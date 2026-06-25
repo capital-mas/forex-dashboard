@@ -612,9 +612,11 @@ with tab4:
         except:
             return ''
 
+    # Compatible con pandas < 2.1 (applymap) y >= 2.1 (map)
+    _map = 'map' if hasattr(df_tabla.style, 'map') else 'applymap'
     styled = (df_tabla.style
-              .applymap(color_score_cell, subset=['Acum', 'Antic', 'Sent'])
-              .applymap(color_ret, subset=['Ret 5d %', 'Ret 10d %'])
+              .pipe(lambda s: getattr(s, _map)(color_score_cell, subset=['Acum', 'Antic', 'Sent']))
+              .pipe(lambda s: getattr(s, _map)(color_ret, subset=['Ret 5d %', 'Ret 10d %']))
               .set_properties(**{'background-color': '#161b22', 'color': '#e6edf3',
                                  'border': '1px solid #30363d'})
               .set_table_styles([{
