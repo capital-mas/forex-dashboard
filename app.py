@@ -404,6 +404,19 @@ ACCIONES_POR_INDUSTRIA = {
     'Internet':           ['GOOGL','META','NFLX','SNAP','PINS','RDDT','SPOT'],
     'Media/Entretenimiento':['DIS','CMCSA','PARA','WBD','FOX','NYT','NWSA'],
     'Streaming':          ['NFLX','DIS','ROKU','SPOT','PARA','WBD','FUBO'],
+    'Argentina':           ['GGAL','BMA','BFR','SUPV','BBAR','CEPU','YPF','PAM','TGS','CRES','LOMA','MRCP','EDN','TRAN','IRS','CAAP','AGRO','TS','TX','VIST'],
+    'Brasil':              ['VALE','ITUB','PBR','BBD','ABEV','NU'],
+    'Agro/Fertilizantes':    ['MOS','NTR','CF','ADM','BG','INGR','IPI','SMG','FMC','CTVA'],
+    'China':               ['BABA','TCEHY','BIDU','JD','NIO','LI','XPEV','BYDDF','PDD','NTES'],
+    'India':               ['INFY','WIT','HDB','IBN','SIFY','REDIFF','VEDL','RDY','TTM','BSBR'],
+    'Corea del Sur':       ['KB','SHG','PKX','SKM','KT'],
+    'Japon':               ['TM','SONY','HMC','NTDOY','MUFG','NMR'],
+    'Taiwan':              ['TSM','ASX','ACER'],
+    'Europa Tecnologia':   ['SAP','ASML','CAPG.PA','DASSAULT.PA','SOPRA.PA','LOGITECH','TEMN.SW','AMS.SW','IFNNY','XRXSF','NXPI','STMICROELECTRONICS','ERF','ERICB.ST'],
+    'Europa Financiero':   ['HSBC','BBVA','SAN','BNP.PA','ACA.PA','DBK.DE','CBK.DE','LLOY.L','BARC.L','CS','UBS','ING','ABN.AS','KBC.BR','ERSTE.VI'],
+    'Europa Industrial':   ['SIEGY','PHIA.AS','ABB','VOLV-B.ST','SU.PA','LR.PA','AIRBUS','RR.L','ATLCO-B.ST','SAND.ST','WEIR.L','IMI.L','SMDS.L','CRH.L'],
+    'Europa Consumo':      ['LVMH','RMS','CFR','NESN.SW','NOVN.SW','RHHBY','UNILEVER.AS','BPOST.BR','HEIAS.AS','EL','RACE','MONCLER.MI','FERRAGAMO.MI'],
+    'Europa Energia':      ['SHEL','BP','TTE','ENI.MI','REPSOL.MC','EQUINOR','OMV.VI','GALP.LS','MOL.BU','PKN.WA','LOTOS.WA','ORSTED.CO','NESTE.HE'],
 }
 
 # ══════════════════════════════════════════════════════════════
