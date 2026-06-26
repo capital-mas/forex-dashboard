@@ -1,6 +1,7 @@
 streamlit>=1.32.0
-yfinance>=0.2.40
-pandas>=2.0.0
+yfinance>=0.2.38
 numpy>=1.24.0
+pandas>=2.0.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
+hurst>=0.0.5
