@@ -1,97 +1,364 @@
+# ==============================================================
+#  ANALIZADOR CUANTITATIVO UNIFICADO
+#  Corto Plazo (Top-Down) + Mediano/Largo Plazo (Cuantitativo)
+#  Autor: Generado con Claude
+#  Instalar: pip install -r requirements.txt
+#  Correr:   streamlit run app.py
+# ==============================================================
+
+import warnings
+warnings.filterwarnings("ignore")
+
 import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import seaborn as sb
-import warnings
-warnings.filterwarnings('ignore')
+from datetime import datetime
+import sys, os
+
+# ── Hurst (solo para largo plazo) ────────────────────────────
+try:
+    from hurst import compute_Hc
+    HURST_OK = True
+except ImportError:
+    HURST_OK = False
+
+# ==============================================================
+#  CONFIG STREAMLIT
+# ==============================================================
 
 st.set_page_config(
-    page_title="Análisis Top-Down",
-    page_icon="📊",
+    page_title="Analizador Cuantitativo Unificado",
+    page_icon="📡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ══════════════════════════════════════════════════════════════
-#  CSS
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
+#  CSS GLOBAL
+# ==============================================================
+
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
   html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #080c14; }
+  .stApp { background-color: #07090f; }
+
   section[data-testid="stSidebar"] {
-      background: linear-gradient(180deg, #0d1117 0%, #080c14 100%);
-      border-right: 1px solid #1e2533;
+      background: linear-gradient(180deg, #0b0f1a 0%, #07090f 100%);
+      border-right: 1px solid #161d2e;
   }
+
+  /* ── Cabecera principal ── */
   .main-header {
-      background: linear-gradient(135deg, #0d1f3c 0%, #0a1628 50%, #0d1117 100%);
-      border: 1px solid #1e3a5f;
-      border-radius: 16px;
-      padding: 28px 32px;
-      margin-bottom: 24px;
+      background: linear-gradient(135deg, #0a1628 0%, #0d1a35 50%, #0b1220 100%);
+      border: 1px solid #1a3050;
+      border-top: 3px solid #3a7bd5;
+      border-radius: 14px;
+      padding: 26px 32px;
+      margin-bottom: 20px;
       position: relative;
       overflow: hidden;
   }
-  .main-header::before {
+  .main-header::after {
       content: '';
       position: absolute;
-      top: -40px; right: -40px;
-      width: 180px; height: 180px;
-      background: radial-gradient(circle, rgba(88,166,255,0.08) 0%, transparent 70%);
+      bottom: -30px; right: -30px;
+      width: 160px; height: 160px;
+      background: radial-gradient(circle, rgba(58,123,213,0.07) 0%, transparent 70%);
       border-radius: 50%;
   }
-  .main-header h1 { color: #e6edf3 !important; font-size: 26px !important; font-weight: 700 !important; margin: 0 0 6px 0 !important; }
-  .main-header p  { color: #8b949e !important; font-size: 13px !important; margin: 0 !important; }
+  .main-header h1 { color: #dde5f0 !important; font-size: 24px !important; font-weight: 700 !important; margin: 0 0 4px 0 !important; letter-spacing: -0.4px; }
+  .main-header p  { color: #6b7d9a !important; font-size: 12px !important; margin: 0 !important; }
+
+  /* ── Modo badge ── */
+  .modo-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-left: 10px;
+      vertical-align: middle;
+  }
+  .modo-corto  { background: rgba(240,136,62,0.15); border: 1px solid rgba(240,136,62,0.4); color: #f0883e; }
+  .modo-largo  { background: rgba(63,185,80,0.12);  border: 1px solid rgba(63,185,80,0.35); color: #3fb950; }
+
+  /* ── KPI cards ── */
   .kpi-card {
-      background: #0d1117;
-      border: 1px solid #1e2533;
-      border-radius: 12px;
-      padding: 16px 20px;
+      background: #0b0f1a;
+      border: 1px solid #161d2e;
+      border-radius: 10px;
+      padding: 14px 18px;
       position: relative;
       overflow: hidden;
       transition: border-color .2s;
   }
-  .kpi-card:hover { border-color: #58a6ff; }
-  .kpi-card .accent { position:absolute; top:0; left:0; width:100%; height:3px; border-radius:12px 12px 0 0; }
-  .kpi-card .label { color: #8b949e; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; margin-bottom: 6px; }
-  .kpi-card .value { color: #e6edf3; font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
-  .kpi-card .sub   { color: #8b949e; font-size: 12px; margin-top: 4px; }
-  .stTabs [data-baseweb="tab-list"] { background: #0d1117; border-bottom: 1px solid #1e2533; gap: 0; padding: 0; }
-  .stTabs [data-baseweb="tab"] { background: transparent; color: #8b949e !important; border: none; padding: 12px 18px; font-weight: 500; font-size: 13px; border-bottom: 2px solid transparent; }
-  .stTabs [aria-selected="true"] { color: #58a6ff !important; border-bottom: 2px solid #58a6ff !important; background: transparent !important; }
-  .section-title { font-size: 15px; font-weight: 600; color: #e6edf3; margin: 20px 0 12px 0; padding-bottom: 8px; border-bottom: 1px solid #1e2533; }
-  .info-banner { background: rgba(88,166,255,0.06); border: 1px solid rgba(88,166,255,0.2); border-radius: 8px; padding: 10px 14px; color: #8b949e; font-size: 12px; margin-bottom: 16px; }
-  .signal-pill { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; background: rgba(88,166,255,0.1); border: 1px solid rgba(88,166,255,0.3); color: #58a6ff; }
-  .sidebar-logo { font-size: 17px; font-weight: 700; color: #e6edf3; padding: 12px 0 4px 0; letter-spacing: -0.3px; }
-  .sidebar-sub  { font-size: 11px; color: #8b949e; margin-bottom: 16px; }
-  h1,h2,h3,h4 { color: #e6edf3 !important; }
-  p, label, .stMarkdown { color: #c9d1d9 !important; }
-  .stButton > button { background: linear-gradient(135deg, #1f6feb, #388bfd); color: white; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; transition: opacity .2s; }
+  .kpi-card:hover { border-color: #3a7bd5; }
+  .kpi-card .accent { position:absolute; top:0; left:0; width:100%; height:3px; border-radius:10px 10px 0 0; }
+  .kpi-card .label { color: #6b7d9a; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .9px; margin-bottom: 5px; }
+  .kpi-card .value { color: #dde5f0; font-size: 19px; font-weight: 700; letter-spacing: -0.5px; font-family: 'JetBrains Mono', monospace; }
+  .kpi-card .sub   { color: #6b7d9a; font-size: 11px; margin-top: 3px; }
+
+  /* ── Tabs ── */
+  .stTabs [data-baseweb="tab-list"] { background: #0b0f1a; border-bottom: 1px solid #161d2e; gap: 0; padding: 0; }
+  .stTabs [data-baseweb="tab"] { background: transparent; color: #6b7d9a !important; border: none; padding: 11px 17px; font-weight: 500; font-size: 12px; border-bottom: 2px solid transparent; }
+  .stTabs [aria-selected="true"] { color: #3a7bd5 !important; border-bottom: 2px solid #3a7bd5 !important; background: transparent !important; }
+
+  /* ── Section title ── */
+  .section-title { font-size: 13px; font-weight: 700; color: #dde5f0; margin: 18px 0 10px 0; padding-bottom: 7px; border-bottom: 1px solid #161d2e; letter-spacing: 0.2px; }
+
+  /* ── Info banner ── */
+  .info-banner { background: rgba(58,123,213,0.06); border: 1px solid rgba(58,123,213,0.2); border-radius: 8px; padding: 9px 13px; color: #6b7d9a; font-size: 11px; margin-bottom: 14px; }
+
+  /* ── Signal pill ── */
+  .signal-pill { display: inline-block; padding: 3px 11px; border-radius: 20px; font-size: 11px; font-weight: 700; background: rgba(58,123,213,0.1); border: 1px solid rgba(58,123,213,0.3); color: #3a7bd5; }
+
+  /* ── Sidebar ── */
+  .sidebar-logo { font-size: 16px; font-weight: 700; color: #dde5f0; padding: 10px 0 3px 0; letter-spacing: -0.3px; }
+  .sidebar-sub  { font-size: 10px; color: #6b7d9a; margin-bottom: 14px; }
+
+  /* ── General overrides ── */
+  h1,h2,h3,h4 { color: #dde5f0 !important; }
+  p, label, .stMarkdown { color: #b0bcd0 !important; }
+  .stButton > button { background: linear-gradient(135deg, #1e5fbd, #3a7bd5); color: white; border: none; border-radius: 7px; font-weight: 600; font-size: 12px; transition: opacity .2s; }
   .stButton > button:hover { opacity: .85; }
-  .stSelectbox > div > div { background: #0d1117 !important; border-color: #1e2533 !important; color: #e6edf3 !important; }
-  .stMultiSelect > div > div { background: #0d1117 !important; border-color: #1e2533 !important; }
-  hr { border-color: #1e2533 !important; }
-  [data-testid="stMetric"] { background: #0d1117; border: 1px solid #1e2533; border-radius: 10px; padding: 12px 16px; }
-  [data-testid="stMetricLabel"] { color: #8b949e !important; font-size: 11px !important; }
-  [data-testid="stMetricValue"] { color: #e6edf3 !important; }
-  .stDataFrame { border-radius: 10px; overflow: hidden; }
+  .stSelectbox > div > div { background: #0b0f1a !important; border-color: #161d2e !important; color: #dde5f0 !important; }
+  .stMultiSelect > div > div { background: #0b0f1a !important; border-color: #161d2e !important; }
+  hr { border-color: #161d2e !important; }
+  [data-testid="stMetric"] { background: #0b0f1a; border: 1px solid #161d2e; border-radius: 9px; padding: 11px 15px; }
+  [data-testid="stMetricLabel"] { color: #6b7d9a !important; font-size: 10px !important; }
+  [data-testid="stMetricValue"] { color: #dde5f0 !important; font-family: 'JetBrains Mono', monospace; }
+
+  /* ── Interpretación largo plazo ── */
+  .interp-card {
+      background: #0b1220;
+      border: 1px solid #161d2e;
+      border-left: 3px solid #3a7bd5;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      line-height: 1.65;
+      color: #b0bcd0;
+  }
+  .interp-header {
+      color: #3a7bd5;
+      font-weight: 700;
+      font-size: 12px;
+      margin-bottom: 5px;
+      font-family: 'JetBrains Mono', monospace;
+  }
+  .sesgo-muy-alc { color: #3fb950; font-weight: 700; }
+  .sesgo-alc     { color: #7ee787; font-weight: 700; }
+  .sesgo-neu     { color: #e3b341; font-weight: 700; }
+  .sesgo-baj     { color: #f0883e; font-weight: 700; }
+  .sesgo-muy-baj { color: #f85149; font-weight: 700; }
+
+  /* ── Tabla ranking ── */
+  .stDataFrame { border-radius: 9px; overflow: hidden; }
+
+  /* ── Modo selector buttons ── */
+  .modo-selector {
+      display: flex; gap: 8px; margin-bottom: 18px;
+  }
 </style>
 """, unsafe_allow_html=True)
 
+# ==============================================================
+#  MATPLOTLIB THEME
+# ==============================================================
+
 plt.rcParams.update({
-    'figure.facecolor': '#080c14', 'axes.facecolor': '#0d1117',
-    'text.color': '#c9d1d9', 'axes.labelcolor': '#8b949e',
-    'xtick.color': '#8b949e', 'ytick.color': '#8b949e',
-    'grid.color': '#1e2533', 'axes.edgecolor': '#1e2533',
+    'figure.facecolor': '#07090f', 'axes.facecolor': '#0b0f1a',
+    'text.color': '#b0bcd0', 'axes.labelcolor': '#6b7d9a',
+    'xtick.color': '#6b7d9a', 'ytick.color': '#6b7d9a',
+    'grid.color': '#161d2e', 'axes.edgecolor': '#161d2e',
     'font.family': 'DejaVu Sans',
 })
 
-# ══════════════════════════════════════════════════════════════
-#  FUNCIONES BASE
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
+#  PALETA DE COLORES
+# ==============================================================
+
+C_BG1   = '#0b0f1a'
+C_BG2   = '#07090f'
+C_ACENT = '#3a7bd5'
+C_TEXT  = '#dde5f0'
+C_MUTED = '#6b7d9a'
+C_GREEN = '#3fb950'
+C_RED   = '#f85149'
+C_YELL  = '#e3b341'
+C_GOLD  = '#f0e68c'
+C_LGRE  = '#7ee787'
+C_LRED  = '#f0883e'
+C_GRID  = '#161d2e'
+C_PANEL = '#0d1220'
+
+def score_color_hex(v):
+    if   v <= 20: return '#f85149'
+    elif v <= 40: return '#f0883e'
+    elif v <= 60: return '#e3b341'
+    elif v <= 80: return '#7ee787'
+    else:         return '#3fb950'
+
+def score_color_mpl(v):
+    return score_color_hex(v)
+
+def sesgo_color_hex(s):
+    return {
+        'MUY ALCISTA': '#3fb950',
+        'ALCISTA':     '#7ee787',
+        'NEUTRAL':     '#e3b341',
+        'BAJISTA':     '#f0883e',
+        'MUY BAJISTA': '#f85149',
+    }.get(s, '#dde5f0')
+
+def clasificar_score(s):
+    if   s <= 20: return 'Muy bajo',  '#f85149', '🔴'
+    elif s <= 40: return 'Bajo',      '#f0883e', '🟠'
+    elif s <= 60: return 'Neutral',   '#e3b341', '🟡'
+    elif s <= 80: return 'Alto',      '#7ee787', '🟢'
+    else:         return 'Muy alto',  '#3fb950', '💚'
+
+# ==============================================================
+#  UNIVERSO DE ACTIVOS
+# ==============================================================
+
+ACCIONES_POR_INDUSTRIA = {
+    'Semiconductores':    ['NVDA','AMD','INTC','TSM','ASML','QCOM','AVGO','MU','AMAT','LRCX'],
+    'Software':           ['MSFT','ORCL','CRM','ADBE','SAP','NOW','INTU','WDAY','SNOW','PLTR'],
+    'Ciberseguridad':     ['CRWD','PANW','ZS','FTNT','OKTA','S','CYBR','QLYS','TENB'],
+    'Cloud/AI':           ['AMZN','GOOGL','META','MSFT','ORCL','IBM','SNOW','MDB','DDOG','NET'],
+    'Hardware/Equipos':   ['AAPL','HPQ','HPE','DELL','STX','WDC','NTAP','PSTG','GLW'],
+    'Fintech':            ['PYPL','SQ','AFRM','UPST','SOFI','LC','ENVA'],
+    'Biotecnología':      ['MRNA','BNTX','REGN','VRTX','BIIB','GILD','AMGN','ILMN','BMRN'],
+    'Farmacéuticas':      ['JNJ','PFE','LLY','ABBV','MRK','BMY','AZN','NVO'],
+    'Equipos Médicos':    ['MDT','ABT','SYK','BSX','EW','ISRG','ZBH','BAX','BDX','HOLX'],
+    'Servicios de Salud': ['UNH','CVS','CI','HUM','CNC','MOH','ELV','DVA'],
+    'Bancos':             ['JPM','BAC','WFC','C','GS','MS','USB','TFC','PNC','COF'],
+    'Seguros':            ['BRK-B','CB','AON','MMC','TRV','AIG','PRU','MET','ALL','AFL'],
+    'Mercados Capitales': ['BX','KKR','APO','ARES','CG','BAM','SCHW','IBKR'],
+    'Bancos Regionales':  ['FITB','HBAN','RF','CFG','ZION','FHN','WTFC'],
+    'Finanzas Diversif.': ['V','MA','AXP','DFS','SYF','ALLY','CACC'],
+    'Petróleo Integrado': ['XOM','CVX','COP','EOG','DVN','MPC','VLO'],
+    'Energía Renovable':  ['NEE','ENPH','SEDG','FSLR','RUN','PLUG','BE','AES'],
+    'Gas Natural':        ['LNG','AR','EQT','RRC','SWN','CNX'],
+    'Energía Solar':      ['FSLR','ENPH','SEDG','MAXN','CSIQ','JKS','RUN'],
+    'Aeroespacial':       ['BA','RTX','LMT','NOC','GD','HII','TDG','HEICO','CW'],
+    'Transporte':         ['UPS','FDX','UNP','CSX','NSC','JBHT','ODFL','XPO'],
+    'Construcción':       ['CAT','DE','EMR','ETN','HON','GE','ROK','AME','PH','IR'],
+    'Defensa':            ['LMT','RTX','NOC','GD','HII','KTOS','AVAV','BWXT'],
+    'Retail':             ['AMZN','WMT','TGT','COST','HD','LOW','TJX','ROST','DG','DLTR'],
+    'Autos':              ['TSLA','GM','F','TM','NIO','RIVN','LCID','XPEV'],
+    'Hotelería/Viajes':   ['MAR','HLT','H','IHG','ABNB','BKNG','EXPE'],
+    'E-commerce':         ['AMZN','SHOP','ETSY','EBAY','W','CHWY','SE','MELI','PDD'],
+    'Alimentos':          ['KHC','GIS','CPB','SJM','MKC','CAG','POST'],
+    'Bebidas':            ['KO','PEP','MNST','STZ','BUD','TAP','CELH'],
+    'Minería Oro':        ['NEM','GOLD','AEM','WPM','KGC','AG','PAAS','CDE','HL'],
+    'Cobre/Metales':      ['FCX','SCCO','TECK','HBM','CLF','NUE','STLD','CMC'],
+    'Químicos':           ['LIN','APD','DD','DOW','LYB','EMN','CE'],
+    'Acero':              ['NUE','STLD','CLF','RS','CMC','X','MT'],
+    'Eléctricas':         ['NEE','DUK','SO','D','AEP','EXC','XEL','ED','ETR'],
+    'Agua':               ['AWK','WTR','WTRG','SJW','MSEX'],
+    'REIT Comercial':     ['SPG','O','VICI','NNN','BXP','KIM','REG'],
+    'REIT Industrial':    ['PLD','EGP','FR','REXR','STAG'],
+    'REIT Residencial':   ['EQR','AVB','ESS','MAA','UDR','CPT'],
+    'Telecomunicaciones': ['T','VZ','TMUS','AMT','CCI','SBAC'],
+    'Internet':           ['GOOGL','META','NFLX','SNAP','PINS','RDDT','SPOT'],
+    'Argentina':          ['GGAL','BMA','BFR','SUPV','BBAR','CEPU','YPF','PAM','TGS','CRESY','LOMA','VISTA'],
+    'Brasil':             ['VALE','ITUB','PBR','BBD','ABEV','NU'],
+    'México':             ['WALMEX.MX','AMXL.MX','CEMEXCPO.MX','GFINBURO.MX'],
+    'China':              ['BABA','TCEHY','BIDU','JD','NIO','LI','XPEV','BYDDF','PDD','NTES'],
+    'India':              ['INFY','WIT','HDB','IBN','VEDL','RDY','TTM'],
+    'Europa Tecnología':  ['SAP','ASML','IFNNY','NXPI'],
+    'Europa Finanzas':    ['HSBC','BBVA','SAN','DBK.DE','LLOY.L','UBS','ING'],
+    'Agro/Fertilizantes': ['MOS','NTR','CF','ADM','BG','FMC','CTVA'],
+    'Cripto (ETF/Coin)':  ['BTC-USD','ETH-USD','SOL-USD','BNB-USD','XRP-USD','ADA-USD'],
+}
+
+TICKER_INDUSTRY = {}
+for ind, lst in ACCIONES_POR_INDUSTRIA.items():
+    for t in lst:
+        if t not in TICKER_INDUSTRY:
+            TICKER_INDUSTRY[t] = ind
+
+ALL_TICKERS = sorted(set(t for lst in ACCIONES_POR_INDUSTRIA.values() for t in lst))
+
+FOREX = {
+    'EUR/USD':('EURUSD=X','Majors'),   'GBP/USD':('GBPUSD=X','Majors'),
+    'USD/JPY':('USDJPY=X','Majors'),   'USD/CHF':('USDCHF=X','Majors'),
+    'USD/CAD':('USDCAD=X','Majors'),   'AUD/USD':('AUDUSD=X','Majors'),
+    'NZD/USD':('NZDUSD=X','Majors'),   'USD/CNY':('USDCNY=X','Majors'),
+    'EUR/GBP':('EURGBP=X','Crosses EUR'), 'EUR/JPY':('EURJPY=X','Crosses EUR'),
+    'EUR/CHF':('EURCHF=X','Crosses EUR'), 'EUR/AUD':('EURAUD=X','Crosses EUR'),
+    'GBP/JPY':('GBPJPY=X','Crosses GBP'), 'GBP/AUD':('GBPAUD=X','Crosses GBP'),
+    'AUD/JPY':('AUDJPY=X','Crosses AUD'), 'NZD/JPY':('NZDJPY=X','Crosses AUD'),
+    'USD/ARS':('USDARS=X','LatAm'), 'USD/BRL':('USDBRL=X','LatAm'),
+    'USD/MXN':('USDMXN=X','LatAm'), 'USD/CLP':('USDCLP=X','LatAm'),
+    'USD/COP':('USDCOP=X','LatAm'), 'USD/PEN':('USDPEN=X','LatAm'),
+}
+
+PAISES = {
+    'EE.UU. S&P500':    ('SPY',  'América'),
+    'EE.UU. NASDAQ':    ('QQQ',  'América'),
+    'EE.UU. DOW':       ('DIA',  'América'),
+    'EE.UU. Russell':   ('IWM',  'América'),
+    'Argentina':        ('ARGT', 'América'),
+    'Brasil':           ('EWZ',  'América'),
+    'Japón':            ('EWJ',  'Asia'),
+    'China':            ('FXI',  'Asia'),
+    'Corea del Sur':    ('EWY',  'Asia'),
+    'Alemania':         ('EWG',  'Europa'),
+    'Europa general':   ('VGK',  'Europa'),
+    'Mercados Emerg.':  ('EEM',  'Global'),
+    'India':            ('INDA', 'Asia'),
+}
+
+SECTORES = {
+    'Tecnología':     ('XLK',  '#3a7bd5'),
+    'Salud':          ('XLV',  '#3fb950'),
+    'Finanzas':       ('XLF',  '#e3b341'),
+    'Consumo Discr.': ('XLY',  '#f0883e'),
+    'Consumo Básico': ('XLP',  '#bc8cff'),
+    'Energía':        ('XLE',  '#ffa657'),
+    'Industriales':   ('XLI',  '#79c0ff'),
+    'Materiales':     ('XLB',  '#8b949e'),
+    'Utilities':      ('XLU',  '#3fb950'),
+    'Real Estate':    ('XLRE', '#f85149'),
+    'Comunicaciones': ('XLC',  '#d2a8ff'),
+}
+
+MERCADOS_REALES = {
+    'Petróleo WTI':  ('CL=F',    'Energía',    '#f0883e'),
+    'Petróleo Brent':('BZ=F',    'Energía',    '#ffa657'),
+    'Gas Natural':   ('NG=F',    'Energía',    '#79c0ff'),
+    'Oro':           ('GC=F',    'Met. Prec.', '#e3b341'),
+    'Plata':         ('SI=F',    'Met. Prec.', '#8b949e'),
+    'Platino':       ('PL=F',    'Met. Prec.', '#bc8cff'),
+    'Cobre':         ('HG=F',    'Met. Ind.',  '#cd7f32'),
+    'Mineras Oro':   ('GDX',     'Minería',    '#e3b341'),
+    'Mineras Plata': ('SIL',     'Minería',    '#8b949e'),
+    'Mineras Cobre': ('COPX',    'Minería',    '#cd7f32'),
+    'Soja':          ('ZS=F',    'Agro',       '#3fb950'),
+    'Maíz':          ('ZC=F',    'Agro',       '#7ee787'),
+    'Trigo':         ('ZW=F',    'Agro',       '#ffa657'),
+    'Bitcoin':       ('BTC-USD', 'Cripto',     '#f0883e'),
+    'Ethereum':      ('ETH-USD', 'Cripto',     '#7ee787'),
+    'Solana':        ('SOL-USD', 'Cripto',     '#bc8cff'),
+    'XRP':           ('XRP-USD', 'Cripto',     '#3a7bd5'),
+}
+
+COLORES_GRUPO_FX  = {'Majors':'#3a7bd5','Crosses EUR':'#f0883e','Crosses GBP':'#7ee787','Crosses AUD':'#bc8cff','LatAm':'#f85149'}
+COLORES_REGION    = {'América':'#3a7bd5','Asia':'#f0883e','Europa':'#7ee787','Global':'#bc8cff'}
+
+# ==============================================================
+#  DESCARGA DE DATOS
+# ==============================================================
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def descargar_datos(ticker, period='3mo'):
@@ -112,23 +379,50 @@ def descargar_datos(ticker, period='3mo'):
     except Exception:
         return None
 
-def get_close(df):
+@st.cache_data(ttl=3600, show_spinner=False)
+def descargar_bulk(tickers, period='2y'):
+    """Descarga masiva para el módulo largo plazo."""
+    try:
+        import yfinance as yf
+        df_all = yf.download(tickers, period=period, interval='1d',
+                             auto_adjust=True, progress=False, group_by='ticker')
+        return df_all
+    except Exception:
+        return None
+
+def get_close_series(df):
     if df is None: return None
     try:
         if isinstance(df, pd.Series): return df.dropna()
         if 'Close' in df.columns:
             c = df['Close']
-            if isinstance(c, pd.DataFrame): c = c.iloc[:, 0]
+            if isinstance(c, pd.DataFrame): c = c.iloc[:,0]
             return c.dropna()
         for col in df.columns:
             if 'close' in str(col).lower(): return df[col].dropna()
         return None
     except: return None
 
+def get_close_from_bulk(df_all, ticker):
+    """Extrae close de descarga masiva."""
+    try:
+        if isinstance(df_all.columns, pd.MultiIndex):
+            if (ticker, 'Close') in df_all.columns:
+                return df_all[(ticker, 'Close')].dropna().astype(float)
+            elif ('Close', ticker) in df_all.columns:
+                return df_all[('Close', ticker)].dropna().astype(float)
+        return pd.Series(dtype=float)
+    except:
+        return pd.Series(dtype=float)
+
+# ==============================================================
+#  INDICADORES — CORTO PLAZO (percentil)
+# ==============================================================
+
 def calcular_atr(df, p=14):
     if df is None: return None
     try:
-        h = df.get('High'); l = df.get('Low'); c = get_close(df)
+        h = df.get('High'); l = df.get('Low'); c = get_close_series(df)
         if h is None or l is None or c is None: return None
         tr = pd.concat([h-l, abs(h-c.shift(1)), abs(l-c.shift(1))], axis=1).max(axis=1)
         return tr.rolling(p).mean()
@@ -147,24 +441,18 @@ def calcular_rsi(close, p=14):
     rs = g / l.replace(0, np.nan)
     return (100 - (100/(1+rs))).fillna(50)
 
-def vol_anual(close, v=20):
+def vol_anual_rolling(close, v=20):
     s = pd.Series(close).dropna()
     return s.pct_change().rolling(v).std() * np.sqrt(252) * 100
 
-def clasificar(s):
-    if   s <= 20: return 'Miedo Extremo',  '#f85149', '🔴'
-    elif s <= 40: return 'Miedo',           '#f0883e', '🟠'
-    elif s <= 60: return 'Neutral',         '#e3b341', '🟡'
-    elif s <= 80: return 'Codicia',         '#7ee787', '🟢'
-    else:         return 'Codicia Extrema', '#3fb950', '💚'
-
-def scores_activo(close_vol, close_mp, atr):
+def scores_corto(close_vol, close_mp, atr):
+    """Scores de acumulación, anticipación y sentimiento para corto plazo."""
     cv = pd.Series(close_vol).dropna()
     cm = pd.Series(close_mp).dropna()
     if len(cv) < 15 or len(cm) < 5: return 50.0, 50.0, 50.0
     precio_pct = pct_rank(cv)
     rsi_pct    = 100 - pct_rank(calcular_rsi(cv, p=7))
-    vol_pct    = 100 - pct_rank(vol_anual(cv, 10))
+    vol_pct    = 100 - pct_rank(vol_anual_rolling(cv, 10))
     sc_acum    = (100-precio_pct)*0.40 + rsi_pct*0.35 + vol_pct*0.25
     ret20 = float(cm.pct_change(5).iloc[-1]*100) if len(cm)>=6 else 0
     if np.isnan(ret20): ret20=0
@@ -178,447 +466,457 @@ def scores_activo(close_vol, close_mp, atr):
     sc_antic = mom*0.40+comp_atr*0.30+bb_c*0.30
     return round(sc_acum,1), round(sc_antic,1), round(pct_rank(cv),1)
 
-def señal_accion(sa, sn, ss):
-    if   sa>=62 and sn>=55:              return '🟢 ACUMULAR'
-    elif sa>=62 and sn>=40:              return '🟡 VIGILAR'
-    elif sa>=58 and sn<40:               return '🔵 ACUMULAR GRADUAL'
-    elif sa<45  and sn>=62 and ss>=62:   return '🚀 TENDENCIA ALCISTA'
-    elif sn>=65 and 40<=sa<62:           return '⚡ MOVIMIENTO INMINENTE'
-    elif sa<38  and sn<42  and ss>=65:   return '⚠️ MÁXIMOS'
-    elif sa>=55 and sn<35  and ss<35:    return '🔴 EVITAR'
-    elif sa<38  and sn>=55 and ss<40:    return '🟠 REBOTE'
-    else:                                return '⏸️ ESPERAR'
+def señal_accion_corto(sa, sn, ss):
+    if   sa>=62 and sn>=55:            return '🟢 ACUMULAR'
+    elif sa>=62 and sn>=40:            return '🟡 VIGILAR'
+    elif sa>=58 and sn<40:             return '🔵 ACUMULAR GRADUAL'
+    elif sa<45  and sn>=62 and ss>=62: return '🚀 TENDENCIA ALCISTA'
+    elif sn>=65 and 40<=sa<62:         return '⚡ MOVIMIENTO INMINENTE'
+    elif sa<38  and sn<42  and ss>=65: return '⚠️ EN MÁXIMOS'
+    elif sa>=55 and sn<35  and ss<35:  return '🔴 EVITAR'
+    elif sa<38  and sn>=55 and ss<40:  return '🟠 POSIBLE REBOTE'
+    else:                              return '⏸️ ESPERAR'
 
-def score_color(v):
-    if   v <= 20: return '#f85149'
-    elif v <= 40: return '#f0883e'
-    elif v <= 60: return '#e3b341'
-    elif v <= 80: return '#7ee787'
-    else:         return '#3fb950'
+# ==============================================================
+#  INDICADORES — MEDIANO/LARGO PLAZO (cuantitativo)
+# ==============================================================
 
-def fmt_precio_fx(p):
-    if p is None: return '—'
-    if p >= 100:  return f'{p:.3f}'
-    if p >= 10:   return f'{p:.4f}'
-    return f'{p:.5f}'
+def analizar_largo(ticker, precio_series):
+    """Análisis cuantitativo completo para mediano/largo plazo."""
+    try:
+        precio = precio_series.dropna().astype(float)
+        if len(precio) < 150:
+            return None
+        retornos = precio.pct_change().dropna()
 
-def fmt_precio_gen(p):
-    if not p or p <= 0: return 'S/D'
-    if p >= 1000: return f'${p:,.0f}'
-    if p >= 10:   return f'${p:.2f}'
-    return f'${p:.4f}'
+        # RSI
+        delta    = precio.diff()
+        avg_gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
+        avg_loss = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
+        rsi_v    = float((100 - 100 / (1 + avg_gain / avg_loss)).iloc[-1])
 
-# ══════════════════════════════════════════════════════════════
-#  DATOS — DEFINICIÓN DE UNIVERSOS
-# ══════════════════════════════════════════════════════════════
+        # MACD
+        macd      = precio.ewm(span=12,adjust=False).mean() - precio.ewm(span=26,adjust=False).mean()
+        signal_m  = macd.ewm(span=9, adjust=False).mean()
+        macd_bull = float(macd.iloc[-1]) > float(signal_m.iloc[-1])
 
-FOREX = {
-    'EUR/USD':('EURUSD=X','Majors'),   'GBP/USD':('GBPUSD=X','Majors'),
-    'USD/JPY':('USDJPY=X','Majors'),   'USD/CHF':('USDCHF=X','Majors'),
-    'USD/CAD':('USDCAD=X','Majors'),   'AUD/USD':('AUDUSD=X','Majors'),
-    'NZD/USD':('NZDUSD=X','Majors'),   'USD/CNY':('USDCNY=X','Majors'),
-    'EUR/GBP':('EURGBP=X','Crosses EUR'), 'EUR/JPY':('EURJPY=X','Crosses EUR'),
-    'EUR/CHF':('EURCHF=X','Crosses EUR'), 'EUR/AUD':('EURAUD=X','Crosses EUR'),
-    'EUR/CAD':('EURCAD=X','Crosses EUR'), 'EUR/NZD':('EURNZD=X','Crosses EUR'),
-    'GBP/JPY':('GBPJPY=X','Crosses GBP'), 'GBP/CHF':('GBPCHF=X','Crosses GBP'),
-    'GBP/AUD':('GBPAUD=X','Crosses GBP'), 'GBP/CAD':('GBPCAD=X','Crosses GBP'),
-    'GBP/NZD':('GBPNZD=X','Crosses GBP'),
-    'AUD/JPY':('AUDJPY=X','Crosses AUD/NZD'), 'AUD/CAD':('AUDCAD=X','Crosses AUD/NZD'),
-    'AUD/CHF':('AUDCHF=X','Crosses AUD/NZD'), 'AUD/NZD':('AUDNZD=X','Crosses AUD/NZD'),
-    'NZD/JPY':('NZDJPY=X','Crosses AUD/NZD'), 'NZD/CAD':('NZDCAD=X','Crosses AUD/NZD'),
-    'NZD/CHF':('NZDCHF=X','Crosses AUD/NZD'),
-    'CAD/JPY':('CADJPY=X','Crosses JPY'), 'CHF/JPY':('CHFJPY=X','Crosses JPY'),
-    'USD/ARS':('USDARS=X','LatAm'), 'USD/BRL':('USDBRL=X','LatAm'),
-    'USD/MXN':('USDMXN=X','LatAm'), 'USD/CLP':('USDCLP=X','LatAm'),
-    'USD/COP':('USDCOP=X','LatAm'), 'USD/PEN':('USDPEN=X','LatAm'),
-    'USD/UYU':('USDUYU=X','LatAm'),
-}
-COLORES_GRUPO_FX = {
-    'Majors':'#58a6ff', 'Crosses EUR':'#f0883e', 'Crosses GBP':'#7ee787',
-    'Crosses AUD/NZD':'#bc8cff', 'Crosses JPY':'#e3b341', 'LatAm':'#f85149',
-}
-ACCENT_GRUPO_FX = {
-    'Majors':'#1f6feb', 'Crosses EUR':'#b35d00', 'Crosses GBP':'#2ea043',
-    'Crosses AUD/NZD':'#8250df', 'Crosses JPY':'#9a6700', 'LatAm':'#cf222e',
-}
+        # Golden Cross
+        ma50  = precio.rolling(50).mean()
+        ma200 = precio.rolling(200).mean()
+        golden_cross = float(ma50.iloc[-1]) > float(ma200.iloc[-1])
 
-PAISES = {
-    'EE.UU. S&P500':    ('SPY',  'América'),
-    'EE.UU. NASDAQ':    ('QQQ',  'América'),
-    'EE.UU. DOW JONES': ('DIA',  'América'),
-    'EE.UU. Russell':   ('IWM',  'América'),
-    'Argentina':        ('ARGT', 'América'),
-    'Brasil':           ('EWZ',  'América'),
-    'Japón':            ('EWJ',  'Asia'),
-    'China':            ('FXI',  'Asia'),
-    'Corea del Sur':    ('EWY',  'Asia'),
-    'Alemania':         ('EWG',  'Europa'),
-    'Europa general':   ('VGK',  'Europa'),
-    'Mercados Emerg.':  ('EEM',  'Global'),
-    'India':            ('INDA', 'Asia'),
-}
+        # Bollinger
+        ma20     = precio.rolling(20).mean()
+        std20    = precio.rolling(20).std()
+        upper_bb = float((ma20 + 2*std20).iloc[-1])
+        lower_bb = float((ma20 - 2*std20).iloc[-1])
+        z_v      = float(((precio - ma20) / std20).iloc[-1])
+        p_actual = float(precio.iloc[-1])
 
-COLORES_REGION = {'América':'#58a6ff','Asia':'#f0883e','Europa':'#7ee787','Global':'#bc8cff'}
+        # Hurst
+        if HURST_OK and len(precio) >= 200:
+            try:
+                H, _, _ = compute_Hc(precio.values, kind='change', simplified=True)
+            except:
+                H = 0.5
+        else:
+            H = 0.5
 
-SECTORES = {
-    'Tecnología':     ('XLK',  '#58a6ff'),
-    'Salud':          ('XLV',  '#7ee787'),
-    'Finanzas':       ('XLF',  '#e3b341'),
-    'Consumo Discr.': ('XLY',  '#f0883e'),
-    'Consumo Básico': ('XLP',  '#bc8cff'),
-    'Energía':        ('XLE',  '#ffa657'),
-    'Industriales':   ('XLI',  '#79c0ff'),
-    'Materiales':     ('XLB',  '#8b949e'),
-    'Utilities':      ('XLU',  '#3fb950'),
-    'Real Estate':    ('XLRE', '#f85149'),
-    'Comunicaciones': ('XLC',  '#d2a8ff'),
-}
+        # Métricas de riesgo/retorno
+        rf        = 0.04
+        ret_a     = float(retornos.mean()) * 252
+        vol_a     = float(retornos.std()) * np.sqrt(252)
+        sharpe    = (ret_a - rf) / vol_a if vol_a > 0 else 0.0
+        neg       = retornos[retornos < 0]
+        sortino   = float((ret_a - rf) / (float(neg.std())*np.sqrt(252))) if len(neg)>5 else None
+        cum       = (1 + retornos).cumprod()
+        max_dd    = float(((cum / cum.cummax()) - 1).min())
 
-MERCADOS_REALES = {
-    'Petróleo WTI':    ('CL=F',    'Energía',    '#f0883e'),
-    'Petróleo Brent':  ('BZ=F',    'Energía',    '#ffa657'),
-    'Gas Natural':     ('NG=F',    'Energía',    '#79c0ff'),
-    'Gasolina RBOB':   ('RB=F',    'Energía',    '#f85149'),
-    'Oro':             ('GC=F',    'Met. Prec.', '#e3b341'),
-    'Plata':           ('SI=F',    'Met. Prec.', '#8b949e'),
-    'Platino':         ('PL=F',    'Met. Prec.', '#bc8cff'),
-    'Paladio':         ('PA=F',    'Met. Prec.', '#d2a8ff'),
-    'Cobre':           ('HG=F',    'Met. Ind.',  '#cd7f32'),
-    'Acero (ETF)':     ('SLX',     'Met. Ind.',  '#8b949e'),
-    'Mineras Oro':     ('GDX',     'Minería',    '#e3b341'),
-    'Mineras Jr. Oro': ('GDXJ',    'Minería',    '#ffa657'),
-    'Mineras Plata':   ('SIL',     'Minería',    '#8b949e'),
-    'Mineras Cobre':   ('COPX',    'Minería',    '#cd7f32'),
-    'Soja':            ('ZS=F',    'Agro',       '#3fb950'),
-    'Maíz':            ('ZC=F',    'Agro',       '#7ee787'),
-    'Trigo':           ('ZW=F',    'Agro',       '#ffa657'),
-    'Café':            ('KC=F',    'Agro',       '#cd7f32'),
-    'Azúcar':          ('SB=F',    'Agro',       '#f85149'),
-    'Bitcoin':         ('BTC-USD', 'Cripto',     '#f0883e'),
-    'Ethereum':        ('ETH-USD', 'Cripto',     '#7ee787'),
-    'Solana':          ('SOL-USD', 'Cripto',     '#bc8cff'),
-    'BNB':             ('BNB-USD', 'Cripto',     '#e3b341'),
-    'XRP':             ('XRP-USD', 'Cripto',     '#58a6ff'),
-    'Cardano':         ('ADA-USD', 'Cripto',     '#d2a8ff'),
-    'Doge':            ('DOGE-USD', 'Cripto',     '#f0883e'),
-    'Tron':            ('TRX-USD', 'Cripto',     '#7ee787'),
-    'Aave':            ('AAVE-USD', 'Cripto',     '#bc8cff'),
-    'Near':            ('NEAR-USD', 'Cripto',     '#e3b341'),
-    'Avax':            ('AVAX', 'Cripto',     '#58a6ff'),
-    'Charlink':        ('LINK-USD', 'Cripto',     '#d2a8ff'),
-}
+        # Trend Score
+        ts = 50
+        if golden_cross: ts += 20
+        if H > 0.55:     ts += 10
+        elif H < 0.45:   ts -= 5
+        if macd_bull:    ts += 15
+        if rsi_v > 50:   ts += 10
+        if rsi_v > 70:   ts -= 5
+        ts = max(0, min(100, ts))
 
-INDUSTRIAS = {
-    'Tecnología': {
-        'Semiconductores':  'SOXX', 'Software':        'IGV',
-        'Ciberseguridad':   'CIBR', 'Cloud/AI':        'SKYY',
-        'Hardware/Equipos': 'QTEC', 'Fintech':         'FINX',
-    },
-    'Salud': {
-        'Biotecnología':       'IBB',  'Farmacéuticas':      'IHE',
-        'Equipos Médicos':     'IHI',  'Servicios de Salud': 'IHF',
-        'Genómica':            'ARKG',
-    },
-    'Finanzas': {
-        'Bancos':             'KBE',  'Bancos Regionales':  'KRE',
-        'Seguros':            'KIE',  'Mercados Capitales': 'IAI',
-        'Finanzas Diversif.': 'VFH',
-    },
-    'Energía': {
-        'Petróleo Integrado': 'IEO',  'Exploración/Prod.':  'XOP',
-        'Gas Natural':        'FCG',  'Energía Renovable':  'ICLN',
-        'Energía Solar':      'TAN',
-    },
-    'Industriales': {
-        'Aeroespacial': 'ITA', 'Transporte':  'IYT',
-        'Construcción': 'ITB', 'Maquinaria':  'XMHQ',
-        'Defensa':      'PPA',
-    },
-    'Consumo Discr.': {
-        'Retail': 'XRT', 'Autos': 'CARZ', 'Hotelería/Viajes': 'AWAY',
-        'E-commerce': 'IBUY',
-    },
-    'Consumo Básico': {
-        'Alimentos': 'PBJ', 'Supermercados': 'FXG', 'Hogar/Limpieza': 'EZU',
-    },
-    'Materiales': {
-        'Minería Oro':   'GDX',  'Cobre/Metales': 'COPX',
-        'Minería Plata': 'SIL',  'Químicos':      'XLB',
-        'Acero':         'SLX',
-    },
-    'Utilities': {
-        'Eléctricas': 'IDU', 'Agua': 'PHO', 'Gas Natural Distr.': 'EMLP',
-    },
-    'Real Estate': {
-        'REIT Comercial':   'VNQ',  'REIT Industrial':   'INDS',
-        'REIT Residencial': 'REZ',  'REIT Salud':        'WELL',
-    },
-    'Comunicaciones': {
-        'Telecomunicaciones':    'IYZ', 'Internet':             'FDN',
-        'Media/Entretenimiento': 'PBS', 'Streaming':            'SUBZ',
-    },
-}
+        # MR Score
+        mr = 50
+        if   -2 < z_v < -0.5:   mr += 20
+        elif z_v < -2:           mr += 10
+        elif -0.5 <= z_v <= 0.5: mr += 10
+        elif z_v > 2:            mr -= 15
+        elif z_v > 1:            mr -= 5
+        if p_actual < lower_bb:  mr += 15
+        elif p_actual > upper_bb:mr -= 10
+        if H < 0.45:   mr += 10
+        elif H > 0.65: mr -= 10
+        mr = max(0, min(100, mr))
 
-ACCIONES_POR_INDUSTRIA = {
-    'Semiconductores':    ['NVDA','AMD','INTC','TSM','ASML','QCOM','AVGO','MU','AMAT','LRCX'],
-    'Software':           ['MSFT','ORCL','CRM','ADBE','SAP','NOW','INTU','WDAY','SNOW','PLTR'],
-    'Ciberseguridad':     ['CRWD','PANW','ZS','FTNT','OKTA','S','CYBR','QLYS','TENB','RPD'],
-    'Cloud/AI':           ['AMZN','GOOGL','META','MSFT','ORCL','IBM','SNOW','MDB','DDOG','NET'],
-    'Hardware/Equipos':   ['AAPL','HPQ','HPE','DELL','STX','WDC','NTAP','PSTG','GLW'],
-    'Fintech':            ['PYPL','SQ','AFRM','UPST','SOFI','LC','OPEN','CURO','ENVA'],
-    'Biotecnología':      ['MRNA','BNTX','REGN','VRTX','BIIB','GILD','AMGN','ILMN','SGEN','BMRN'],
-    'Farmacéuticas':      ['JNJ','PFE','LLY','ABBV','MRK','BMY','AZN','NVO','RHHBY','SNY'],
-    'Equipos Médicos':    ['MDT','ABT','SYK','BSX','EW','ISRG','ZBH','BAX','BDX','HOLX'],
-    'Servicios de Salud': ['UNH','CVS','CI','HUM','CNC','MOH','ELV','DVA'],
-    'Genómica':           ['ILMN','PACB','NVTA','BEAM','CRSP','EDIT','NTLA'],
-    'Bancos':             ['JPM','BAC','WFC','C','GS','MS','USB','TFC','PNC','COF'],
-    'Seguros':            ['BRK-B','CB','AON','MMC','TRV','AIG','PRU','MET','ALL','AFL'],
-    'Mercados Capitales': ['BX','KKR','APO','ARES','CG','BAM','GS','MS','SCHW','IBKR'],
-    'Bancos Regionales':  ['FITB','HBAN','RF','CFG','ZION','FHN','WTFC','GBCI'],
-    'Finanzas Diversif.': ['V','MA','AXP','DFS','SYF','ALLY','CACC','OMF'],
-    'Petróleo Integrado': ['XOM','CVX','COP','EOG','PXD','DVN','MPC','VLO'],
-    'Energía Renovable':  ['NEE','ENPH','SEDG','FSLR','RUN','PLUG','BE','ARRY','AES'],
-    'Exploración/Prod.':  ['PXD','EOG','DVN','FANG','MRO','APA','OVV','SM','CTRA'],
-    'Gas Natural':        ['LNG','AR','EQT','RRC','SWN','CNX'],
-    'Energía Solar':      ['FSLR','ENPH','SEDG','ARRY','MAXN','CSIQ','JKS','RUN'],
-    'Aeroespacial':       ['BA','RTX','LMT','NOC','GD','HII','TDG','HEICO','SPR','CW'],
-    'Transporte':         ['UPS','FDX','UNP','CSX','NSC','JBHT','ODFL','XPO','CHRW'],
-    'Construcción':       ['CAT','DE','EMR','ETN','HON','GE','ROK','AME','PH','IR'],
-    'Maquinaria':         ['CAT','DE','AGCO','PCAR','CMI','TXT','GGG','FELE'],
-    'Defensa':            ['LMT','RTX','NOC','GD','HII','KTOS','AVAV','BWXT'],
-    'Retail':             ['AMZN','WMT','TGT','COST','HD','LOW','TJX','ROST','DG','DLTR'],
-    'Autos':              ['TSLA','GM','F','TM','STLA','NIO','RIVN','LCID','XPEV'],
-    'Hotelería/Viajes':   ['MAR','HLT','H','IHG','WH','ABNB','BKNG','EXPE','TRIP'],
-    'E-commerce':         ['AMZN','SHOP','ETSY','EBAY','W','CHWY','SE','MELI','PDD'],
-    'Alimentos':          ['KHC','GIS','CPB','SJM','MKC','CAG','POST','LANC'],
-    'Bebidas':            ['KO','PEP','MNST','STZ','BUD','TAP','SAM','CELH','COKE'],
-    'Supermercados':      ['WMT','KR','ACI','SFM','CASY','GO'],
-    'Hogar/Limpieza':     ['PG','CL','KMB','CHD','NWL','SPB'],
-    'Minería Oro':        ['NEM','GOLD','AEM','WPM','KGC','AG','PAAS','CDE','HL','EXK'],
-    'Cobre/Metales':      ['FCX','SCCO','TECK','HBM','CLF','NUE','STLD','CMC','RS'],
-    'Minería Plata':      ['WPM','PAAS','AG','CDE','HL','EXK','SILV','MAG'],
-    'Químicos':           ['LIN','APD','DD','DOW','LYB','EMN','CE','HUN'],
-    'Acero':              ['NUE','STLD','CLF','RS','CMC','X','MT','TS'],
-    'Eléctricas':         ['NEE','DUK','SO','D','AEP','EXC','XEL','ED','ES','ETR'],
-    'Agua':               ['AWK','WTR','WTRG','SJW','MSEX'],
-    'Gas Natural Distr.': ['OKE','WMB','ET','KMI','TRGP','NI','ATO'],
-    'REIT Comercial':     ['SPG','O','VICI','NNN','BXP','KIM','REG','FRT'],
-    'REIT Industrial':    ['PLD','EGP','FR','REXR','STAG','LXP'],
-    'REIT Residencial':   ['EQR','AVB','ESS','MAA','UDR','CPT'],
-    'REIT Salud':         ['WELL','VTR','PEAK','HR','MPW','SBRA','LTC'],
-    'Telecomunicaciones': ['T','VZ','TMUS','LUMN','AMT','CCI','SBAC'],
-    'Internet':           ['GOOGL','META','NFLX','SNAP','PINS','RDDT','SPOT'],
-    'Media/Entretenimiento':['DIS','CMCSA','PARA','WBD','FOX','NYT','NWSA'],
-    'Streaming':          ['NFLX','DIS','ROKU','SPOT','PARA','WBD','FUBO'],
-    'Argentina':           ['GGAL','BMA','BFR','SUPV','BBAR','CEPU','YPF','PAM','TGS','CRES','LOMA','MRCP','EDN','TRAN','IRS','CAAP','AGRO','TS','TX','VIST'],
-    'Brasil':              ['VALE','ITUB','PBR','BBD','ABEV','NU'],
-    'Agro/Fertilizantes':    ['MOS','NTR','CF','ADM','BG','INGR','IPI','SMG','FMC','CTVA'],
-    'China':               ['BABA','TCEHY','BIDU','JD','NIO','LI','XPEV','BYDDF','PDD','NTES'],
-    'India':               ['INFY','WIT','HDB','IBN','SIFY','REDIFF','VEDL','RDY','TTM','BSBR'],
-    'Corea del Sur':       ['KB','SHG','PKX','SKM','KT'],
-    'Japon':               ['TM','SONY','HMC','NTDOY','MUFG','NMR'],
-    'Taiwan':              ['TSM','ASX','ACER'],
-    'Europa Tecnologia':   ['SAP','ASML','CAPG.PA','DASSAULT.PA','SOPRA.PA','LOGITECH','TEMN.SW','AMS.SW','IFNNY','XRXSF','NXPI','STMICROELECTRONICS','ERF','ERICB.ST'],
-    'Europa Financiero':   ['HSBC','BBVA','SAN','BNP.PA','ACA.PA','DBK.DE','CBK.DE','LLOY.L','BARC.L','CS','UBS','ING','ABN.AS','KBC.BR','ERSTE.VI'],
-    'Europa Industrial':   ['SIEGY','PHIA.AS','ABB','VOLV-B.ST','SU.PA','LR.PA','AIRBUS','RR.L','ATLCO-B.ST','SAND.ST','WEIR.L','IMI.L','SMDS.L','CRH.L'],
-    'Europa Consumo':      ['LVMH','RMS','CFR','NESN.SW','NOVN.SW','RHHBY','UNILEVER.AS','BPOST.BR','HEIAS.AS','EL','RACE','MONCLER.MI','FERRAGAMO.MI'],
-    'Europa Energia':      ['SHEL','BP','TTE','ENI.MI','REPSOL.MC','EQUINOR','OMV.VI','GALP.LS','MOL.BU','PKN.WA','LOTOS.WA','ORSTED.CO','NESTE.HE'],
-}
+        # Risk Score
+        rs = 50
+        if sharpe > 2:   rs += 25
+        elif sharpe > 1: rs += 15
+        elif sharpe > 0: rs += 5
+        else:            rs -= 15
+        if sortino is not None:
+            if sortino > 2:   rs += 10
+            elif sortino > 1: rs += 5
+            elif sortino < 0: rs -= 10
+        if max_dd > -0.10:   rs += 15
+        elif max_dd > -0.20: rs += 8
+        elif max_dd < -0.40: rs -= 10
+        if vol_a < 0.15:     rs += 10
+        elif vol_a < 0.30:   rs += 5
+        elif vol_a > 0.60:   rs -= 10
+        rs = max(0, min(100, rs))
 
-# ══════════════════════════════════════════════════════════════
-#  FUNCIONES DE CARGA POR MÓDULO
-# ══════════════════════════════════════════════════════════════
+        gs = int((ts + mr + rs) / 3)
+
+        rev_signal = any([z_v < -1.0, p_actual < lower_bb, rsi_v < 35])
+        rev_reasons = []
+        if z_v < -1.0:          rev_reasons.append(f'Z={z_v:.2f}')
+        if p_actual < lower_bb: rev_reasons.append('BajoBB')
+        if rsi_v < 35:          rev_reasons.append(f'RSI={rsi_v:.1f}')
+
+        if gs >= 70:   sesgo = 'MUY ALCISTA'
+        elif gs >= 55: sesgo = 'ALCISTA'
+        elif gs >= 45: sesgo = 'NEUTRAL'
+        elif gs >= 30: sesgo = 'BAJISTA'
+        else:          sesgo = 'MUY BAJISTA'
+
+        return dict(
+            ticker=ticker, industria=TICKER_INDUSTRY.get(ticker,'N/A'),
+            precio=p_actual, ret_anual=ret_a*100, vol_anual=vol_a*100,
+            rsi=rsi_v, macd_bull=macd_bull, golden_cross=golden_cross,
+            hurst=H, zscore=z_v, sharpe=sharpe, sortino=sortino,
+            max_dd=max_dd*100, trend_score=ts, mr_score=mr,
+            risk_score=rs, global_score=gs, sesgo=sesgo,
+            reversion_signal=rev_signal,
+            reversion_reasons=', '.join(rev_reasons) if rev_reasons else '—',
+            upper_bb=upper_bb, lower_bb=lower_bb, ma20=float(ma20.iloc[-1]),
+        )
+    except Exception:
+        return None
+
+def interpretar_largo(r):
+    """Texto interpretativo completo para largo plazo."""
+    sesgo_txt = {
+        'MUY ALCISTA': 'presenta un perfil cuantitativo muy alcista',
+        'ALCISTA':     'muestra un sesgo alcista moderado',
+        'NEUTRAL':     'se encuentra en zona neutral sin dirección clara',
+        'BAJISTA':     'exhibe señales bajistas en el periodo analizado',
+        'MUY BAJISTA': 'muestra un perfil cuantitativo claramente bajista',
+    }.get(r['sesgo'], 'no tiene sesgo definido')
+
+    lineas = [f"{r['ticker']} ({r['industria']}) {sesgo_txt}, con un Global Score de {int(r['global_score'])}/100."]
+
+    t_parts = []
+    if r['golden_cross']:
+        t_parts.append("Golden Cross activo (MA50 > MA200)")
+    else:
+        t_parts.append("sin Golden Cross: MA50 < MA200")
+    if r['macd_bull']:
+        t_parts.append("MACD alcista")
+    else:
+        t_parts.append("MACD bajista")
+    if r['hurst'] > 0.55:
+        t_parts.append(f"Hurst {r['hurst']:.3f}: tendencia persistente")
+    elif r['hurst'] < 0.45:
+        t_parts.append(f"Hurst {r['hurst']:.3f}: comportamiento reversivo")
+    else:
+        t_parts.append(f"Hurst {r['hurst']:.3f}: próximo a paseo aleatorio")
+    lineas.append("Tendencia: " + " | ".join(t_parts) + ".")
+
+    z = r['zscore']
+    if z < -2:
+        val_txt = f"Z-Score {z:.2f}: precio muy deprimido respecto a media de 20d"
+    elif z < -1:
+        val_txt = f"Z-Score {z:.2f}: precio por debajo de media — zona de soporte potencial"
+    elif z > 2:
+        val_txt = f"Z-Score {z:.2f}: sobrecompra estadística"
+    elif z > 1:
+        val_txt = f"Z-Score {z:.2f}: presión compradora por encima de media"
+    else:
+        val_txt = f"Z-Score {z:.2f}: neutro, precio cercano a su media"
+    if r['precio'] < r['lower_bb']:
+        val_txt += " | BAJO Banda Bollinger inferior (sobreventa extrema)"
+    if r['rsi'] < 35:
+        val_txt += f" | RSI {r['rsi']:.1f}: momentum vendedor dominante"
+    elif r['rsi'] > 70:
+        val_txt += f" | RSI {r['rsi']:.1f}: sobrecompra en momentum"
+    lineas.append(val_txt + ".")
+
+    sh = r['sharpe']; dd = r['max_dd']; vol = r['vol_anual']
+    r_parts = []
+    if sh > 2:   r_parts.append(f"Sharpe excelente ({sh:.2f})")
+    elif sh > 1: r_parts.append(f"Sharpe bueno ({sh:.2f})")
+    elif sh > 0: r_parts.append(f"Sharpe moderado ({sh:.2f})")
+    else:        r_parts.append(f"Sharpe negativo ({sh:.2f}): retorno no compensa el riesgo")
+    if dd > -10:   r_parts.append(f"drawdown contenido ({dd:.1f}%)")
+    elif dd > -20: r_parts.append(f"drawdown {dd:.1f}%: nivel aceptable")
+    elif dd > -35: r_parts.append(f"drawdown {dd:.1f}%: caída significativa")
+    else:          r_parts.append(f"drawdown severo ({dd:.1f}%)")
+    if vol < 20:   r_parts.append(f"volatilidad baja ({vol:.1f}%)")
+    elif vol < 35: r_parts.append(f"volatilidad moderada ({vol:.1f}%)")
+    else:          r_parts.append(f"alta volatilidad ({vol:.1f}%)")
+    lineas.append("Riesgo: " + " | ".join(r_parts) + ".")
+
+    if r['reversion_signal']:
+        lineas.append(f"SEÑAL REVERSIÓN ({r['reversion_reasons']}): condiciones de sobreventa estadística. MR Score: {int(r['mr_score'])}/100.")
+
+    return " ".join(lineas)
+
+# ==============================================================
+#  CARGA DE DATOS CORTO PLAZO
+# ==============================================================
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def cargar_forex():
+def cargar_forex_corto():
     res = {}
     for nombre, (tk, grupo) in FOREX.items():
         try:
-            df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
+            df_v = descargar_datos(tk, '3mo')
+            df_m = descargar_datos(tk, '1mo')
             if df_v is None: continue
-            cl_v = get_close(df_v); cl_m = get_close(df_m)
+            cl_v = get_close_series(df_v)
+            cl_m = get_close_series(df_m)
             if cl_v is None or cl_m is None or len(cl_v.dropna())<15: continue
             atr = calcular_atr(df_m)
-            sa, sn, ss = scores_activo(cl_v, cl_m, atr)
-            rsi    = float(calcular_rsi(cl_m, p=7).iloc[-1])
-            ret_5d = float(cl_m.pct_change(5).iloc[-1]*100)  if len(cl_m)>=6  else 0
-            ret_10d= float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-            precio = float(cl_m.iloc[-1])
+            sa, sn, ss = scores_corto(cl_v, cl_m, atr)
+            rsi     = float(calcular_rsi(cl_m, p=7).iloc[-1])
+            ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
+            ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
+            precio  = float(cl_m.iloc[-1])
             for v in [rsi, ret_5d, ret_10d]:
                 if np.isnan(v): v = 0
-            hist = cl_m.reset_index(); hist.columns = ['Fecha','Precio']
+            hist = cl_m.reset_index()
+            hist.columns = ['Fecha','Precio']
             res[nombre] = dict(tk=tk, grupo=grupo, sa=sa, sn=sn, ss=ss,
                 sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi, ret_5d=ret_5d, ret_10d=ret_10d,
-                precio=precio, accion=señal_accion(sa,sn,ss), hist=hist)
+                precio=precio, accion=señal_accion_corto(sa,sn,ss), hist=hist)
         except: continue
     return res
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def cargar_paises():
+def cargar_paises_corto():
     res = {}
     for nombre, (tk, region) in PAISES.items():
         try:
-            df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
+            df_v = descargar_datos(tk, '3mo')
+            df_m = descargar_datos(tk, '1mo')
             if df_v is None: continue
-            cl_v = get_close(df_v); cl_m = get_close(df_m)
+            cl_v = get_close_series(df_v)
+            cl_m = get_close_series(df_m)
             if cl_v is None or cl_m is None or len(cl_v.dropna())<15: continue
             atr = calcular_atr(df_m)
-            sa, sn, ss = scores_activo(cl_v, cl_m, atr)
-            ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100)  if len(cl_m)>=6  else 0
+            sa, sn, ss = scores_corto(cl_v, cl_m, atr)
+            ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
             ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
             precio  = float(cl_m.iloc[-1])
             res[nombre] = dict(tk=tk, region=region, sa=sa, sn=sn, ss=ss,
                 sf=sa*0.45+sn*0.35+ss*0.20, ret_5d=ret_5d, ret_10d=ret_10d,
-                precio=precio, accion=señal_accion(sa,sn,ss))
+                precio=precio, accion=señal_accion_corto(sa,sn,ss))
         except: continue
     return res
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def cargar_sectores():
+def cargar_sectores_corto():
     res = {}
     for nombre, (tk, color) in SECTORES.items():
         try:
-            df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
+            df_v = descargar_datos(tk, '3mo')
+            df_m = descargar_datos(tk, '1mo')
             if df_v is None: continue
-            cl_v = get_close(df_v); cl_m = get_close(df_m)
+            cl_v = get_close_series(df_v)
+            cl_m = get_close_series(df_m)
             if cl_v is None or cl_m is None or len(cl_v.dropna())<15: continue
             atr = calcular_atr(df_m)
-            sa, sn, ss = scores_activo(cl_v, cl_m, atr)
-            rsi    = float(calcular_rsi(cl_m, p=7).iloc[-1])
-            ret_5d = float(cl_m.pct_change(5).iloc[-1]*100)  if len(cl_m)>=6  else 0
-            ret_10d= float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-            precio = float(cl_m.iloc[-1])
+            sa, sn, ss = scores_corto(cl_v, cl_m, atr)
+            rsi     = float(calcular_rsi(cl_m, p=7).iloc[-1])
+            ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
+            ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
+            precio  = float(cl_m.iloc[-1])
             res[nombre] = dict(tk=tk, color=color, sa=sa, sn=sn, ss=ss,
                 sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi, ret_5d=ret_5d, ret_10d=ret_10d,
-                precio=precio, accion=señal_accion(sa,sn,ss))
+                precio=precio, accion=señal_accion_corto(sa,sn,ss))
         except: continue
     return res
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def cargar_mercados():
+def cargar_mercados_corto():
     res = {}
     for nombre, (tk, cat, color) in MERCADOS_REALES.items():
         try:
-            df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
+            df_v = descargar_datos(tk, '3mo')
+            df_m = descargar_datos(tk, '1mo')
             if df_v is None or df_m is None: continue
-            cl_v = get_close(df_v); cl_m = get_close(df_m)
+            cl_v = get_close_series(df_v)
+            cl_m = get_close_series(df_m)
             if cl_v is None or cl_m is None or len(cl_v.dropna())<20: continue
             atr = calcular_atr(df_m)
-            sa, sn, ss = scores_activo(cl_v, cl_m, atr)
-            rsi    = float(calcular_rsi(cl_m, p=7).iloc[-1])
-            ret_5d = float(cl_m.pct_change(5).iloc[-1]*100)  if len(cl_m)>=6  else 0
-            ret_10d= float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-            precio = float(cl_m.iloc[-1])
+            sa, sn, ss = scores_corto(cl_v, cl_m, atr)
+            rsi     = float(calcular_rsi(cl_m, p=7).iloc[-1])
+            ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
+            ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
+            precio  = float(cl_m.iloc[-1])
             for v in [ret_5d, ret_10d, rsi]:
                 if np.isnan(v): v = 0
             res[nombre] = dict(tk=tk, cat=cat, color=color, sa=sa, sn=sn, ss=ss,
                 sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi, ret_5d=ret_5d, ret_10d=ret_10d,
-                precio=precio, accion=señal_accion(sa,sn,ss))
+                precio=precio, accion=señal_accion_corto(sa,sn,ss))
         except: continue
     return res
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def cargar_industrias():
+def cargar_acciones_corto(industrias_sel):
     res = {}
-    for sector, inds in INDUSTRIAS.items():
-        res[sector] = {}
-        for ind_nombre, tk in inds.items():
-            try:
-                df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
-                if df_v is None: continue
-                cl_v = get_close(df_v); cl_m = get_close(df_m)
-                if cl_v is None or cl_m is None or len(cl_v.dropna())<15: continue
-                atr = calcular_atr(df_m)
-                sa, sn, ss = scores_activo(cl_v, cl_m, atr)
-                rsi    = float(calcular_rsi(cl_m, p=7).iloc[-1])
-                ret_5d = float(cl_m.pct_change(5).iloc[-1]*100)  if len(cl_m)>=6  else 0
-                ret_10d= float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-                precio = float(cl_m.iloc[-1])
-                res[sector][ind_nombre] = dict(tk=tk, sa=sa, sn=sn, ss=ss,
-                    sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi, ret_5d=ret_5d, ret_10d=ret_10d,
-                    precio=precio, accion=señal_accion(sa,sn,ss))
-            except: continue
-    return res
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def cargar_acciones():
-    res = {}
-    for industria, tickers in ACCIONES_POR_INDUSTRIA.items():
+    for industria in industrias_sel:
+        tickers = ACCIONES_POR_INDUSTRIA.get(industria, [])
         res[industria] = {}
         for tk in tickers:
             try:
-                df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
+                df_v = descargar_datos(tk, '3mo')
+                df_m = descargar_datos(tk, '1mo')
                 if df_v is None: continue
-                cl_v = get_close(df_v); cl_m = get_close(df_m)
+                cl_v = get_close_series(df_v)
+                cl_m = get_close_series(df_m)
                 if cl_v is None or cl_m is None or len(cl_v.dropna())<15: continue
                 atr = calcular_atr(df_m)
-                sa, sn, ss = scores_activo(cl_v, cl_m, atr)
-                rsi    = float(calcular_rsi(cl_m, p=7).iloc[-1])
-                ret_5d = float(cl_m.pct_change(5).iloc[-1]*100)  if len(cl_m)>=6  else 0
-                ret_10d= float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-                precio = float(cl_m.iloc[-1])
+                sa, sn, ss = scores_corto(cl_v, cl_m, atr)
+                rsi     = float(calcular_rsi(cl_m, p=7).iloc[-1])
+                ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
+                ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
+                precio  = float(cl_m.iloc[-1])
                 res[industria][tk] = dict(sa=sa, sn=sn, ss=ss,
                     sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi, ret_5d=ret_5d, ret_10d=ret_10d,
-                    precio=precio, accion=señal_accion(sa,sn,ss))
+                    precio=precio, accion=señal_accion_corto(sa,sn,ss))
             except: continue
     return res
 
-# ══════════════════════════════════════════════════════════════
-#  COMPONENTES DE GRAFICOS REUTILIZABLES
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
+#  CARGA DE DATOS LARGO PLAZO
+# ==============================================================
 
-def grafico_barras_h(items_ord, titulo, color_barra_alt=None, accent_color='#1f6feb'):
-    """Barras horizontales acum + antic."""
+@st.cache_data(ttl=3600, show_spinner=False)
+def cargar_resultados_largo(industrias_sel):
+    """Análisis cuantitativo completo (2 años de datos) para industrias seleccionadas."""
+    tickers = []
+    for ind in industrias_sel:
+        tickers.extend(ACCIONES_POR_INDUSTRIA.get(ind, []))
+    tickers = list(set(tickers))
+
+    if not tickers:
+        return pd.DataFrame()
+
+    df_all = descargar_bulk(tickers, period='2y')
+    if df_all is None:
+        return pd.DataFrame()
+
+    resultados = []
+    for tk in tickers:
+        precio = get_close_from_bulk(df_all, tk)
+        if len(precio) < 150:
+            continue
+        r = analizar_largo(tk, precio)
+        if r:
+            resultados.append(r)
+
+    if not resultados:
+        return pd.DataFrame()
+
+    df_res = pd.DataFrame(resultados).sort_values('global_score', ascending=False).reset_index(drop=True)
+    df_res['rank'] = df_res.index + 1
+    return df_res
+
+# ==============================================================
+#  COMPONENTES GRÁFICOS (compartidos)
+# ==============================================================
+
+def fmt_precio(p):
+    if not p or p <= 0: return 'S/D'
+    if p >= 1000: return f'${p:,.0f}'
+    if p >= 10:   return f'${p:.2f}'
+    return f'${p:.5f}'
+
+def kpi_cards(datos_dict, label_extra=''):
+    if not datos_dict: return
+    mejor   = max(datos_dict.items(), key=lambda x: x[1]['sa'])
+    mom_max = max(datos_dict.items(), key=lambda x: x[1]['sn'])
+    riesgo  = min(datos_dict.items(), key=lambda x: x[1]['sa'])
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#3a7bd5"></div>'
+                    f'<div class="label">Total analizados</div><div class="value">{len(datos_dict)}</div>'
+                    f'<div class="sub">{label_extra}</div></div>', unsafe_allow_html=True)
+    with k2:
+        lbl,col,_ = clasificar_score(mejor[1]['sa'])
+        st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#2ea043"></div>'
+                    f'<div class="label">🟢 Mejor oportunidad</div><div class="value">{mejor[0][:18]}</div>'
+                    f'<div class="sub">Acum: <b style="color:{col}">{mejor[1]["sa"]:.0f}</b> · {lbl}</div></div>', unsafe_allow_html=True)
+    with k3:
+        st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#9a6700"></div>'
+                    f'<div class="label">⚡ Mayor momentum</div><div class="value">{mom_max[0][:18]}</div>'
+                    f'<div class="sub">Antic: <b style="color:#e3b341">{mom_max[1]["sn"]:.0f}</b></div></div>', unsafe_allow_html=True)
+    with k4:
+        lbl3,col3,_ = clasificar_score(riesgo[1]['sa'])
+        st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#cf222e"></div>'
+                    f'<div class="label">⚠️ Mayor riesgo / caro</div><div class="value">{riesgo[0][:18]}</div>'
+                    f'<div class="sub">Acum: <b style="color:{col3}">{riesgo[1]["sa"]:.0f}</b> · {lbl3}</div></div>', unsafe_allow_html=True)
+    st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
+
+def grafico_barras_h(items_ord, titulo, color_ant='#3a7bd5'):
     ns   = [n for n,_ in items_ord]
     sas  = [d['sa'] for _,d in items_ord]
     sns_ = [d['sn'] for _,d in items_ord]
     y    = np.arange(len(ns))
 
-    fig, ax = plt.subplots(figsize=(7, max(3, len(ns)*0.52)))
-    fig.patch.set_facecolor('#080c14')
-    ax.set_facecolor('#0d1117')
+    fig, ax = plt.subplots(figsize=(7, max(3, len(ns)*0.5)))
+    fig.patch.set_facecolor('#07090f')
+    ax.set_facecolor('#0b0f1a')
 
-    col_bars = [score_color(s) for s in sas]
-    brs = ax.barh(y, sas, color=col_bars, edgecolor='none', height=0.52, alpha=.92, zorder=3)
-    col_alt = color_barra_alt if color_barra_alt else '#58a6ff'
-    ax.barh(y, sns_, color=col_alt, edgecolor='none', height=0.24, alpha=0.35, zorder=3)
+    col_bars = [score_color_mpl(s) for s in sas]
+    brs = ax.barh(y, sas,  color=col_bars, edgecolor='none', height=0.50, alpha=.90, zorder=3)
+    ax.barh(y, sns_, color=color_ant, edgecolor='none', height=0.22, alpha=0.35, zorder=3)
 
-    ax.axvline(62, color='#2ea043', ls='--', alpha=.5, lw=.9)
-    ax.axvline(38, color='#cf222e', ls='--', alpha=.5, lw=.9)
-    ax.fill_betweenx([-0.5,len(ns)-0.5], 62,100, alpha=.04, color='#2ea043')
-    ax.fill_betweenx([-0.5,len(ns)-0.5],  0, 38, alpha=.04, color='#cf222e')
+    ax.axvline(62, color='#2ea043', ls='--', alpha=.45, lw=.8)
+    ax.axvline(38, color='#cf222e', ls='--', alpha=.45, lw=.8)
+    ax.fill_betweenx([-0.5,len(ns)-0.5], 62,100, alpha=.04, color='#3fb950')
+    ax.fill_betweenx([-0.5,len(ns)-0.5],  0, 38, alpha=.04, color='#f85149')
 
     ax.set_xlim(0, 118)
     ax.set_yticks(y)
-    ax.set_yticklabels(ns, fontsize=9, color='#c9d1d9')
-    ax.set_title(titulo, color='#e6edf3', fontsize=11, fontweight='600', pad=8, loc='left', x=0.01)
+    ax.set_yticklabels(ns, fontsize=8.5, color='#b0bcd0')
+    ax.set_title(titulo, color='#dde5f0', fontsize=10, fontweight='600', pad=7, loc='left', x=0.01)
 
     for b, s in zip(brs, sas):
-        ax.text(s+1, b.get_y()+b.get_height()/2, f'{s:.0f}', va='center', color='#e6edf3', fontsize=8.5, fontweight='600')
+        ax.text(s+1, b.get_y()+b.get_height()/2, f'{s:.0f}', va='center', color='#dde5f0', fontsize=8, fontweight='600')
 
-    ax.spines['top'].set_color(accent_color); ax.spines['top'].set_linewidth(2)
-    ax.grid(axis='x', alpha=.15, zorder=0); ax.tick_params(colors='#8b949e')
-    ax.set_xlabel('Score Acumulación', color='#8b949e', fontsize=8)
+    ax.spines['top'].set_color(C_ACENT); ax.spines['top'].set_linewidth(1.5)
+    ax.grid(axis='x', alpha=.12, zorder=0); ax.tick_params(colors='#6b7d9a')
+    ax.set_xlabel('Score Acumulación', color='#6b7d9a', fontsize=7.5)
     plt.tight_layout(pad=1.2)
     return fig
 
-def grafico_momentum(pares_ord, label_5d='5 días', label_10d='10 días'):
-    ns_all  = [n for n,_ in pares_ord]
-    r5_all  = [d.get('ret_5d', d.get('ret_1m',0)) for _,d in pares_ord]
-    r10_all = [d.get('ret_10d', d.get('ret_3m',0)) for _,d in pares_ord]
-    x_all   = np.arange(len(ns_all))
+def grafico_momentum(pares_ord):
+    ns    = [n for n,_ in pares_ord]
+    r5    = [d.get('ret_5d',0) for _,d in pares_ord]
+    r10   = [d.get('ret_10d',0) for _,d in pares_ord]
+    x_all = np.arange(len(ns))
 
-    fig, ax = plt.subplots(figsize=(max(12, len(ns_all)*0.52), 5))
-    fig.patch.set_facecolor('#080c14'); ax.set_facecolor('#0d1117')
+    fig, ax = plt.subplots(figsize=(max(10, len(ns)*0.5), 4.5))
+    fig.patch.set_facecolor('#07090f'); ax.set_facecolor('#0b0f1a')
 
-    ax.bar(x_all-.2, r5_all,  width=.38, color=['#2ea043' if v>=0 else '#cf222e' for v in r5_all],  alpha=.95, label=label_5d, zorder=3)
-    ax.bar(x_all+.2, r10_all, width=.38, color=['#388bfd' if v>=0 else '#bc8cff' for v in r10_all], alpha=.65, label=label_10d, zorder=3)
-    ax.axhline(0, color='#c9d1d9', lw=.7, alpha=.4)
+    ax.bar(x_all-.2, r5,  width=.36, color=['#2ea043' if v>=0 else '#cf222e' for v in r5],  alpha=.95, label='5 días', zorder=3)
+    ax.bar(x_all+.2, r10, width=.36, color=['#3a7bd5' if v>=0 else '#bc8cff' for v in r10], alpha=.65, label='10 días', zorder=3)
+    ax.axhline(0, color='#b0bcd0', lw=.6, alpha=.4)
     ax.set_xticks(x_all)
-    ax.set_xticklabels(ns_all, rotation=45, ha='right', fontsize=8.5)
-    ax.set_ylabel('Retorno %', fontsize=9)
-    ax.legend(facecolor='#0d1117', labelcolor='#c9d1d9', fontsize=9, framealpha=.8)
-    ax.grid(axis='y', alpha=.15, zorder=0); ax.tick_params(colors='#8b949e')
+    ax.set_xticklabels(ns, rotation=45, ha='right', fontsize=8)
+    ax.set_ylabel('Retorno %', fontsize=8.5)
+    ax.legend(facecolor='#0b0f1a', labelcolor='#b0bcd0', fontsize=8, framealpha=.8)
+    ax.grid(axis='y', alpha=.12, zorder=0)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
     plt.tight_layout(pad=1.2)
     return fig
@@ -630,688 +928,985 @@ def grafico_heatmap(datos_dict, titulo='Heatmap de scores'):
         'Sent':  {n:d['ss'] for n,d in datos_dict.items()},
     }).sort_values('Acum', ascending=False)
 
-    fig, ax = plt.subplots(figsize=(5.5, max(5, len(datos_dict)*0.36)))
-    fig.patch.set_facecolor('#080c14')
+    fig, ax = plt.subplots(figsize=(5, max(4, len(datos_dict)*0.35)))
+    fig.patch.set_facecolor('#07090f')
     sb.heatmap(df_heat, annot=True, fmt='.0f', cmap='RdYlGn', vmin=0, vmax=100,
-               ax=ax, linewidths=.4, linecolor='#080c14', cbar_kws={'label':'Score', 'shrink':.8})
-    ax.set_title(titulo, color='#e6edf3', fontsize=11, pad=10, loc='left')
-    ax.tick_params(colors='#c9d1d9')
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=0, fontsize=9)
-    ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=8)
+               ax=ax, linewidths=.35, linecolor='#07090f',
+               cbar_kws={'label':'Score','shrink':.7})
+    ax.set_title(titulo, color='#dde5f0', fontsize=10, pad=8, loc='left')
+    ax.tick_params(colors='#b0bcd0')
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=0, fontsize=8.5)
+    ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=7.5)
     plt.tight_layout(pad=1.2)
     return fig
 
 def grafico_cuadrante(datos_dict, colores_dict=None, titulo='Mapa de Oportunidades'):
-    fig, ax = plt.subplots(figsize=(9, 7))
-    fig.patch.set_facecolor('#080c14'); ax.set_facecolor('#0d1117')
+    fig, ax = plt.subplots(figsize=(8.5, 6.5))
+    fig.patch.set_facecolor('#07090f'); ax.set_facecolor('#0b0f1a')
 
     for nombre, d in datos_dict.items():
-        col_p = colores_dict.get(d.get('grupo', d.get('region', d.get('cat',''))), '#58a6ff') if colores_dict else '#58a6ff'
-        ax.scatter(d['sn'], d['sa'], color=col_p, s=150, zorder=5, edgecolors='#080c14', linewidths=1.2, alpha=.9)
-        ax.annotate(nombre[:10], (d['sn'], d['sa']), xytext=(6,3), textcoords='offset points', fontsize=7.5, color='#c9d1d9')
+        clave = d.get('grupo', d.get('region', d.get('cat','')))
+        col_p = colores_dict.get(clave, C_ACENT) if colores_dict else C_ACENT
+        ax.scatter(d['sn'], d['sa'], color=col_p, s=130, zorder=5,
+                   edgecolors='#07090f', linewidths=1.1, alpha=.9)
+        ax.annotate(nombre[:12], (d['sn'], d['sa']),
+                    xytext=(5,3), textcoords='offset points', fontsize=7.5, color='#b0bcd0')
 
-    ax.axhline(62, color='#2ea043', ls='--', alpha=.4, lw=1)
-    ax.axhline(38, color='#cf222e', ls='--', alpha=.4, lw=1)
-    ax.axvline(55, color='#e3b341', ls='--', alpha=.4, lw=1)
-    ax.fill_between([55,100],[62,62],[100,100], alpha=.06, color='#2ea043')
-    ax.fill_between([0,55],  [0,0],  [38,38],  alpha=.06, color='#cf222e')
-    ax.text(77, 97, '✦ Mejor zona entrada', color='#2ea043', fontsize=8.5, alpha=.8, ha='center', fontweight='600')
-    ax.text(25,  5, '✦ Zona de cautela',    color='#cf222e', fontsize=8.5, alpha=.8, ha='center', fontweight='600')
-    ax.set_xlabel('Score Anticipación →', fontsize=10)
-    ax.set_ylabel('← Score Acumulación',  fontsize=10)
-    ax.set_title(titulo, color='#e6edf3', fontsize=11, pad=10)
+    ax.axhline(62, color='#3fb950', ls='--', alpha=.35, lw=.9)
+    ax.axhline(38, color='#f85149', ls='--', alpha=.35, lw=.9)
+    ax.axvline(55, color='#e3b341', ls='--', alpha=.35, lw=.9)
+    ax.fill_between([55,100],[62,62],[100,100], alpha=.05, color='#3fb950')
+    ax.fill_between([0,55],  [0,0],  [38,38],  alpha=.05, color='#f85149')
+    ax.text(77, 97, '✦ Zona de entrada', color='#3fb950', fontsize=8, alpha=.8, ha='center', fontweight='600')
+    ax.text(25,  4, '✦ Zona de cautela', color='#f85149', fontsize=8, alpha=.8, ha='center', fontweight='600')
+    ax.set_xlabel('Score Anticipación →', fontsize=9.5)
+    ax.set_ylabel('← Score Acumulación', fontsize=9.5)
+    ax.set_title(titulo, color='#dde5f0', fontsize=10.5, pad=8)
     ax.set_xlim(0,100); ax.set_ylim(0,100)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
-    ax.grid(alpha=.12); ax.tick_params(colors='#8b949e')
+    ax.grid(alpha=.10); ax.tick_params(colors='#6b7d9a')
     plt.tight_layout(pad=1.2)
     return fig
 
-def tabla_ranking(filas_dict, precio_fmt='gen'):
+def tabla_corto(filas_dict, precio_fmt='gen'):
     filas = []
     for nombre, d in sorted(filas_dict.items(), key=lambda x: x[1]['sa'], reverse=True):
-        p = fmt_precio_fx(d['precio']) if precio_fmt=='fx' else fmt_precio_gen(d.get('precio',0))
+        p = fmt_precio(d.get('precio',0))
         filas.append({
             'Nombre':    nombre,
             'Acum':      round(d['sa'],1),
             'Antic':     round(d['sn'],1),
             'Sent':      round(d['ss'],1),
             'RSI':       round(d.get('rsi',0),1),
-            'Ret 5d %':  round(d.get('ret_5d', d.get('ret_1m',0)),2),
-            'Ret 10d %': round(d.get('ret_10d', d.get('ret_3m',0)),2),
+            'Ret 5d %':  round(d.get('ret_5d',0),2),
+            'Ret 10d %': round(d.get('ret_10d',0),2),
             'Precio':    p,
             'Señal':     d['accion'],
         })
     df = pd.DataFrame(filas)
 
-    def color_score_cell(val):
+    def cs(val):
         try:
             v = float(val)
-            if   v<=20: return 'background-color:#3d1a1a; color:#f85149; font-weight:600'
-            elif v<=40: return 'background-color:#3d2a10; color:#f0883e; font-weight:600'
-            elif v<=60: return 'background-color:#2e2a10; color:#e3b341; font-weight:600'
-            elif v<=80: return 'background-color:#102a1a; color:#7ee787; font-weight:600'
-            else:       return 'background-color:#0a2a10; color:#3fb950; font-weight:600'
+            if v<=20: return 'background-color:#2a0a0a;color:#f85149;font-weight:600'
+            elif v<=40: return 'background-color:#2a1a05;color:#f0883e;font-weight:600'
+            elif v<=60: return 'background-color:#1e1a05;color:#e3b341;font-weight:600'
+            elif v<=80: return 'background-color:#081a0a;color:#7ee787;font-weight:600'
+            else: return 'background-color:#051505;color:#3fb950;font-weight:600'
         except: return ''
 
-    def color_ret(val):
-        try:
-            v = float(val)
-            c = '#3fb950' if v>=0 else '#f85149'
-            return f'color:{c}; font-weight:600'
+    def cr(val):
+        try: v=float(val); return f'color:{"#3fb950" if v>=0 else "#f85149"};font-weight:600'
         except: return ''
 
     _map = 'map' if hasattr(df.style,'map') else 'applymap'
     styled = (df.style
-        .pipe(lambda s: getattr(s,_map)(color_score_cell, subset=['Acum','Antic','Sent']))
-        .pipe(lambda s: getattr(s,_map)(color_ret, subset=['Ret 5d %','Ret 10d %']))
-        .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #1e2533'})
+        .pipe(lambda s: getattr(s,_map)(cs, subset=['Acum','Antic','Sent']))
+        .pipe(lambda s: getattr(s,_map)(cr, subset=['Ret 5d %','Ret 10d %']))
+        .set_properties(**{'background-color':'#0b0f1a','color':'#dde5f0','border':'1px solid #161d2e'})
         .set_table_styles([{
             'selector':'th',
-            'props':[('background-color','#161b22'),('color','#e6edf3'),
-                     ('font-weight','600'),('text-align','center'),
-                     ('border-bottom','2px solid #1f6feb')]
-        },{'selector':'td','props':[('text-align','center')]}])
+            'props':[('background-color','#0d1220'),('color','#dde5f0'),
+                     ('font-weight','700'),('text-align','center'),
+                     ('border-bottom','2px solid #3a7bd5'),('font-size','11px')]
+        },{'selector':'td','props':[('text-align','center'),('font-size','12px')]}])
     )
-    altura = min(600, max(150, len(df)*35 + 45))
+    altura = min(600, max(150, len(df)*35+45))
     st.dataframe(styled, use_container_width=True, height=altura)
     return df
 
-def kpi_cards(datos_dict, label_extra=''):
-    if not datos_dict: return
-    mejor   = max(datos_dict.items(), key=lambda x: x[1]['sa'])
-    mom_max = max(datos_dict.items(), key=lambda x: x[1]['sn'])
-    riesgo  = min(datos_dict.items(), key=lambda x: x[1]['sa'])
-    k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#1f6feb"></div>'
-                    f'<div class="label">Total analizados</div><div class="value">{len(datos_dict)}</div>'
-                    f'<div class="sub">{label_extra}</div></div>', unsafe_allow_html=True)
-    with k2:
-        lbl,col,_ = clasificar(mejor[1]['sa'])
-        st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#2ea043"></div>'
-                    f'<div class="label">🟢 Mejor oportunidad</div><div class="value">{mejor[0][:18]}</div>'
-                    f'<div class="sub">Acum: <b style="color:{col}">{mejor[1]["sa"]:.0f}</b> · {lbl}</div></div>', unsafe_allow_html=True)
-    with k3:
-        lbl2,col2,_ = clasificar(mom_max[1]['sn'])
-        st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#9a6700"></div>'
-                    f'<div class="label">⚡ Mayor momentum</div><div class="value">{mom_max[0][:18]}</div>'
-                    f'<div class="sub">Antic: <b style="color:{col2}">{mom_max[1]["sn"]:.0f}</b></div></div>', unsafe_allow_html=True)
-    with k4:
-        lbl3,col3,_ = clasificar(riesgo[1]['sa'])
-        st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#cf222e"></div>'
-                    f'<div class="label">⚠️ Mayor riesgo</div><div class="value">{riesgo[0][:18]}</div>'
-                    f'<div class="sub">Acum: <b style="color:{col3}">{riesgo[1]["sa"]:.0f}</b> · {lbl3}</div></div>', unsafe_allow_html=True)
-    st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
+def tabla_largo(df_res):
+    if df_res.empty: return
+    cols_show = ['rank','ticker','industria','precio','ret_anual','vol_anual',
+                 'rsi','sharpe','max_dd','trend_score','mr_score','risk_score','global_score','sesgo']
+    df_show = df_res[cols_show].copy()
+    df_show.columns = ['#','Ticker','Industria','Precio','Ret %','Vol %','RSI',
+                        'Sharpe','DD%','Trend','MR','Risk','Global','Sesgo']
+    df_show['Precio'] = df_show['Precio'].apply(fmt_precio)
+    for c in ['Ret %','Vol %']:
+        df_show[c] = df_show[c].apply(lambda x: f'{x:+.1f}' if pd.notna(x) else 'N/A')
+    df_show['RSI']   = df_show['RSI'].apply(lambda x: f'{x:.1f}')
+    df_show['Sharpe']= df_show['Sharpe'].apply(lambda x: f'{x:.2f}')
+    df_show['DD%']   = df_show['DD%'].apply(lambda x: f'{x:.1f}')
 
-# ══════════════════════════════════════════════════════════════
+    def cs(val):
+        try:
+            v = float(val)
+            if v<=20: return 'background-color:#2a0a0a;color:#f85149;font-weight:600'
+            elif v<=40: return 'background-color:#2a1a05;color:#f0883e;font-weight:600'
+            elif v<=60: return 'background-color:#1e1a05;color:#e3b341;font-weight:600'
+            elif v<=80: return 'background-color:#081a0a;color:#7ee787;font-weight:600'
+            else: return 'background-color:#051505;color:#3fb950;font-weight:600'
+        except: return ''
+
+    def sesgo_style(val):
+        return {
+            'MUY ALCISTA': 'color:#3fb950;font-weight:700',
+            'ALCISTA':     'color:#7ee787;font-weight:700',
+            'NEUTRAL':     'color:#e3b341;font-weight:700',
+            'BAJISTA':     'color:#f0883e;font-weight:700',
+            'MUY BAJISTA': 'color:#f85149;font-weight:700',
+        }.get(val, '')
+
+    _map = 'map' if hasattr(df_show.style,'map') else 'applymap'
+    styled = (df_show.style
+        .pipe(lambda s: getattr(s,_map)(cs, subset=['Trend','MR','Risk','Global']))
+        .pipe(lambda s: getattr(s,_map)(sesgo_style, subset=['Sesgo']))
+        .set_properties(**{'background-color':'#0b0f1a','color':'#dde5f0','border':'1px solid #161d2e'})
+        .set_table_styles([{
+            'selector':'th',
+            'props':[('background-color','#0d1220'),('color','#dde5f0'),
+                     ('font-weight','700'),('text-align','center'),
+                     ('border-bottom','2px solid #3a7bd5'),('font-size','11px')]
+        },{'selector':'td','props':[('text-align','center'),('font-size','11px')]}])
+    )
+    altura = min(700, max(200, len(df_show)*30+45))
+    st.dataframe(styled, use_container_width=True, height=altura)
+
+# ==============================================================
 #  SIDEBAR
-# ══════════════════════════════════════════════════════════════
+# ==============================================================
+
 with st.sidebar:
-    st.markdown('<div class="sidebar-logo">📊 Análisis Top-Down</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sidebar-sub">Scores por percentil histórico · 3 meses</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-logo">📡 Analizador Unificado</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-sub">Corto · Mediano · Largo plazo</div>', unsafe_allow_html=True)
     st.markdown('---')
 
-    modulo = st.radio('Módulo de análisis', [
-        '💱 Forex',
-        '🌍 Países / Índices',
-        '📊 Sectores S&P500',
-        '🛢️ Mercados Reales',
-        '🏭 Industrias',
-        '📈 Acciones',
-        '🎯 Resumen Top-Down',
-    ])
+    MODO = st.radio(
+        'Horizonte temporal',
+        ['⚡ Corto Plazo (1–30d)', '📈 Mediano/Largo Plazo (2 años)'],
+        help='Corto: scores por percentil histórico | Largo: análisis cuantitativo con Trend/MR/Risk Score'
+    )
+    ES_LARGO = '📈' in MODO
+
     st.markdown('---')
-    if st.button('🔄  Actualizar datos', use_container_width=True):
-        st.cache_data.clear(); st.rerun()
-    st.markdown('---')
-    st.markdown("""
-    <div style='font-size:11px; color:#8b949e; line-height:1.7'>
-    <b style='color:#c9d1d9'>Scores (0–100)</b><br>
-    <span style='color:#3fb950'>●</span> 81–100 &nbsp;Muy alto<br>
-    <span style='color:#7ee787'>●</span> 61–80 &nbsp;Alto<br>
-    <span style='color:#e3b341'>●</span> 41–60 &nbsp;Neutral<br>
-    <span style='color:#f0883e'>●</span> 21–40 &nbsp;Bajo<br>
-    <span style='color:#f85149'>●</span> 0–20 &nbsp;&nbsp;Muy bajo<br><br>
-    <b style='color:#c9d1d9'>Fuente:</b> Yahoo Finance<br>
-    <b style='color:#c9d1d9'>Caché:</b> 30 minutos<br><br>
-    <i>Solo informativo. No constituye asesoramiento financiero.</i>
-    </div>
-    """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════
-#  HEADER PRINCIPAL
-# ══════════════════════════════════════════════════════════════
-ICONOS = {
-    '💱 Forex':           ('💱 Análisis Forex — Top-Down',           'Majors · Crosses · LatAm — Scores por percentil histórico 3 meses'),
-    '🌍 Países / Índices':('🌍 Países e Índices Globales',            'ETFs por país — Scores por percentil histórico 3 meses'),
-    '📊 Sectores S&P500': ('📊 Sectores del S&P500',                  '11 sectores GICS — Scores por percentil histórico 3 meses'),
-    '🛢️ Mercados Reales': ('🛢️ Commodities · Metales · Cripto',       'Energía · Metales · Agro · Cripto — Scores por percentil histórico 3 meses'),
-    '🏭 Industrias':      ('🏭 Industrias por Sector',                'ETFs de industria dentro de cada sector S&P500 — 3 meses'),
-    '📈 Acciones':        ('📈 Acciones por Industria',               'Top acciones de cada industria — Scores por percentil histórico 3 meses'),
-    '🎯 Resumen Top-Down':('🎯 Resumen Ejecutivo Top-Down',           'País → Sector → Mercado → Industria → Acción · Solo informativo'),
-}
-titulo_h, sub_h = ICONOS.get(modulo, ('📊 Análisis Top-Down',''))
-st.markdown(f'<div class="main-header"><h1>{titulo_h}</h1><p>{sub_h}</p></div>', unsafe_allow_html=True)
+    if not ES_LARGO:
+        # Módulos corto plazo
+        modulo = st.radio('Módulo', [
+            '💱 Forex',
+            '🌍 Países / Índices',
+            '📊 Sectores S&P500',
+            '🛢️ Mercados Reales',
+            '📈 Acciones',
+            '🎯 Resumen Top-Down',
+        ])
+    else:
+        # Módulos largo plazo
+        modulo = st.radio('Módulo', [
+            '📋 Ranking & Scores',
+            '🔄 Candidatos Reversión',
+            '📊 Por Industria',
+            '🔍 Detalle por Ticker',
+        ])
 
-# ══════════════════════════════════════════════════════════════
-#  MÓDULO: FOREX
-# ══════════════════════════════════════════════════════════════
-if modulo == '💱 Forex':
-    grupos_disponibles = list(dict.fromkeys(v[1] for v in FOREX.values()))
-
-    with st.sidebar:
         st.markdown('---')
-        grupos_sel = st.multiselect('Grupos FX', grupos_disponibles, default=grupos_disponibles)
-
-    with st.spinner('⏳ Descargando datos Forex...'):
-        datos_fx = cargar_forex()
-
-    datos_filtrados = {n:d for n,d in datos_fx.items() if d['grupo'] in grupos_sel}
-    if not datos_filtrados:
-        st.error('No hay datos. Verificá la conexión o seleccioná al menos un grupo.')
-        st.stop()
-
-    kpi_cards(datos_filtrados, f'{len(grupos_sel)} grupos activos')
-
-    tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores por grupo','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
-
-    with tab1:
-        st.markdown('<div class="info-banner">Barra grande = <b>Acumulación</b> (precio barato históricamente) · Barra fina = <b>Anticipación</b> (momentum) · Línea verde = zona de entrada (>62) · Línea roja = cautela (<38)</div>', unsafe_allow_html=True)
-        grupos_en_datos = [g for g in grupos_disponibles if g in grupos_sel and any(d['grupo']==g for d in datos_filtrados.values())]
-        for i in range(0, len(grupos_en_datos), 2):
-            cols = st.columns(2)
-            for j, grupo in enumerate(grupos_en_datos[i:i+2]):
-                items = [(n,d) for n,d in datos_filtrados.items() if d['grupo']==grupo]
-                if not items: continue
-                items_ord = sorted(items, key=lambda x: x[1]['sa'], reverse=True)
-                fig = grafico_barras_h(items_ord, grupo, COLORES_GRUPO_FX.get(grupo,'#58a6ff'), ACCENT_GRUPO_FX.get(grupo,'#1f6feb'))
-                with cols[j]: st.pyplot(fig, use_container_width=True)
-                plt.close(fig)
-
-    with tab2:
-        st.markdown('<p class="section-title">Retorno 5d vs 10d</p>', unsafe_allow_html=True)
-        pares_ord = sorted(datos_filtrados.items(), key=lambda x: x[1]['ret_5d'], reverse=True)
-        fig2 = grafico_momentum(pares_ord)
-        st.pyplot(fig2, use_container_width=True); plt.close(fig2)
-        st.markdown('<p class="section-title">Heatmap de scores</p>', unsafe_allow_html=True)
-        col_heat, _ = st.columns([1,1])
-        with col_heat:
-            fig_h = grafico_heatmap(datos_filtrados, 'Heatmap Forex — verde=oportunidad')
-            st.pyplot(fig_h, use_container_width=True); plt.close(fig_h)
-
-    with tab3:
-        st.markdown('<div class="info-banner">🟢 Arriba-derecha: precio barato + momentum alcista → mejor zona de entrada · 🔴 Abajo-izquierda: precio caro + bajista → evitar</div>', unsafe_allow_html=True)
-        col_mapa, _ = st.columns([2,1])
-        with col_mapa:
-            fig3 = grafico_cuadrante(datos_filtrados, COLORES_GRUPO_FX, 'Mapa Oportunidades Forex')
-            st.pyplot(fig3, use_container_width=True); plt.close(fig3)
-
-    with tab4:
-        st.markdown('<p class="section-title">Ranking completo</p>', unsafe_allow_html=True)
-        c_fil1, c_fil2 = st.columns([1,3])
-        with c_fil1:
-            señales_unicas = ['Todas'] + sorted(set(d['accion'] for d in datos_filtrados.values()))
-            señal_sel = st.selectbox('Filtrar señal', señales_unicas)
-        df_show = {n:d for n,d in datos_filtrados.items() if señal_sel=='Todas' or d['accion']==señal_sel}
-        tabla_ranking(df_show, precio_fmt='fx')
-
-        st.markdown('<p class="section-title">🔍 Detalle de par</p>', unsafe_allow_html=True)
-        par_sel = st.selectbox('Par', list(datos_filtrados.keys()), key='det_fx')
-        if par_sel and par_sel in datos_filtrados:
-            d = datos_filtrados[par_sel]
-            sc1,sc2,sc3,sc4,sc5 = st.columns(5)
-            for col_st, label, value, ref in [(sc1,'Acumulación',d['sa'],62),(sc2,'Anticipación',d['sn'],55),(sc3,'Sentimiento',d['ss'],50),(sc4,'RSI',d['rsi'],50),(sc5,'Precio',None,None)]:
-                with col_st:
-                    if value is not None:
-                        delta = f"+{value-ref:.1f}" if value>=ref else f"{value-ref:.1f}"
-                        st.metric(label, f'{value:.1f}', delta)
-                    else:
-                        st.metric(label, fmt_precio_fx(d['precio']))
-            st.markdown(f'<div style="margin:8px 0"><span class="signal-pill">{d["accion"]}</span> &nbsp;<span style="color:#8b949e;font-size:13px">{d["grupo"]}</span></div>', unsafe_allow_html=True)
-            hist = d.get('hist')
-            if hist is not None and len(hist) > 2:
-                precios = hist['Precio'].values
-                p_min = precios.min(); p_max = precios.max()
-                margen = (p_max-p_min)*0.15 if (p_max-p_min)>0 else p_min*0.01
-                fig_line, ax_line = plt.subplots(figsize=(10, 3.2))
-                fig_line.patch.set_facecolor('#080c14'); ax_line.set_facecolor('#0d1117')
-                ax_line.fill_between(range(len(precios)), precios, alpha=0.15, color='#388bfd')
-                trend_color = '#2ea043' if precios[-1]>=precios[0] else '#cf222e'
-                ax_line.plot(range(len(precios)), precios, color=trend_color, lw=2, zorder=4)
-                ax_line.scatter(len(precios)-1, precios[-1], color=trend_color, s=60, zorder=5, edgecolors='#e6edf3', lw=1)
-                ax_line.set_ylim(p_min-margen, p_max+margen)
-                fechas = hist['Fecha'].values; n_ticks = min(6, len(fechas))
-                idx_ticks = np.linspace(0, len(fechas)-1, n_ticks, dtype=int)
-                ax_line.set_xticks(idx_ticks)
-                try: ax_line.set_xticklabels([str(fechas[i])[:10] for i in idx_ticks], rotation=0, fontsize=8)
-                except: pass
-                ret_pct = (precios[-1]/precios[0]-1)*100
-                ax_line.set_title(f'{par_sel} — últimos 30 días  ({ret_pct:+.2f}%)', color='#2ea043' if ret_pct>=0 else '#cf222e', fontsize=10, fontweight='600', pad=8, loc='left')
-                ax_line.spines['top'].set_visible(False); ax_line.spines['right'].set_visible(False)
-                ax_line.grid(axis='y', alpha=.15); ax_line.tick_params(colors='#8b949e')
-                plt.tight_layout(pad=1.2)
-                st.pyplot(fig_line, use_container_width=True); plt.close(fig_line)
-
-# ══════════════════════════════════════════════════════════════
-#  MÓDULO: PAÍSES / ÍNDICES
-# ══════════════════════════════════════════════════════════════
-elif modulo == '🌍 Países / Índices':
-    with st.spinner('⏳ Descargando datos de países...'):
-        datos_p = cargar_paises()
-    if not datos_p:
-        st.error('No hay datos disponibles.'); st.stop()
-
-    kpi_cards(datos_p, 'índices globales')
-    tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
-
-    with tab1:
-        st.markdown('<div class="info-banner">Barra grande = Acumulación · Barra fina = Anticipación · Línea verde = zona entrada (>62)</div>', unsafe_allow_html=True)
-        regiones = list(dict.fromkeys(d['region'] for d in datos_p.values()))
-        for i in range(0, len(regiones), 2):
-            cols = st.columns(2)
-            for j, region in enumerate(regiones[i:i+2]):
-                items = sorted([(n,d) for n,d in datos_p.items() if d['region']==region], key=lambda x: x[1]['sa'], reverse=True)
-                if not items: continue
-                fig = grafico_barras_h(items, region, COLORES_REGION.get(region,'#58a6ff'))
-                with cols[j]: st.pyplot(fig, use_container_width=True)
-                plt.close(fig)
-
-    with tab2:
-        pares_ord = sorted(datos_p.items(), key=lambda x: x[1]['ret_5d'], reverse=True)
-        fig2 = grafico_momentum(pares_ord)
-        st.pyplot(fig2, use_container_width=True); plt.close(fig2)
-        col_heat, _ = st.columns([1,1])
-        with col_heat:
-            fig_h = grafico_heatmap(datos_p, 'Heatmap Países — verde=oportunidad')
-            st.pyplot(fig_h, use_container_width=True); plt.close(fig_h)
-
-    with tab3:
-        col_mapa, _ = st.columns([2,1])
-        with col_mapa:
-            fig3 = grafico_cuadrante(datos_p, COLORES_REGION, 'Mapa Oportunidades Países')
-            st.pyplot(fig3, use_container_width=True); plt.close(fig3)
-
-    with tab4:
-        tabla_ranking(datos_p)
-
-# ══════════════════════════════════════════════════════════════
-#  MÓDULO: SECTORES S&P500
-# ══════════════════════════════════════════════════════════════
-elif modulo == '📊 Sectores S&P500':
-    with st.spinner('⏳ Descargando datos de sectores...'):
-        datos_s = cargar_sectores()
-    if not datos_s:
-        st.error('No hay datos disponibles.'); st.stop()
-
-    kpi_cards(datos_s, '11 sectores GICS')
-    tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
-
-    with tab1:
-        st.markdown('<div class="info-banner">Scores de los 11 sectores del S&P500. Colores por nivel de score: 🟢 alto (barato) → 🔴 bajo (caro)</div>', unsafe_allow_html=True)
-        items_ord = sorted(datos_s.items(), key=lambda x: x[1]['sa'], reverse=True)
-        fig = grafico_barras_h(items_ord, 'S&P500 — Todos los sectores')
-        st.pyplot(fig, use_container_width=True); plt.close(fig)
-
-    with tab2:
-        pares_ord = sorted(datos_s.items(), key=lambda x: x[1]['ret_5d'], reverse=True)
-        fig2 = grafico_momentum(pares_ord)
-        st.pyplot(fig2, use_container_width=True); plt.close(fig2)
-        col_heat, _ = st.columns([1,1])
-        with col_heat:
-            fig_h = grafico_heatmap(datos_s, 'Heatmap Sectores — verde=oportunidad')
-            st.pyplot(fig_h, use_container_width=True); plt.close(fig_h)
-
-    with tab3:
-        col_mapa, _ = st.columns([2,1])
-        with col_mapa:
-            fig3 = grafico_cuadrante(datos_s, None, 'Mapa Oportunidades Sectores')
-            st.pyplot(fig3, use_container_width=True); plt.close(fig3)
-
-    with tab4:
-        tabla_ranking(datos_s)
-
-# ══════════════════════════════════════════════════════════════
-#  MÓDULO: MERCADOS REALES
-# ══════════════════════════════════════════════════════════════
-elif modulo == '🛢️ Mercados Reales':
-    with st.spinner('⏳ Descargando datos de mercados reales...'):
-        datos_m = cargar_mercados()
-    if not datos_m:
-        st.error('No hay datos disponibles.'); st.stop()
-
-    kpi_cards(datos_m, 'commodities · metales · cripto')
-    tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores por categoría','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
-
-    with tab1:
-        st.markdown('<div class="info-banner">Energía · Metales Preciosos · Metales Industriales · Minería · Agro · Cripto</div>', unsafe_allow_html=True)
-        cats = list(dict.fromkeys(d['cat'] for d in datos_m.values()))
-        for i in range(0, len(cats), 2):
-            cols = st.columns(2)
-            for j, cat in enumerate(cats[i:i+2]):
-                items = sorted([(n,d) for n,d in datos_m.items() if d['cat']==cat], key=lambda x: x[1]['sa'], reverse=True)
-                if not items: continue
-                fig = grafico_barras_h(items, cat)
-                with cols[j]: st.pyplot(fig, use_container_width=True)
-                plt.close(fig)
-
-    with tab2:
-        pares_ord = sorted(datos_m.items(), key=lambda x: x[1]['ret_5d'], reverse=True)
-        fig2 = grafico_momentum(pares_ord)
-        st.pyplot(fig2, use_container_width=True); plt.close(fig2)
-        col_heat, _ = st.columns([1,1])
-        with col_heat:
-            fig_h = grafico_heatmap(datos_m, 'Heatmap Mercados Reales — verde=oportunidad')
-            st.pyplot(fig_h, use_container_width=True); plt.close(fig_h)
-
-    with tab3:
-        col_mapa, _ = st.columns([2,1])
-        with col_mapa:
-            fig3 = grafico_cuadrante(datos_m, None, 'Mapa Oportunidades Mercados Reales')
-            st.pyplot(fig3, use_container_width=True); plt.close(fig3)
-
-    with tab4:
-        tabla_ranking(datos_m)
-
-# ══════════════════════════════════════════════════════════════
-#  MÓDULO: INDUSTRIAS
-# ══════════════════════════════════════════════════════════════
-elif modulo == '🏭 Industrias':
-    with st.spinner('⏳ Descargando datos de industrias... (puede tardar ~2 min)'):
-        datos_ind = cargar_industrias()
-
-    todas_ind = {f'{s[:4]}·{i}': d for s, inds in datos_ind.items() for i, d in inds.items()}
-    if not todas_ind:
-        st.error('No hay datos disponibles.'); st.stop()
-
-    kpi_cards(todas_ind, 'ETFs de industria')
-    tab1, tab2, tab3 = st.tabs(['📊 Por sector','🗺️ Cuadrante','📋 Ranking'])
-
-    with tab1:
-        st.markdown('<div class="info-banner">Industrias ordenadas por Score de Acumulación dentro de cada sector</div>', unsafe_allow_html=True)
-        sectores_con_datos = [s for s in datos_ind if datos_ind[s]]
-        with st.sidebar:
-            st.markdown('---')
-            sector_sel = st.selectbox('Ver sector', ['Todos'] + sectores_con_datos)
-
-        for sector, inds in datos_ind.items():
-            if not inds: continue
-            if sector_sel != 'Todos' and sector != sector_sel: continue
-            items_ord = sorted(inds.items(), key=lambda x: x[1]['sa'], reverse=True)
-            fig = grafico_barras_h(items_ord, sector)
-            st.pyplot(fig, use_container_width=True); plt.close(fig)
-
-    with tab2:
-        col_mapa, _ = st.columns([2,1])
-        with col_mapa:
-            fig3 = grafico_cuadrante(todas_ind, None, 'Mapa Oportunidades Industrias')
-            st.pyplot(fig3, use_container_width=True); plt.close(fig3)
-
-    with tab3:
-        st.markdown('<p class="section-title">Ranking completo de industrias</p>', unsafe_allow_html=True)
-        filas = []
-        for sector, inds in datos_ind.items():
-            for ind_n, d in sorted(inds.items(), key=lambda x: x[1]['sa'], reverse=True):
-                filas.append({'Sector': sector, 'Industria': ind_n, 'ETF': d['tk'],
-                    'Acum': round(d['sa'],1), 'Antic': round(d['sn'],1), 'Sent': round(d['ss'],1),
-                    'RSI': round(d.get('rsi',0),1), 'Ret 5d %': round(d.get('ret_5d',0),2),
-                    'Ret 10d %': round(d.get('ret_10d',0),2), 'Precio': fmt_precio_gen(d.get('precio',0)),
-                    'Señal': d['accion']})
-        df_ind = pd.DataFrame(filas).sort_values('Acum', ascending=False)
-
-        def cs(val):
-            try:
-                v = float(val)
-                if v<=20: return 'background-color:#3d1a1a;color:#f85149;font-weight:600'
-                elif v<=40: return 'background-color:#3d2a10;color:#f0883e;font-weight:600'
-                elif v<=60: return 'background-color:#2e2a10;color:#e3b341;font-weight:600'
-                elif v<=80: return 'background-color:#102a1a;color:#7ee787;font-weight:600'
-                else: return 'background-color:#0a2a10;color:#3fb950;font-weight:600'
-            except: return ''
-
-        def cr(val):
-            try: v=float(val); return f'color:{"#3fb950" if v>=0 else "#f85149"};font-weight:600'
-            except: return ''
-
-        _map = 'map' if hasattr(df_ind.style,'map') else 'applymap'
-        styled = (df_ind.style
-            .pipe(lambda s: getattr(s,_map)(cs, subset=['Acum','Antic','Sent']))
-            .pipe(lambda s: getattr(s,_map)(cr, subset=['Ret 5d %','Ret 10d %']))
-            .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #1e2533'})
-            .set_table_styles([{'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),('font-weight','600'),('text-align','center'),('border-bottom','2px solid #1f6feb')]},{'selector':'td','props':[('text-align','center')]}])
+        ind_disp = list(ACCIONES_POR_INDUSTRIA.keys())
+        ind_sel = st.multiselect(
+            'Industrias a analizar',
+            ind_disp,
+            default=ind_disp[:6],
+            help='Más industrias = más tiempo de carga. Se usa 2 años de historia.'
         )
-        altura = min(700, max(200, len(df_ind)*35+45))
-        st.dataframe(styled, use_container_width=True, height=altura)
-
-# ══════════════════════════════════════════════════════════════
-#  MÓDULO: ACCIONES
-# ══════════════════════════════════════════════════════════════
-elif modulo == '📈 Acciones':
-    with st.sidebar:
-        st.markdown('---')
-        industrias_disponibles = list(ACCIONES_POR_INDUSTRIA.keys())
-        industrias_sel = st.multiselect('Industrias a analizar', industrias_disponibles, default=industrias_disponibles[:5], help='Seleccioná todas para análisis completo (~10 min)')
         if st.button('▶ Analizar seleccionadas', use_container_width=True):
             st.cache_data.clear()
+            st.rerun()
 
-    if not industrias_sel:
-        st.info('Seleccioná al menos una industria en el menú lateral para comenzar.')
-        st.stop()
+    st.markdown('---')
+    if st.button('🔄 Actualizar datos', use_container_width=True):
+        st.cache_data.clear(); st.rerun()
 
-    with st.spinner(f'⏳ Analizando acciones de {len(industrias_sel)} industrias... (puede tardar varios minutos)'):
-        datos_acc_raw = cargar_acciones()
-
-    datos_acc = {ind: tks for ind, tks in datos_acc_raw.items() if ind in industrias_sel and tks}
-    if not datos_acc:
-        st.error('No hay datos disponibles.'); st.stop()
-
-    todas_acc = {tk: d for ind, tks in datos_acc.items() for tk, d in tks.items()}
-    kpi_cards(todas_acc, f'{len(industrias_sel)} industrias')
-
-    tab1, tab2, tab3 = st.tabs(['📊 Por industria','🗺️ Cuadrante','📋 Ranking'])
-
-    with tab1:
-        st.markdown('<div class="info-banner">Top acciones por industria ordenadas por Score de Acumulación</div>', unsafe_allow_html=True)
-        for industria, tickers in datos_acc.items():
-            if not tickers: continue
-            st.markdown(f'<p class="section-title">📂 {industria}</p>', unsafe_allow_html=True)
-            items_ord = sorted(tickers.items(), key=lambda x: x[1]['sa'], reverse=True)
-            fig = grafico_barras_h(items_ord, industria)
-            st.pyplot(fig, use_container_width=True); plt.close(fig)
-
-    with tab2:
-        col_mapa, _ = st.columns([2,1])
-        with col_mapa:
-            fig3 = grafico_cuadrante(todas_acc, None, 'Mapa Oportunidades Acciones')
-            st.pyplot(fig3, use_container_width=True); plt.close(fig3)
-
-    with tab3:
-        st.markdown('<p class="section-title">Ranking completo de acciones</p>', unsafe_allow_html=True)
-        filas = []
-        for industria, tickers in datos_acc.items():
-            for tk, d in sorted(tickers.items(), key=lambda x: x[1]['sa'], reverse=True):
-                filas.append({'Industria': industria, 'Ticker': tk,
-                    'Acum': round(d['sa'],1), 'Antic': round(d['sn'],1), 'Sent': round(d['ss'],1),
-                    'RSI': round(d.get('rsi',0),1), 'Ret 5d %': round(d.get('ret_5d',0),2),
-                    'Ret 10d %': round(d.get('ret_10d',0),2), 'Precio': fmt_precio_gen(d.get('precio',0)),
-                    'Señal': d['accion']})
-        df_acc = pd.DataFrame(filas).sort_values('Acum', ascending=False)
-
-        def cs(val):
-            try:
-                v = float(val)
-                if v<=20: return 'background-color:#3d1a1a;color:#f85149;font-weight:600'
-                elif v<=40: return 'background-color:#3d2a10;color:#f0883e;font-weight:600'
-                elif v<=60: return 'background-color:#2e2a10;color:#e3b341;font-weight:600'
-                elif v<=80: return 'background-color:#102a1a;color:#7ee787;font-weight:600'
-                else: return 'background-color:#0a2a10;color:#3fb950;font-weight:600'
-            except: return ''
-
-        def cr(val):
-            try: v=float(val); return f'color:{"#3fb950" if v>=0 else "#f85149"};font-weight:600'
-            except: return ''
-
-        c_fil1, c_fil2 = st.columns([1,3])
-        with c_fil1:
-            señales_acc = ['Todas'] + sorted(df_acc['Señal'].unique().tolist())
-            señal_acc = st.selectbox('Filtrar señal', señales_acc)
-        df_show_acc = df_acc if señal_acc=='Todas' else df_acc[df_acc['Señal']==señal_acc]
-
-        _map = 'map' if hasattr(df_show_acc.style,'map') else 'applymap'
-        styled = (df_show_acc.style
-            .pipe(lambda s: getattr(s,_map)(cs, subset=['Acum','Antic','Sent']))
-            .pipe(lambda s: getattr(s,_map)(cr, subset=['Ret 5d %','Ret 10d %']))
-            .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #1e2533'})
-            .set_table_styles([{'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),('font-weight','600'),('text-align','center'),('border-bottom','2px solid #1f6feb')]},{'selector':'td','props':[('text-align','center')]}])
-        )
-        altura = min(700, max(200, len(df_show_acc)*35+45))
-        st.dataframe(styled, use_container_width=True, height=altura)
-
-# ══════════════════════════════════════════════════════════════
-#  MÓDULO: RESUMEN TOP-DOWN
-# ══════════════════════════════════════════════════════════════
-elif modulo == '🎯 Resumen Top-Down':
-    st.markdown('<div class="info-banner">Este módulo carga los datos de <b>todos los niveles</b> para mostrar el flujo completo Top-Down. Puede tardar 3–5 minutos en la primera carga.</div>', unsafe_allow_html=True)
-
-    col_btn1, col_btn2 = st.columns([1,4])
-    with col_btn1:
-        cargar = st.button('▶ Cargar resumen completo', use_container_width=True)
-
-    if cargar or 'resumen_loaded' in st.session_state:
-        st.session_state['resumen_loaded'] = True
-
-        prog = st.progress(0, text='Cargando países...')
-        datos_p   = cargar_paises();   prog.progress(20, 'Cargando sectores...')
-        datos_s   = cargar_sectores(); prog.progress(40, 'Cargando mercados reales...')
-        datos_m   = cargar_mercados(); prog.progress(60, 'Cargando industrias...')
-        datos_ind = cargar_industrias(); prog.progress(80, 'Procesando...')
-        todas_ind = {f'{s[:4]}·{i}': d for s, inds in datos_ind.items() for i, d in inds.items()}
-        prog.progress(100, '✅ Listo'); prog.empty()
-
-        # ── Tabla resumen ejecutivo ──────────────────────────
-        st.markdown('<p class="section-title">🏆 Mejores oportunidades por nivel</p>', unsafe_allow_html=True)
-
-        def row_resumen(nivel, datos_dict, icono):
-            if not datos_dict: return None
-            mejor = max(datos_dict.items(), key=lambda x: x[1]['sa'])
-            d = mejor[1]
-            lbl,col,em = clasificar(d['sa'])
-            return {'Nivel': f'{icono} {nivel}', 'Nombre': mejor[0], 'Acum': round(d['sa'],1),
-                    'Antic': round(d['sn'],1), 'Señal': d['accion'], 'Clasificación': lbl}
-
-        rows_res = [r for r in [
-            row_resumen('País / Índice',  datos_p,   '🌍'),
-            row_resumen('Sector S&P500',  datos_s,   '📊'),
-            row_resumen('Mercado Real',   datos_m,   '🛢️'),
-            row_resumen('Industria',      todas_ind, '🏭'),
-        ] if r]
-
-        if rows_res:
-            df_res = pd.DataFrame(rows_res)
-            def cs(val):
-                try:
-                    v=float(val)
-                    if v<=20: return 'background-color:#3d1a1a;color:#f85149;font-weight:600'
-                    elif v<=40: return 'background-color:#3d2a10;color:#f0883e;font-weight:600'
-                    elif v<=60: return 'background-color:#2e2a10;color:#e3b341;font-weight:600'
-                    elif v<=80: return 'background-color:#102a1a;color:#7ee787;font-weight:600'
-                    else: return 'background-color:#0a2a10;color:#3fb950;font-weight:600'
-                except: return ''
-            _map = 'map' if hasattr(df_res.style,'map') else 'applymap'
-            styled = (df_res.style
-                .pipe(lambda s: getattr(s,_map)(cs, subset=['Acum','Antic']))
-                .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #1e2533'})
-                .set_table_styles([{'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),('font-weight','600'),('text-align','center'),('border-bottom','2px solid #1f6feb')]},{'selector':'td','props':[('text-align','center')]}])
-            )
-            st.dataframe(styled, use_container_width=True, height=len(df_res)*42+50)
-
-        # ── Gráfico comparativo top-down ──────────────────────
-        st.markdown('<p class="section-title">📊 Comparación visual — mejores de cada nivel</p>', unsafe_allow_html=True)
-
-        fuentes = []
-        if datos_p:   fuentes.append(('Países',   datos_p,   '#58a6ff'))
-        if datos_s:   fuentes.append(('Sectores', datos_s,   '#7ee787'))
-        if datos_m:   fuentes.append(('Mercados', datos_m,   '#f0883e'))
-        if todas_ind: fuentes.append(('Industr.',  todas_ind, '#bc8cff'))
-
-        if fuentes:
-            fig_td, axes_td = plt.subplots(1, len(fuentes), figsize=(5*len(fuentes), 9))
-            fig_td.patch.set_facecolor('#080c14')
-            if len(fuentes)==1: axes_td=[axes_td]
-            ACCENT_TD = ['#1f6feb','#2ea043','#b35d00','#8250df']
-
-            for ax_td, (label, datos_d, col_td), acc_td in zip(axes_td, fuentes, ACCENT_TD):
-                ax_td.set_facecolor('#0d1117')
-                top_items = sorted(datos_d.items(), key=lambda x: x[1]['sa'], reverse=True)[:12]
-                ns_td  = [n[:14] for n,_ in top_items]
-                sas_td = [d['sa'] for _,d in top_items]
-                sns_td = [d['sn'] for _,d in top_items]
-                y_td   = np.arange(len(ns_td))
-                brs_td = ax_td.barh(y_td, sas_td, color=[score_color(s) for s in sas_td], edgecolor='none', height=0.55, alpha=.9)
-                ax_td.barh(y_td, sns_td, color=col_td, edgecolor='none', height=0.25, alpha=0.35)
-                ax_td.axvline(62, color='#3fb950', ls=':', alpha=.4)
-                ax_td.axvline(38, color='#f85149', ls=':', alpha=.4)
-                ax_td.fill_betweenx([-0.5,len(ns_td)-0.5], 62,100, alpha=.04, color='#3fb950')
-                ax_td.set_xlim(0,118)
-                ax_td.set_yticks(y_td); ax_td.set_yticklabels(ns_td, fontsize=8)
-                ax_td.set_title(label, color='#e6edf3', fontsize=10, pad=6, fontweight='600')
-                for b, s in zip(brs_td, sas_td):
-                    ax_td.text(s+1, b.get_y()+b.get_height()/2, f'{s:.0f}', va='center', color='white', fontsize=7.5)
-                ax_td.spines['top'].set_color(acc_td); ax_td.spines['top'].set_linewidth(2)
-                ax_td.grid(axis='x', alpha=.2); ax_td.tick_params(colors='#8b949e')
-
-            plt.suptitle('Top-Down: mejores oportunidades por nivel', color='#e6edf3', fontsize=13, fontweight='bold', y=1.01)
-            plt.tight_layout(pad=1.5)
-            st.pyplot(fig_td, use_container_width=True); plt.close(fig_td)
-
-        # ── Flujo Top-Down ────────────────────────────────────
-        st.markdown('<p class="section-title">🔄 Flujo Top-Down recomendado</p>', unsafe_allow_html=True)
+    st.markdown('---')
+    if not ES_LARGO:
         st.markdown("""
-        <div style='background:#0d1117;border:1px solid #1e2533;border-radius:12px;padding:20px;'>
-        <div style='display:flex;align-items:center;gap:12px;flex-wrap:wrap;'>
-          <div style='background:#1f6feb22;border:1px solid #1f6feb44;border-radius:8px;padding:10px 16px;text-align:center'>
-            <div style='color:#8b949e;font-size:11px;font-weight:600;text-transform:uppercase'>Paso 1</div>
-            <div style='color:#e6edf3;font-size:13px;font-weight:700;margin-top:4px'>🌍 País / Índice</div>
-            <div style='color:#8b949e;font-size:11px'>¿Qué mercado está barato?</div>
-          </div>
-          <div style='color:#58a6ff;font-size:20px'>→</div>
-          <div style='background:#2ea04322;border:1px solid #2ea04344;border-radius:8px;padding:10px 16px;text-align:center'>
-            <div style='color:#8b949e;font-size:11px;font-weight:600;text-transform:uppercase'>Paso 2</div>
-            <div style='color:#e6edf3;font-size:13px;font-weight:700;margin-top:4px'>📊 Sector</div>
-            <div style='color:#8b949e;font-size:11px'>¿Qué sector lidera?</div>
-          </div>
-          <div style='color:#58a6ff;font-size:20px'>→</div>
-          <div style='background:#b35d0022;border:1px solid #b35d0044;border-radius:8px;padding:10px 16px;text-align:center'>
-            <div style='color:#8b949e;font-size:11px;font-weight:600;text-transform:uppercase'>Paso 3</div>
-            <div style='color:#e6edf3;font-size:13px;font-weight:700;margin-top:4px'>🏭 Industria</div>
-            <div style='color:#8b949e;font-size:11px'>¿Qué industria destaca?</div>
-          </div>
-          <div style='color:#58a6ff;font-size:20px'>→</div>
-          <div style='background:#8250df22;border:1px solid #8250df44;border-radius:8px;padding:10px 16px;text-align:center'>
-            <div style='color:#8b949e;font-size:11px;font-weight:600;text-transform:uppercase'>Paso 4</div>
-            <div style='color:#e6edf3;font-size:13px;font-weight:700;margin-top:4px'>📈 Acción</div>
-            <div style='color:#8b949e;font-size:11px'>¿Qué ticker tiene mejor score?</div>
-          </div>
-        </div>
-        <div style='color:#8b949e;font-size:11px;margin-top:14px;border-top:1px solid #1e2533;padding-top:10px'>
-        ⚡ Regla clave: el sector arrastra a las acciones dentro de él. Buscar acciones donde sector + industria + acción apunten en la misma dirección.
-        </div>
+        <div style='font-size:10px; color:#6b7d9a; line-height:1.7'>
+        <b style='color:#b0bcd0'>Scores Acumulación (0–100)</b><br>
+        <span style='color:#3fb950'>●</span> 81–100 &nbsp;Muy alto (muy barato)<br>
+        <span style='color:#7ee787'>●</span> 61–80 &nbsp;Alto (barato)<br>
+        <span style='color:#e3b341'>●</span> 41–60 &nbsp;Neutral<br>
+        <span style='color:#f0883e'>●</span> 21–40 &nbsp;Bajo (caro)<br>
+        <span style='color:#f85149'>●</span> 0–20 &nbsp;&nbsp;Muy bajo (muy caro)<br><br>
+        <b style='color:#b0bcd0'>Caché:</b> 30 minutos<br>
+        <i>Solo informativo.</i>
         </div>
         """, unsafe_allow_html=True)
     else:
         st.markdown("""
-        <div style='background:#0d1117;border:1px dashed #1e3a5f;border-radius:12px;padding:32px;text-align:center'>
-          <div style='font-size:40px;margin-bottom:12px'>🎯</div>
-          <div style='color:#e6edf3;font-size:16px;font-weight:600;margin-bottom:8px'>Resumen Top-Down</div>
-          <div style='color:#8b949e;font-size:13px'>Presioná el botón para cargar todos los niveles y ver el análisis completo.</div>
+        <div style='font-size:10px; color:#6b7d9a; line-height:1.7'>
+        <b style='color:#b0bcd0'>Global Score:</b><br>
+        ≥70 MUY ALCISTA<br>
+        55–69 ALCISTA<br>
+        45–54 NEUTRAL<br>
+        30–44 BAJISTA<br>
+        &lt;30 MUY BAJISTA<br><br>
+        <b style='color:#b0bcd0'>Datos:</b> 2 años diarios<br>
+        <b style='color:#b0bcd0'>RF:</b> 4% anual<br>
+        <i>Solo informativo.</i>
         </div>
         """, unsafe_allow_html=True)
 
-# ── Footer ────────────────────────────────────────────────────
-st.markdown('<div style="height:24px"></div>', unsafe_allow_html=True)
+# ==============================================================
+#  HEADER PRINCIPAL
+# ==============================================================
+
+modo_badge_class = 'modo-corto' if not ES_LARGO else 'modo-largo'
+modo_badge_txt   = 'CORTO PLAZO (1-30d)' if not ES_LARGO else 'MEDIANO/LARGO PLAZO (2 años)'
+
+ICONOS = {
+    '💱 Forex':             '💱 Análisis Forex',
+    '🌍 Países / Índices':  '🌍 Países e Índices Globales',
+    '📊 Sectores S&P500':   '📊 Sectores del S&P500',
+    '🛢️ Mercados Reales':   '🛢️ Commodities · Metales · Cripto',
+    '📈 Acciones':          '📈 Acciones por Industria',
+    '🎯 Resumen Top-Down':  '🎯 Resumen Ejecutivo Top-Down',
+    '📋 Ranking & Scores':  '📋 Ranking Cuantitativo Completo',
+    '🔄 Candidatos Reversión': '🔄 Candidatos a Reversión a la Media',
+    '📊 Por Industria':     '📊 Análisis por Industria',
+    '🔍 Detalle por Ticker':'🔍 Análisis Individual de Ticker',
+}
+titulo_h = ICONOS.get(modulo, 'Análisis')
+st.markdown(
+    f'<div class="main-header">'
+    f'<h1>{titulo_h}<span class="modo-badge {modo_badge_class}">{modo_badge_txt}</span></h1>'
+    f'<p>Fuente: Yahoo Finance · Generado: {datetime.now().strftime("%d/%m/%Y %H:%M")}</p>'
+    f'</div>',
+    unsafe_allow_html=True
+)
+
+# ==============================================================
+#  ─── MÓDULOS CORTO PLAZO ─────────────────────────────────────
+# ==============================================================
+
+if not ES_LARGO:
+
+    # ── FOREX ────────────────────────────────────────────────
+    if modulo == '💱 Forex':
+        grupos_disp = list(dict.fromkeys(v[1] for v in FOREX.values()))
+        with st.sidebar:
+            st.markdown('---')
+            grupos_sel = st.multiselect('Grupos FX', grupos_disp, default=grupos_disp)
+
+        with st.spinner('Descargando datos Forex...'):
+            datos_fx = cargar_forex_corto()
+
+        datos_f = {n:d for n,d in datos_fx.items() if d['grupo'] in grupos_sel}
+        if not datos_f: st.error('No hay datos.'); st.stop()
+
+        kpi_cards(datos_f, f'{len(grupos_sel)} grupos')
+        tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
+
+        with tab1:
+            st.markdown('<div class="info-banner">Barra grande = <b>Acumulación</b> (precio barato históricamente) · Barra fina = <b>Anticipación</b> · Verde >62 = zona de entrada · Rojo <38 = cautela</div>', unsafe_allow_html=True)
+            grupos_en = [g for g in grupos_disp if g in grupos_sel and any(d['grupo']==g for d in datos_f.values())]
+            for i in range(0, len(grupos_en), 2):
+                cols = st.columns(2)
+                for j, grupo in enumerate(grupos_en[i:i+2]):
+                    items = [(n,d) for n,d in datos_f.items() if d['grupo']==grupo]
+                    if not items: continue
+                    items_ord = sorted(items, key=lambda x: x[1]['sa'], reverse=True)
+                    fig = grafico_barras_h(items_ord, grupo, COLORES_GRUPO_FX.get(grupo, C_ACENT))
+                    with cols[j]: st.pyplot(fig, use_container_width=True)
+                    plt.close(fig)
+
+        with tab2:
+            pares_ord = sorted(datos_f.items(), key=lambda x: x[1]['ret_5d'], reverse=True)
+            fig2 = grafico_momentum(pares_ord)
+            st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+            c_h, _ = st.columns([1,1])
+            with c_h:
+                fig_h = grafico_heatmap(datos_f, 'Heatmap Forex')
+                st.pyplot(fig_h, use_container_width=True); plt.close(fig_h)
+
+        with tab3:
+            c_m, _ = st.columns([2,1])
+            with c_m:
+                fig3 = grafico_cuadrante(datos_f, COLORES_GRUPO_FX, 'Mapa Oportunidades Forex')
+                st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+
+        with tab4:
+            señ_u = ['Todas'] + sorted(set(d['accion'] for d in datos_f.values()))
+            señ_s = st.selectbox('Filtrar señal', señ_u)
+            df_show = {n:d for n,d in datos_f.items() if señ_s=='Todas' or d['accion']==señ_s}
+            tabla_corto(df_show, 'fx')
+
+            st.markdown('<p class="section-title">🔍 Detalle de par</p>', unsafe_allow_html=True)
+            par_sel = st.selectbox('Par', list(datos_f.keys()))
+            if par_sel and par_sel in datos_f:
+                d = datos_f[par_sel]
+                sc1,sc2,sc3,sc4,sc5 = st.columns(5)
+                for col_st, label, value, ref in [(sc1,'Acumulación',d['sa'],62),(sc2,'Anticipación',d['sn'],55),(sc3,'Sentimiento',d['ss'],50),(sc4,'RSI',d['rsi'],50),(sc5,'Ret 5d',d['ret_5d'],0)]:
+                    with col_st:
+                        delta = f"+{value-ref:.1f}" if value>=ref else f"{value-ref:.1f}"
+                        st.metric(label, f'{value:.1f}', delta)
+                st.markdown(f'<div style="margin:8px 0"><span class="signal-pill">{d["accion"]}</span></div>', unsafe_allow_html=True)
+                hist = d.get('hist')
+                if hist is not None and len(hist) > 2:
+                    precios = hist['Precio'].values
+                    fig_l, ax_l = plt.subplots(figsize=(9, 3))
+                    fig_l.patch.set_facecolor('#07090f'); ax_l.set_facecolor('#0b0f1a')
+                    trend_c = '#3fb950' if precios[-1]>=precios[0] else '#f85149'
+                    ax_l.fill_between(range(len(precios)), precios, alpha=0.12, color='#3a7bd5')
+                    ax_l.plot(range(len(precios)), precios, color=trend_c, lw=1.8, zorder=4)
+                    ax_l.scatter(len(precios)-1, precios[-1], color=trend_c, s=55, zorder=5)
+                    ax_l.grid(axis='y', alpha=.12); ax_l.spines['top'].set_visible(False); ax_l.spines['right'].set_visible(False)
+                    ret_p = (precios[-1]/precios[0]-1)*100
+                    ax_l.set_title(f'{par_sel} — 30 días ({ret_p:+.2f}%)', color=trend_c, fontsize=10, fontweight='600', loc='left')
+                    plt.tight_layout(pad=1.2)
+                    st.pyplot(fig_l, use_container_width=True); plt.close(fig_l)
+
+    # ── PAÍSES ───────────────────────────────────────────────
+    elif modulo == '🌍 Países / Índices':
+        with st.spinner('Descargando datos de países...'):
+            datos_p = cargar_paises_corto()
+        if not datos_p: st.error('No hay datos.'); st.stop()
+        kpi_cards(datos_p, 'índices globales')
+        tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
+        with tab1:
+            regiones = list(dict.fromkeys(d['region'] for d in datos_p.values()))
+            for i in range(0, len(regiones), 2):
+                cols = st.columns(2)
+                for j, region in enumerate(regiones[i:i+2]):
+                    items = sorted([(n,d) for n,d in datos_p.items() if d['region']==region], key=lambda x: x[1]['sa'], reverse=True)
+                    if not items: continue
+                    fig = grafico_barras_h(items, region, COLORES_REGION.get(region, C_ACENT))
+                    with cols[j]: st.pyplot(fig, use_container_width=True)
+                    plt.close(fig)
+        with tab2:
+            fig2 = grafico_momentum(sorted(datos_p.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
+            st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+            c_h, _ = st.columns([1,1])
+            with c_h:
+                fig_h = grafico_heatmap(datos_p, 'Heatmap Países')
+                st.pyplot(fig_h, use_container_width=True); plt.close(fig_h)
+        with tab3:
+            c_m, _ = st.columns([2,1])
+            with c_m:
+                fig3 = grafico_cuadrante(datos_p, COLORES_REGION, 'Mapa Oportunidades Países')
+                st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+        with tab4:
+            tabla_corto(datos_p)
+
+    # ── SECTORES ─────────────────────────────────────────────
+    elif modulo == '📊 Sectores S&P500':
+        with st.spinner('Descargando datos de sectores...'):
+            datos_s = cargar_sectores_corto()
+        if not datos_s: st.error('No hay datos.'); st.stop()
+        kpi_cards(datos_s, '11 sectores GICS')
+        tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
+        with tab1:
+            items_ord = sorted(datos_s.items(), key=lambda x: x[1]['sa'], reverse=True)
+            fig = grafico_barras_h(items_ord, 'S&P500 — Sectores')
+            st.pyplot(fig, use_container_width=True); plt.close(fig)
+        with tab2:
+            fig2 = grafico_momentum(sorted(datos_s.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
+            st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+            c_h, _ = st.columns([1,1])
+            with c_h:
+                fig_h = grafico_heatmap(datos_s, 'Heatmap Sectores')
+                st.pyplot(fig_h, use_container_width=True); plt.close(fig_h)
+        with tab3:
+            c_m, _ = st.columns([2,1])
+            with c_m:
+                fig3 = grafico_cuadrante(datos_s, None, 'Mapa Oportunidades Sectores')
+                st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+        with tab4:
+            tabla_corto(datos_s)
+
+    # ── MERCADOS REALES ───────────────────────────────────────
+    elif modulo == '🛢️ Mercados Reales':
+        with st.spinner('Descargando commodities...'):
+            datos_m = cargar_mercados_corto()
+        if not datos_m: st.error('No hay datos.'); st.stop()
+        kpi_cards(datos_m, 'commodities · metales · cripto')
+        tab1, tab2, tab3, tab4 = st.tabs(['📊 Por categoría','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
+        with tab1:
+            cats = list(dict.fromkeys(d['cat'] for d in datos_m.values()))
+            for i in range(0, len(cats), 2):
+                cols = st.columns(2)
+                for j, cat in enumerate(cats[i:i+2]):
+                    items = sorted([(n,d) for n,d in datos_m.items() if d['cat']==cat], key=lambda x: x[1]['sa'], reverse=True)
+                    if not items: continue
+                    fig = grafico_barras_h(items, cat)
+                    with cols[j]: st.pyplot(fig, use_container_width=True)
+                    plt.close(fig)
+        with tab2:
+            fig2 = grafico_momentum(sorted(datos_m.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
+            st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+            c_h, _ = st.columns([1,1])
+            with c_h:
+                fig_h = grafico_heatmap(datos_m, 'Heatmap Mercados Reales')
+                st.pyplot(fig_h, use_container_width=True); plt.close(fig_h)
+        with tab3:
+            c_m, _ = st.columns([2,1])
+            with c_m:
+                fig3 = grafico_cuadrante(datos_m, None, 'Mapa Oportunidades Mercados Reales')
+                st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+        with tab4:
+            tabla_corto(datos_m)
+
+    # ── ACCIONES CORTO ────────────────────────────────────────
+    elif modulo == '📈 Acciones':
+        with st.sidebar:
+            st.markdown('---')
+            ind_disp_c = list(ACCIONES_POR_INDUSTRIA.keys())
+            ind_sel_c = st.multiselect('Industrias', ind_disp_c, default=ind_disp_c[:5])
+
+        if not ind_sel_c:
+            st.info('Seleccioná al menos una industria en el menú lateral.')
+            st.stop()
+
+        with st.spinner(f'Analizando {len(ind_sel_c)} industrias...'):
+            datos_acc_c = cargar_acciones_corto(tuple(ind_sel_c))
+
+        datos_acc_c = {ind: tks for ind, tks in datos_acc_c.items() if tks}
+        if not datos_acc_c: st.error('No hay datos.'); st.stop()
+
+        todas_c = {tk: d for ind, tks in datos_acc_c.items() for tk, d in tks.items()}
+        kpi_cards(todas_c, f'{len(ind_sel_c)} industrias')
+        tab1, tab2, tab3 = st.tabs(['📊 Por industria','🗺️ Cuadrante','📋 Ranking'])
+
+        with tab1:
+            for industria, tickers in datos_acc_c.items():
+                if not tickers: continue
+                st.markdown(f'<p class="section-title">📂 {industria}</p>', unsafe_allow_html=True)
+                items_ord = sorted(tickers.items(), key=lambda x: x[1]['sa'], reverse=True)
+                fig = grafico_barras_h(items_ord, industria)
+                st.pyplot(fig, use_container_width=True); plt.close(fig)
+
+        with tab2:
+            c_m, _ = st.columns([2,1])
+            with c_m:
+                fig3 = grafico_cuadrante(todas_c, None, 'Mapa Oportunidades Acciones')
+                st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+
+        with tab3:
+            filas = []
+            for industria, tickers in datos_acc_c.items():
+                for tk, d in sorted(tickers.items(), key=lambda x: x[1]['sa'], reverse=True):
+                    filas.append({'Industria': industria, 'Ticker': tk,
+                        'Acum': round(d['sa'],1), 'Antic': round(d['sn'],1), 'Sent': round(d['ss'],1),
+                        'RSI': round(d.get('rsi',0),1), 'Ret 5d %': round(d.get('ret_5d',0),2),
+                        'Ret 10d %': round(d.get('ret_10d',0),2),
+                        'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion']})
+            df_acc = pd.DataFrame(filas).sort_values('Acum', ascending=False)
+            señ_u2 = ['Todas'] + sorted(df_acc['Señal'].unique().tolist())
+            señ_s2 = st.selectbox('Filtrar señal', señ_u2, key='acc_corto_f')
+            df_show_a = df_acc if señ_s2=='Todas' else df_acc[df_acc['Señal']==señ_s2]
+
+            def cs(val):
+                try:
+                    v = float(val)
+                    if v<=20: return 'background-color:#2a0a0a;color:#f85149;font-weight:600'
+                    elif v<=40: return 'background-color:#2a1a05;color:#f0883e;font-weight:600'
+                    elif v<=60: return 'background-color:#1e1a05;color:#e3b341;font-weight:600'
+                    elif v<=80: return 'background-color:#081a0a;color:#7ee787;font-weight:600'
+                    else: return 'background-color:#051505;color:#3fb950;font-weight:600'
+                except: return ''
+            def cr(val):
+                try: v=float(val); return f'color:{"#3fb950" if v>=0 else "#f85149"};font-weight:600'
+                except: return ''
+            _map = 'map' if hasattr(df_show_a.style,'map') else 'applymap'
+            styled = (df_show_a.style
+                .pipe(lambda s: getattr(s,_map)(cs, subset=['Acum','Antic','Sent']))
+                .pipe(lambda s: getattr(s,_map)(cr, subset=['Ret 5d %','Ret 10d %']))
+                .set_properties(**{'background-color':'#0b0f1a','color':'#dde5f0','border':'1px solid #161d2e'})
+                .set_table_styles([{'selector':'th','props':[('background-color','#0d1220'),('color','#dde5f0'),('font-weight','700'),('text-align','center'),('border-bottom','2px solid #3a7bd5')]},{'selector':'td','props':[('text-align','center')]}])
+            )
+            altura = min(700, max(200, len(df_show_a)*32+45))
+            st.dataframe(styled, use_container_width=True, height=altura)
+
+    # ── RESUMEN TOP-DOWN ──────────────────────────────────────
+    elif modulo == '🎯 Resumen Top-Down':
+        st.markdown('<div class="info-banner">Carga los datos de <b>todos los niveles</b>. Primera carga puede tardar 3–5 min.</div>', unsafe_allow_html=True)
+        c_btn, _ = st.columns([1,4])
+        with c_btn:
+            cargar_td = st.button('▶ Cargar resumen completo', use_container_width=True)
+
+        if cargar_td or 'td_loaded' in st.session_state:
+            st.session_state['td_loaded'] = True
+            prog = st.progress(0, text='Cargando países...')
+            d_p = cargar_paises_corto(); prog.progress(25, 'Sectores...')
+            d_s = cargar_sectores_corto(); prog.progress(50, 'Mercados...')
+            d_m = cargar_mercados_corto(); prog.progress(75, 'Procesando...')
+            prog.progress(100, '✅ Listo'); prog.empty()
+
+            st.markdown('<p class="section-title">🏆 Mejores oportunidades por nivel</p>', unsafe_allow_html=True)
+            def row_td(nivel, dd, icono):
+                if not dd: return None
+                mejor = max(dd.items(), key=lambda x: x[1]['sa'])
+                d = mejor[1]
+                lbl,col,_ = clasificar_score(d['sa'])
+                return {'Nivel': f'{icono} {nivel}', 'Nombre': mejor[0],
+                        'Acum': round(d['sa'],1), 'Antic': round(d['sn'],1),
+                        'Señal': d['accion'], 'Clasificación': lbl}
+            rows = [r for r in [row_td('Países/Índices',d_p,'🌍'),
+                                  row_td('Sectores S&P500',d_s,'📊'),
+                                  row_td('Mercados Reales',d_m,'🛢️')] if r]
+            if rows:
+                df_td = pd.DataFrame(rows)
+                def cs(val):
+                    try:
+                        v=float(val)
+                        if v<=40: return 'color:#f0883e;font-weight:700'
+                        elif v<=60: return 'color:#e3b341;font-weight:700'
+                        else: return 'color:#3fb950;font-weight:700'
+                    except: return ''
+                _map = 'map' if hasattr(df_td.style,'map') else 'applymap'
+                styled_td = (df_td.style
+                    .pipe(lambda s: getattr(s,_map)(cs, subset=['Acum','Antic']))
+                    .set_properties(**{'background-color':'#0b0f1a','color':'#dde5f0','border':'1px solid #161d2e'})
+                    .set_table_styles([{'selector':'th','props':[('background-color','#0d1220'),('color','#dde5f0'),('font-weight','700'),('border-bottom','2px solid #3a7bd5')]},{'selector':'td','props':[('text-align','center')]}])
+                )
+                st.dataframe(styled_td, use_container_width=True, height=len(df_td)*42+50)
+
+            st.markdown('<p class="section-title">📊 Comparación visual</p>', unsafe_allow_html=True)
+            fuentes = [(l, d, c) for l,d,c in [('Países',d_p,'#3a7bd5'),('Sectores',d_s,'#3fb950'),('Mercados',d_m,'#f0883e')] if d]
+            if fuentes:
+                fig_td, axes_td = plt.subplots(1, len(fuentes), figsize=(5*len(fuentes), 8))
+                fig_td.patch.set_facecolor('#07090f')
+                if len(fuentes)==1: axes_td=[axes_td]
+                for ax_td, (label, dd, col_td) in zip(axes_td, fuentes):
+                    ax_td.set_facecolor('#0b0f1a')
+                    top_items = sorted(dd.items(), key=lambda x: x[1]['sa'], reverse=True)[:12]
+                    ns_td  = [n[:14] for n,_ in top_items]
+                    sas_td = [d['sa'] for _,d in top_items]
+                    sns_td = [d['sn'] for _,d in top_items]
+                    y_td   = np.arange(len(ns_td))
+                    brs_td = ax_td.barh(y_td, sas_td, color=[score_color_mpl(s) for s in sas_td], edgecolor='none', height=0.52, alpha=.88)
+                    ax_td.barh(y_td, sns_td, color=col_td, edgecolor='none', height=0.22, alpha=0.32)
+                    ax_td.axvline(62, color='#3fb950', ls=':', alpha=.4)
+                    ax_td.axvline(38, color='#f85149', ls=':', alpha=.4)
+                    ax_td.set_xlim(0,118); ax_td.set_yticks(y_td)
+                    ax_td.set_yticklabels(ns_td, fontsize=8)
+                    ax_td.set_title(label, color='#dde5f0', fontsize=10, fontweight='600', pad=5)
+                    for b, s in zip(brs_td, sas_td):
+                        ax_td.text(s+1, b.get_y()+b.get_height()/2, f'{s:.0f}', va='center', color='white', fontsize=7.5)
+                    ax_td.spines['top'].set_color(col_td); ax_td.grid(axis='x', alpha=.15)
+                plt.suptitle('Top-Down: mejores oportunidades por nivel', color='#dde5f0', fontsize=12, fontweight='bold', y=1.01)
+                plt.tight_layout(pad=1.5)
+                st.pyplot(fig_td, use_container_width=True); plt.close(fig_td)
+
+            st.markdown("""
+            <p class="section-title">🔄 Flujo Top-Down recomendado</p>
+            <div style='background:#0b0f1a;border:1px solid #161d2e;border-radius:10px;padding:18px;'>
+            <div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;'>
+              <div style='background:#1a3050;border:1px solid #3a7bd5;border-radius:7px;padding:9px 14px;text-align:center'>
+                <div style='color:#6b7d9a;font-size:10px;font-weight:700;text-transform:uppercase'>Paso 1</div>
+                <div style='color:#dde5f0;font-size:12px;font-weight:700;margin-top:3px'>🌍 País / Índice</div>
+                <div style='color:#6b7d9a;font-size:10px'>¿Qué mercado está barato?</div>
+              </div>
+              <div style='color:#3a7bd5;font-size:18px'>→</div>
+              <div style='background:#0d2010;border:1px solid #3fb950;border-radius:7px;padding:9px 14px;text-align:center'>
+                <div style='color:#6b7d9a;font-size:10px;font-weight:700;text-transform:uppercase'>Paso 2</div>
+                <div style='color:#dde5f0;font-size:12px;font-weight:700;margin-top:3px'>📊 Sector</div>
+                <div style='color:#6b7d9a;font-size:10px'>¿Qué sector lidera?</div>
+              </div>
+              <div style='color:#3a7bd5;font-size:18px'>→</div>
+              <div style='background:#1e1a05;border:1px solid #e3b341;border-radius:7px;padding:9px 14px;text-align:center'>
+                <div style='color:#6b7d9a;font-size:10px;font-weight:700;text-transform:uppercase'>Paso 3</div>
+                <div style='color:#dde5f0;font-size:12px;font-weight:700;margin-top:3px'>🏭 Industria</div>
+                <div style='color:#6b7d9a;font-size:10px'>¿Qué industria destaca?</div>
+              </div>
+              <div style='color:#3a7bd5;font-size:18px'>→</div>
+              <div style='background:#1a0d20;border:1px solid #bc8cff;border-radius:7px;padding:9px 14px;text-align:center'>
+                <div style='color:#6b7d9a;font-size:10px;font-weight:700;text-transform:uppercase'>Paso 4</div>
+                <div style='color:#dde5f0;font-size:12px;font-weight:700;margin-top:3px'>📈 Acción</div>
+                <div style='color:#6b7d9a;font-size:10px'>¿Qué ticker tiene mejor score?</div>
+              </div>
+            </div>
+            <div style='color:#6b7d9a;font-size:10px;margin-top:12px;border-top:1px solid #161d2e;padding-top:9px'>
+            ⚡ Clave: buscar acciones donde país + sector + industria apunten en la misma dirección.
+            </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style='background:#0b0f1a;border:1px dashed #1a3050;border-radius:10px;padding:30px;text-align:center'>
+              <div style='font-size:36px;margin-bottom:10px'>🎯</div>
+              <div style='color:#dde5f0;font-size:15px;font-weight:600;margin-bottom:6px'>Resumen Top-Down</div>
+              <div style='color:#6b7d9a;font-size:12px'>Presioná el botón para cargar todos los niveles y ver el análisis completo.</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+# ==============================================================
+#  ─── MÓDULOS LARGO PLAZO ─────────────────────────────────────
+# ==============================================================
+
+else:
+    if 'ind_sel' not in dir() or not ind_sel:
+        ind_sel = list(ACCIONES_POR_INDUSTRIA.keys())[:6]
+
+    # ── RANKING LARGO ─────────────────────────────────────────
+    if modulo == '📋 Ranking & Scores':
+        with st.spinner(f'Descargando 2 años de datos para {len(ind_sel)} industrias... Esto puede tardar 1–3 min.'):
+            df_res_l = cargar_resultados_largo(tuple(ind_sel))
+
+        if df_res_l.empty:
+            st.error('No hay datos suficientes. Verificá la conexión.'); st.stop()
+
+        n_alc = len(df_res_l[df_res_l['sesgo'].isin(['ALCISTA','MUY ALCISTA'])])
+        n_baj = len(df_res_l[df_res_l['sesgo'].isin(['BAJISTA','MUY BAJISTA'])])
+        n_rev = df_res_l['reversion_signal'].sum()
+
+        k1,k2,k3,k4 = st.columns(4)
+        with k1:
+            st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#3a7bd5"></div>'
+                        f'<div class="label">Total analizados</div><div class="value">{len(df_res_l)}</div>'
+                        f'<div class="sub">{len(ind_sel)} industrias · 2 años de datos</div></div>', unsafe_allow_html=True)
+        with k2:
+            st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#3fb950"></div>'
+                        f'<div class="label">🟢 Alcistas</div><div class="value" style="color:#3fb950">{n_alc}</div>'
+                        f'<div class="sub">Alcista + Muy Alcista</div></div>', unsafe_allow_html=True)
+        with k3:
+            st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#f85149"></div>'
+                        f'<div class="label">🔴 Bajistas</div><div class="value" style="color:#f85149">{n_baj}</div>'
+                        f'<div class="sub">Bajista + Muy Bajista</div></div>', unsafe_allow_html=True)
+        with k4:
+            st.markdown(f'<div class="kpi-card"><div class="accent" style="background:#f0e68c"></div>'
+                        f'<div class="label">⚡ Candidatos Reversión</div><div class="value" style="color:#f0e68c">{n_rev}</div>'
+                        f'<div class="sub">Z<-1 | BajoBB | RSI<35</div></div>', unsafe_allow_html=True)
+        st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
+
+        tab1, tab2, tab3 = st.tabs(['📋 Tabla completa','📊 Distribución scores','🗺️ Cuadrante largo plazo'])
+
+        with tab1:
+            st.markdown('<div class="info-banner">Trend Score = tendencia (MA, MACD, Hurst) · MR Score = reversión (Z, BB, RSI) · Risk Score = calidad (Sharpe, Sortino, DD, Vol)</div>', unsafe_allow_html=True)
+            col_f1, col_f2 = st.columns([1,3])
+            with col_f1:
+                sesgos_u = ['Todos'] + df_res_l['sesgo'].unique().tolist()
+                sesgo_f = st.selectbox('Filtrar sesgo', sesgos_u)
+            df_show_l = df_res_l if sesgo_f=='Todos' else df_res_l[df_res_l['sesgo']==sesgo_f]
+            tabla_largo(df_show_l)
+
+        with tab2:
+            fig_dist, axes_dist = plt.subplots(1, 3, figsize=(14, 4))
+            fig_dist.patch.set_facecolor('#07090f')
+            for ax_d, col_d, titulo_d in zip(axes_dist, ['trend_score','mr_score','global_score'],
+                                              ['Trend Score','MR Score','Global Score']):
+                ax_d.set_facecolor('#0b0f1a')
+                vals = df_res_l[col_d].values
+                ax_d.hist(vals, bins=20, color=C_ACENT, alpha=0.8, edgecolor='#07090f')
+                ax_d.axvline(vals.mean(), color='#f0883e', lw=1.5, ls='--', label=f'Media: {vals.mean():.1f}')
+                ax_d.axvline(70, color='#3fb950', lw=1, ls=':', alpha=.6)
+                ax_d.axvline(30, color='#f85149', lw=1, ls=':', alpha=.6)
+                ax_d.set_title(titulo_d, color='#dde5f0', fontsize=10, fontweight='600')
+                ax_d.legend(fontsize=8, facecolor='#0b0f1a', labelcolor='#b0bcd0')
+                ax_d.grid(alpha=.12); ax_d.tick_params(colors='#6b7d9a')
+            plt.suptitle('Distribución de Scores — todos los activos', color='#dde5f0', fontsize=11, fontweight='bold')
+            plt.tight_layout(pad=1.5)
+            st.pyplot(fig_dist, use_container_width=True); plt.close(fig_dist)
+
+        with tab3:
+            datos_cuad = {r['ticker']: {'sa': r['trend_score'], 'sn': r['mr_score'], 'ss': r['risk_score'],
+                                         'grupo': r['industria']} for _, r in df_res_l.iterrows()}
+            c_m, _ = st.columns([2,1])
+            with c_m:
+                fig_c = grafico_cuadrante(datos_cuad, None, 'Trend Score vs MR Score (largo plazo)')
+                st.pyplot(fig_c, use_container_width=True); plt.close(fig_c)
+
+    # ── CANDIDATOS REVERSIÓN ──────────────────────────────────
+    elif modulo == '🔄 Candidatos Reversión':
+        with st.spinner('Calculando señales de reversión...'):
+            df_res_l = cargar_resultados_largo(tuple(ind_sel))
+
+        if df_res_l.empty: st.error('No hay datos.'); st.stop()
+
+        df_rev_l = df_res_l[df_res_l['reversion_signal']].sort_values('mr_score', ascending=False)
+
+        st.markdown(f"""
+        <div class="info-banner">
+        Condiciones de activación: <b>Z-Score &lt; -1.0</b> (precio muy debajo de media 20d) | 
+        <b>Precio bajo Banda Bollinger inferior</b> (sobreventa extrema) | <b>RSI &lt; 35</b> (momentum bajista dominante). 
+        Hurst &lt; 0.50 refuerza la señal. Total candidatos: <b>{len(df_rev_l)}</b>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if len(df_rev_l) == 0:
+            st.info('No se detectaron candidatos con las condiciones actuales. El mercado no muestra extremos de sobreventa en las industrias seleccionadas.')
+        else:
+            cols_rev = ['ticker','industria','precio','zscore','rsi','hurst',
+                        'lower_bb','ret_anual','vol_anual','sharpe','max_dd','mr_score','risk_score','global_score','reversion_reasons']
+            df_rev_show = df_rev_l[cols_rev].copy()
+            df_rev_show.columns = ['Ticker','Industria','Precio','Z-Score','RSI','Hurst',
+                                    'BB Inf.','Ret %','Vol %','Sharpe','DD%','MR','Risk','Global','Razones']
+            df_rev_show['Precio']  = df_rev_show['Precio'].apply(fmt_precio)
+            df_rev_show['Z-Score'] = df_rev_show['Z-Score'].apply(lambda x: f'{x:+.2f}')
+            df_rev_show['RSI']     = df_rev_show['RSI'].apply(lambda x: f'{x:.1f}')
+            df_rev_show['Hurst']   = df_rev_show['Hurst'].apply(lambda x: f'{x:.3f}')
+            df_rev_show['BB Inf.'] = df_rev_show['BB Inf.'].apply(fmt_precio)
+            df_rev_show['Ret %']   = df_rev_show['Ret %'].apply(lambda x: f'{x:+.1f}')
+            df_rev_show['Vol %']   = df_rev_show['Vol %'].apply(lambda x: f'{x:.1f}')
+            df_rev_show['Sharpe']  = df_rev_show['Sharpe'].apply(lambda x: f'{x:.2f}')
+            df_rev_show['DD%']     = df_rev_show['DD%'].apply(lambda x: f'{x:.1f}')
+
+            def cs(val):
+                try:
+                    v=float(val)
+                    if v<=20: return 'background-color:#2a0a0a;color:#f85149;font-weight:600'
+                    elif v<=40: return 'background-color:#2a1a05;color:#f0883e;font-weight:600'
+                    elif v<=60: return 'background-color:#1e1a05;color:#e3b341;font-weight:600'
+                    elif v<=80: return 'background-color:#081a0a;color:#7ee787;font-weight:600'
+                    else: return 'background-color:#051505;color:#3fb950;font-weight:600'
+                except: return ''
+
+            _map = 'map' if hasattr(df_rev_show.style,'map') else 'applymap'
+            styled_rev = (df_rev_show.style
+                .pipe(lambda s: getattr(s,_map)(cs, subset=['MR','Risk','Global']))
+                .set_properties(**{'background-color':'#0b0f1a','color':'#dde5f0','border':'1px solid #161d2e'})
+                .set_table_styles([{'selector':'th','props':[('background-color','#0d1220'),('color','#dde5f0'),('font-weight','700'),('text-align','center'),('border-bottom','2px solid #3a7bd5')]},{'selector':'td','props':[('text-align','center'),('font-size','11px')]}])
+            )
+            altura = min(700, max(200, len(df_rev_show)*32+45))
+            st.dataframe(styled_rev, use_container_width=True, height=altura)
+
+            # Gráfico scatter MR Score vs Global Score
+            st.markdown('<p class="section-title">📊 MR Score vs Global Score — candidatos</p>', unsafe_allow_html=True)
+            fig_rev, ax_rev = plt.subplots(figsize=(9, 5))
+            fig_rev.patch.set_facecolor('#07090f'); ax_rev.set_facecolor('#0b0f1a')
+            ax_rev.scatter(df_rev_l['mr_score'], df_rev_l['global_score'],
+                           c=[score_color_mpl(s) for s in df_rev_l['global_score']],
+                           s=120, edgecolors='#07090f', lw=1, alpha=.9, zorder=5)
+            for _, r in df_rev_l.iterrows():
+                ax_rev.annotate(r['ticker'], (r['mr_score'], r['global_score']),
+                                xytext=(5,3), textcoords='offset points', fontsize=7.5, color='#b0bcd0')
+            ax_rev.axvline(60, color='#3fb950', ls='--', alpha=.4)
+            ax_rev.axhline(55, color='#3a7bd5', ls='--', alpha=.4)
+            ax_rev.set_xlabel('MR Score →', fontsize=10); ax_rev.set_ylabel('Global Score →', fontsize=10)
+            ax_rev.set_title('Candidatos a Reversión — mejor cuadrante: derecha-arriba', color='#dde5f0', fontsize=10.5)
+            ax_rev.grid(alpha=.12); ax_rev.tick_params(colors='#6b7d9a')
+            ax_rev.spines['top'].set_visible(False); ax_rev.spines['right'].set_visible(False)
+            plt.tight_layout(pad=1.2)
+            st.pyplot(fig_rev, use_container_width=True); plt.close(fig_rev)
+
+    # ── POR INDUSTRIA LARGO ───────────────────────────────────
+    elif modulo == '📊 Por Industria':
+        with st.spinner('Calculando análisis por industria...'):
+            df_res_l = cargar_resultados_largo(tuple(ind_sel))
+
+        if df_res_l.empty: st.error('No hay datos.'); st.stop()
+
+        for industria in ind_sel:
+            grupo = df_res_l[df_res_l['industria']==industria].sort_values('global_score', ascending=False)
+            if grupo.empty: continue
+
+            avg_g = grupo['global_score'].mean()
+            n_alc = grupo['sesgo'].isin(['ALCISTA','MUY ALCISTA']).sum()
+            best  = grupo.iloc[0]
+
+            st.markdown(f"""
+            <p class="section-title">📂 {industria} &nbsp;—&nbsp; Score promedio: {avg_g:.1f} &nbsp;|&nbsp; Alcistas: {n_alc}/{len(grupo)} &nbsp;|&nbsp; Mejor: {best['ticker']} ({int(best['global_score'])})</p>
+            """, unsafe_allow_html=True)
+
+            # Mini tabla
+            cols_ind = ['ticker','precio','ret_anual','vol_anual','rsi','hurst','sharpe','max_dd','trend_score','mr_score','risk_score','global_score','sesgo']
+            df_ind_show = grupo[cols_ind].copy()
+            df_ind_show.columns = ['Ticker','Precio','Ret %','Vol %','RSI','Hurst','Sharpe','DD%','Trend','MR','Risk','Global','Sesgo']
+            df_ind_show['Precio'] = df_ind_show['Precio'].apply(fmt_precio)
+            df_ind_show['Ret %']  = df_ind_show['Ret %'].apply(lambda x: f'{x:+.1f}')
+            df_ind_show['Vol %']  = df_ind_show['Vol %'].apply(lambda x: f'{x:.1f}')
+            df_ind_show['RSI']    = df_ind_show['RSI'].apply(lambda x: f'{x:.1f}')
+            df_ind_show['Hurst']  = df_ind_show['Hurst'].apply(lambda x: f'{x:.3f}')
+            df_ind_show['Sharpe'] = df_ind_show['Sharpe'].apply(lambda x: f'{x:.2f}')
+            df_ind_show['DD%']    = df_ind_show['DD%'].apply(lambda x: f'{x:.1f}')
+
+            def cs(val):
+                try:
+                    v=float(val)
+                    if v<=20: return 'background-color:#2a0a0a;color:#f85149;font-weight:600'
+                    elif v<=40: return 'background-color:#2a1a05;color:#f0883e;font-weight:600'
+                    elif v<=60: return 'background-color:#1e1a05;color:#e3b341;font-weight:600'
+                    elif v<=80: return 'background-color:#081a0a;color:#7ee787;font-weight:600'
+                    else: return 'background-color:#051505;color:#3fb950;font-weight:600'
+                except: return ''
+            def sesgo_st(val):
+                return {'MUY ALCISTA':'color:#3fb950;font-weight:700','ALCISTA':'color:#7ee787;font-weight:700',
+                        'NEUTRAL':'color:#e3b341;font-weight:700','BAJISTA':'color:#f0883e;font-weight:700',
+                        'MUY BAJISTA':'color:#f85149;font-weight:700'}.get(val,'')
+
+            _map = 'map' if hasattr(df_ind_show.style,'map') else 'applymap'
+            styled_ind = (df_ind_show.style
+                .pipe(lambda s: getattr(s,_map)(cs, subset=['Trend','MR','Risk','Global']))
+                .pipe(lambda s: getattr(s,_map)(sesgo_st, subset=['Sesgo']))
+                .set_properties(**{'background-color':'#0b0f1a','color':'#dde5f0','border':'1px solid #161d2e'})
+                .set_table_styles([{'selector':'th','props':[('background-color','#0d1220'),('color','#dde5f0'),('font-weight','700'),('text-align','center'),('border-bottom','2px solid #3a7bd5'),('font-size','10px')]},{'selector':'td','props':[('text-align','center'),('font-size','11px')]}])
+            )
+            st.dataframe(styled_ind, use_container_width=True, height=min(400, len(df_ind_show)*32+45))
+
+            # Interpretaciones individuales
+            with st.expander(f'📝 Interpretaciones individuales — {industria}'):
+                for _, row in grupo.iterrows():
+                    r_dict = row.to_dict()
+                    interp = interpretar_largo(r_dict)
+                    sesgo_class = {
+                        'MUY ALCISTA':'sesgo-muy-alc', 'ALCISTA':'sesgo-alc',
+                        'NEUTRAL':'sesgo-neu', 'BAJISTA':'sesgo-baj', 'MUY BAJISTA':'sesgo-muy-baj',
+                    }.get(r_dict['sesgo'], '')
+                    st.markdown(f"""
+                    <div class="interp-card">
+                        <div class="interp-header">
+                            {r_dict['ticker']} &nbsp;·&nbsp; Score: {int(r_dict['global_score'])}/100 &nbsp;·&nbsp;
+                            <span class="{sesgo_class}">{r_dict['sesgo']}</span> &nbsp;·&nbsp;
+                            {fmt_precio(r_dict['precio'])}
+                        </div>
+                        {interp}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    # ── DETALLE POR TICKER ────────────────────────────────────
+    elif modulo == '🔍 Detalle por Ticker':
+        todos_tickers = []
+        for ind in ind_sel:
+            todos_tickers.extend(ACCIONES_POR_INDUSTRIA.get(ind,[]))
+        todos_tickers = sorted(set(todos_tickers))
+
+        if not todos_tickers:
+            st.info('Seleccioná al menos una industria en el menú lateral.')
+            st.stop()
+
+        ticker_sel = st.selectbox('Seleccioná un ticker', todos_tickers)
+
+        if ticker_sel:
+            with st.spinner(f'Descargando 2 años de datos para {ticker_sel}...'):
+                df_tk = descargar_datos(ticker_sel, '2y')
+
+            if df_tk is None or df_tk.empty:
+                st.error(f'No hay datos suficientes para {ticker_sel}.')
+                st.stop()
+
+            cl = get_close_series(df_tk)
+            if cl is None or len(cl) < 150:
+                st.error('Datos insuficientes para el análisis.')
+                st.stop()
+
+            r = analizar_largo(ticker_sel, cl)
+            if r is None:
+                st.error('No se pudo calcular el análisis.')
+                st.stop()
+
+            # KPIs
+            k1,k2,k3,k4,k5,k6 = st.columns(6)
+            metricas = [
+                (k1, 'Global Score',  f"{int(r['global_score'])}/100",  str(r['sesgo'])),
+                (k2, 'Trend Score',   f"{int(r['trend_score'])}/100",   f"GC: {'Sí' if r['golden_cross'] else 'No'} | MACD: {'Alc' if r['macd_bull'] else 'Baj'}"),
+                (k3, 'MR Score',      f"{int(r['mr_score'])}/100",      f"Z: {r['zscore']:+.2f} | RSI: {r['rsi']:.1f}"),
+                (k4, 'Risk Score',    f"{int(r['risk_score'])}/100",    f"Sharpe: {r['sharpe']:.2f}"),
+                (k5, 'Ret. Anual',    f"{r['ret_anual']:+.1f}%",        f"Vol: {r['vol_anual']:.1f}%"),
+                (k6, 'Max DrawDown',  f"{r['max_dd']:.1f}%",            f"Hurst: {r['hurst']:.3f}"),
+            ]
+            for col_k, label, value, sub in metricas:
+                with col_k:
+                    st.markdown(
+                        f'<div class="kpi-card"><div class="accent" style="background:{score_color_hex(r[\"global_score\"])}"></div>'
+                        f'<div class="label">{label}</div><div class="value">{value}</div>'
+                        f'<div class="sub">{sub}</div></div>',
+                        unsafe_allow_html=True
+                    )
+            st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
+
+            # Interpretación
+            interp = interpretar_largo(r)
+            sesgo_class = {
+                'MUY ALCISTA':'sesgo-muy-alc', 'ALCISTA':'sesgo-alc',
+                'NEUTRAL':'sesgo-neu', 'BAJISTA':'sesgo-baj', 'MUY BAJISTA':'sesgo-muy-baj',
+            }.get(r['sesgo'], '')
+            st.markdown(f"""
+            <div class="interp-card">
+                <div class="interp-header">
+                    Interpretación cuantitativa — {ticker_sel} &nbsp;·&nbsp; {r['industria']} &nbsp;·&nbsp;
+                    <span class="{sesgo_class}">{r['sesgo']}</span>
+                </div>
+                {interp}
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Gráfico de precio con indicadores
+            tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger','📊 RSI & MACD','📉 Drawdown'])
+
+            with tab_g1:
+                retornos_tk = cl.pct_change().dropna()
+                ma20_tk  = cl.rolling(20).mean()
+                std20_tk = cl.rolling(20).std()
+                upper_tk = ma20_tk + 2*std20_tk
+                lower_tk = ma20_tk - 2*std20_tk
+                ma50_tk  = cl.rolling(50).mean()
+                ma200_tk = cl.rolling(200).mean()
+
+                fig_p, ax_p = plt.subplots(figsize=(12, 5))
+                fig_p.patch.set_facecolor('#07090f'); ax_p.set_facecolor('#0b0f1a')
+                ax_p.fill_between(cl.index, lower_tk, upper_tk, alpha=0.08, color='#3a7bd5', label='Bandas Bollinger')
+                ax_p.plot(cl.index, upper_tk, color='#3a7bd5', lw=0.8, alpha=0.5)
+                ax_p.plot(cl.index, lower_tk, color='#3a7bd5', lw=0.8, alpha=0.5)
+                ax_p.plot(cl.index, ma20_tk,  color='#e3b341', lw=1.2, ls='--', label='MA20')
+                ax_p.plot(cl.index, ma50_tk,  color='#3fb950', lw=1.2, label='MA50')
+                ax_p.plot(cl.index, ma200_tk, color='#f85149', lw=1.2, label='MA200')
+                trend_c_tk = '#3fb950' if cl.iloc[-1] >= cl.iloc[0] else '#f85149'
+                ax_p.plot(cl.index, cl, color=trend_c_tk, lw=1.8, zorder=4, label='Precio')
+                ax_p.fill_between(cl.index, cl, cl.min(), alpha=0.06, color=trend_c_tk)
+                ax_p.set_title(f'{ticker_sel} — Precio + Indicadores (2 años)', color='#dde5f0', fontsize=11, fontweight='600')
+                ax_p.legend(fontsize=8, facecolor='#0b0f1a', labelcolor='#b0bcd0', ncol=3)
+                ax_p.grid(alpha=.12); ax_p.tick_params(colors='#6b7d9a')
+                ax_p.spines['top'].set_visible(False); ax_p.spines['right'].set_visible(False)
+                plt.tight_layout(pad=1.2)
+                st.pyplot(fig_p, use_container_width=True); plt.close(fig_p)
+
+            with tab_g2:
+                rsi_tk   = calcular_rsi(cl, 14)
+                macd_tk  = cl.ewm(span=12,adjust=False).mean() - cl.ewm(span=26,adjust=False).mean()
+                signal_tk= macd_tk.ewm(span=9,adjust=False).mean()
+                hist_macd= macd_tk - signal_tk
+
+                fig_rs, (ax_rsi, ax_macd) = plt.subplots(2, 1, figsize=(12, 6), gridspec_kw={'hspace':0.3})
+                fig_rs.patch.set_facecolor('#07090f')
+                for ax_i in [ax_rsi, ax_macd]: ax_i.set_facecolor('#0b0f1a')
+
+                ax_rsi.plot(rsi_tk.index, rsi_tk, color='#bc8cff', lw=1.5)
+                ax_rsi.axhline(70, color='#f85149', ls='--', alpha=.5, lw=.9)
+                ax_rsi.axhline(30, color='#3fb950', ls='--', alpha=.5, lw=.9)
+                ax_rsi.fill_between(rsi_tk.index, 30, rsi_tk.values, where=rsi_tk.values<30, alpha=.2, color='#3fb950')
+                ax_rsi.fill_between(rsi_tk.index, 70, rsi_tk.values, where=rsi_tk.values>70, alpha=.2, color='#f85149')
+                ax_rsi.set_title('RSI (14)', color='#dde5f0', fontsize=9.5, fontweight='600')
+                ax_rsi.set_ylim(0,100); ax_rsi.grid(alpha=.12); ax_rsi.tick_params(colors='#6b7d9a')
+
+                ax_macd.plot(macd_tk.index, macd_tk, color='#3a7bd5', lw=1.3, label='MACD')
+                ax_macd.plot(signal_tk.index, signal_tk, color='#f0883e', lw=1.1, label='Signal')
+                ax_macd.bar(hist_macd.index, hist_macd, color=['#3fb950' if v>=0 else '#f85149' for v in hist_macd], alpha=.5)
+                ax_macd.axhline(0, color='#b0bcd0', lw=.6, alpha=.4)
+                ax_macd.set_title('MACD (12,26,9)', color='#dde5f0', fontsize=9.5, fontweight='600')
+                ax_macd.legend(fontsize=8, facecolor='#0b0f1a', labelcolor='#b0bcd0')
+                ax_macd.grid(alpha=.12); ax_macd.tick_params(colors='#6b7d9a')
+                for ax_i in [ax_rsi, ax_macd]:
+                    ax_i.spines['top'].set_visible(False); ax_i.spines['right'].set_visible(False)
+                plt.tight_layout(pad=1.2)
+                st.pyplot(fig_rs, use_container_width=True); plt.close(fig_rs)
+
+            with tab_g3:
+                retornos_tk2 = cl.pct_change().dropna()
+                cum_tk = (1 + retornos_tk2).cumprod()
+                dd_tk  = (cum_tk / cum_tk.cummax()) - 1
+
+                fig_dd, ax_dd = plt.subplots(figsize=(12, 4))
+                fig_dd.patch.set_facecolor('#07090f'); ax_dd.set_facecolor('#0b0f1a')
+                ax_dd.fill_between(dd_tk.index, dd_tk*100, 0, alpha=0.6, color='#f85149')
+                ax_dd.plot(dd_tk.index, dd_tk*100, color='#f85149', lw=1.2)
+                ax_dd.axhline(0, color='#b0bcd0', lw=.6, alpha=.4)
+                ax_dd.axhline(-20, color='#e3b341', ls='--', alpha=.4, lw=.8, label='-20%')
+                ax_dd.axhline(-40, color='#f85149', ls='--', alpha=.4, lw=.8, label='-40%')
+                ax_dd.set_title(f'{ticker_sel} — Drawdown desde máximo (%) | Máx: {float(dd_tk.min()*100):.1f}%', color='#dde5f0', fontsize=10, fontweight='600')
+                ax_dd.legend(fontsize=8, facecolor='#0b0f1a', labelcolor='#b0bcd0')
+                ax_dd.grid(alpha=.12); ax_dd.tick_params(colors='#6b7d9a')
+                ax_dd.spines['top'].set_visible(False); ax_dd.spines['right'].set_visible(False)
+                plt.tight_layout(pad=1.2)
+                st.pyplot(fig_dd, use_container_width=True); plt.close(fig_dd)
+
+# ==============================================================
+#  FOOTER
+# ==============================================================
+
+st.markdown('<div style="height:20px"></div>', unsafe_allow_html=True)
 st.markdown("""
-<div style='text-align:center; color:#484f58; font-size:11px; padding:12px;
-     border-top:1px solid #1e2533; margin-top:8px'>
-📊 Análisis Top-Down &nbsp;·&nbsp; Datos: Yahoo Finance &nbsp;·&nbsp; Caché: 30 min
-&nbsp;·&nbsp; Solo informativo, no constituye asesoramiento financiero
+<div style='text-align:center; color:#3a4a5a; font-size:10px; padding:12px;
+     border-top:1px solid #161d2e; margin-top:8px'>
+📡 Analizador Cuantitativo Unificado &nbsp;·&nbsp; Corto + Mediano/Largo Plazo &nbsp;·&nbsp;
+Datos: Yahoo Finance &nbsp;·&nbsp; Caché: 30 min &nbsp;·&nbsp;
+<b>Solo informativo. No constituye asesoramiento financiero.</b>
 </div>
 """, unsafe_allow_html=True)
