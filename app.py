@@ -55,38 +55,72 @@ st.markdown("""
   .block-container { padding: 0 2rem 2rem 2rem !important; max-width: 1400px; }
 
   /* ── Top nav bar ── */
-  .topbar {
+  .topbar-wrap {
     position: sticky; top: 0; z-index: 999;
-    background: rgba(7,9,15,0.97);
+    background: rgba(7,9,15,0.96);
     border-bottom: 1px solid #21262d;
-    padding: 0 2rem;
-    display: flex; align-items: center; gap: 2rem;
-    height: 56px;
-    backdrop-filter: blur(12px);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    padding: 0;
   }
-  .topbar-logo {
-    font-size: 14px; font-weight: 700; color: #e6edf3;
-    letter-spacing: -0.3px; white-space: nowrap;
-    display: flex; align-items: center; gap: 8px;
+  .topbar-inner {
+    display: flex; align-items: center;
+    padding: 0 24px; height: 58px; gap: 0;
   }
-  .topbar-logo span { color: #3a7bd5; }
-  .topbar-sep { width: 1px; height: 24px; background: #21262d; }
-  .topbar-nav { display: flex; gap: 4px; flex: 1; overflow-x: auto; }
-  .topbar-nav::-webkit-scrollbar { height: 0; }
-  .nav-btn {
-    padding: 6px 14px; border-radius: 6px; border: none;
-    font-size: 12px; font-weight: 500; cursor: pointer;
-    white-space: nowrap; transition: all .15s;
-    background: transparent; color: #8b949e;
+  .topbar-brand {
+    display: flex; align-items: center; gap: 10px;
+    margin-right: 28px; flex-shrink: 0;
   }
-  .nav-btn:hover { background: #161b22; color: #e6edf3; }
-  .nav-btn.active { background: #1f3a5f; color: #3a7bd5; font-weight: 600; }
-  .nav-badge {
-    display: inline-block; margin-left: 5px;
-    background: #1f3a5f; color: #3a7bd5;
-    font-size: 9px; font-weight: 700;
-    padding: 1px 5px; border-radius: 10px;
-    vertical-align: middle;
+  .topbar-brand-icon {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, #1e4fa8, #3a7bd5);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+  .topbar-brand-name {
+    font-size: 13px; font-weight: 700; color: #e6edf3;
+    letter-spacing: -0.3px; line-height: 1.2;
+  }
+  .topbar-brand-sub {
+    font-size: 10px; color: #6b7d9a; letter-spacing: 0.2px;
+  }
+  .topbar-divider { width: 1px; height: 22px; background: #21262d; margin: 0 20px; flex-shrink: 0; }
+  .topbar-nav-group { display: flex; align-items: center; gap: 2px; flex: 1; }
+  .topbar-section-label {
+    font-size: 9px; font-weight: 700; color: #3a4a5f;
+    text-transform: uppercase; letter-spacing: 1.2px;
+    margin-right: 6px; white-space: nowrap;
+  }
+  .topbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .topbar-time {
+    font-size: 10px; color: #3a4a5f; font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+  }
+
+  /* Streamlit buttons restyled as nav pills */
+  div[data-testid="stHorizontalBlock"] > div[data-testid="column"] .stButton > button {
+    border-radius: 6px !important;
+    border: 1px solid transparent !important;
+    padding: 5px 13px !important;
+    font-size: 12px !important; font-weight: 500 !important;
+    height: 32px !important; min-height: 32px !important;
+    background: transparent !important;
+    color: #8b949e !important;
+    transition: all .15s !important;
+    box-shadow: none !important;
+    white-space: nowrap !important;
+  }
+  div[data-testid="stHorizontalBlock"] > div[data-testid="column"] .stButton > button:hover {
+    background: #161b22 !important;
+    color: #e6edf3 !important;
+    border-color: #21262d !important;
+  }
+
+  /* Mode buttons get accent styling */
+  div[data-testid="column"]:nth-child(1) .stButton > button,
+  div[data-testid="column"]:nth-child(2) .stButton > button,
+  div[data-testid="column"]:nth-child(3) .stButton > button {
+    font-weight: 600 !important;
   }
 
   /* ── Page header ── */
@@ -941,39 +975,68 @@ def tabla_largo(df_res):
 # ==============================================================
 
 def modulo_buscador():
-    st.markdown('<div class="search-container">', unsafe_allow_html=True)
-    st.markdown('<div class="search-title">🔍 Buscador Universal</div>', unsafe_allow_html=True)
-    st.markdown('<div class="search-sub">Ingresá cualquier ticker del universo (acciones, cripto, ETF) y obtené el análisis completo: corto y largo plazo.</div>', unsafe_allow_html=True)
-
-    col_sel, col_btn = st.columns([3,1])
-    with col_sel:
-        ticker_input = st.selectbox(
-            'Seleccioná o escribí un ticker',
-            options=[''] + ALL_TICKERS,
-            index=0,
-            format_func=lambda x: f"{x} — {TICKER_INDUSTRY.get(x,'')}" if x else '— Buscá un ticker —',
-            key='buscador_ticker'
-        )
-    with col_btn:
-        st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
-        buscar = st.button('▶ Analizar', use_container_width=True, key='btn_buscar')
-
-    # También permitir texto libre
-    ticker_free = st.text_input('O escribí el ticker manualmente (ej: NVDA, BTC-USD, EURUSD=X)', key='ticker_manual', placeholder='NVDA')
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    ticker_final = (ticker_free.strip().upper() if ticker_free.strip() else ticker_input)
-    if not ticker_final or not (buscar or ticker_free.strip()):
-        st.markdown("""
-        <div style='background:#0d1117;border:1px dashed #21262d;border-radius:10px;padding:40px;text-align:center;margin-top:8px'>
-          <div style='font-size:40px;margin-bottom:12px'>🔍</div>
-          <div style='color:#e6edf3;font-size:15px;font-weight:600;margin-bottom:6px'>Buscador de Activos</div>
-          <div style='color:#6b7d9a;font-size:12px;line-height:1.7'>
-            Seleccioná un ticker del menú o escribilo manualmente.<br>
-            Obtendrás análisis de corto plazo (percentil histórico) y largo plazo (cuantitativo 2 años).
+    # ── Hero del buscador ──
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #3a7bd5;
+         border-radius:14px; padding:32px 36px; margin-bottom:28px;">
+      <div style="display:flex;align-items:flex-start;gap:18px">
+        <div style="font-size:32px;line-height:1">🔍</div>
+        <div>
+          <div style="font-size:18px;font-weight:700;color:#e6edf3;letter-spacing:-0.4px;margin-bottom:6px">
+            Buscador Universal de Activos
+          </div>
+          <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+            Ingresá el símbolo de cualquier activo: acciones, ETF, cripto, divisas o commodities.<br>
+            Obtenés análisis completo de <b style="color:#f0883e">corto plazo</b> (percentiles históricos) 
+            y <b style="color:#3fb950">largo plazo</b> (cuantitativo 2 años).
           </div>
         </div>
-        """, unsafe_allow_html=True)
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Input manual ──
+    col_inp, col_btn = st.columns([4, 1])
+    with col_inp:
+        ticker_manual = st.text_input(
+            'Símbolo del activo',
+            key='ticker_manual',
+            placeholder='Ej: NVDA · AAPL · BTC-USD · EURUSD=X · GC=F · GGAL',
+            label_visibility='collapsed',
+        )
+    with col_btn:
+        analizar = st.button('▶ Analizar', use_container_width=True, key='btn_buscar')
+
+    # Ayuda de ejemplos
+    st.markdown("""
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;margin-bottom:4px">
+      <span style="font-size:10px;color:#3a4a5f;font-weight:600;align-self:center">Ejemplos rápidos →</span>
+      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">NVDA</code>
+      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">AAPL</code>
+      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">TSLA</code>
+      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">BTC-USD</code>
+      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">ETH-USD</code>
+      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">EURUSD=X</code>
+      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">GC=F</code>
+      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">GGAL</code>
+      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">YPF</code>
+    </div>
+    """, unsafe_allow_html=True)
+
+    ticker_final = ticker_manual.strip().upper() if ticker_manual else ''
+
+    if not ticker_final or not analizar:
+        if not ticker_final:
+            st.markdown("""
+            <div style="border:1px dashed #21262d;border-radius:12px;padding:48px;text-align:center;margin-top:20px">
+              <div style="font-size:44px;margin-bottom:14px;opacity:.6">📊</div>
+              <div style="color:#6b7d9a;font-size:13px;font-weight:500;line-height:1.8">
+                Escribí el ticker arriba y presioná <b style="color:#e6edf3">Analizar</b><br>
+                para ver el análisis completo del activo.
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
         return
 
     _renderizar_buscador(ticker_final)
@@ -1163,8 +1226,8 @@ def _renderizar_buscador(ticker):
 for key, default in [
     ('nav_horizonte', 'corto'),
     ('nav_modulo', 'resumen'),
-    ('nav_ind_sel_corto', list(ACCIONES_POR_INDUSTRIA.keys())[:5]),
-    ('nav_ind_sel_largo', list(ACCIONES_POR_INDUSTRIA.keys())[:6]),
+    ('nav_ind_sel_corto', list(ACCIONES_POR_INDUSTRIA.keys())[:1]),
+    ('nav_ind_sel_largo', list(ACCIONES_POR_INDUSTRIA.keys())[:1]),
     ('nav_grupos_fx', list(dict.fromkeys(v[1] for v in FOREX.values()))),
 ]:
     if key not in st.session_state:
@@ -1174,76 +1237,110 @@ for key, default in [
 #  TOP NAV BAR (HTML estático + botones Streamlit)
 # ==============================================================
 
-st.markdown("""
-<div class="topbar">
-  <div class="topbar-logo">📡 <span>Analizador</span> Cuantitativo</div>
-  <div class="topbar-sep"></div>
-</div>
-""", unsafe_allow_html=True)
+# ==============================================================
+#  NAVBAR HTML + botones Streamlit superpuestos
+# ==============================================================
 
-# Nav usando columnas con botones
-nav_cols = st.columns([1,1,1,1,1,1,1,1,1,1,0.5])
+_now_str = datetime.now().strftime('%H:%M')
+_h_color = {'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5'}
+_h_label = {'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda'}
 
 HORIZONTE = st.session_state['nav_horizonte']
 MODULO    = st.session_state['nav_modulo']
 
-with nav_cols[0]:
-    if st.button('⚡ Corto Plazo', use_container_width=True, key='nav_h_corto'):
+# ── Barra de marca (HTML puro) ──
+st.markdown(f"""
+<div class="topbar-wrap">
+  <div class="topbar-inner">
+    <div class="topbar-brand">
+      <div class="topbar-brand-icon">📡</div>
+      <div>
+        <div class="topbar-brand-name">Analizador Cuantitativo</div>
+        <div class="topbar-brand-sub">Yahoo Finance · Caché 30min</div>
+      </div>
+    </div>
+    <div class="topbar-divider"></div>
+    <div style="display:flex;align-items:center;gap:6px;margin-right:16px;flex-shrink:0">
+      <span style="width:7px;height:7px;border-radius:50%;background:{_h_color.get(HORIZONTE,'#3a7bd5')};display:inline-block"></span>
+      <span style="font-size:11px;font-weight:600;color:{_h_color.get(HORIZONTE,'#3a7bd5')}">{_h_label.get(HORIZONTE,'')}</span>
+    </div>
+    <div class="topbar-divider"></div>
+    <div style="flex:1"></div>
+    <div class="topbar-time">🕐 {_now_str}</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ── Fila de navegación ── separada debajo del brand bar
+st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
+
+# Botones de modo principal
+_c = st.columns([1.1, 1.1, 1, 0.05, 1, 1, 1, 1, 1, 1, 0.05, 1])
+
+with _c[0]:
+    _active_corto = '▸ ' if HORIZONTE == 'corto' else ''
+    if st.button(f'{_active_corto}⚡ Corto Plazo', use_container_width=True, key='nav_h_corto',
+                 help='Análisis Top-Down 1–30 días'):
         st.session_state['nav_horizonte'] = 'corto'
         st.session_state['nav_modulo'] = 'resumen'
         st.rerun()
-with nav_cols[1]:
-    if st.button('📈 Largo Plazo', use_container_width=True, key='nav_h_largo'):
+
+with _c[1]:
+    _active_largo = '▸ ' if HORIZONTE == 'largo' else ''
+    if st.button(f'{_active_largo}📈 Largo Plazo', use_container_width=True, key='nav_h_largo',
+                 help='Análisis cuantitativo 2 años'):
         st.session_state['nav_horizonte'] = 'largo'
         st.session_state['nav_modulo'] = 'ranking'
         st.rerun()
-with nav_cols[2]:
-    if st.button('🔍 Buscador', use_container_width=True, key='nav_buscador'):
+
+with _c[2]:
+    _active_bus = '▸ ' if HORIZONTE == 'buscador' else ''
+    if st.button(f'{_active_bus}🔍 Buscador', use_container_width=True, key='nav_buscador',
+                 help='Análisis completo por ticker'):
         st.session_state['nav_horizonte'] = 'buscador'
         st.session_state['nav_modulo'] = 'buscador'
         st.rerun()
 
+# Separador visual (columna vacía)
+# _c[3] vacío
+
+# Sub-módulos según horizonte
 if HORIZONTE == 'corto':
-    with nav_cols[3]:
-        if st.button('💱 Forex', use_container_width=True, key='nav_forex'):
-            st.session_state['nav_modulo'] = 'forex'; st.rerun()
-    with nav_cols[4]:
-        if st.button('🌍 Países', use_container_width=True, key='nav_paises'):
-            st.session_state['nav_modulo'] = 'paises'; st.rerun()
-    with nav_cols[5]:
-        if st.button('📊 Sectores', use_container_width=True, key='nav_sectores'):
-            st.session_state['nav_modulo'] = 'sectores'; st.rerun()
-    with nav_cols[6]:
-        if st.button('🛢️ Mercados', use_container_width=True, key='nav_mercados'):
-            st.session_state['nav_modulo'] = 'mercados'; st.rerun()
-    with nav_cols[7]:
-        if st.button('📈 Acciones', use_container_width=True, key='nav_acciones'):
-            st.session_state['nav_modulo'] = 'acciones'; st.rerun()
-    with nav_cols[8]:
-        if st.button('🎯 Top-Down', use_container_width=True, key='nav_topdown'):
-            st.session_state['nav_modulo'] = 'topdown'; st.rerun()
+    _mods_corto = [
+        ('💱 Forex',    'forex',    4),
+        ('🌍 Países',   'paises',   5),
+        ('📊 Sectores', 'sectores', 6),
+        ('🛢️ Mercados', 'mercados', 7),
+        ('📈 Acciones', 'acciones', 8),
+        ('🎯 Top-Down', 'topdown',  9),
+    ]
+    for label, mod_key, col_idx in _mods_corto:
+        with _c[col_idx]:
+            _prefix = '· ' if MODULO == mod_key else ''
+            if st.button(f'{_prefix}{label}', use_container_width=True, key=f'nav_{mod_key}'):
+                st.session_state['nav_modulo'] = mod_key; st.rerun()
 
 elif HORIZONTE == 'largo':
-    with nav_cols[3]:
-        if st.button('📋 Ranking', use_container_width=True, key='nav_ranking'):
-            st.session_state['nav_modulo'] = 'ranking'; st.rerun()
-    with nav_cols[4]:
-        if st.button('🔄 Reversión', use_container_width=True, key='nav_rev'):
-            st.session_state['nav_modulo'] = 'reversion'; st.rerun()
-    with nav_cols[5]:
-        if st.button('🏭 Por Industria', use_container_width=True, key='nav_indust'):
-            st.session_state['nav_modulo'] = 'industria'; st.rerun()
-    with nav_cols[6]:
-        if st.button('🔍 Ticker', use_container_width=True, key='nav_ticker'):
-            st.session_state['nav_modulo'] = 'ticker'; st.rerun()
+    _mods_largo = [
+        ('📋 Ranking',     'ranking',   4),
+        ('🔄 Reversión',   'reversion', 5),
+        ('🏭 Industria',   'industria', 6),
+        ('🔍 Ticker',      'ticker',    7),
+    ]
+    for label, mod_key, col_idx in _mods_largo:
+        with _c[col_idx]:
+            _prefix = '· ' if MODULO == mod_key else ''
+            if st.button(f'{_prefix}{label}', use_container_width=True, key=f'nav_{mod_key}'):
+                st.session_state['nav_modulo'] = mod_key; st.rerun()
 
-with nav_cols[10]:
-    if st.button('🔄', use_container_width=True, key='nav_refresh', help='Actualizar datos'):
+# Actualizar datos — última columna
+with _c[11]:
+    if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh', help='Limpiar caché y recargar datos'):
         st.cache_data.clear(); st.rerun()
 
-st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
+st.markdown('<div style="height:2px"></div>', unsafe_allow_html=True)
 
-# Actualizar estado local
+# Re-leer estado por si cambió
 HORIZONTE = st.session_state['nav_horizonte']
 MODULO    = st.session_state['nav_modulo']
 
@@ -1252,35 +1349,48 @@ MODULO    = st.session_state['nav_modulo']
 # ==============================================================
 
 titulos = {
-    'buscador':  ('🔍 Buscador Universal', 'Análisis completo por ticker — corto y largo plazo'),
-    'forex':     ('💱 Análisis Forex', 'Pares de divisas — ranking y oportunidades'),
-    'paises':    ('🌍 Países / Índices Globales', 'Índices nacionales y regionales'),
-    'sectores':  ('📊 Sectores S&P500', '11 sectores GICS — flujo de capital'),
-    'mercados':  ('🛢️ Commodities · Metales · Cripto', 'Mercados reales globales'),
-    'acciones':  ('📈 Acciones por Industria', 'Ranking por sector corto plazo'),
-    'topdown':   ('🎯 Resumen Top-Down', 'Flujo macro → micro'),
-    'ranking':   ('📋 Ranking Cuantitativo', 'Global Score · Trend · MR · Risk'),
-    'reversion': ('🔄 Candidatos a Reversión', 'Sobreventa estadística · Z-Score · Bollinger · RSI'),
-    'industria': ('🏭 Análisis por Industria', 'Comparativa cuantitativa sectorial'),
-    'ticker':    ('🔍 Análisis Individual', 'Detalle cuantitativo por ticker'),
-    'resumen':   ('🎯 Resumen Top-Down', 'Vista ejecutiva multi-nivel'),
+    'buscador':  ('Buscador Universal', '🔍', 'Análisis completo por ticker — corto y largo plazo'),
+    'forex':     ('Análisis Forex', '💱', 'Pares de divisas — ranking y oportunidades de acumulación'),
+    'paises':    ('Países / Índices Globales', '🌍', 'Índices nacionales y regionales — flujo de capital macro'),
+    'sectores':  ('Sectores S&P500', '📊', '11 sectores GICS — rotación y momentum'),
+    'mercados':  ('Commodities · Metales · Cripto', '🛢️', 'Mercados reales globales — energía, metales, agro, digital'),
+    'acciones':  ('Acciones por Industria', '📈', 'Ranking por sector — oportunidades de corto plazo'),
+    'topdown':   ('Resumen Top-Down', '🎯', 'Vista ejecutiva macro → sector → acción'),
+    'ranking':   ('Ranking Cuantitativo', '📋', 'Global Score · Trend Score · MR Score · Risk Score'),
+    'reversion': ('Candidatos a Reversión', '🔄', 'Sobreventa estadística — Z-Score · Bollinger · RSI < 35'),
+    'industria': ('Análisis por Industria', '🏭', 'Comparativa cuantitativa sectorial con interpretación'),
+    'ticker':    ('Análisis Individual', '🔍', 'Detalle cuantitativo completo para un ticker específico'),
+    'resumen':   ('Resumen Top-Down', '🎯', 'Vista ejecutiva multi-nivel — macro a micro'),
 }
-titulo_h, subtitulo_h = titulos.get(MODULO, ('📡 Analizador', ''))
+titulo_h, icono_h, subtitulo_h = titulos.get(MODULO, ('Analizador', '📡', ''))
 
-badge_color = '#f0883e' if HORIZONTE == 'corto' else ('#3fb950' if HORIZONTE == 'largo' else '#3a7bd5')
-badge_txt   = 'CORTO PLAZO' if HORIZONTE == 'corto' else ('LARGO PLAZO' if HORIZONTE == 'largo' else 'BUSCADOR')
+badge_map = {
+    'corto':    ('#f0883e', 'rgba(240,136,62,0.12)', 'CORTO PLAZO'),
+    'largo':    ('#3fb950', 'rgba(63,185,80,0.10)',  'LARGO PLAZO'),
+    'buscador': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BÚSQUEDA'),
+}
+badge_color, badge_bg, badge_txt = badge_map.get(HORIZONTE, ('#3a7bd5','rgba(58,123,213,0.12)',''))
 
 st.markdown(f"""
 <div class="page-header">
-  <div class="page-title">
-    {titulo_h}
-    <span style="display:inline-block;margin-left:12px;padding:3px 10px;border-radius:20px;
-      font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;
-      background:rgba(255,255,255,0.06);border:1px solid {badge_color};color:{badge_color}">
-      {badge_txt}
-    </span>
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
+    <div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:5px">
+        <span style="font-size:22px;line-height:1">{icono_h}</span>
+        <span class="page-title">{titulo_h}</span>
+        <span style="padding:3px 10px;border-radius:20px;font-size:9px;font-weight:700;
+          letter-spacing:1px;text-transform:uppercase;background:{badge_bg};
+          border:1px solid {badge_color};color:{badge_color}">{badge_txt}</span>
+      </div>
+      <div class="page-sub">{subtitulo_h}</div>
+    </div>
+    <div style="text-align:right;flex-shrink:0">
+      <div style="font-size:11px;color:#3a4a5f;font-family:'JetBrains Mono',monospace">
+        {datetime.now().strftime('%d/%m/%Y · %H:%M')}
+      </div>
+      <div style="font-size:10px;color:#2a3a4f;margin-top:2px">Yahoo Finance</div>
+    </div>
   </div>
-  <div class="page-sub">{subtitulo_h} &nbsp;·&nbsp; {datetime.now().strftime('%d/%m/%Y %H:%M')}</div>
 </div>
 """, unsafe_allow_html=True)
 
