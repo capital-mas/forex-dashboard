@@ -97,30 +97,53 @@ st.markdown("""
     white-space: nowrap;
   }
 
-  /* Streamlit buttons restyled as nav pills */
+  /* ── Nav pills — todos los botones de la fila de navegación ── */
   div[data-testid="stHorizontalBlock"] > div[data-testid="column"] .stButton > button {
-    border-radius: 6px !important;
-    border: 1px solid transparent !important;
-    padding: 5px 13px !important;
+    border-radius: 999px !important;
+    border: 1px solid #21262d !important;
+    padding: 6px 16px !important;
     font-size: 12px !important; font-weight: 500 !important;
-    height: 32px !important; min-height: 32px !important;
-    background: transparent !important;
+    height: 34px !important; min-height: 34px !important;
+    background: #0d1117 !important;
     color: #8b949e !important;
-    transition: all .15s !important;
+    transition: all .18s ease !important;
     box-shadow: none !important;
     white-space: nowrap !important;
+    letter-spacing: 0.1px !important;
   }
   div[data-testid="stHorizontalBlock"] > div[data-testid="column"] .stButton > button:hover {
     background: #161b22 !important;
     color: #e6edf3 !important;
-    border-color: #21262d !important;
+    border-color: #3a4a5a !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
   }
 
-  /* Mode buttons get accent styling */
-  div[data-testid="column"]:nth-child(1) .stButton > button,
-  div[data-testid="column"]:nth-child(2) .stButton > button,
-  div[data-testid="column"]:nth-child(3) .stButton > button {
-    font-weight: 600 !important;
+  /* ── Botón ACTIVO — verde brillante ── */
+  .nav-active-btn .stButton > button {
+    background: linear-gradient(135deg, #1a7f37, #2ea043) !important;
+    color: #ffffff !important;
+    border-color: #2ea043 !important;
+    font-weight: 700 !important;
+    box-shadow: 0 0 0 3px rgba(46,160,67,0.18), 0 2px 8px rgba(46,160,67,0.25) !important;
+  }
+  .nav-active-btn .stButton > button:hover {
+    background: linear-gradient(135deg, #238636, #3fb950) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 0 0 3px rgba(63,185,80,0.22), 0 4px 12px rgba(46,160,67,0.3) !important;
+  }
+
+  /* ── Botón de actualizar — outline gris ── */
+  .nav-refresh-btn .stButton > button {
+    background: transparent !important;
+    color: #6b7d9a !important;
+    border-color: #21262d !important;
+    font-size: 11px !important;
+  }
+  .nav-refresh-btn .stButton > button:hover {
+    background: #161b22 !important;
+    color: #e6edf3 !important;
+    border-color: #3a4a5a !important;
   }
 
   /* ── Page header ── */
@@ -937,7 +960,7 @@ def _apply_score_style(df, score_cols, ret_cols=None):
     ])
     return styled
 
-def tabla_corto(filas_dict):
+def tabla_corto(filas_dict, key_suffix=''):
     filas = []
     for nombre, d in sorted(filas_dict.items(), key=lambda x: x[1]['sa'], reverse=True):
         filas.append({'Nombre': nombre, 'Acum': round(d['sa'],1), 'Antic': round(d['sn'],1),
@@ -945,10 +968,26 @@ def tabla_corto(filas_dict):
             'Ret 5d %': round(d.get('ret_5d',0),2), 'Ret 10d %': round(d.get('ret_10d',0),2),
             'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion']})
     df = pd.DataFrame(filas)
-    styled = _apply_score_style(df, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %'])
-    st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df)*35+45)))
 
-def tabla_largo(df_res):
+    # ── Filtros en línea ──
+    fc1, fc2, fc3 = st.columns([2,2,2])
+    with fc1:
+        señales_u = ['Todas'] + sorted(df['Señal'].unique().tolist())
+        f_señal = st.selectbox('Señal', señales_u, key=f'tc_señal_{key_suffix}')
+    with fc2:
+        f_acum_min = st.slider('Acum mínimo', 0, 100, 0, 5, key=f'tc_acum_{key_suffix}')
+    with fc3:
+        f_antic_min = st.slider('Antic mínimo', 0, 100, 0, 5, key=f'tc_antic_{key_suffix}')
+
+    df_f = df.copy()
+    if f_señal != 'Todas': df_f = df_f[df_f['Señal']==f_señal]
+    df_f = df_f[(df_f['Acum']>=f_acum_min) & (df_f['Antic']>=f_antic_min)]
+
+    styled = _apply_score_style(df_f, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %'])
+    st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
+    st.caption(f'{len(df_f)} activos mostrados de {len(df)} totales')
+
+def tabla_largo(df_res, key_suffix=''):
     if df_res.empty: return
     cols_show = ['rank','ticker','industria','precio','ret_anual','vol_anual','rsi','sharpe',
                  'max_dd','trend_score','mr_score','risk_score','global_score','sesgo']
@@ -961,20 +1000,67 @@ def tabla_largo(df_res):
     df_show['RSI']    = df_show['RSI'].apply(lambda x: f'{x:.1f}')
     df_show['Sharpe'] = df_show['Sharpe'].apply(lambda x: f'{x:.2f}')
     df_show['DD%']    = df_show['DD%'].apply(lambda x: f'{x:.1f}')
+
+    # ── Filtros ──
+    fc1, fc2, fc3, fc4 = st.columns([2,2,1,1])
+    with fc1:
+        sesgos_u = ['Todos'] + sorted(df_show['Sesgo'].unique().tolist())
+        f_sesgo = st.selectbox('Sesgo', sesgos_u, key=f'tl_sesgo_{key_suffix}')
+    with fc2:
+        inds_u = ['Todas'] + sorted(df_show['Industria'].unique().tolist())
+        f_ind = st.selectbox('Industria', inds_u, key=f'tl_ind_{key_suffix}')
+    with fc3:
+        f_global_min = st.slider('Global mín.', 0, 100, 0, 5, key=f'tl_global_{key_suffix}')
+    with fc4:
+        f_sharpe_min = st.slider('Sharpe mín.', -3, 5, -3, 1, key=f'tl_sharpe_{key_suffix}')
+
+    df_f = df_show.copy()
+    if f_sesgo != 'Todos': df_f = df_f[df_f['Sesgo']==f_sesgo]
+    if f_ind   != 'Todas': df_f = df_f[df_f['Industria']==f_ind]
+    try:
+        df_f = df_f[df_f['Global'].astype(int) >= f_global_min]
+        df_f = df_f[df_f['Sharpe'].astype(float) >= f_sharpe_min]
+    except: pass
+
     def sesgo_style(val):
         return {'MUY ALCISTA':'color:#3fb950;font-weight:700','ALCISTA':'color:#7ee787;font-weight:700',
                 'NEUTRAL':'color:#e3b341;font-weight:700','BAJISTA':'color:#f0883e;font-weight:700',
                 'MUY BAJISTA':'color:#f85149;font-weight:700'}.get(val,'')
-    _map = 'map' if hasattr(df_show.style,'map') else 'applymap'
-    styled = (_apply_score_style(df_show, ['Trend','MR','Risk','Global'])
+    _map = 'map' if hasattr(df_f.style,'map') else 'applymap'
+    styled = (_apply_score_style(df_f, ['Trend','MR','Risk','Global'])
               .pipe(lambda s: getattr(s,_map)(sesgo_style, subset=['Sesgo'])))
-    st.dataframe(styled, use_container_width=True, height=min(700, max(200, len(df_show)*30+45)))
+    st.dataframe(styled, use_container_width=True, height=min(700, max(200, len(df_f)*30+45)))
+    st.caption(f'{len(df_f)} activos mostrados de {len(df_show)} totales')
+
+    # ── Click en ticker para ir al buscador ──
+    st.markdown('<div style="margin-top:12px">', unsafe_allow_html=True)
+    tickers_disponibles = df_f['Ticker'].tolist()
+    if tickers_disponibles:
+        cc1, cc2 = st.columns([3,1])
+        with cc1:
+            ticker_click = st.selectbox(
+                '🔍 Analizar ticker de la tabla',
+                ['— Seleccioná un ticker —'] + tickers_disponibles,
+                key=f'tl_ticker_click_{key_suffix}'
+            )
+        with cc2:
+            st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+            if st.button('▶ Ver análisis completo', use_container_width=True, key=f'tl_go_{key_suffix}'):
+                if ticker_click and ticker_click != '— Seleccioná un ticker —':
+                    st.session_state['ticker_from_table'] = ticker_click
+                    st.session_state['nav_horizonte'] = 'buscador'
+                    st.session_state['nav_modulo']    = 'buscador'
+                    st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ==============================================================
 #  MÓDULO BUSCADOR UNIVERSAL
 # ==============================================================
 
 def modulo_buscador():
+    # Si viene de un click en tabla, pre-cargar y auto-analizar
+    prefill = st.session_state.get('ticker_from_table', '')
+
     # ── Hero del buscador ──
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
@@ -988,7 +1074,7 @@ def modulo_buscador():
           </div>
           <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
             Ingresá el símbolo de cualquier activo: acciones, ETF, cripto, divisas o commodities.<br>
-            Obtenés análisis completo de <b style="color:#f0883e">corto plazo</b> (percentiles históricos) 
+            Obtenés análisis completo de <b style="color:#f0883e">corto plazo</b> (percentiles históricos)
             y <b style="color:#3fb950">largo plazo</b> (cuantitativo 2 años).
           </div>
         </div>
@@ -1001,7 +1087,8 @@ def modulo_buscador():
     with col_inp:
         ticker_manual = st.text_input(
             'Símbolo del activo',
-            key='ticker_manual',
+            value=prefill,
+            key='ticker_manual_input',
             placeholder='Ej: NVDA · AAPL · BTC-USD · EURUSD=X · GC=F · GGAL',
             label_visibility='collapsed',
         )
@@ -1011,7 +1098,7 @@ def modulo_buscador():
     # Ayuda de ejemplos
     st.markdown("""
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;margin-bottom:4px">
-      <span style="font-size:10px;color:#3a4a5f;font-weight:600;align-self:center">Ejemplos rápidos →</span>
+      <span style="font-size:10px;color:#3a4a5f;font-weight:600;align-self:center">Ejemplos →</span>
       <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">NVDA</code>
       <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">AAPL</code>
       <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">TSLA</code>
@@ -1026,17 +1113,21 @@ def modulo_buscador():
 
     ticker_final = ticker_manual.strip().upper() if ticker_manual else ''
 
-    if not ticker_final or not analizar:
-        if not ticker_final:
-            st.markdown("""
-            <div style="border:1px dashed #21262d;border-radius:12px;padding:48px;text-align:center;margin-top:20px">
-              <div style="font-size:44px;margin-bottom:14px;opacity:.6">📊</div>
-              <div style="color:#6b7d9a;font-size:13px;font-weight:500;line-height:1.8">
-                Escribí el ticker arriba y presioná <b style="color:#e6edf3">Analizar</b><br>
-                para ver el análisis completo del activo.
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+    # Auto-analizar si viene de tabla
+    auto_run = bool(prefill and ticker_final == prefill.upper())
+    if prefill:
+        st.session_state['ticker_from_table'] = ''  # limpiar para la próxima vez
+
+    if not ticker_final or not (analizar or auto_run):
+        st.markdown("""
+        <div style="border:1px dashed #21262d;border-radius:12px;padding:48px;text-align:center;margin-top:20px">
+          <div style="font-size:44px;margin-bottom:14px;opacity:.6">📊</div>
+          <div style="color:#6b7d9a;font-size:13px;font-weight:500;line-height:1.8">
+            Escribí el ticker arriba y presioná <b style="color:#e6edf3">Analizar</b><br>
+            para ver el análisis completo del activo.
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
     _renderizar_buscador(ticker_final)
@@ -1229,6 +1320,8 @@ for key, default in [
     ('nav_ind_sel_corto', list(ACCIONES_POR_INDUSTRIA.keys())[:1]),
     ('nav_ind_sel_largo', list(ACCIONES_POR_INDUSTRIA.keys())[:1]),
     ('nav_grupos_fx', list(dict.fromkeys(v[1] for v in FOREX.values()))),
+    ('ticker_from_table', ''),
+    ('ticker_manual', ''),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -1272,37 +1365,31 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ── Fila de navegación ── separada debajo del brand bar
-st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
+st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+
+# Helper para envolver un botón con clase activa
+def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on_click_val_m=None):
+    css_class = 'nav-active-btn' if is_active else ''
+    with col:
+        st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
+        clicked = st.button(label, use_container_width=True, key=key)
+        st.markdown('</div>', unsafe_allow_html=True)
+        if clicked:
+            if on_click_val_h:
+                st.session_state['nav_horizonte'] = on_click_val_h
+            if on_click_val_m:
+                st.session_state['nav_modulo'] = on_click_val_m
+            st.rerun()
 
 # Botones de modo principal
-_c = st.columns([1.1, 1.1, 1, 0.05, 1, 1, 1, 1, 1, 1, 0.05, 1])
+_c = st.columns([1.1, 1.1, 1, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
 
-with _c[0]:
-    _active_corto = '▸ ' if HORIZONTE == 'corto' else ''
-    if st.button(f'{_active_corto}⚡ Corto Plazo', use_container_width=True, key='nav_h_corto',
-                 help='Análisis Top-Down 1–30 días'):
-        st.session_state['nav_horizonte'] = 'corto'
-        st.session_state['nav_modulo'] = 'resumen'
-        st.rerun()
-
-with _c[1]:
-    _active_largo = '▸ ' if HORIZONTE == 'largo' else ''
-    if st.button(f'{_active_largo}📈 Largo Plazo', use_container_width=True, key='nav_h_largo',
-                 help='Análisis cuantitativo 2 años'):
-        st.session_state['nav_horizonte'] = 'largo'
-        st.session_state['nav_modulo'] = 'ranking'
-        st.rerun()
-
-with _c[2]:
-    _active_bus = '▸ ' if HORIZONTE == 'buscador' else ''
-    if st.button(f'{_active_bus}🔍 Buscador', use_container_width=True, key='nav_buscador',
-                 help='Análisis completo por ticker'):
-        st.session_state['nav_horizonte'] = 'buscador'
-        st.session_state['nav_modulo'] = 'buscador'
-        st.rerun()
-
-# Separador visual (columna vacía)
-# _c[3] vacío
+_nav_btn(_c[0], '⚡ Corto Plazo', 'nav_h_corto',
+         HORIZONTE=='corto', None, 'corto', 'resumen')
+_nav_btn(_c[1], '📈 Largo Plazo', 'nav_h_largo',
+         HORIZONTE=='largo', None, 'largo', 'ranking')
+_nav_btn(_c[2], '🔍 Buscador', 'nav_buscador',
+         HORIZONTE=='buscador', None, 'buscador', 'buscador')
 
 # Sub-módulos según horizonte
 if HORIZONTE == 'corto':
@@ -1315,30 +1402,28 @@ if HORIZONTE == 'corto':
         ('🎯 Top-Down', 'topdown',  9),
     ]
     for label, mod_key, col_idx in _mods_corto:
-        with _c[col_idx]:
-            _prefix = '· ' if MODULO == mod_key else ''
-            if st.button(f'{_prefix}{label}', use_container_width=True, key=f'nav_{mod_key}'):
-                st.session_state['nav_modulo'] = mod_key; st.rerun()
+        _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
+                 MODULO==mod_key, None, None, mod_key)
 
 elif HORIZONTE == 'largo':
     _mods_largo = [
-        ('📋 Ranking',     'ranking',   4),
-        ('🔄 Reversión',   'reversion', 5),
-        ('🏭 Industria',   'industria', 6),
-        ('🔍 Ticker',      'ticker',    7),
+        ('📋 Ranking',   'ranking',   4),
+        ('🔄 Reversión', 'reversion', 5),
+        ('🏭 Industria', 'industria', 6),
+        ('🔍 Ticker',    'ticker',    7),
     ]
     for label, mod_key, col_idx in _mods_largo:
-        with _c[col_idx]:
-            _prefix = '· ' if MODULO == mod_key else ''
-            if st.button(f'{_prefix}{label}', use_container_width=True, key=f'nav_{mod_key}'):
-                st.session_state['nav_modulo'] = mod_key; st.rerun()
+        _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
+                 MODULO==mod_key, None, None, mod_key)
 
-# Actualizar datos — última columna
+# Actualizar datos
 with _c[11]:
-    if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh', help='Limpiar caché y recargar datos'):
+    st.markdown('<div class="nav-refresh-btn">', unsafe_allow_html=True)
+    if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
         st.cache_data.clear(); st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown('<div style="height:2px"></div>', unsafe_allow_html=True)
+st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
 
 # Re-leer estado por si cambió
 HORIZONTE = st.session_state['nav_horizonte']
@@ -1580,11 +1665,44 @@ elif HORIZONTE == 'corto':
                         'Ret 10d %': round(d.get('ret_10d',0),2),
                         'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion']})
             df_acc = pd.DataFrame(filas).sort_values('Acum', ascending=False)
-            señ_u2 = ['Todas'] + sorted(df_acc['Señal'].unique().tolist())
-            señ_s2 = st.selectbox('Filtrar señal', señ_u2, key='acc_corto_f')
-            df_show_a = df_acc if señ_s2=='Todas' else df_acc[df_acc['Señal']==señ_s2]
+
+            # Filtros
+            fa1, fa2, fa3, fa4 = st.columns([2,2,1,1])
+            with fa1:
+                señ_u2 = ['Todas'] + sorted(df_acc['Señal'].unique().tolist())
+                señ_s2 = st.selectbox('Señal', señ_u2, key='acc_corto_f')
+            with fa2:
+                ind_u2 = ['Todas'] + sorted(df_acc['Industria'].unique().tolist())
+                ind_s2 = st.selectbox('Industria', ind_u2, key='acc_corto_ind')
+            with fa3:
+                acum_min2 = st.slider('Acum mín.', 0, 100, 0, 5, key='acc_corto_acum')
+            with fa4:
+                antic_min2 = st.slider('Antic mín.', 0, 100, 0, 5, key='acc_corto_antic')
+
+            df_show_a = df_acc.copy()
+            if señ_s2  != 'Todas': df_show_a = df_show_a[df_show_a['Señal']==señ_s2]
+            if ind_s2  != 'Todas': df_show_a = df_show_a[df_show_a['Industria']==ind_s2]
+            df_show_a = df_show_a[(df_show_a['Acum']>=acum_min2) & (df_show_a['Antic']>=antic_min2)]
+
             styled = _apply_score_style(df_show_a, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %'])
             st.dataframe(styled, use_container_width=True, height=min(700, max(200, len(df_show_a)*32+45)))
+            st.caption(f'{len(df_show_a)} activos mostrados de {len(df_acc)} totales')
+
+            # Click-to-analyze
+            tickers_disp = df_show_a['Ticker'].tolist()
+            if tickers_disp:
+                cca1, cca2 = st.columns([3,1])
+                with cca1:
+                    tk_click_a = st.selectbox('🔍 Analizar ticker de la tabla',
+                        ['— Seleccioná —'] + tickers_disp, key='acc_corto_click')
+                with cca2:
+                    st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+                    if st.button('▶ Ver análisis completo', use_container_width=True, key='acc_corto_go'):
+                        if tk_click_a and tk_click_a != '— Seleccioná —':
+                            st.session_state['ticker_from_table'] = tk_click_a
+                            st.session_state['nav_horizonte'] = 'buscador'
+                            st.session_state['nav_modulo']    = 'buscador'
+                            st.rerun()
 
 # ── LARGO PLAZO ─────────────────────────────────────────────────
 
@@ -1613,10 +1731,7 @@ elif HORIZONTE == 'largo':
         ])
         tab1, tab2, tab3 = st.tabs(['📋 Tabla completa','📊 Distribución','🗺️ Cuadrante largo plazo'])
         with tab1:
-            sesgos_u = ['Todos'] + df_res_l['sesgo'].unique().tolist()
-            sesgo_f = st.selectbox('Filtrar sesgo', sesgos_u)
-            df_show_l = df_res_l if sesgo_f=='Todos' else df_res_l[df_res_l['sesgo']==sesgo_f]
-            tabla_largo(df_show_l)
+            tabla_largo(df_res_l, key_suffix='ranking')
         with tab2:
             fig_dist, axes_dist = plt.subplots(1, 3, figsize=(14, 4))
             fig_dist.patch.set_facecolor('#07090f')
