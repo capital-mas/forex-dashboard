@@ -300,6 +300,12 @@ MERCADOS_REALES = {
     'BNB':             ('BNB-USD', 'Cripto',     '#e3b341'),
     'XRP':             ('XRP-USD', 'Cripto',     '#58a6ff'),
     'Cardano':         ('ADA-USD', 'Cripto',     '#d2a8ff'),
+    'Doge':            ('DOGE-USD', 'Cripto',     '#f0883e'),
+    'Tron':            ('TRX-USD', 'Cripto',     '#7ee787'),
+    'Aave':            ('AAVE-USD', 'Cripto',     '#bc8cff'),
+    'Near':            ('NEAR-USD', 'Cripto',     '#e3b341'),
+    'Avax':            ('AVAX', 'Cripto',     '#58a6ff'),
+    'Charlink':        ('LINK-USD', 'Cripto',     '#d2a8ff'),
 }
 
 INDUSTRIAS = {
