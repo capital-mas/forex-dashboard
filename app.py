@@ -1792,10 +1792,11 @@ else:
                 (k5, 'Ret. Anual',    f"{r['ret_anual']:+.1f}%",        f"Vol: {r['vol_anual']:.1f}%"),
                 (k6, 'Max DrawDown',  f"{r['max_dd']:.1f}%",            f"Hurst: {r['hurst']:.3f}"),
             ]
+            accent_color = score_color_hex(r['global_score'])
             for col_k, label, value, sub in metricas:
                 with col_k:
                     st.markdown(
-                        f'<div class="kpi-card"><div class="accent" style="background:{score_color_hex(r[\"global_score\"])}"></div>'
+                        f'<div class="kpi-card"><div class="accent" style="background:{accent_color}"></div>'
                         f'<div class="label">{label}</div><div class="value">{value}</div>'
                         f'<div class="sub">{sub}</div></div>',
                         unsafe_allow_html=True
