@@ -371,7 +371,7 @@ ACCIONES_POR_INDUSTRIA = {
     'REIT Residencial':   ['EQR','AVB','ESS','MAA','UDR','CPT'],
     'Telecomunicaciones': ['T','VZ','TMUS','AMT','CCI','SBAC'],
     'Internet':           ['GOOGL','META','NFLX','SNAP','PINS','RDDT','SPOT'],
-    'Argentina':          ['GGAL','BMA','BFR','SUPV','BBAR','CEPU','YPF','PAM','TGS','CRESY','LOMA','VIST'],
+    'Argentina':          ['GGAL','BMA','BFR','SUPV','BBAR','CEPU','YPF','PAM','TGS','CRESY','LOMA','VISTA'],
     'Brasil':             ['VALE','ITUB','PBR','BBD','ABEV','NU'],
     'México':             ['WALMEX.MX','AMXL.MX','CEMEXCPO.MX','GFINBURO.MX'],
     'China':              ['BABA','TCEHY','BIDU','JD','NIO','LI','XPEV','BYDDF','PDD','NTES'],
@@ -1420,6 +1420,87 @@ def _renderizar_buscador(ticker):
         ax_dd.spines['top'].set_visible(False); ax_dd.spines['right'].set_visible(False)
         plt.tight_layout(pad=1.2)
         st.pyplot(fig_dd, use_container_width=True); plt.close(fig_dd)
+
+
+    # ── ANÁLISIS FUNDAMENTAL ──────────────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 📊 Análisis Fundamental')
+
+    industria_fund = TICKER_INDUSTRY.get(ticker, 'Sin Clasificar')
+    sector_fund    = SECTOR_MAP_FUND.get(industria_fund, 'Sin Clasificar')
+
+    with st.spinner('Descargando ratios fundamentales...'):
+        res_fund = analizar_fundamental(ticker, industria_fund)
+
+    if res_fund is None:
+        st.info('No se encontraron datos fundamentales para este activo (puede ser cripto, forex o commodity sin estados financieros).')
+    else:
+        sc_col_b, sc_bg_b = _senal_color(res_fund['senal_final'])
+        bench_b = res_fund['bench']
+
+        # KPIs fundamentales
+        kpi_cards_4([
+            ('Señal Fundamental', res_fund['senal_final'],
+             f"✅ {res_fund['n_ok']} positivas · ⚠️ {res_fund['n_alt']} alertas", sc_col_b),
+            ('Valuación',
+             f"PER {_fmt_num(res_fund.get('per'))}x · P/B {_fmt_num(res_fund.get('pb'))}x",
+             f"EV/EBITDA: {_fmt_num(res_fund.get('ev_ebitda'))}x · PEG: {_fmt_num(res_fund.get('peg'))}",
+             '#3a7bd5'),
+            ('Rentabilidad',
+             f"ROE {_fmt_pct(res_fund.get('roe'))} · ROA {_fmt_pct(res_fund.get('roa'))}",
+             f"Mg.Bruto: {_fmt_pct(res_fund.get('gross_margin'))} · Mg.Op: {_fmt_pct(res_fund.get('op_margin'))}",
+             '#3fb950'),
+            ('Solvencia / Flujo',
+             f"D/E {_fmt_num(res_fund.get('debt_equity'))}x · CR {_fmt_num(res_fund.get('curr_ratio'))}x",
+             f"FCF: {_fmt_big(res_fund.get('fcf'))} · Beta: {_fmt_num(res_fund.get('beta'))}",
+             '#e3b341'),
+        ])
+
+        # Métricas secundarias
+        mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
+        with mc1: st.metric('Sector', sector_fund[:16])
+        with mc2: st.metric('Industria', industria_fund[:16])
+        with mc3: st.metric('Rev. Growth', _fmt_pct(res_fund.get('revenue_growth')))
+        with mc4: st.metric('Div. Yield', _fmt_pct(res_fund.get('div_yield')))
+        with mc5: st.metric('Precio Obj.', fmt_precio(res_fund.get('target_price')))
+        with mc6: st.metric('Rec. Analistas', res_fund.get('recommendation') or 'N/D')
+
+        # Benchmark del sector
+        st.markdown(f"""
+        <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
+             border-radius:8px;padding:10px 16px;margin:10px 0;font-size:11px;color:#b0bcd0;line-height:1.8'>
+          <b style='color:#3a7bd5;font-size:12px'>BENCHMARK {sector_fund.upper()}</b><br>
+          {bench_b['descripcion']}<br>
+          <b style='color:#6b7d9a'>Métricas clave:</b> {' · '.join(bench_b.get('metricas_clave', []))}
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Señales en dos columnas
+        ok_sigs_b  = [(t,m) for t,m in res_fund['senales'] if t=='OK']
+        alt_sigs_b = [(t,m) for t,m in res_fund['senales'] if t=='ALT']
+        col_sig1, col_sig2 = st.columns(2)
+        with col_sig1:
+            st.markdown('<div style="font-size:11px;font-weight:700;color:#3fb950;margin-bottom:4px">✅ SEÑALES POSITIVAS</div>', unsafe_allow_html=True)
+            if ok_sigs_b:
+                for _, msg in ok_sigs_b:
+                    st.markdown(f'<div style="font-size:11px;color:#3fb950;padding:2px 0;border-bottom:1px solid #21262d">• {msg}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div style="font-size:11px;color:#6b7d9a">Sin señales positivas detectadas</div>', unsafe_allow_html=True)
+        with col_sig2:
+            st.markdown('<div style="font-size:11px;font-weight:700;color:#f85149;margin-bottom:4px">⚠️ ALERTAS</div>', unsafe_allow_html=True)
+            if alt_sigs_b:
+                for _, msg in alt_sigs_b:
+                    st.markdown(f'<div style="font-size:11px;color:#f85149;padding:2px 0;border-bottom:1px solid #21262d">• {msg}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div style="font-size:11px;color:#6b7d9a">Sin alertas detectadas</div>', unsafe_allow_html=True)
+
+        # Vs benchmark sectorial
+        if res_fund['sector_senales']:
+            st.markdown('<div style="margin-top:12px;font-size:11px;font-weight:700;color:#3a7bd5;margin-bottom:4px">📐 COMPARATIVA VS BENCHMARK SECTORIAL</div>', unsafe_allow_html=True)
+            for tipo, msg in res_fund['sector_senales']:
+                col_vs_b = '#3fb950' if tipo == 'POS' else '#f85149'
+                ico_vs_b = '✔' if tipo == 'POS' else '✘'
+                st.markdown(f'<div style="font-size:11px;color:{col_vs_b};padding:3px 0;border-bottom:1px solid #21262d">{ico_vs_b} {msg}</div>', unsafe_allow_html=True)
 
 
 # ==============================================================
@@ -2580,21 +2661,84 @@ def modulo_fundamental():
 
         df_fund = pd.DataFrame(filas_res)
 
-        # Filtros
-        fc1, fc2, fc3 = st.columns(3)
-        with fc1:
-            f_senal_f = st.selectbox('Señal', ['Todas','COMPRA FUERTE','MANTENER','RIESGO / VENDER'], key='fund_f_senal')
-        with fc2:
-            inds_u_f = ['Todas'] + sorted(df_fund['Industria'].unique().tolist())
-            f_ind_f  = st.selectbox('Industria', inds_u_f, key='fund_f_ind')
-        with fc3:
-            sects_u  = ['Todos'] + sorted(df_fund['Sector'].unique().tolist())
-            f_sect_f = st.selectbox('Sector', sects_u, key='fund_f_sect')
+        # ── FILTROS AVANZADOS ─────────────────────────────────────────────
+        with st.expander('🎛️ Filtros avanzados', expanded=True):
+            frow1 = st.columns(4)
+            with frow1[0]:
+                f_senal_f = st.selectbox('Señal', ['Todas','COMPRA FUERTE','MANTENER','RIESGO / VENDER'], key='fund_f_senal')
+            with frow1[1]:
+                inds_u_f = ['Todas'] + sorted(df_fund['Industria'].unique().tolist())
+                f_ind_f  = st.selectbox('Industria', inds_u_f, key='fund_f_ind')
+            with frow1[2]:
+                sects_u  = ['Todos'] + sorted(df_fund['Sector'].unique().tolist())
+                f_sect_f = st.selectbox('Sector', sects_u, key='fund_f_sect')
+            with frow1[3]:
+                f_sort = st.selectbox('Ordenar por', ['OK ↓ (más señales positivas)', 'ALT ↑ (más alertas)', 'YTD % ↓', 'PER ↑ (más barato)', 'ROE % ↓'], key='fund_f_sort')
 
+            frow2 = st.columns(4)
+            with frow2[0]:
+                f_per_max = st.number_input('PER máximo', min_value=0.0, max_value=500.0, value=0.0, step=5.0, key='fund_f_per',
+                                             help='0 = sin límite. Filtra empresas con PER ≤ este valor.')
+            with frow2[1]:
+                f_roe_min = st.number_input('ROE mínimo %', min_value=0.0, max_value=100.0, value=0.0, step=1.0, key='fund_f_roe',
+                                             help='0 = sin límite. Filtra empresas con ROE ≥ este porcentaje.')
+            with frow2[2]:
+                f_beta_max = st.number_input('Beta máximo', min_value=0.0, max_value=5.0, value=0.0, step=0.1, key='fund_f_beta',
+                                              help='0 = sin límite. Filtra activos con Beta ≤ este valor.')
+            with frow2[3]:
+                f_fcf_pos  = st.checkbox('Solo FCF positivo', key='fund_f_fcf')
+                f_ok_min   = st.number_input('Señales OK mínimas', min_value=0, max_value=20, value=0, step=1, key='fund_f_ok_min')
+
+        # ── APLICAR FILTROS ───────────────────────────────────────────────
         df_f2 = df_fund.copy()
-        if f_senal_f != 'Todas': df_f2 = df_f2[df_f2['Señal']==f_senal_f]
-        if f_ind_f   != 'Todas': df_f2 = df_f2[df_f2['Industria']==f_ind_f]
-        if f_sect_f  != 'Todos': df_f2 = df_f2[df_f2['Sector']==f_sect_f]
+        if f_senal_f != 'Todas':
+            df_f2 = df_f2[df_f2['Señal'] == f_senal_f]
+        if f_ind_f != 'Todas':
+            df_f2 = df_f2[df_f2['Industria'] == f_ind_f]
+        if f_sect_f != 'Todos':
+            df_f2 = df_f2[df_f2['Sector'] == f_sect_f]
+
+        # Filtros numéricos: comparar contra valores reales (no strings formateados)
+        emp_filtradas = [e for lst in todos_resultados.values() for e in lst]
+        tickers_validos = set(df_f2['Ticker'].tolist())
+
+        if f_per_max > 0:
+            tickers_validos = {e['ticker'] for e in emp_filtradas
+                               if e['ticker'] in tickers_validos
+                               and e.get('per') is not None and e['per'] <= f_per_max}
+        if f_roe_min > 0:
+            tickers_validos = {e['ticker'] for e in emp_filtradas
+                               if e['ticker'] in tickers_validos
+                               and e.get('roe') is not None and e['roe'] * 100 >= f_roe_min}
+        if f_beta_max > 0:
+            tickers_validos = {e['ticker'] for e in emp_filtradas
+                               if e['ticker'] in tickers_validos
+                               and e.get('beta') is not None and e['beta'] <= f_beta_max}
+        if f_fcf_pos:
+            tickers_validos = {e['ticker'] for e in emp_filtradas
+                               if e['ticker'] in tickers_validos
+                               and e.get('fcf') is not None and e['fcf'] > 0}
+        if f_ok_min > 0:
+            tickers_validos = {e['ticker'] for e in emp_filtradas
+                               if e['ticker'] in tickers_validos
+                               and e['n_ok'] >= f_ok_min}
+
+        df_f2 = df_f2[df_f2['Ticker'].isin(tickers_validos)]
+
+        # Ordenamiento
+        if 'OK ↓' in f_sort:
+            df_f2 = df_f2.sort_values('OK', ascending=False)
+        elif 'ALT ↑' in f_sort:
+            df_f2 = df_f2.sort_values('ALT', ascending=False)
+        elif 'YTD' in f_sort:
+            ytd_num = df_f2['YTD %'].str.replace('%','').apply(pd.to_numeric, errors='coerce')
+            df_f2 = df_f2.assign(_ytd=ytd_num).sort_values('_ytd', ascending=False).drop(columns=['_ytd'])
+        elif 'PER' in f_sort:
+            per_num = df_f2['PER'].apply(pd.to_numeric, errors='coerce')
+            df_f2 = df_f2.assign(_per=per_num).sort_values('_per', ascending=True).drop(columns=['_per'])
+        elif 'ROE' in f_sort:
+            roe_num = df_f2['ROE %'].str.replace('%','').apply(pd.to_numeric, errors='coerce')
+            df_f2 = df_f2.assign(_roe=roe_num).sort_values('_roe', ascending=False).drop(columns=['_roe'])
 
         def style_senal_fund(val):
             c, bg = _senal_color(val)
