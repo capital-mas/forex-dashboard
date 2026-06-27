@@ -98,7 +98,7 @@ st.markdown("""
   }
 
   /* ── Nav pills — todos los botones de la fila de navegación ── */
-  div[data-testid="stHorizontalBlock"] > div[data-testid="column"] .stButton > button {
+  div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button {
     border-radius: 999px !important;
     border: 1px solid #21262d !important;
     padding: 6px 16px !important;
@@ -111,39 +111,12 @@ st.markdown("""
     white-space: nowrap !important;
     letter-spacing: 0.1px !important;
   }
-  div[data-testid="stHorizontalBlock"] > div[data-testid="column"] .stButton > button:hover {
+  div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button:hover {
     background: #161b22 !important;
     color: #e6edf3 !important;
     border-color: #3a4a5a !important;
     transform: translateY(-1px) !important;
     box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
-  }
-
-  /* ── Botón ACTIVO — verde brillante ── */
-  .nav-active-btn .stButton > button {
-    background: linear-gradient(135deg, #1a7f37, #2ea043) !important;
-    color: #ffffff !important;
-    border-color: #2ea043 !important;
-    font-weight: 700 !important;
-    box-shadow: 0 0 0 3px rgba(46,160,67,0.18), 0 2px 8px rgba(46,160,67,0.25) !important;
-  }
-  .nav-active-btn .stButton > button:hover {
-    background: linear-gradient(135deg, #238636, #3fb950) !important;
-    transform: translateY(-1px) !important;
-    box-shadow: 0 0 0 3px rgba(63,185,80,0.22), 0 4px 12px rgba(46,160,67,0.3) !important;
-  }
-
-  /* ── Botón de actualizar — outline gris ── */
-  .nav-refresh-btn .stButton > button {
-    background: transparent !important;
-    color: #6b7d9a !important;
-    border-color: #21262d !important;
-    font-size: 11px !important;
-  }
-  .nav-refresh-btn .stButton > button:hover {
-    background: #161b22 !important;
-    color: #e6edf3 !important;
-    border-color: #3a4a5a !important;
   }
 
   /* ── Page header ── */
@@ -969,19 +942,34 @@ def tabla_corto(filas_dict, key_suffix=''):
             'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion']})
     df = pd.DataFrame(filas)
 
-    # ── Filtros en línea ──
-    fc1, fc2, fc3 = st.columns([2,2,2])
+    fc1, fc2 = st.columns([2,2])
     with fc1:
         señales_u = ['Todas'] + sorted(df['Señal'].unique().tolist())
         f_señal = st.selectbox('Señal', señales_u, key=f'tc_señal_{key_suffix}')
     with fc2:
-        f_acum_min = st.slider('Acum mínimo', 0, 100, 0, 5, key=f'tc_acum_{key_suffix}')
-    with fc3:
-        f_antic_min = st.slider('Antic mínimo', 0, 100, 0, 5, key=f'tc_antic_{key_suffix}')
+        st.write('')
+
+    fr1, fr2, fr3 = st.columns(3)
+    with fr1:
+        f_acum = st.slider('Rango Acum', 0, 100, (0,100), 1, key=f'tc_acum_{key_suffix}')
+    with fr2:
+        f_antic = st.slider('Rango Antic', 0, 100, (0,100), 1, key=f'tc_antic_{key_suffix}')
+    with fr3:
+        f_sent = st.slider('Rango Sent', 0, 100, (0,100), 1, key=f'tc_sent_{key_suffix}')
+
+    fr4, fr5, fr6 = st.columns(3)
+    with fr4:
+        f_rsi = st.slider('Rango RSI', 0, 100, (0,100), 1, key=f'tc_rsi_{key_suffix}')
+    with fr5:
+        f_ret5 = st.slider('Rango Ret 5d %', -30, 30, (-30,30), 1, key=f'tc_ret5_{key_suffix}')
+    with fr6:
+        f_ret10 = st.slider('Rango Ret 10d %', -30, 30, (-30,30), 1, key=f'tc_ret10_{key_suffix}')
 
     df_f = df.copy()
     if f_señal != 'Todas': df_f = df_f[df_f['Señal']==f_señal]
-    df_f = df_f[(df_f['Acum']>=f_acum_min) & (df_f['Antic']>=f_antic_min)]
+    df_f = df_f[df_f['Acum'].between(*f_acum) & df_f['Antic'].between(*f_antic)
+                & df_f['Sent'].between(*f_sent) & df_f['RSI'].between(*f_rsi)
+                & df_f['Ret 5d %'].between(*f_ret5) & df_f['Ret 10d %'].between(*f_ret10)]
 
     styled = _apply_score_style(df_f, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %'])
     st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
@@ -1001,25 +989,46 @@ def tabla_largo(df_res, key_suffix=''):
     df_show['Sharpe'] = df_show['Sharpe'].apply(lambda x: f'{x:.2f}')
     df_show['DD%']    = df_show['DD%'].apply(lambda x: f'{x:.1f}')
 
-    # ── Filtros ──
-    fc1, fc2, fc3, fc4 = st.columns([2,2,1,1])
+    fc1, fc2 = st.columns([2,2])
     with fc1:
         sesgos_u = ['Todos'] + sorted(df_show['Sesgo'].unique().tolist())
         f_sesgo = st.selectbox('Sesgo', sesgos_u, key=f'tl_sesgo_{key_suffix}')
     with fc2:
         inds_u = ['Todas'] + sorted(df_show['Industria'].unique().tolist())
         f_ind = st.selectbox('Industria', inds_u, key=f'tl_ind_{key_suffix}')
-    with fc3:
-        f_global_min = st.slider('Global mín.', 0, 100, 0, 5, key=f'tl_global_{key_suffix}')
-    with fc4:
-        f_sharpe_min = st.slider('Sharpe mín.', -3, 5, -3, 1, key=f'tl_sharpe_{key_suffix}')
+
+    fr1, fr2, fr3, fr4 = st.columns(4)
+    with fr1:
+        f_global = st.slider('Rango Global', 0, 100, (0,100), 1, key=f'tl_global_{key_suffix}')
+    with fr2:
+        f_sharpe = st.slider('Rango Sharpe', -3.0, 5.0, (-3.0,5.0), 0.1, key=f'tl_sharpe_{key_suffix}')
+    with fr3:
+        f_trend = st.slider('Rango Trend', 0, 100, (0,100), 1, key=f'tl_trend_{key_suffix}')
+    with fr4:
+        f_risk = st.slider('Rango Risk', 0, 100, (0,100), 1, key=f'tl_risk_{key_suffix}')
+
+    fr5, fr6, fr7, fr8 = st.columns(4)
+    with fr5:
+        f_mr = st.slider('Rango MR', 0, 100, (0,100), 1, key=f'tl_mr_{key_suffix}')
+    with fr6:
+        f_ret = st.slider('Rango Ret %', -80, 200, (-80,200), 5, key=f'tl_ret_{key_suffix}')
+    with fr7:
+        f_vol = st.slider('Rango Vol %', 0, 150, (0,150), 5, key=f'tl_vol_{key_suffix}')
+    with fr8:
+        f_dd = st.slider('Rango DD %', -100, 0, (-100,0), 5, key=f'tl_dd_{key_suffix}')
 
     df_f = df_show.copy()
     if f_sesgo != 'Todos': df_f = df_f[df_f['Sesgo']==f_sesgo]
     if f_ind   != 'Todas': df_f = df_f[df_f['Industria']==f_ind]
     try:
-        df_f = df_f[df_f['Global'].astype(int) >= f_global_min]
-        df_f = df_f[df_f['Sharpe'].astype(float) >= f_sharpe_min]
+        df_f = df_f[df_f['Global'].astype(int).between(*f_global)]
+        df_f = df_f[df_f['Sharpe'].astype(float).between(*f_sharpe)]
+        df_f = df_f[df_f['Trend'].astype(int).between(*f_trend)]
+        df_f = df_f[df_f['Risk'].astype(int).between(*f_risk)]
+        df_f = df_f[df_f['MR'].astype(int).between(*f_mr)]
+        df_f = df_f[df_f['Ret %'].astype(float).between(*f_ret)]
+        df_f = df_f[df_f['Vol %'].astype(float).between(*f_vol)]
+        df_f = df_f[df_f['DD%'].astype(float).between(*f_dd)]
     except: pass
 
     def sesgo_style(val):
@@ -1032,7 +1041,6 @@ def tabla_largo(df_res, key_suffix=''):
     st.dataframe(styled, use_container_width=True, height=min(700, max(200, len(df_f)*30+45)))
     st.caption(f'{len(df_f)} activos mostrados de {len(df_show)} totales')
 
-    # ── Click en ticker para ir al buscador ──
     st.markdown('<div style="margin-top:12px">', unsafe_allow_html=True)
     tickers_disponibles = df_f['Ticker'].tolist()
     if tickers_disponibles:
@@ -1058,10 +1066,8 @@ def tabla_largo(df_res, key_suffix=''):
 # ==============================================================
 
 def modulo_buscador():
-    # Si viene de un click en tabla, pre-cargar y auto-analizar
     prefill = st.session_state.get('ticker_from_table', '')
 
-    # ── Hero del buscador ──
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d; border-top:2px solid #3a7bd5;
@@ -1082,7 +1088,6 @@ def modulo_buscador():
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Input manual ──
     col_inp, col_btn = st.columns([4, 1])
     with col_inp:
         ticker_manual = st.text_input(
@@ -1095,7 +1100,6 @@ def modulo_buscador():
     with col_btn:
         analizar = st.button('▶ Analizar', use_container_width=True, key='btn_buscar')
 
-    # Ayuda de ejemplos
     st.markdown("""
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;margin-bottom:4px">
       <span style="font-size:10px;color:#3a4a5f;font-weight:600;align-self:center">Ejemplos →</span>
@@ -1113,10 +1117,9 @@ def modulo_buscador():
 
     ticker_final = ticker_manual.strip().upper() if ticker_manual else ''
 
-    # Auto-analizar si viene de tabla
     auto_run = bool(prefill and ticker_final == prefill.upper())
     if prefill:
-        st.session_state['ticker_from_table'] = ''  # limpiar para la próxima vez
+        st.session_state['ticker_from_table'] = ''
 
     if not ticker_final or not (analizar or auto_run):
         st.markdown("""
@@ -1137,7 +1140,6 @@ def _renderizar_buscador(ticker):
 
     industria = TICKER_INDUSTRY.get(ticker, 'Externo / Manual')
 
-    # ── CORTO PLAZO ──────────────────────────────────────────
     st.markdown('### ⚡ Análisis Corto Plazo (1–30 días)')
     with st.spinner('Cargando datos de corto plazo...'):
         df_v = descargar_datos(ticker, '3mo')
@@ -1175,7 +1177,6 @@ def _renderizar_buscador(ticker):
 
             st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{señal}</span></div>', unsafe_allow_html=True)
 
-            # Mini gráfico precio 30d
             precios = cl_m.values
             if len(precios) > 2:
                 fig_l, ax_l = plt.subplots(figsize=(10, 3))
@@ -1195,7 +1196,6 @@ def _renderizar_buscador(ticker):
 
     st.markdown('---')
 
-    # ── LARGO PLAZO ──────────────────────────────────────────
     st.markdown('### 📈 Análisis Largo Plazo (2 años cuantitativo)')
     with st.spinner('Cargando 2 años de datos...'):
         df_tk = descargar_datos(ticker, '2y')
@@ -1228,7 +1228,6 @@ def _renderizar_buscador(ticker):
     with c3: st.metric('Max DrawDown', f"{r['max_dd']:.1f}%")
     with c4: st.metric('Hurst', f"{r['hurst']:.3f}")
 
-    # Interpretación
     interp = interpretar_largo(r)
     sesgo_class = {'MUY ALCISTA':'sesgo-muy-alc','ALCISTA':'sesgo-alc','NEUTRAL':'sesgo-neu',
                    'BAJISTA':'sesgo-baj','MUY BAJISTA':'sesgo-muy-baj'}.get(r['sesgo'],'')
@@ -1239,7 +1238,6 @@ def _renderizar_buscador(ticker):
     </div>
     """, unsafe_allow_html=True)
 
-    # Gráficos
     tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger', '📊 RSI & MACD', '📉 Drawdown'])
 
     with tab_g1:
@@ -1313,7 +1311,6 @@ def _renderizar_buscador(ticker):
 #  ESTADO DE NAVEGACIÓN
 # ==============================================================
 
-# Init session state
 for key, default in [
     ('nav_horizonte', 'corto'),
     ('nav_modulo', 'resumen'),
@@ -1327,11 +1324,7 @@ for key, default in [
         st.session_state[key] = default
 
 # ==============================================================
-#  TOP NAV BAR (HTML estático + botones Streamlit)
-# ==============================================================
-
-# ==============================================================
-#  NAVBAR HTML + botones Streamlit superpuestos
+#  TOP NAV BAR
 # ==============================================================
 
 _now_str = datetime.now().strftime('%H:%M')
@@ -1341,7 +1334,6 @@ _h_label = {'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsque
 HORIZONTE = st.session_state['nav_horizonte']
 MODULO    = st.session_state['nav_modulo']
 
-# ── Barra de marca (HTML puro) ──
 st.markdown(f"""
 <div class="topbar-wrap">
   <div class="topbar-inner">
@@ -1364,16 +1356,29 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Fila de navegación ── separada debajo del brand bar
 st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
-# Helper para envolver un botón con clase activa
 def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on_click_val_m=None):
-    css_class = 'nav-active-btn' if is_active else ''
     with col:
-        st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
-        clicked = st.button(label, use_container_width=True, key=key)
-        st.markdown('</div>', unsafe_allow_html=True)
+        cont_key = f'navcont_{key}'
+        with st.container(key=cont_key):
+            clicked = st.button(label, use_container_width=True, key=key)
+        if is_active:
+            st.markdown(f"""
+            <style>
+            .st-key-{cont_key} button {{
+                background: linear-gradient(135deg, #1a7f37, #2ea043) !important;
+                color: #ffffff !important;
+                border-color: #2ea043 !important;
+                font-weight: 700 !important;
+                box-shadow: 0 0 0 3px rgba(46,160,67,0.18), 0 2px 8px rgba(46,160,67,0.25) !important;
+            }}
+            .st-key-{cont_key} button:hover {{
+                background: linear-gradient(135deg, #238636, #3fb950) !important;
+                transform: translateY(-1px) !important;
+            }}
+            </style>
+            """, unsafe_allow_html=True)
         if clicked:
             if on_click_val_h:
                 st.session_state['nav_horizonte'] = on_click_val_h
@@ -1381,7 +1386,6 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
                 st.session_state['nav_modulo'] = on_click_val_m
             st.rerun()
 
-# Botones de modo principal
 _c = st.columns([1.1, 1.1, 1, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
 
 _nav_btn(_c[0], '⚡ Corto Plazo', 'nav_h_corto',
@@ -1391,7 +1395,6 @@ _nav_btn(_c[1], '📈 Largo Plazo', 'nav_h_largo',
 _nav_btn(_c[2], '🔍 Buscador', 'nav_buscador',
          HORIZONTE=='buscador', None, 'buscador', 'buscador')
 
-# Sub-módulos según horizonte
 if HORIZONTE == 'corto':
     _mods_corto = [
         ('💱 Forex',    'forex',    4),
@@ -1416,16 +1419,28 @@ elif HORIZONTE == 'largo':
         _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
                  MODULO==mod_key, None, None, mod_key)
 
-# Actualizar datos
 with _c[11]:
-    st.markdown('<div class="nav-refresh-btn">', unsafe_allow_html=True)
-    if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
-        st.cache_data.clear(); st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
+    with st.container(key='nav_refresh_cont'):
+        if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
+            st.cache_data.clear(); st.rerun()
+st.markdown("""
+<style>
+.st-key-nav_refresh_cont button {
+    background: transparent !important;
+    color: #6b7d9a !important;
+    border-color: #21262d !important;
+    font-size: 11px !important;
+}
+.st-key-nav_refresh_cont button:hover {
+    background: #161b22 !important;
+    color: #e6edf3 !important;
+    border-color: #3a4a5a !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
 
-# Re-leer estado por si cambió
 HORIZONTE = st.session_state['nav_horizonte']
 MODULO    = st.session_state['nav_modulo']
 
@@ -1483,12 +1498,8 @@ st.markdown(f"""
 #  RENDERIZADO DE MÓDULOS
 # ==============================================================
 
-# ── BUSCADOR ────────────────────────────────────────────────────
-
 if MODULO == 'buscador':
     modulo_buscador()
-
-# ── CORTO PLAZO ─────────────────────────────────────────────────
 
 elif HORIZONTE == 'corto':
 
@@ -1666,29 +1677,41 @@ elif HORIZONTE == 'corto':
                         'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion']})
             df_acc = pd.DataFrame(filas).sort_values('Acum', ascending=False)
 
-            # Filtros
-            fa1, fa2, fa3, fa4 = st.columns([2,2,1,1])
+            fa1, fa2 = st.columns([2,2])
             with fa1:
                 señ_u2 = ['Todas'] + sorted(df_acc['Señal'].unique().tolist())
                 señ_s2 = st.selectbox('Señal', señ_u2, key='acc_corto_f')
             with fa2:
                 ind_u2 = ['Todas'] + sorted(df_acc['Industria'].unique().tolist())
                 ind_s2 = st.selectbox('Industria', ind_u2, key='acc_corto_ind')
-            with fa3:
-                acum_min2 = st.slider('Acum mín.', 0, 100, 0, 5, key='acc_corto_acum')
-            with fa4:
-                antic_min2 = st.slider('Antic mín.', 0, 100, 0, 5, key='acc_corto_antic')
+
+            fb1, fb2, fb3 = st.columns(3)
+            with fb1:
+                acum_r = st.slider('Rango Acum', 0, 100, (0,100), 1, key='acc_corto_acum')
+            with fb2:
+                antic_r = st.slider('Rango Antic', 0, 100, (0,100), 1, key='acc_corto_antic')
+            with fb3:
+                sent_r = st.slider('Rango Sent', 0, 100, (0,100), 1, key='acc_corto_sent')
+
+            fb4, fb5, fb6 = st.columns(3)
+            with fb4:
+                rsi_r = st.slider('Rango RSI', 0, 100, (0,100), 1, key='acc_corto_rsi')
+            with fb5:
+                ret5_r = st.slider('Rango Ret 5d %', -30, 30, (-30,30), 1, key='acc_corto_ret5')
+            with fb6:
+                ret10_r = st.slider('Rango Ret 10d %', -30, 30, (-30,30), 1, key='acc_corto_ret10')
 
             df_show_a = df_acc.copy()
-            if señ_s2  != 'Todas': df_show_a = df_show_a[df_show_a['Señal']==señ_s2]
-            if ind_s2  != 'Todas': df_show_a = df_show_a[df_show_a['Industria']==ind_s2]
-            df_show_a = df_show_a[(df_show_a['Acum']>=acum_min2) & (df_show_a['Antic']>=antic_min2)]
+            if señ_s2 != 'Todas': df_show_a = df_show_a[df_show_a['Señal']==señ_s2]
+            if ind_s2 != 'Todas': df_show_a = df_show_a[df_show_a['Industria']==ind_s2]
+            df_show_a = df_show_a[df_show_a['Acum'].between(*acum_r) & df_show_a['Antic'].between(*antic_r)
+                                   & df_show_a['Sent'].between(*sent_r) & df_show_a['RSI'].between(*rsi_r)
+                                   & df_show_a['Ret 5d %'].between(*ret5_r) & df_show_a['Ret 10d %'].between(*ret10_r)]
 
             styled = _apply_score_style(df_show_a, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %'])
             st.dataframe(styled, use_container_width=True, height=min(700, max(200, len(df_show_a)*32+45)))
             st.caption(f'{len(df_show_a)} activos mostrados de {len(df_acc)} totales')
 
-            # Click-to-analyze
             tickers_disp = df_show_a['Ticker'].tolist()
             if tickers_disp:
                 cca1, cca2 = st.columns([3,1])
@@ -1703,8 +1726,6 @@ elif HORIZONTE == 'corto':
                             st.session_state['nav_horizonte'] = 'buscador'
                             st.session_state['nav_modulo']    = 'buscador'
                             st.rerun()
-
-# ── LARGO PLAZO ─────────────────────────────────────────────────
 
 elif HORIZONTE == 'largo':
     ind_disp = list(ACCIONES_POR_INDUSTRIA.keys())
@@ -1767,17 +1788,30 @@ elif HORIZONTE == 'largo':
             cols_rev = ['ticker','industria','precio','zscore','rsi','hurst','lower_bb','ret_anual','vol_anual','sharpe','max_dd','mr_score','risk_score','global_score','reversion_reasons']
             df_rv = df_rev_l[cols_rev].copy()
             df_rv.columns = ['Ticker','Industria','Precio','Z-Score','RSI','Hurst','BB Inf.','Ret %','Vol %','Sharpe','DD%','MR','Risk','Global','Razones']
+
+            fr1, fr2 = st.columns(2)
+            with fr1:
+                inds_rev = ['Todas'] + sorted(df_rv['Industria'].unique().tolist())
+                ind_rev_sel = st.selectbox('Industria', inds_rev, key='rev_ind')
+            with fr2:
+                f_mr_rev = st.slider('Rango MR', 0, 100, (0,100), 1, key='rev_mr')
+
+            df_rv_f = df_rv.copy()
+            if ind_rev_sel != 'Todas': df_rv_f = df_rv_f[df_rv_f['Industria']==ind_rev_sel]
+            df_rv_f = df_rv_f[df_rv_f['MR'].between(*f_mr_rev)]
+
             for col_fmt, fmt in [('Precio',fmt_precio),('BB Inf.',fmt_precio)]:
-                df_rv[col_fmt] = df_rv[col_fmt].apply(fmt)
-            df_rv['Z-Score'] = df_rv['Z-Score'].apply(lambda x: f'{x:+.2f}')
-            df_rv['RSI']     = df_rv['RSI'].apply(lambda x: f'{x:.1f}')
-            df_rv['Hurst']   = df_rv['Hurst'].apply(lambda x: f'{x:.3f}')
-            df_rv['Ret %']   = df_rv['Ret %'].apply(lambda x: f'{x:+.1f}')
-            df_rv['Vol %']   = df_rv['Vol %'].apply(lambda x: f'{x:.1f}')
-            df_rv['Sharpe']  = df_rv['Sharpe'].apply(lambda x: f'{x:.2f}')
-            df_rv['DD%']     = df_rv['DD%'].apply(lambda x: f'{x:.1f}')
-            styled_rev = _apply_score_style(df_rv, ['MR','Risk','Global'])
-            st.dataframe(styled_rev, use_container_width=True, height=min(700, max(200, len(df_rv)*32+45)))
+                df_rv_f[col_fmt] = df_rv_f[col_fmt].apply(fmt)
+            df_rv_f['Z-Score'] = df_rv_f['Z-Score'].apply(lambda x: f'{x:+.2f}')
+            df_rv_f['RSI']     = df_rv_f['RSI'].apply(lambda x: f'{x:.1f}')
+            df_rv_f['Hurst']   = df_rv_f['Hurst'].apply(lambda x: f'{x:.3f}')
+            df_rv_f['Ret %']   = df_rv_f['Ret %'].apply(lambda x: f'{x:+.1f}')
+            df_rv_f['Vol %']   = df_rv_f['Vol %'].apply(lambda x: f'{x:.1f}')
+            df_rv_f['Sharpe']  = df_rv_f['Sharpe'].apply(lambda x: f'{x:.2f}')
+            df_rv_f['DD%']     = df_rv_f['DD%'].apply(lambda x: f'{x:.1f}')
+            styled_rev = _apply_score_style(df_rv_f, ['MR','Risk','Global'])
+            st.dataframe(styled_rev, use_container_width=True, height=min(700, max(200, len(df_rv_f)*32+45)))
+            st.caption(f'{len(df_rv_f)} activos mostrados de {len(df_rv)} totales')
 
     elif MODULO == 'industria':
         with st.spinner('Calculando análisis por industria...'):
