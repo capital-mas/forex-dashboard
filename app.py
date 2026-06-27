@@ -2680,42 +2680,45 @@ def modulo_fundamental():
                     'YTD % ↓', 'PER ↑ (más barato)', 'ROE % ↓'
                 ], key='fund_f_sort')
 
-            st.markdown('<div style="margin-top:10px;margin-bottom:2px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">RANGOS NUMÉRICOS</div>', unsafe_allow_html=True)
-            frow2 = st.columns(3)
-            with frow2[0]:
-                f_per_rng = st.slider(
-                    'PER (rango)', min_value=0.0, max_value=200.0,
-                    value=(0.0, 200.0), step=1.0, key='fund_f_per_rng',
-                    help='Filtra por rango de PER. Empresas con N/D quedan excluidas si movés el mínimo > 0.'
-                )
-            with frow2[1]:
-                f_roe_rng = st.slider(
-                    'ROE % (rango)', min_value=-50.0, max_value=100.0,
-                    value=(-50.0, 100.0), step=1.0, key='fund_f_roe_rng',
-                    help='Filtra por rango de ROE en porcentaje.'
-                )
-            with frow2[2]:
-                f_beta_rng = st.slider(
-                    'Beta (rango)', min_value=0.0, max_value=4.0,
-                    value=(0.0, 4.0), step=0.1, key='fund_f_beta_rng',
-                    help='Filtra por rango de Beta.'
-                )
+            st.markdown('<div style="margin-top:10px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">📐 VALUACIÓN</div>', unsafe_allow_html=True)
+            vrow = st.columns(3)
+            with vrow[0]:
+                f_per_rng = st.slider('PER', min_value=0.0, max_value=200.0, value=(0.0, 200.0), step=1.0, key='fund_f_per_rng')
+            with vrow[1]:
+                f_pb_rng = st.slider('P/B', min_value=0.0, max_value=30.0, value=(0.0, 30.0), step=0.5, key='fund_f_pb_rng')
+            with vrow[2]:
+                f_eveb_rng = st.slider('EV/EBITDA', min_value=0.0, max_value=60.0, value=(0.0, 60.0), step=1.0, key='fund_f_eveb_rng')
 
-            frow3 = st.columns(3)
-            with frow3[0]:
-                f_ok_rng = st.slider(
-                    'Señales OK (rango)', min_value=0, max_value=20,
-                    value=(0, 20), step=1, key='fund_f_ok_rng',
-                    help='Número de señales positivas detectadas.'
-                )
-            with frow3[1]:
-                f_div_rng = st.slider(
-                    'Div. Yield % (rango)', min_value=0.0, max_value=20.0,
-                    value=(0.0, 20.0), step=0.5, key='fund_f_div_rng',
-                    help='Filtra por rango de dividendo anual en %.'
-                )
-            with frow3[2]:
-                f_fcf_pos = st.checkbox('Solo FCF positivo', key='fund_f_fcf')
+            st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">📈 RENTABILIDAD Y MÁRGENES</div>', unsafe_allow_html=True)
+            rrow = st.columns(4)
+            with rrow[0]:
+                f_roe_rng = st.slider('ROE %', min_value=-50.0, max_value=100.0, value=(-50.0, 100.0), step=1.0, key='fund_f_roe_rng')
+            with rrow[1]:
+                f_gm_rng = st.slider('Mg. Bruto %', min_value=-20.0, max_value=100.0, value=(-20.0, 100.0), step=1.0, key='fund_f_gm_rng')
+            with rrow[2]:
+                f_om_rng = st.slider('Mg. Operativo %', min_value=-50.0, max_value=60.0, value=(-50.0, 60.0), step=1.0, key='fund_f_om_rng')
+            with rrow[3]:
+                f_rg_rng = st.slider('Rev. Growth %', min_value=-50.0, max_value=100.0, value=(-50.0, 100.0), step=1.0, key='fund_f_rg_rng')
+
+            st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">🔒 SOLVENCIA, RIESGO Y FLUJO</div>', unsafe_allow_html=True)
+            srow = st.columns(4)
+            with srow[0]:
+                f_de_rng = st.slider('D/E', min_value=0.0, max_value=10.0, value=(0.0, 10.0), step=0.1, key='fund_f_de_rng')
+            with srow[1]:
+                f_beta_rng = st.slider('Beta', min_value=0.0, max_value=4.0, value=(0.0, 4.0), step=0.1, key='fund_f_beta_rng')
+            with srow[2]:
+                f_div_rng = st.slider('Div. Yield %', min_value=0.0, max_value=20.0, value=(0.0, 20.0), step=0.5, key='fund_f_div_rng')
+            with srow[3]:
+                f_ytd_rng = st.slider('YTD %', min_value=-80.0, max_value=300.0, value=(-80.0, 300.0), step=5.0, key='fund_f_ytd_rng')
+
+            st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">✅ SEÑALES Y FCF</div>', unsafe_allow_html=True)
+            qrow = st.columns(3)
+            with qrow[0]:
+                f_ok_rng = st.slider('Señales OK', min_value=0, max_value=20, value=(0, 20), step=1, key='fund_f_ok_rng')
+            with qrow[1]:
+                f_fcf_pos = st.checkbox('Solo FCF positivo', key='fund_f_fcf', value=False)
+            with qrow[2]:
+                st.markdown('<div style="font-size:10px;color:#6b7d9a;padding-top:28px">N/D: la empresa se excluye si el rango es distinto al default.</div>', unsafe_allow_html=True)
 
         # ── APLICAR FILTROS ───────────────────────────────────────────────
         df_f2 = df_fund.copy()
@@ -2726,51 +2729,63 @@ def modulo_fundamental():
         if f_sect_f != 'Todos':
             df_f2 = df_f2[df_f2['Sector'] == f_sect_f]
 
-        # Filtros numéricos por rango (sobre valores reales, no strings)
         emp_filtradas = [e for lst in todos_resultados.values() for e in lst]
         tickers_validos = set(df_f2['Ticker'].tolist())
 
-        per_min_f,  per_max_f  = f_per_rng
-        roe_min_f,  roe_max_f  = f_roe_rng
-        beta_min_f, beta_max_f = f_beta_rng
-        ok_min_f,   ok_max_f   = f_ok_rng
-        div_min_f,  div_max_f  = f_div_rng
-
-        per_activo  = (per_min_f  > 0.0   or per_max_f  < 200.0)
-        roe_activo  = (roe_min_f  > -50.0 or roe_max_f  < 100.0)
-        beta_activo = (beta_min_f > 0.0   or beta_max_f < 4.0)
-        ok_activo   = (ok_min_f   > 0     or ok_max_f   < 20)
-        div_activo  = (div_min_f  > 0.0   or div_max_f  < 20.0)
-
         def _en_rango(val, lo, hi, escala=1.0):
             if val is None: return False
-            v = val * escala
-            return lo <= v <= hi
+            return lo <= val * escala <= hi
+
+        _DEFAULTS = {
+            'per':  (0.0, 200.0), 'pb':  (0.0, 30.0),  'eveb': (0.0, 60.0),
+            'roe':  (-50.0, 100.0), 'gm': (-20.0, 100.0), 'om': (-50.0, 60.0),
+            'rg':   (-50.0, 100.0), 'de': (0.0, 10.0),  'beta': (0.0, 4.0),
+            'div':  (0.0, 20.0),   'ytd': (-80.0, 300.0), 'ok': (0, 20),
+        }
+        _RNGS = {
+            'per': f_per_rng, 'pb': f_pb_rng, 'eveb': f_eveb_rng,
+            'roe': f_roe_rng, 'gm': f_gm_rng, 'om': f_om_rng,
+            'rg':  f_rg_rng,  'de': f_de_rng, 'beta': f_beta_rng,
+            'div': f_div_rng, 'ytd': f_ytd_rng, 'ok': f_ok_rng,
+        }
+        _activo = {k: (_RNGS[k] != _DEFAULTS[k]) for k in _DEFAULTS}
 
         nuevos = set()
         for e in emp_filtradas:
-            if e['ticker'] not in tickers_validos:
-                continue
-            if per_activo  and not _en_rango(e.get('per'),  per_min_f,  per_max_f):
-                continue
-            if roe_activo  and not _en_rango(e.get('roe'),  roe_min_f,  roe_max_f, 100.0):
-                continue
-            if beta_activo and not _en_rango(e.get('beta'), beta_min_f, beta_max_f):
-                continue
-            if ok_activo   and not (ok_min_f <= e['n_ok'] <= ok_max_f):
-                continue
-            if div_activo  and not _en_rango(e.get('div_yield'), div_min_f, div_max_f, 100.0):
-                continue
-            if f_fcf_pos and (e.get('fcf') is None or e['fcf'] <= 0):
-                continue
+            if e['ticker'] not in tickers_validos: continue
+            lo, hi = f_per_rng
+            if _activo['per']  and not _en_rango(e.get('per'),            lo, hi):         continue
+            lo, hi = f_pb_rng
+            if _activo['pb']   and not _en_rango(e.get('pb'),             lo, hi):         continue
+            lo, hi = f_eveb_rng
+            if _activo['eveb'] and not _en_rango(e.get('ev_ebitda'),      lo, hi):         continue
+            lo, hi = f_roe_rng
+            if _activo['roe']  and not _en_rango(e.get('roe'),            lo, hi, 100.0):  continue
+            lo, hi = f_gm_rng
+            if _activo['gm']   and not _en_rango(e.get('gross_margin'),   lo, hi, 100.0):  continue
+            lo, hi = f_om_rng
+            if _activo['om']   and not _en_rango(e.get('op_margin'),      lo, hi, 100.0):  continue
+            lo, hi = f_rg_rng
+            if _activo['rg']   and not _en_rango(e.get('revenue_growth'), lo, hi, 100.0):  continue
+            lo, hi = f_de_rng
+            if _activo['de']   and not _en_rango(e.get('debt_equity'),    lo, hi):         continue
+            lo, hi = f_beta_rng
+            if _activo['beta'] and not _en_rango(e.get('beta'),           lo, hi):         continue
+            lo, hi = f_div_rng
+            if _activo['div']  and not _en_rango(e.get('div_yield'),      lo, hi, 100.0):  continue
+            lo, hi = f_ytd_rng
+            if _activo['ytd']  and not _en_rango(e.get('alza_ytd'),       lo, hi):         continue
+            lo, hi = f_ok_rng
+            if _activo['ok']   and not (lo <= e['n_ok'] <= hi):                            continue
+            if f_fcf_pos and (e.get('fcf') is None or e['fcf'] <= 0):                      continue
             nuevos.add(e['ticker'])
 
-        if any([per_activo, roe_activo, beta_activo, ok_activo, div_activo, f_fcf_pos]):
+        if any(_activo.values()) or f_fcf_pos:
             tickers_validos = nuevos
 
         df_f2 = df_f2[df_f2['Ticker'].isin(tickers_validos)]
 
-        # Ordenamiento
+
         if 'OK ↓' in f_sort:
             df_f2 = df_f2.sort_values('OK', ascending=False)
         elif 'ALT ↑' in f_sort:
