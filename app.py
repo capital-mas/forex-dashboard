@@ -1147,6 +1147,378 @@ def tabla_largo(df_res, key_suffix=''):
     st.markdown('</div>', unsafe_allow_html=True)
 
 
+
+# ==============================================================
+#  ANÁLISIS FUNDAMENTAL — DATOS
+# ==============================================================
+
+SECTOR_MAP_FUND = {
+    'Semiconductores': 'Technology',   'Software': 'Technology',
+    'Ciberseguridad': 'Technology',    'Cloud/AI': 'Technology',
+    'Hardware/Equipos': 'Technology',  'Fintech': 'Financial Services',
+    'Biotecnología': 'Healthcare',     'Farmacéuticas': 'Healthcare',
+    'Equipos Médicos': 'Healthcare',   'Servicios de Salud': 'Healthcare',
+    'Bancos': 'Financial Services',    'Seguros': 'Financial Services',
+    'Mercados Capitales': 'Financial Services',
+    'Bancos Regionales': 'Financial Services',
+    'Finanzas Diversif.': 'Financial Services',
+    'Petróleo Integrado': 'Energy',    'Energía Renovable': 'Energy',
+    'Gas Natural': 'Energy',           'Energía Solar': 'Energy',
+    'Aeroespacial': 'Industrials',     'Transporte': 'Industrials',
+    'Construcción': 'Industrials',     'Defensa': 'Industrials',
+    'Retail': 'Consumer Cyclical',     'Autos': 'Consumer Cyclical',
+    'Hotelería/Viajes': 'Consumer Cyclical', 'E-commerce': 'Consumer Cyclical',
+    'Alimentos': 'Consumer Defensive', 'Bebidas': 'Consumer Defensive',
+    'Minería Oro': 'Basic Materials',  'Cobre/Metales': 'Basic Materials',
+    'Químicos': 'Basic Materials',     'Acero': 'Basic Materials',
+    'Telecomunicaciones': 'Communication Services',
+    'Internet': 'Communication Services',
+    'Eléctricas': 'Utilities',         'Agua': 'Utilities',
+    'REIT Comercial': 'Real Estate',   'REIT Industrial': 'Real Estate',
+    'REIT Residencial': 'Real Estate',
+    'Agro/Fertilizantes': 'Basic Materials',
+    'Argentina': 'Latam Emergente',    'Brasil': 'Latam Emergente',
+    'México': 'Latam Emergente',
+    'China': 'Asia Emergente',         'India': 'Asia Emergente',
+    'Europa Tecnología': 'Europa',     'Europa Finanzas': 'Europa',
+    'Cripto (ETF/Coin)': 'Cripto',
+}
+
+INDUSTRY_BENCHMARKS_FUND = {
+    'Technology': {
+        'per_max': 35, 'pb_max': 10, 'gross_margin_min': 0.50,
+        'roe_min': 0.15, 'debt_equity_max': 1.0,
+        'descripcion': 'Altos márgenes brutos (>50%), valuaciones PER elevadas. FCF positivo y expansión de márgenes son clave. Múltiplos relevantes: EV/EBITDA, P/S.',
+        'metricas_clave': ['Margen Bruto', 'Crecimiento Ingresos', 'FCF', 'EV/EBITDA', 'ROE'],
+    },
+    'Financial Services': {
+        'per_max': 18, 'pb_max': 2.5, 'gross_margin_min': None,
+        'roe_min': 0.10, 'debt_equity_max': None,
+        'descripcion': 'Se valúan por P/B y ROE. P/B < 1 puede indicar infravaloración. ROE objetivo > 10-12%. Deuda estructural es parte del modelo.',
+        'metricas_clave': ['P/B', 'ROE', 'ROA', 'Margen Neto', 'Crecimiento EPS'],
+    },
+    'Healthcare': {
+        'per_max': 30, 'pb_max': 6.0, 'gross_margin_min': 0.40,
+        'roe_min': 0.12, 'debt_equity_max': 1.2,
+        'descripcion': 'Combina defensividad con crecimiento estructural. Farmacéuticas con pipeline sólido sostienen márgenes brutos >60%.',
+        'metricas_clave': ['PEG Ratio', 'Margen Bruto', 'ROE', 'FCF', 'Crecimiento Ingresos'],
+    },
+    'Energy': {
+        'per_max': 20, 'pb_max': 3.0, 'gross_margin_min': 0.20,
+        'roe_min': 0.08, 'debt_equity_max': 1.5,
+        'descripcion': 'Sector cíclico sensible al precio del petróleo/gas. Se valoriza por EV/EBITDA, FCF yield y dividendos.',
+        'metricas_clave': ['EV/EBITDA', 'FCF', 'Dividend Yield', 'Deuda/Equity', 'Beta'],
+    },
+    'Industrials': {
+        'per_max': 22, 'pb_max': 4.0, 'gross_margin_min': 0.25,
+        'roe_min': 0.12, 'debt_equity_max': 1.5,
+        'descripcion': 'Manufactura, aeroespacial, logística. Cíclico, ligado al ciclo económico global. Margen operativo es el indicador más relevante.',
+        'metricas_clave': ['Margen Operativo', 'EV/EBITDA', 'ROE', 'Deuda/Equity', 'FCF'],
+    },
+    'Consumer Cyclical': {
+        'per_max': 25, 'pb_max': 5.0, 'gross_margin_min': 0.30,
+        'roe_min': 0.12, 'debt_equity_max': 1.5,
+        'descripcion': 'Retail, automotriz y entretenimiento. Muy sensible al ciclo económico. Beta alto (>1.2) típico.',
+        'metricas_clave': ['Beta', 'Margen Operativo', 'Current Ratio', 'FCF', 'Revenue Growth'],
+    },
+    'Consumer Defensive': {
+        'per_max': 22, 'pb_max': 4.0, 'gross_margin_min': 0.35,
+        'roe_min': 0.15, 'debt_equity_max': 1.5,
+        'descripcion': 'Alimentos, bebidas, cuidado personal: demanda estable, dividendos crecientes. Beta bajo (<0.8) los hace refugio.',
+        'metricas_clave': ['Dividend Yield', 'Beta', 'Margen Bruto', 'ROE', 'P/B'],
+    },
+    'Basic Materials': {
+        'per_max': 18, 'pb_max': 2.5, 'gross_margin_min': 0.20,
+        'roe_min': 0.08, 'debt_equity_max': 1.0,
+        'descripcion': 'Minería, química, acero: negocios intensivos en capital y muy cíclicos. EV/EBITDA es el múltiplo estándar.',
+        'metricas_clave': ['EV/EBITDA', 'Deuda/Equity', 'FCF', 'Margen Bruto', 'Beta'],
+    },
+    'Communication Services': {
+        'per_max': 28, 'pb_max': 5.0, 'gross_margin_min': 0.40,
+        'roe_min': 0.12, 'debt_equity_max': 1.5,
+        'descripcion': 'Telcos con alto CAPEX y dividendos. Plataformas digitales con márgenes altos.',
+        'metricas_clave': ['Margen Bruto', 'FCF', 'Dividend Yield', 'EV/EBITDA', 'Revenue Growth'],
+    },
+    'Utilities': {
+        'per_max': 20, 'pb_max': 2.5, 'gross_margin_min': 0.30,
+        'roe_min': 0.08, 'debt_equity_max': 2.0,
+        'descripcion': 'Negocios regulados con flujos predecibles. Beta < 0.5 típico. Dividend yield sostenible es el principal atractivo.',
+        'metricas_clave': ['Dividend Yield', 'Beta', 'Deuda/Equity', 'P/B', 'Margen Operativo'],
+    },
+    'Real Estate': {
+        'per_max': 30, 'pb_max': 3.0, 'gross_margin_min': 0.40,
+        'roe_min': 0.07, 'debt_equity_max': 2.5,
+        'descripcion': 'REITs: se valúan por FFO. Dividend yield crucial (deben distribuir >= 90% de ganancias).',
+        'metricas_clave': ['Dividend Yield', 'P/B', 'Deuda/Equity', 'Current Ratio', 'FCF'],
+    },
+    'Latam Emergente': {
+        'per_max': 14, 'pb_max': 2.0, 'gross_margin_min': 0.20,
+        'roe_min': 0.10, 'debt_equity_max': 1.5,
+        'descripcion': 'Riesgo país y tipo de cambio comprimen los múltiplos. PER < 10 frecuente en Argentina. FCF positivo requisito mínimo. ROE > 15% en entornos inflacionarios.',
+        'metricas_clave': ['PER', 'P/B', 'Dividend Yield', 'FCF', 'Deuda/Equity', 'Beta', 'ROE'],
+    },
+    'Asia Emergente': {
+        'per_max': 20, 'pb_max': 3.0, 'gross_margin_min': 0.25,
+        'roe_min': 0.10, 'debt_equity_max': 1.2,
+        'descripcion': 'Heterogéneo: Japón y Corea con múltiplos comprimidos. China con descuento regulatorio (PER 10-15x). India admite múltiplos más altos por crecimiento estructural.',
+        'metricas_clave': ['PER', 'P/B', 'ROE', 'FCF', 'EV/EBITDA', 'Revenue Growth', 'Deuda/Equity'],
+    },
+    'Europa': {
+        'per_max': 20, 'pb_max': 3.5, 'gross_margin_min': 0.30,
+        'roe_min': 0.10, 'debt_equity_max': 1.5,
+        'descripcion': 'Descuento histórico de 20-30% vs EE.UU. PER de 14-18x normal. Energía paga dividendos del 4-6%. Tecnología europea (ASML, SAP) admite múltiplos más altos.',
+        'metricas_clave': ['PER', 'P/B', 'Dividend Yield', 'EV/EBITDA', 'ROE', 'FCF', 'Deuda/Equity'],
+    },
+    'Cripto': {
+        'per_max': None, 'pb_max': None, 'gross_margin_min': None,
+        'roe_min': None, 'debt_equity_max': None,
+        'descripcion': 'Activos digitales sin métricas de valuación tradicionales. Análisis técnico y on-chain son más relevantes.',
+        'metricas_clave': ['Volatilidad', 'Momentum', 'Correlación BTC', 'Dominancia'],
+    },
+}
+
+DEFAULT_BENCHMARK_FUND = {
+    'per_max': None, 'pb_max': None, 'gross_margin_min': None,
+    'roe_min': None, 'debt_equity_max': None,
+    'descripcion': 'Sin benchmark predefinido. Comparar contra peers directos.',
+    'metricas_clave': ['FCF', 'ROE', 'Revenue Growth', 'Margen Operativo', 'EV/EBITDA'],
+}
+
+
+def _fmt_pct(v):
+    return f'{v*100:.2f}%' if v is not None else 'N/D'
+
+def _fmt_num(v, d=2):
+    return f'{v:.{d}f}' if v is not None else 'N/D'
+
+def _fmt_big(v):
+    if v is None: return 'N/D'
+    av = abs(v)
+    if av >= 1e12: return f'{v/1e12:.2f}T'
+    if av >= 1e9:  return f'{v/1e9:.2f}B'
+    if av >= 1e6:  return f'{v/1e6:.2f}M'
+    if av >= 1e3:  return f'{v/1e3:.2f}K'
+    return str(round(v, 2))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def analizar_fundamental(ticker, industria):
+    try:
+        import yfinance as yf
+        sector = SECTOR_MAP_FUND.get(industria, 'Sin Clasificar')
+        bench  = INDUSTRY_BENCHMARKS_FUND.get(sector, DEFAULT_BENCHMARK_FUND)
+        stock  = yf.Ticker(ticker)
+        info   = stock.info or {}
+
+        precio_actual    = info.get('currentPrice') or info.get('regularMarketPrice')
+        market_cap       = info.get('marketCap')
+        enterprise_value = info.get('enterpriseValue')
+        nombre           = info.get('longName') or ticker
+        recommendation   = info.get('recommendationKey')
+
+        alza_ytd = None
+        try:
+            inicio_ano = f"{datetime.now().year}-01-02"
+            hist = stock.history(start=inicio_ano)
+            if not hist.empty and precio_actual:
+                alza_ytd = ((precio_actual - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100
+        except: pass
+
+        net_income = ebitda = None
+        try:
+            income = stock.financials
+            if not income.empty:
+                if 'Net Income' in income.index:   net_income = income.loc['Net Income'].iloc[0]
+                if 'EBITDA' in income.index:       ebitda = income.loc['EBITDA'].iloc[0]
+        except: pass
+
+        total_debt = cash = None
+        try:
+            bal = stock.balance_sheet
+            if not bal.empty:
+                for n in ['Total Debt', 'TotalDebt']:
+                    if n in bal.index: total_debt = bal.loc[n].iloc[0]; break
+                for n in ['Cash', 'Cash And Cash Equivalents', 'Cash Cash Equivalents And Short Term Investments']:
+                    if n in bal.index: cash = bal.loc[n].iloc[0]; break
+        except: pass
+
+        fcf            = info.get('freeCashflow')
+        op_cf          = info.get('operatingCashflow')
+        per            = info.get('trailingPE') or info.get('forwardPE')
+        pb             = info.get('priceToBook')
+        ps             = info.get('priceToSalesTrailing12Months')
+        peg            = info.get('pegRatio')
+        roe            = info.get('returnOnEquity')
+        roa            = info.get('returnOnAssets')
+        curr_ratio     = info.get('currentRatio')
+        debt_equity    = info.get('debtToEquity')
+        beta           = info.get('beta')
+        op_margin      = info.get('operatingMargins')
+        profit_margin  = info.get('profitMargins')
+        gross_margin   = info.get('grossMargins')
+        div_yield      = info.get('dividendYield')
+        eps_growth     = info.get('earningsQuarterlyGrowth')
+        revenue_growth = info.get('revenueGrowth')
+        earnings_growth= info.get('earningsGrowth')
+        target_price   = info.get('targetMeanPrice')
+
+        if debt_equity is not None: debt_equity = debt_equity / 100
+
+        try:
+            bal = stock.balance_sheet
+            if not bal.empty:
+                equity = None
+                for n in ['Stockholders Equity','Total Stockholders Equity','Common Stock Equity','Total Equity Gross Minority Interest']:
+                    if n in bal.index: equity = bal.loc[n].iloc[0]; break
+                if debt_equity is None and total_debt is not None and equity and equity != 0:
+                    debt_equity = total_debt / equity
+                if curr_ratio is None:
+                    ca = cl_ = None
+                    for n in ['Current Assets','Total Current Assets']:
+                        if n in bal.index: ca = bal.loc[n].iloc[0]; break
+                    for n in ['Current Liabilities','Total Current Liabilities']:
+                        if n in bal.index: cl_ = bal.loc[n].iloc[0]; break
+                    if ca and cl_ and cl_ != 0: curr_ratio = ca / cl_
+        except: pass
+
+        if div_yield is None:
+            div_yield = info.get('yield') or info.get('trailingAnnualDividendYield')
+
+        try:
+            income = stock.financials
+            if not income.empty:
+                tr = None
+                for n in ['Total Revenue','Revenue']:
+                    if n in income.index: tr = income.loc[n].iloc[0]; break
+                if tr and tr != 0:
+                    if gross_margin is None:
+                        if 'Gross Profit' in income.index: gross_margin = income.loc['Gross Profit'].iloc[0] / tr
+                    if op_margin is None:
+                        for n in ['Operating Income','Total Operating Income As Reported']:
+                            if n in income.index: op_margin = income.loc[n].iloc[0] / tr; break
+                    if profit_margin is None and net_income is not None:
+                        profit_margin = net_income / tr
+        except: pass
+
+        ev_ebitda = enterprise_value / ebitda if enterprise_value and ebitda else None
+
+        senales = []
+        if revenue_growth:
+            if revenue_growth > 0.20:   senales.append(('OK','Crecimiento de ingresos explosivo'))
+            elif revenue_growth > 0.10: senales.append(('OK','Buen crecimiento de ingresos'))
+            elif revenue_growth < 0:    senales.append(('ALT','Caída en ingresos'))
+        if eps_growth:
+            if eps_growth > 0.20:       senales.append(('OK','EPS creciendo fuertemente'))
+            elif eps_growth > 0.10:     senales.append(('OK','Crecimiento positivo de EPS'))
+            elif eps_growth < 0:        senales.append(('ALT','EPS en deterioro'))
+        if earnings_growth:
+            if earnings_growth > 0.15:  senales.append(('OK','Ganancias en expansión'))
+            elif earnings_growth < 0:   senales.append(('ALT','Contracción de ganancias'))
+        if roe:
+            if roe > 0.25:              senales.append(('OK','ROE excepcional'))
+            elif roe > 0.15:            senales.append(('OK','ROE saludable'))
+            elif roe < 0.08:            senales.append(('ALT','ROE débil'))
+        if roa:
+            if roa > 0.10:              senales.append(('OK','ROA sólido'))
+            elif roa < 0.03:            senales.append(('ALT','Baja eficiencia sobre activos'))
+        if gross_margin:
+            if gross_margin > 0.50:     senales.append(('OK','Margen bruto excelente'))
+            elif gross_margin < 0.20:   senales.append(('ALT','Margen bruto bajo'))
+        if op_margin:
+            if op_margin > 0.25:        senales.append(('OK','Margen operativo fuerte'))
+            elif op_margin < 0.10:      senales.append(('ALT','Margen operativo débil'))
+        if profit_margin:
+            if profit_margin > 0.20:    senales.append(('OK','Margen neto muy saludable'))
+            elif profit_margin < 0.05:  senales.append(('ALT','Margen neto muy bajo'))
+        if alza_ytd:
+            if alza_ytd > 30:           senales.append(('OK','Momentum extremadamente alcista'))
+            elif alza_ytd > 15:         senales.append(('OK','Momentum alcista fuerte'))
+            elif alza_ytd < -15:        senales.append(('ALT','Tendencia bajista fuerte'))
+        if per:
+            if per < 10:                senales.append(('OK','Empresa posiblemente infravalorada (PER < 10)'))
+            elif per < 15:              senales.append(('OK','PER atractivo'))
+            elif per > 40:              senales.append(('ALT','Valuación exigente (PER > 40)'))
+        if pb:
+            if pb < 1.5:                senales.append(('OK','P/B atractivo'))
+            elif pb > 8:                senales.append(('ALT','P/B elevado'))
+        if peg:
+            if peg < 1:                 senales.append(('OK','Crecimiento barato según PEG'))
+            elif peg > 2:               senales.append(('ALT','Crecimiento caro según PEG'))
+        if ev_ebitda:
+            if ev_ebitda < 10:          senales.append(('OK','EV/EBITDA atractivo'))
+            elif ev_ebitda > 20:        senales.append(('ALT','EV/EBITDA elevado'))
+        if fcf:
+            if fcf > 0:                 senales.append(('OK','Free Cash Flow positivo'))
+            else:                       senales.append(('ALT','Free Cash Flow negativo'))
+        if cash and total_debt:
+            if cash > total_debt:       senales.append(('OK','Caja superior a deuda'))
+            elif total_debt > cash * 3: senales.append(('ALT','Deuda muy superior a caja'))
+        if beta:
+            if beta > 1.5:              senales.append(('ALT','Volatilidad muy alta (Beta > 1.5)'))
+            elif beta < 0.8:            senales.append(('OK','Activo defensivo (Beta bajo)'))
+        if curr_ratio:
+            if curr_ratio > 2:          senales.append(('OK','Liquidez excelente'))
+            elif curr_ratio < 1:        senales.append(('ALT','Riesgo de liquidez'))
+        if div_yield:
+            if div_yield > 0.05:        senales.append(('OK','Dividendo muy atractivo'))
+            elif div_yield > 0.02:      senales.append(('OK','Dividendo saludable'))
+
+        n_ok  = sum(1 for t,_ in senales if t=='OK')
+        n_alt = sum(1 for t,_ in senales if t=='ALT')
+        if n_ok >= 8:   senal_final = 'COMPRA FUERTE'
+        elif n_ok >= 5: senal_final = 'MANTENER'
+        else:           senal_final = 'RIESGO / VENDER'
+
+        sector_senales = []
+        per_max = bench.get('per_max'); pb_max = bench.get('pb_max')
+        gm_min  = bench.get('gross_margin_min'); roe_min = bench.get('roe_min')
+        de_max  = bench.get('debt_equity_max')
+        if per and per_max:
+            if per < per_max*0.6: sector_senales.append(('POS', f'PER ({per:.1f}x) muy por debajo del límite sectorial ({per_max}x)'))
+            elif per < per_max:   sector_senales.append(('POS', f'PER ({per:.1f}x) dentro del rango aceptable (max {per_max}x)'))
+            else:                 sector_senales.append(('ALT', f'PER ({per:.1f}x) supera benchmark sectorial ({per_max}x)'))
+        if pb and pb_max:
+            if pb < 1.0:       sector_senales.append(('ALT', f'P/B ({pb:.2f}x) < 1 — cotiza bajo valor libro'))
+            elif pb < pb_max:  sector_senales.append(('POS', f'P/B ({pb:.2f}x) dentro del rango sectorial (max {pb_max}x)'))
+            else:              sector_senales.append(('ALT', f'P/B ({pb:.2f}x) elevado vs benchmark ({pb_max}x)'))
+        if gross_margin and gm_min:
+            if gross_margin > gm_min: sector_senales.append(('POS', f'Margen bruto ({gross_margin*100:.1f}%) supera mínimo sectorial ({gm_min*100:.0f}%)'))
+            else:                     sector_senales.append(('ALT', f'Margen bruto ({gross_margin*100:.1f}%) bajo benchmark ({gm_min*100:.0f}%)'))
+        if roe and roe_min:
+            if roe > roe_min*1.5: sector_senales.append(('POS', f'ROE ({roe*100:.1f}%) muy sobre benchmark ({roe_min*100:.0f}%)'))
+            elif roe > roe_min:   sector_senales.append(('POS', f'ROE ({roe*100:.1f}%) supera mínimo sectorial ({roe_min*100:.0f}%)'))
+            else:                 sector_senales.append(('ALT', f'ROE ({roe*100:.1f}%) bajo benchmark sectorial ({roe_min*100:.0f}%)'))
+        if debt_equity is not None and de_max:
+            if debt_equity < de_max*0.5: sector_senales.append(('POS', f'Deuda/Equity ({debt_equity:.2f}x) muy conservadora vs sector'))
+            elif debt_equity < de_max:   sector_senales.append(('POS', f'Deuda/Equity ({debt_equity:.2f}x) dentro del rango ({de_max}x max)'))
+            else:                        sector_senales.append(('ALT', f'Deuda/Equity ({debt_equity:.2f}x) supera límite sectorial ({de_max}x)'))
+        if fcf is not None:
+            if fcf > 0: sector_senales.append(('POS', 'FCF positivo — genera caja real'))
+            else:       sector_senales.append(('ALT', 'FCF negativo — revisar si es ciclo inversor o problema estructural'))
+
+        return {
+            'ticker': ticker, 'nombre': nombre, 'sector': sector, 'industria': industria,
+            'precio': precio_actual, 'market_cap': market_cap, 'ev': enterprise_value,
+            'per': per, 'pb': pb, 'ps': ps, 'peg': peg, 'ev_ebitda': ev_ebitda,
+            'roe': roe, 'roa': roa, 'gross_margin': gross_margin, 'op_margin': op_margin,
+            'profit_margin': profit_margin, 'debt_equity': debt_equity, 'curr_ratio': curr_ratio,
+            'beta': beta, 'div_yield': div_yield, 'revenue_growth': revenue_growth,
+            'eps_growth': eps_growth, 'earnings_growth': earnings_growth,
+            'fcf': fcf, 'op_cf': op_cf, 'target_price': target_price, 'cash': cash,
+            'alza_ytd': alza_ytd, 'recommendation': recommendation,
+            'senales': senales, 'senal_final': senal_final, 'sector_senales': sector_senales,
+            'bench': bench, 'n_ok': n_ok, 'n_alt': n_alt,
+        }
+    except Exception as e:
+        return None
+
+
+def _senal_color(s):
+    if 'COMPRA' in s: return '#3fb950', 'rgba(63,185,80,0.12)'
+    if 'MANTENER' in s: return '#e3b341', 'rgba(227,179,65,0.12)'
+    return '#f85149', 'rgba(248,81,73,0.12)'
+
+
 # ==============================================================
 #  MÓDULO BUSCADOR UNIVERSAL
 # ==============================================================
@@ -2193,376 +2565,6 @@ elif HORIZONTE == 'largo':
                     plt.tight_layout(pad=1.2); st.pyplot(fig_dd, use_container_width=True); plt.close(fig_dd)
 
 
-# ==============================================================
-#  ANÁLISIS FUNDAMENTAL — DATOS
-# ==============================================================
-
-SECTOR_MAP_FUND = {
-    'Semiconductores': 'Technology',   'Software': 'Technology',
-    'Ciberseguridad': 'Technology',    'Cloud/AI': 'Technology',
-    'Hardware/Equipos': 'Technology',  'Fintech': 'Financial Services',
-    'Biotecnología': 'Healthcare',     'Farmacéuticas': 'Healthcare',
-    'Equipos Médicos': 'Healthcare',   'Servicios de Salud': 'Healthcare',
-    'Bancos': 'Financial Services',    'Seguros': 'Financial Services',
-    'Mercados Capitales': 'Financial Services',
-    'Bancos Regionales': 'Financial Services',
-    'Finanzas Diversif.': 'Financial Services',
-    'Petróleo Integrado': 'Energy',    'Energía Renovable': 'Energy',
-    'Gas Natural': 'Energy',           'Energía Solar': 'Energy',
-    'Aeroespacial': 'Industrials',     'Transporte': 'Industrials',
-    'Construcción': 'Industrials',     'Defensa': 'Industrials',
-    'Retail': 'Consumer Cyclical',     'Autos': 'Consumer Cyclical',
-    'Hotelería/Viajes': 'Consumer Cyclical', 'E-commerce': 'Consumer Cyclical',
-    'Alimentos': 'Consumer Defensive', 'Bebidas': 'Consumer Defensive',
-    'Minería Oro': 'Basic Materials',  'Cobre/Metales': 'Basic Materials',
-    'Químicos': 'Basic Materials',     'Acero': 'Basic Materials',
-    'Telecomunicaciones': 'Communication Services',
-    'Internet': 'Communication Services',
-    'Eléctricas': 'Utilities',         'Agua': 'Utilities',
-    'REIT Comercial': 'Real Estate',   'REIT Industrial': 'Real Estate',
-    'REIT Residencial': 'Real Estate',
-    'Agro/Fertilizantes': 'Basic Materials',
-    'Argentina': 'Latam Emergente',    'Brasil': 'Latam Emergente',
-    'México': 'Latam Emergente',
-    'China': 'Asia Emergente',         'India': 'Asia Emergente',
-    'Europa Tecnología': 'Europa',     'Europa Finanzas': 'Europa',
-    'Cripto (ETF/Coin)': 'Cripto',
-}
-
-INDUSTRY_BENCHMARKS_FUND = {
-    'Technology': {
-        'per_max': 35, 'pb_max': 10, 'gross_margin_min': 0.50,
-        'roe_min': 0.15, 'debt_equity_max': 1.0,
-        'descripcion': 'Altos márgenes brutos (>50%), valuaciones PER elevadas. FCF positivo y expansión de márgenes son clave. Múltiplos relevantes: EV/EBITDA, P/S.',
-        'metricas_clave': ['Margen Bruto', 'Crecimiento Ingresos', 'FCF', 'EV/EBITDA', 'ROE'],
-    },
-    'Financial Services': {
-        'per_max': 18, 'pb_max': 2.5, 'gross_margin_min': None,
-        'roe_min': 0.10, 'debt_equity_max': None,
-        'descripcion': 'Se valúan por P/B y ROE. P/B < 1 puede indicar infravaloración. ROE objetivo > 10-12%. Deuda estructural es parte del modelo.',
-        'metricas_clave': ['P/B', 'ROE', 'ROA', 'Margen Neto', 'Crecimiento EPS'],
-    },
-    'Healthcare': {
-        'per_max': 30, 'pb_max': 6.0, 'gross_margin_min': 0.40,
-        'roe_min': 0.12, 'debt_equity_max': 1.2,
-        'descripcion': 'Combina defensividad con crecimiento estructural. Farmacéuticas con pipeline sólido sostienen márgenes brutos >60%.',
-        'metricas_clave': ['PEG Ratio', 'Margen Bruto', 'ROE', 'FCF', 'Crecimiento Ingresos'],
-    },
-    'Energy': {
-        'per_max': 20, 'pb_max': 3.0, 'gross_margin_min': 0.20,
-        'roe_min': 0.08, 'debt_equity_max': 1.5,
-        'descripcion': 'Sector cíclico sensible al precio del petróleo/gas. Se valoriza por EV/EBITDA, FCF yield y dividendos.',
-        'metricas_clave': ['EV/EBITDA', 'FCF', 'Dividend Yield', 'Deuda/Equity', 'Beta'],
-    },
-    'Industrials': {
-        'per_max': 22, 'pb_max': 4.0, 'gross_margin_min': 0.25,
-        'roe_min': 0.12, 'debt_equity_max': 1.5,
-        'descripcion': 'Manufactura, aeroespacial, logística. Cíclico, ligado al ciclo económico global. Margen operativo es el indicador más relevante.',
-        'metricas_clave': ['Margen Operativo', 'EV/EBITDA', 'ROE', 'Deuda/Equity', 'FCF'],
-    },
-    'Consumer Cyclical': {
-        'per_max': 25, 'pb_max': 5.0, 'gross_margin_min': 0.30,
-        'roe_min': 0.12, 'debt_equity_max': 1.5,
-        'descripcion': 'Retail, automotriz y entretenimiento. Muy sensible al ciclo económico. Beta alto (>1.2) típico.',
-        'metricas_clave': ['Beta', 'Margen Operativo', 'Current Ratio', 'FCF', 'Revenue Growth'],
-    },
-    'Consumer Defensive': {
-        'per_max': 22, 'pb_max': 4.0, 'gross_margin_min': 0.35,
-        'roe_min': 0.15, 'debt_equity_max': 1.5,
-        'descripcion': 'Alimentos, bebidas, cuidado personal: demanda estable, dividendos crecientes. Beta bajo (<0.8) los hace refugio.',
-        'metricas_clave': ['Dividend Yield', 'Beta', 'Margen Bruto', 'ROE', 'P/B'],
-    },
-    'Basic Materials': {
-        'per_max': 18, 'pb_max': 2.5, 'gross_margin_min': 0.20,
-        'roe_min': 0.08, 'debt_equity_max': 1.0,
-        'descripcion': 'Minería, química, acero: negocios intensivos en capital y muy cíclicos. EV/EBITDA es el múltiplo estándar.',
-        'metricas_clave': ['EV/EBITDA', 'Deuda/Equity', 'FCF', 'Margen Bruto', 'Beta'],
-    },
-    'Communication Services': {
-        'per_max': 28, 'pb_max': 5.0, 'gross_margin_min': 0.40,
-        'roe_min': 0.12, 'debt_equity_max': 1.5,
-        'descripcion': 'Telcos con alto CAPEX y dividendos. Plataformas digitales con márgenes altos.',
-        'metricas_clave': ['Margen Bruto', 'FCF', 'Dividend Yield', 'EV/EBITDA', 'Revenue Growth'],
-    },
-    'Utilities': {
-        'per_max': 20, 'pb_max': 2.5, 'gross_margin_min': 0.30,
-        'roe_min': 0.08, 'debt_equity_max': 2.0,
-        'descripcion': 'Negocios regulados con flujos predecibles. Beta < 0.5 típico. Dividend yield sostenible es el principal atractivo.',
-        'metricas_clave': ['Dividend Yield', 'Beta', 'Deuda/Equity', 'P/B', 'Margen Operativo'],
-    },
-    'Real Estate': {
-        'per_max': 30, 'pb_max': 3.0, 'gross_margin_min': 0.40,
-        'roe_min': 0.07, 'debt_equity_max': 2.5,
-        'descripcion': 'REITs: se valúan por FFO. Dividend yield crucial (deben distribuir >= 90% de ganancias).',
-        'metricas_clave': ['Dividend Yield', 'P/B', 'Deuda/Equity', 'Current Ratio', 'FCF'],
-    },
-    'Latam Emergente': {
-        'per_max': 14, 'pb_max': 2.0, 'gross_margin_min': 0.20,
-        'roe_min': 0.10, 'debt_equity_max': 1.5,
-        'descripcion': 'Riesgo país y tipo de cambio comprimen los múltiplos. PER < 10 frecuente en Argentina. FCF positivo requisito mínimo. ROE > 15% en entornos inflacionarios.',
-        'metricas_clave': ['PER', 'P/B', 'Dividend Yield', 'FCF', 'Deuda/Equity', 'Beta', 'ROE'],
-    },
-    'Asia Emergente': {
-        'per_max': 20, 'pb_max': 3.0, 'gross_margin_min': 0.25,
-        'roe_min': 0.10, 'debt_equity_max': 1.2,
-        'descripcion': 'Heterogéneo: Japón y Corea con múltiplos comprimidos. China con descuento regulatorio (PER 10-15x). India admite múltiplos más altos por crecimiento estructural.',
-        'metricas_clave': ['PER', 'P/B', 'ROE', 'FCF', 'EV/EBITDA', 'Revenue Growth', 'Deuda/Equity'],
-    },
-    'Europa': {
-        'per_max': 20, 'pb_max': 3.5, 'gross_margin_min': 0.30,
-        'roe_min': 0.10, 'debt_equity_max': 1.5,
-        'descripcion': 'Descuento histórico de 20-30% vs EE.UU. PER de 14-18x normal. Energía paga dividendos del 4-6%. Tecnología europea (ASML, SAP) admite múltiplos más altos.',
-        'metricas_clave': ['PER', 'P/B', 'Dividend Yield', 'EV/EBITDA', 'ROE', 'FCF', 'Deuda/Equity'],
-    },
-    'Cripto': {
-        'per_max': None, 'pb_max': None, 'gross_margin_min': None,
-        'roe_min': None, 'debt_equity_max': None,
-        'descripcion': 'Activos digitales sin métricas de valuación tradicionales. Análisis técnico y on-chain son más relevantes.',
-        'metricas_clave': ['Volatilidad', 'Momentum', 'Correlación BTC', 'Dominancia'],
-    },
-}
-
-DEFAULT_BENCHMARK_FUND = {
-    'per_max': None, 'pb_max': None, 'gross_margin_min': None,
-    'roe_min': None, 'debt_equity_max': None,
-    'descripcion': 'Sin benchmark predefinido. Comparar contra peers directos.',
-    'metricas_clave': ['FCF', 'ROE', 'Revenue Growth', 'Margen Operativo', 'EV/EBITDA'],
-}
-
-
-def _fmt_pct(v):
-    return f'{v*100:.2f}%' if v is not None else 'N/D'
-
-def _fmt_num(v, d=2):
-    return f'{v:.{d}f}' if v is not None else 'N/D'
-
-def _fmt_big(v):
-    if v is None: return 'N/D'
-    av = abs(v)
-    if av >= 1e12: return f'{v/1e12:.2f}T'
-    if av >= 1e9:  return f'{v/1e9:.2f}B'
-    if av >= 1e6:  return f'{v/1e6:.2f}M'
-    if av >= 1e3:  return f'{v/1e3:.2f}K'
-    return str(round(v, 2))
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def analizar_fundamental(ticker, industria):
-    try:
-        import yfinance as yf
-        sector = SECTOR_MAP_FUND.get(industria, 'Sin Clasificar')
-        bench  = INDUSTRY_BENCHMARKS_FUND.get(sector, DEFAULT_BENCHMARK_FUND)
-        stock  = yf.Ticker(ticker)
-        info   = stock.info or {}
-
-        precio_actual    = info.get('currentPrice') or info.get('regularMarketPrice')
-        market_cap       = info.get('marketCap')
-        enterprise_value = info.get('enterpriseValue')
-        nombre           = info.get('longName') or ticker
-        recommendation   = info.get('recommendationKey')
-
-        alza_ytd = None
-        try:
-            inicio_ano = f"{datetime.now().year}-01-02"
-            hist = stock.history(start=inicio_ano)
-            if not hist.empty and precio_actual:
-                alza_ytd = ((precio_actual - hist['Close'].iloc[0]) / hist['Close'].iloc[0]) * 100
-        except: pass
-
-        net_income = ebitda = None
-        try:
-            income = stock.financials
-            if not income.empty:
-                if 'Net Income' in income.index:   net_income = income.loc['Net Income'].iloc[0]
-                if 'EBITDA' in income.index:       ebitda = income.loc['EBITDA'].iloc[0]
-        except: pass
-
-        total_debt = cash = None
-        try:
-            bal = stock.balance_sheet
-            if not bal.empty:
-                for n in ['Total Debt', 'TotalDebt']:
-                    if n in bal.index: total_debt = bal.loc[n].iloc[0]; break
-                for n in ['Cash', 'Cash And Cash Equivalents', 'Cash Cash Equivalents And Short Term Investments']:
-                    if n in bal.index: cash = bal.loc[n].iloc[0]; break
-        except: pass
-
-        fcf            = info.get('freeCashflow')
-        op_cf          = info.get('operatingCashflow')
-        per            = info.get('trailingPE') or info.get('forwardPE')
-        pb             = info.get('priceToBook')
-        ps             = info.get('priceToSalesTrailing12Months')
-        peg            = info.get('pegRatio')
-        roe            = info.get('returnOnEquity')
-        roa            = info.get('returnOnAssets')
-        curr_ratio     = info.get('currentRatio')
-        debt_equity    = info.get('debtToEquity')
-        beta           = info.get('beta')
-        op_margin      = info.get('operatingMargins')
-        profit_margin  = info.get('profitMargins')
-        gross_margin   = info.get('grossMargins')
-        div_yield      = info.get('dividendYield')
-        eps_growth     = info.get('earningsQuarterlyGrowth')
-        revenue_growth = info.get('revenueGrowth')
-        earnings_growth= info.get('earningsGrowth')
-        target_price   = info.get('targetMeanPrice')
-
-        if debt_equity is not None: debt_equity = debt_equity / 100
-
-        try:
-            bal = stock.balance_sheet
-            if not bal.empty:
-                equity = None
-                for n in ['Stockholders Equity','Total Stockholders Equity','Common Stock Equity','Total Equity Gross Minority Interest']:
-                    if n in bal.index: equity = bal.loc[n].iloc[0]; break
-                if debt_equity is None and total_debt is not None and equity and equity != 0:
-                    debt_equity = total_debt / equity
-                if curr_ratio is None:
-                    ca = cl_ = None
-                    for n in ['Current Assets','Total Current Assets']:
-                        if n in bal.index: ca = bal.loc[n].iloc[0]; break
-                    for n in ['Current Liabilities','Total Current Liabilities']:
-                        if n in bal.index: cl_ = bal.loc[n].iloc[0]; break
-                    if ca and cl_ and cl_ != 0: curr_ratio = ca / cl_
-        except: pass
-
-        if div_yield is None:
-            div_yield = info.get('yield') or info.get('trailingAnnualDividendYield')
-
-        try:
-            income = stock.financials
-            if not income.empty:
-                tr = None
-                for n in ['Total Revenue','Revenue']:
-                    if n in income.index: tr = income.loc[n].iloc[0]; break
-                if tr and tr != 0:
-                    if gross_margin is None:
-                        if 'Gross Profit' in income.index: gross_margin = income.loc['Gross Profit'].iloc[0] / tr
-                    if op_margin is None:
-                        for n in ['Operating Income','Total Operating Income As Reported']:
-                            if n in income.index: op_margin = income.loc[n].iloc[0] / tr; break
-                    if profit_margin is None and net_income is not None:
-                        profit_margin = net_income / tr
-        except: pass
-
-        ev_ebitda = enterprise_value / ebitda if enterprise_value and ebitda else None
-
-        senales = []
-        if revenue_growth:
-            if revenue_growth > 0.20:   senales.append(('OK','Crecimiento de ingresos explosivo'))
-            elif revenue_growth > 0.10: senales.append(('OK','Buen crecimiento de ingresos'))
-            elif revenue_growth < 0:    senales.append(('ALT','Caída en ingresos'))
-        if eps_growth:
-            if eps_growth > 0.20:       senales.append(('OK','EPS creciendo fuertemente'))
-            elif eps_growth > 0.10:     senales.append(('OK','Crecimiento positivo de EPS'))
-            elif eps_growth < 0:        senales.append(('ALT','EPS en deterioro'))
-        if earnings_growth:
-            if earnings_growth > 0.15:  senales.append(('OK','Ganancias en expansión'))
-            elif earnings_growth < 0:   senales.append(('ALT','Contracción de ganancias'))
-        if roe:
-            if roe > 0.25:              senales.append(('OK','ROE excepcional'))
-            elif roe > 0.15:            senales.append(('OK','ROE saludable'))
-            elif roe < 0.08:            senales.append(('ALT','ROE débil'))
-        if roa:
-            if roa > 0.10:              senales.append(('OK','ROA sólido'))
-            elif roa < 0.03:            senales.append(('ALT','Baja eficiencia sobre activos'))
-        if gross_margin:
-            if gross_margin > 0.50:     senales.append(('OK','Margen bruto excelente'))
-            elif gross_margin < 0.20:   senales.append(('ALT','Margen bruto bajo'))
-        if op_margin:
-            if op_margin > 0.25:        senales.append(('OK','Margen operativo fuerte'))
-            elif op_margin < 0.10:      senales.append(('ALT','Margen operativo débil'))
-        if profit_margin:
-            if profit_margin > 0.20:    senales.append(('OK','Margen neto muy saludable'))
-            elif profit_margin < 0.05:  senales.append(('ALT','Margen neto muy bajo'))
-        if alza_ytd:
-            if alza_ytd > 30:           senales.append(('OK','Momentum extremadamente alcista'))
-            elif alza_ytd > 15:         senales.append(('OK','Momentum alcista fuerte'))
-            elif alza_ytd < -15:        senales.append(('ALT','Tendencia bajista fuerte'))
-        if per:
-            if per < 10:                senales.append(('OK','Empresa posiblemente infravalorada (PER < 10)'))
-            elif per < 15:              senales.append(('OK','PER atractivo'))
-            elif per > 40:              senales.append(('ALT','Valuación exigente (PER > 40)'))
-        if pb:
-            if pb < 1.5:                senales.append(('OK','P/B atractivo'))
-            elif pb > 8:                senales.append(('ALT','P/B elevado'))
-        if peg:
-            if peg < 1:                 senales.append(('OK','Crecimiento barato según PEG'))
-            elif peg > 2:               senales.append(('ALT','Crecimiento caro según PEG'))
-        if ev_ebitda:
-            if ev_ebitda < 10:          senales.append(('OK','EV/EBITDA atractivo'))
-            elif ev_ebitda > 20:        senales.append(('ALT','EV/EBITDA elevado'))
-        if fcf:
-            if fcf > 0:                 senales.append(('OK','Free Cash Flow positivo'))
-            else:                       senales.append(('ALT','Free Cash Flow negativo'))
-        if cash and total_debt:
-            if cash > total_debt:       senales.append(('OK','Caja superior a deuda'))
-            elif total_debt > cash * 3: senales.append(('ALT','Deuda muy superior a caja'))
-        if beta:
-            if beta > 1.5:              senales.append(('ALT','Volatilidad muy alta (Beta > 1.5)'))
-            elif beta < 0.8:            senales.append(('OK','Activo defensivo (Beta bajo)'))
-        if curr_ratio:
-            if curr_ratio > 2:          senales.append(('OK','Liquidez excelente'))
-            elif curr_ratio < 1:        senales.append(('ALT','Riesgo de liquidez'))
-        if div_yield:
-            if div_yield > 0.05:        senales.append(('OK','Dividendo muy atractivo'))
-            elif div_yield > 0.02:      senales.append(('OK','Dividendo saludable'))
-
-        n_ok  = sum(1 for t,_ in senales if t=='OK')
-        n_alt = sum(1 for t,_ in senales if t=='ALT')
-        if n_ok >= 8:   senal_final = 'COMPRA FUERTE'
-        elif n_ok >= 5: senal_final = 'MANTENER'
-        else:           senal_final = 'RIESGO / VENDER'
-
-        sector_senales = []
-        per_max = bench.get('per_max'); pb_max = bench.get('pb_max')
-        gm_min  = bench.get('gross_margin_min'); roe_min = bench.get('roe_min')
-        de_max  = bench.get('debt_equity_max')
-        if per and per_max:
-            if per < per_max*0.6: sector_senales.append(('POS', f'PER ({per:.1f}x) muy por debajo del límite sectorial ({per_max}x)'))
-            elif per < per_max:   sector_senales.append(('POS', f'PER ({per:.1f}x) dentro del rango aceptable (max {per_max}x)'))
-            else:                 sector_senales.append(('ALT', f'PER ({per:.1f}x) supera benchmark sectorial ({per_max}x)'))
-        if pb and pb_max:
-            if pb < 1.0:       sector_senales.append(('ALT', f'P/B ({pb:.2f}x) < 1 — cotiza bajo valor libro'))
-            elif pb < pb_max:  sector_senales.append(('POS', f'P/B ({pb:.2f}x) dentro del rango sectorial (max {pb_max}x)'))
-            else:              sector_senales.append(('ALT', f'P/B ({pb:.2f}x) elevado vs benchmark ({pb_max}x)'))
-        if gross_margin and gm_min:
-            if gross_margin > gm_min: sector_senales.append(('POS', f'Margen bruto ({gross_margin*100:.1f}%) supera mínimo sectorial ({gm_min*100:.0f}%)'))
-            else:                     sector_senales.append(('ALT', f'Margen bruto ({gross_margin*100:.1f}%) bajo benchmark ({gm_min*100:.0f}%)'))
-        if roe and roe_min:
-            if roe > roe_min*1.5: sector_senales.append(('POS', f'ROE ({roe*100:.1f}%) muy sobre benchmark ({roe_min*100:.0f}%)'))
-            elif roe > roe_min:   sector_senales.append(('POS', f'ROE ({roe*100:.1f}%) supera mínimo sectorial ({roe_min*100:.0f}%)'))
-            else:                 sector_senales.append(('ALT', f'ROE ({roe*100:.1f}%) bajo benchmark sectorial ({roe_min*100:.0f}%)'))
-        if debt_equity is not None and de_max:
-            if debt_equity < de_max*0.5: sector_senales.append(('POS', f'Deuda/Equity ({debt_equity:.2f}x) muy conservadora vs sector'))
-            elif debt_equity < de_max:   sector_senales.append(('POS', f'Deuda/Equity ({debt_equity:.2f}x) dentro del rango ({de_max}x max)'))
-            else:                        sector_senales.append(('ALT', f'Deuda/Equity ({debt_equity:.2f}x) supera límite sectorial ({de_max}x)'))
-        if fcf is not None:
-            if fcf > 0: sector_senales.append(('POS', 'FCF positivo — genera caja real'))
-            else:       sector_senales.append(('ALT', 'FCF negativo — revisar si es ciclo inversor o problema estructural'))
-
-        return {
-            'ticker': ticker, 'nombre': nombre, 'sector': sector, 'industria': industria,
-            'precio': precio_actual, 'market_cap': market_cap, 'ev': enterprise_value,
-            'per': per, 'pb': pb, 'ps': ps, 'peg': peg, 'ev_ebitda': ev_ebitda,
-            'roe': roe, 'roa': roa, 'gross_margin': gross_margin, 'op_margin': op_margin,
-            'profit_margin': profit_margin, 'debt_equity': debt_equity, 'curr_ratio': curr_ratio,
-            'beta': beta, 'div_yield': div_yield, 'revenue_growth': revenue_growth,
-            'eps_growth': eps_growth, 'earnings_growth': earnings_growth,
-            'fcf': fcf, 'op_cf': op_cf, 'target_price': target_price, 'cash': cash,
-            'alza_ytd': alza_ytd, 'recommendation': recommendation,
-            'senales': senales, 'senal_final': senal_final, 'sector_senales': sector_senales,
-            'bench': bench, 'n_ok': n_ok, 'n_alt': n_alt,
-        }
-    except Exception as e:
-        return None
-
-
-def _senal_color(s):
-    if 'COMPRA' in s: return '#3fb950', 'rgba(63,185,80,0.12)'
-    if 'MANTENER' in s: return '#e3b341', 'rgba(227,179,65,0.12)'
-    return '#f85149', 'rgba(248,81,73,0.12)'
-
 
 def modulo_fundamental():
     ind_disp_f = list(ACCIONES_POR_INDUSTRIA.keys())
@@ -2673,21 +2675,47 @@ def modulo_fundamental():
                 sects_u  = ['Todos'] + sorted(df_fund['Sector'].unique().tolist())
                 f_sect_f = st.selectbox('Sector', sects_u, key='fund_f_sect')
             with frow1[3]:
-                f_sort = st.selectbox('Ordenar por', ['OK ↓ (más señales positivas)', 'ALT ↑ (más alertas)', 'YTD % ↓', 'PER ↑ (más barato)', 'ROE % ↓'], key='fund_f_sort')
+                f_sort = st.selectbox('Ordenar por', [
+                    'OK ↓ (más señales positivas)', 'ALT ↑ (más alertas)',
+                    'YTD % ↓', 'PER ↑ (más barato)', 'ROE % ↓'
+                ], key='fund_f_sort')
 
-            frow2 = st.columns(4)
+            st.markdown('<div style="margin-top:10px;margin-bottom:2px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">RANGOS NUMÉRICOS</div>', unsafe_allow_html=True)
+            frow2 = st.columns(3)
             with frow2[0]:
-                f_per_max = st.number_input('PER máximo', min_value=0.0, max_value=500.0, value=0.0, step=5.0, key='fund_f_per',
-                                             help='0 = sin límite. Filtra empresas con PER ≤ este valor.')
+                f_per_rng = st.slider(
+                    'PER (rango)', min_value=0.0, max_value=200.0,
+                    value=(0.0, 200.0), step=1.0, key='fund_f_per_rng',
+                    help='Filtra por rango de PER. Empresas con N/D quedan excluidas si movés el mínimo > 0.'
+                )
             with frow2[1]:
-                f_roe_min = st.number_input('ROE mínimo %', min_value=0.0, max_value=100.0, value=0.0, step=1.0, key='fund_f_roe',
-                                             help='0 = sin límite. Filtra empresas con ROE ≥ este porcentaje.')
+                f_roe_rng = st.slider(
+                    'ROE % (rango)', min_value=-50.0, max_value=100.0,
+                    value=(-50.0, 100.0), step=1.0, key='fund_f_roe_rng',
+                    help='Filtra por rango de ROE en porcentaje.'
+                )
             with frow2[2]:
-                f_beta_max = st.number_input('Beta máximo', min_value=0.0, max_value=5.0, value=0.0, step=0.1, key='fund_f_beta',
-                                              help='0 = sin límite. Filtra activos con Beta ≤ este valor.')
-            with frow2[3]:
-                f_fcf_pos  = st.checkbox('Solo FCF positivo', key='fund_f_fcf')
-                f_ok_min   = st.number_input('Señales OK mínimas', min_value=0, max_value=20, value=0, step=1, key='fund_f_ok_min')
+                f_beta_rng = st.slider(
+                    'Beta (rango)', min_value=0.0, max_value=4.0,
+                    value=(0.0, 4.0), step=0.1, key='fund_f_beta_rng',
+                    help='Filtra por rango de Beta.'
+                )
+
+            frow3 = st.columns(3)
+            with frow3[0]:
+                f_ok_rng = st.slider(
+                    'Señales OK (rango)', min_value=0, max_value=20,
+                    value=(0, 20), step=1, key='fund_f_ok_rng',
+                    help='Número de señales positivas detectadas.'
+                )
+            with frow3[1]:
+                f_div_rng = st.slider(
+                    'Div. Yield % (rango)', min_value=0.0, max_value=20.0,
+                    value=(0.0, 20.0), step=0.5, key='fund_f_div_rng',
+                    help='Filtra por rango de dividendo anual en %.'
+                )
+            with frow3[2]:
+                f_fcf_pos = st.checkbox('Solo FCF positivo', key='fund_f_fcf')
 
         # ── APLICAR FILTROS ───────────────────────────────────────────────
         df_f2 = df_fund.copy()
@@ -2698,30 +2726,47 @@ def modulo_fundamental():
         if f_sect_f != 'Todos':
             df_f2 = df_f2[df_f2['Sector'] == f_sect_f]
 
-        # Filtros numéricos: comparar contra valores reales (no strings formateados)
+        # Filtros numéricos por rango (sobre valores reales, no strings)
         emp_filtradas = [e for lst in todos_resultados.values() for e in lst]
         tickers_validos = set(df_f2['Ticker'].tolist())
 
-        if f_per_max > 0:
-            tickers_validos = {e['ticker'] for e in emp_filtradas
-                               if e['ticker'] in tickers_validos
-                               and e.get('per') is not None and e['per'] <= f_per_max}
-        if f_roe_min > 0:
-            tickers_validos = {e['ticker'] for e in emp_filtradas
-                               if e['ticker'] in tickers_validos
-                               and e.get('roe') is not None and e['roe'] * 100 >= f_roe_min}
-        if f_beta_max > 0:
-            tickers_validos = {e['ticker'] for e in emp_filtradas
-                               if e['ticker'] in tickers_validos
-                               and e.get('beta') is not None and e['beta'] <= f_beta_max}
-        if f_fcf_pos:
-            tickers_validos = {e['ticker'] for e in emp_filtradas
-                               if e['ticker'] in tickers_validos
-                               and e.get('fcf') is not None and e['fcf'] > 0}
-        if f_ok_min > 0:
-            tickers_validos = {e['ticker'] for e in emp_filtradas
-                               if e['ticker'] in tickers_validos
-                               and e['n_ok'] >= f_ok_min}
+        per_min_f,  per_max_f  = f_per_rng
+        roe_min_f,  roe_max_f  = f_roe_rng
+        beta_min_f, beta_max_f = f_beta_rng
+        ok_min_f,   ok_max_f   = f_ok_rng
+        div_min_f,  div_max_f  = f_div_rng
+
+        per_activo  = (per_min_f  > 0.0   or per_max_f  < 200.0)
+        roe_activo  = (roe_min_f  > -50.0 or roe_max_f  < 100.0)
+        beta_activo = (beta_min_f > 0.0   or beta_max_f < 4.0)
+        ok_activo   = (ok_min_f   > 0     or ok_max_f   < 20)
+        div_activo  = (div_min_f  > 0.0   or div_max_f  < 20.0)
+
+        def _en_rango(val, lo, hi, escala=1.0):
+            if val is None: return False
+            v = val * escala
+            return lo <= v <= hi
+
+        nuevos = set()
+        for e in emp_filtradas:
+            if e['ticker'] not in tickers_validos:
+                continue
+            if per_activo  and not _en_rango(e.get('per'),  per_min_f,  per_max_f):
+                continue
+            if roe_activo  and not _en_rango(e.get('roe'),  roe_min_f,  roe_max_f, 100.0):
+                continue
+            if beta_activo and not _en_rango(e.get('beta'), beta_min_f, beta_max_f):
+                continue
+            if ok_activo   and not (ok_min_f <= e['n_ok'] <= ok_max_f):
+                continue
+            if div_activo  and not _en_rango(e.get('div_yield'), div_min_f, div_max_f, 100.0):
+                continue
+            if f_fcf_pos and (e.get('fcf') is None or e['fcf'] <= 0):
+                continue
+            nuevos.add(e['ticker'])
+
+        if any([per_activo, roe_activo, beta_activo, ok_activo, div_activo, f_fcf_pos]):
+            tickers_validos = nuevos
 
         df_f2 = df_f2[df_f2['Ticker'].isin(tickers_validos)]
 
