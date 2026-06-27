@@ -61,7 +61,7 @@ st.markdown("""
     color: #c9d1d9;
   }
   .stApp { background: #07090f; }
-  .block-container { padding: 0 2rem 2rem 2rem !important; max-width: 1400px; }
+  .block-container { padding: 0 1.5rem 1.5rem 1.5rem !important; max-width: 1500px; }
 
 
   /* ── Top nav bar ── */
@@ -133,9 +133,9 @@ st.markdown("""
 
   /* ── Page header ── */
   .page-header {
-    padding: 28px 0 20px 0;
+    padding: 14px 0 12px 0;
     border-bottom: 1px solid #21262d;
-    margin-bottom: 24px;
+    margin-bottom: 14px;
   }
   .page-title { font-size: 22px; font-weight: 700; color: #e6edf3; margin: 0; letter-spacing: -0.5px; }
   .page-sub { font-size: 12px; color: #6b7d9a; margin: 4px 0 0 0; }
@@ -154,16 +154,22 @@ st.markdown("""
 
 
   /* ── KPI cards ── */
-  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
   .kpi-card {
     background: #0d1117; border: 1px solid #21262d; border-radius: 10px;
-    padding: 16px 18px; position: relative; overflow: hidden; transition: border-color .2s;
+    padding: 13px 16px; position: relative; overflow: hidden;
+    transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+    cursor: default;
   }
-  .kpi-card:hover { border-color: #3a7bd5; }
+  .kpi-card:hover {
+    border-color: #3a7bd5;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(58,123,213,0.15);
+  }
   .kpi-accent { position: absolute; top: 0; left: 0; width: 100%; height: 2px; border-radius: 10px 10px 0 0; }
-  .kpi-label { color: #6b7d9a; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
-  .kpi-value { color: #e6edf3; font-size: 20px; font-weight: 700; letter-spacing: -0.5px; font-family: 'JetBrains Mono', monospace; }
-  .kpi-sub { color: #6b7d9a; font-size: 11px; margin-top: 4px; }
+  .kpi-label { color: #6b7d9a; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
+  .kpi-value { color: #e6edf3; font-size: 19px; font-weight: 700; letter-spacing: -0.5px; font-family: 'JetBrains Mono', monospace; }
+  .kpi-sub { color: #6b7d9a; font-size: 10px; margin-top: 3px; line-height: 1.4; }
 
 
   /* ── Tabs ── */
@@ -265,6 +271,57 @@ st.markdown("""
   h1,h2,h3,h4 { color: #e6edf3 !important; }
   hr { border-color: #21262d !important; }
   p, label, .stMarkdown { color: #b0bcd0 !important; }
+
+  /* ── Ticker mini-card (Fundamental) ── */
+  .tk-card {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 9px;
+    padding: 11px 14px; transition: all .18s ease; cursor: default;
+  }
+  .tk-card:hover { border-color: #3a7bd5; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(58,123,213,0.12); }
+
+  /* ── Filtro-chip activo ── */
+  .filter-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px; border-radius: 20px; font-size: 10px; font-weight: 700;
+    background: rgba(58,123,213,0.12); border: 1px solid rgba(58,123,213,0.3);
+    color: #3a7bd5; margin: 2px 3px; white-space: nowrap;
+  }
+
+  /* ── Buscador global en nav ── */
+  .nav-search-box {
+    display: flex; align-items: center; gap: 8px;
+    background: #0d1117; border: 1px solid #21262d; border-radius: 7px;
+    padding: 5px 12px; transition: border-color .15s;
+  }
+  .nav-search-box:focus-within { border-color: #3a7bd5; }
+
+  /* ── Metric compacto ── */
+  [data-testid="stMetric"] { background: #0d1117; border: 1px solid #21262d; border-radius: 9px; padding: 10px 14px; transition: all .18s ease; }
+  [data-testid="stMetric"]:hover { border-color: #3a7bd5; transform: translateY(-1px); }
+  [data-testid="stMetricLabel"] { color: #6b7d9a !important; font-size: 10px !important; }
+  [data-testid="stMetricValue"] { color: #e6edf3 !important; font-family: 'JetBrains Mono', monospace; }
+
+  /* ── Expander compacto ── */
+  details summary { padding: 8px 12px !important; font-size: 12px !important; }
+  details[open] { border-color: #3a4a5a !important; }
+
+  /* ── Tabs más compactos ── */
+  .stTabs [data-baseweb="tab"] { padding: 8px 14px; font-size: 11px; }
+
+  /* ── Progress bar ── */
+  .stProgress > div > div > div { background: linear-gradient(90deg, #1e5fbd, #3a7bd5) !important; border-radius: 4px !important; }
+
+  /* ── Spinner ── */
+  .stSpinner > div { border-top-color: #3a7bd5 !important; }
+
+  /* ── Scrollbar fina ── */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: #07090f; }
+  ::-webkit-scrollbar-thumb { background: #21262d; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a4a5a; }
+
+  /* ── Altura mínima para no ver pantalla vacía ── */
+  .main .block-container { min-height: 100vh; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1883,11 +1940,14 @@ def _renderizar_buscador(ticker):
 for key, default in [
     ('nav_horizonte', 'corto'),
     ('nav_modulo', 'resumen'),
-    ('nav_ind_sel_corto', list(ACCIONES_POR_INDUSTRIA.keys())[:1]),
-    ('nav_ind_sel_largo', list(ACCIONES_POR_INDUSTRIA.keys())[:1]),
+    ('nav_ind_sel_global', list(ACCIONES_POR_INDUSTRIA.keys())[:2]),
+    ('nav_ind_sel_corto', list(ACCIONES_POR_INDUSTRIA.keys())[:2]),
+    ('nav_ind_sel_largo', list(ACCIONES_POR_INDUSTRIA.keys())[:2]),
+    ('fund_ind_sel', list(ACCIONES_POR_INDUSTRIA.keys())[:2]),
     ('nav_grupos_fx', list(dict.fromkeys(v[1] for v in FOREX.values()))),
     ('ticker_from_table', ''),
     ('ticker_manual', ''),
+    ('nav_search_ticker', ''),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -1913,8 +1973,8 @@ st.markdown(f"""
     <div class="topbar-brand">
       <div class="topbar-brand-icon">📡</div>
       <div>
-        <div class="topbar-brand-name">Analizador Cuantitativo</div>
-        <div class="topbar-brand-sub">Yahoo Finance · Caché 30min</div>
+        <div class="topbar-brand-name">QuantAnalyzer</div>
+        <div class="topbar-brand-sub">Live · Yahoo Finance</div>
       </div>
     </div>
     <div class="topbar-divider"></div>
@@ -1930,7 +1990,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
-st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
 
 
 def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on_click_val_m=None):
@@ -1962,25 +2022,38 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
             st.rerun()
 
 
-_c = st.columns([1.1, 1.1, 1, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
+_c = st.columns([1.1, 1.1, 0.05, 1, 1, 1, 1, 1, 1, 0.05, 2.0, 0.8])
 
 
 _nav_btn(_c[0], '⚡ Corto Plazo', 'nav_h_corto',
          HORIZONTE=='corto', None, 'corto', 'resumen')
 _nav_btn(_c[1], '📈 Largo Plazo', 'nav_h_largo',
          HORIZONTE=='largo', None, 'largo', 'ranking')
-_nav_btn(_c[2], '🔍 Buscador', 'nav_buscador',
-         HORIZONTE=='buscador', None, 'buscador', 'buscador')
+
+
+# Buscador global siempre visible
+with _c[10]:
+    _search_val = st.text_input('', placeholder='🔍  Ticker: NVDA, AAPL, GGAL...',
+                                 label_visibility='collapsed', key='nav_global_search')
+with _c[11]:
+    _search_btn = st.button('Buscar', key='nav_global_search_btn', use_container_width=True)
+
+if _search_btn and _search_val.strip():
+    _tk_nav = _search_val.strip().upper()
+    st.session_state['ticker_from_table'] = _tk_nav
+    st.session_state['nav_horizonte'] = 'buscador'
+    st.session_state['nav_modulo']    = 'buscador'
+    st.rerun()
 
 
 if HORIZONTE == 'corto':
     _mods_corto = [
-        ('💱 Forex',    'forex',    4),
-        ('🌍 Países',   'paises',   5),
-        ('📊 Sectores', 'sectores', 6),
-        ('🛢️ Mercados', 'mercados', 7),
-        ('📈 Acciones', 'acciones', 8),
-        ('🎯 Top-Down', 'topdown',  9),
+        ('💱 Forex',    'forex',    3),
+        ('🌍 Países',   'paises',   4),
+        ('📊 Sectores', 'sectores', 5),
+        ('🛢️ Mercados', 'mercados', 6),
+        ('📈 Acciones', 'acciones', 7),
+        ('🎯 Top-Down', 'topdown',  8),
     ]
     for label, mod_key, col_idx in _mods_corto:
         _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
@@ -1989,20 +2062,20 @@ if HORIZONTE == 'corto':
 
 elif HORIZONTE == 'largo':
     _mods_largo = [
-        ('📋 Ranking',      'ranking',      4),
-        ('🔄 Reversión',    'reversion',    5),
-        ('🏭 Industria',    'industria',    6),
-        ('🔍 Ticker',       'ticker',       7),
-        ('📊 Fundamental',  'fundamental',  8),
+        ('📋 Ranking',      'ranking',      3),
+        ('🔄 Reversión',    'reversion',    4),
+        ('🏭 Industria',    'industria',    5),
+        ('🔍 Ticker',       'ticker',       6),
+        ('📊 Fundamental',  'fundamental',  7),
     ]
     for label, mod_key, col_idx in _mods_largo:
         _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
                  MODULO==mod_key, None, None, mod_key)
 
 
-with _c[11]:
+with _c[9]:
     with st.container(key='nav_refresh_cont'):
-        if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
+        if st.button('↺', use_container_width=True, key='nav_refresh'):
             st.cache_data.clear(); st.rerun()
 st.markdown("""
 <style>
@@ -2336,9 +2409,13 @@ elif HORIZONTE == 'largo':
         pass  # handled by modulo_fundamental() below
     else:
         ind_disp = list(ACCIONES_POR_INDUSTRIA.keys())
-        ind_sel  = st.multiselect('Industrias a analizar (2 años de historia)', ind_disp,
-                                   default=st.session_state['nav_ind_sel_largo'], key='largo_ind_sel')
-        st.session_state['nav_ind_sel_largo'] = ind_sel
+        _largo_default = st.session_state.get('nav_ind_sel_global',
+                         st.session_state.get('nav_ind_sel_largo', ind_disp[:2]))
+        ind_sel  = st.multiselect('Industrias a analizar (2 años)', ind_disp,
+                                   default=_largo_default, key='largo_ind_sel')
+        st.session_state['nav_ind_sel_largo']  = ind_sel
+        st.session_state['nav_ind_sel_global'] = ind_sel
+        st.session_state['fund_ind_sel']       = ind_sel
 
 
         if not ind_sel:
@@ -2568,12 +2645,18 @@ elif HORIZONTE == 'largo':
 
 def modulo_fundamental():
     ind_disp_f = list(ACCIONES_POR_INDUSTRIA.keys())
+    # Sincronizar con estado global de industrias
+    _fund_default = st.session_state.get('fund_ind_sel',
+                    st.session_state.get('nav_ind_sel_largo',
+                    st.session_state.get('nav_ind_sel_global', ind_disp_f[:2])))
     ind_sel_f  = st.multiselect(
-        'Industrias a analizar (Fundamental)', ind_disp_f,
-        default=st.session_state.get('fund_ind_sel', ind_disp_f[:1]),
+        'Industrias a analizar', ind_disp_f,
+        default=_fund_default,
         key='fund_ind_sel_widget'
     )
+    # Guardar en estado global para que otros módulos lo compartan
     st.session_state['fund_ind_sel'] = ind_sel_f
+    st.session_state['nav_ind_sel_global'] = ind_sel_f
 
     if not ind_sel_f:
         st.info('Seleccioná al menos una industria.')
@@ -2584,36 +2667,25 @@ def modulo_fundamental():
 
     # ── TAB 1: Por industria ──────────────────────────────────────────────
     with tab_modo_f:
-        if st.button('▶ Cargar análisis fundamental', key='btn_fund_load'):
-            st.session_state['fund_loaded'] = True
-
-        if not st.session_state.get('fund_loaded'):
-            st.markdown("""
-            <div style='background:#0d1117;border:1px dashed #21262d;border-radius:10px;
-                 padding:40px;text-align:center;margin-top:16px'>
-              <div style='font-size:40px;margin-bottom:12px'>📊</div>
-              <div style='color:#e6edf3;font-size:14px;font-weight:600;margin-bottom:6px'>Análisis Fundamental</div>
-              <div style='color:#6b7d9a;font-size:12px'>Ratios financieros + benchmarks por sector.<br>
-              Presioná el botón para iniciar la descarga (puede tardar según la cantidad de tickers).</div>
-            </div>
-            """, unsafe_allow_html=True)
-            return
-
-        todos_resultados = {}
-        prog_f = st.progress(0, text='Descargando datos fundamentales...')
-        tickers_total = [tk for ind in ind_sel_f for tk in ACCIONES_POR_INDUSTRIA.get(ind, [])]
-        procesados = 0
-
-        for industria in ind_sel_f:
-            todos_resultados[industria] = []
-            for tk in ACCIONES_POR_INDUSTRIA.get(industria, []):
-                r = analizar_fundamental(tk, industria)
-                if r: todos_resultados[industria].append(r)
-                procesados += 1
-                pct = int(procesados / max(len(tickers_total), 1) * 100)
-                prog_f.progress(min(pct, 100), text=f'Procesando {tk}...')
-
-        prog_f.empty()
+        # Carga automática — sin botón, spinner inline en los cards
+        _fund_key = f'fund_cache_{"_".join(sorted(ind_sel_f))}'
+        if _fund_key not in st.session_state:
+            todos_resultados = {}
+            prog_f = st.progress(0, text='⟳ Iniciando descarga...')
+            tickers_total = [tk for ind in ind_sel_f for tk in ACCIONES_POR_INDUSTRIA.get(ind, [])]
+            procesados = 0
+            for industria in ind_sel_f:
+                todos_resultados[industria] = []
+                for tk in ACCIONES_POR_INDUSTRIA.get(industria, []):
+                    r = analizar_fundamental(tk, industria)
+                    if r: todos_resultados[industria].append(r)
+                    procesados += 1
+                    pct = int(procesados / max(len(tickers_total), 1) * 100)
+                    prog_f.progress(min(pct, 100), text=f'⟳ {tk} ({procesados}/{len(tickers_total)})...')
+            prog_f.empty()
+            st.session_state[_fund_key] = todos_resultados
+        else:
+            todos_resultados = st.session_state[_fund_key]
 
         total_emp = sum(len(v) for v in todos_resultados.values())
         if total_emp == 0:
@@ -2625,11 +2697,14 @@ def modulo_fundamental():
         n_compra   = sum(1 for e in todas_emp if 'COMPRA' in e['senal_final'])
         n_mantener = sum(1 for e in todas_emp if 'MANTENER' in e['senal_final'])
         n_riesgo   = sum(1 for e in todas_emp if 'RIESGO' in e['senal_final'])
+        pct_compra = round(n_compra/max(total_emp,1)*100)
+        pct_mantener = round(n_mantener/max(total_emp,1)*100)
+        pct_riesgo = round(n_riesgo/max(total_emp,1)*100)
         kpi_cards_4([
-            ('Total analizadas', str(total_emp), f'{len(ind_sel_f)} industrias', '#3a7bd5'),
-            ('✅ Compra Fuerte', str(n_compra),   'score_ok ≥ 8 señales positivas', '#3fb950'),
-            ('🟡 Mantener',      str(n_mantener), 'score_ok 5-7', '#e3b341'),
-            ('🔴 Riesgo/Vender', str(n_riesgo),   'score_ok < 5', '#f85149'),
+            ('Analizadas', str(total_emp), f'{len(ind_sel_f)} industrias seleccionadas', '#3a7bd5'),
+            ('Compra Fuerte', str(n_compra),   f'{pct_compra}% del total · ≥ 8 señales OK', '#3fb950'),
+            ('Mantener',      str(n_mantener), f'{pct_mantener}% del total · 5-7 señales OK', '#e3b341'),
+            ('Riesgo / Vender', str(n_riesgo), f'{pct_riesgo}% del total · < 5 señales OK', '#f85149'),
         ])
 
         # Tabla global resumen
@@ -2664,7 +2739,33 @@ def modulo_fundamental():
         df_fund = pd.DataFrame(filas_res)
 
         # ── FILTROS AVANZADOS ─────────────────────────────────────────────
-        with st.expander('🎛️ Filtros avanzados', expanded=True):
+        # ── Chips de filtros activos ──────────────────────────────────────
+        _DEFS_CHIP = {
+            'per': (0.0,200.0), 'pb': (0.0,30.0), 'eveb': (0.0,60.0),
+            'roe': (-50.0,100.0), 'gm': (-20.0,100.0), 'om': (-50.0,60.0),
+            'rg': (-50.0,100.0), 'de': (0.0,10.0), 'beta': (0.0,4.0),
+            'div': (0.0,20.0), 'ytd': (-80.0,300.0), 'ok': (0,20),
+        }
+        _NAMES_CHIP = {'per':'PER','pb':'P/B','eveb':'EV/EBITDA','roe':'ROE%',
+                       'gm':'Mg.Bruto%','om':'Mg.Op%','rg':'Rev.Growth%',
+                       'de':'D/E','beta':'Beta','div':'Div.Yield%','ytd':'YTD%','ok':'OK'}
+        _active_chips = []
+        for _ck, _cd in _DEFS_CHIP.items():
+            _rng_val = st.session_state.get(f'fund_f_{_ck}_rng', _cd)
+            if _rng_val != _cd:
+                _active_chips.append(f'{_NAMES_CHIP[_ck]}: {_rng_val[0]}–{_rng_val[1]}')
+        if st.session_state.get('fund_f_fcf', False):
+            _active_chips.append('FCF+')
+        if st.session_state.get('fund_f_senal','Todas') != 'Todas':
+            _active_chips.append(f"Señal: {st.session_state['fund_f_senal']}")
+        if st.session_state.get('fund_f_ind','Todas') != 'Todas':
+            _active_chips.append(f"Ind: {st.session_state['fund_f_ind']}")
+
+        if _active_chips:
+            _chips_html = ''.join(f'<span class="filter-chip">✕ {c}</span>' for c in _active_chips)
+            st.markdown(f'<div style="margin-bottom:8px;line-height:2.2"><b style="font-size:10px;color:#6b7d9a;text-transform:uppercase;letter-spacing:.8px">Filtros activos: </b>{_chips_html}</div>', unsafe_allow_html=True)
+
+        with st.expander('🎛️ Filtros avanzados', expanded=not bool(_active_chips)):
             frow1 = st.columns(4)
             with frow1[0]:
                 f_senal_f = st.selectbox('Señal', ['Todas','COMPRA FUERTE','MANTENER','RIESGO / VENDER'], key='fund_f_senal')
@@ -2989,7 +3090,7 @@ def modulo_fundamental():
 
 if HORIZONTE == 'largo' and MODULO == 'fundamental':
     if 'fund_ind_sel' not in st.session_state:
-        st.session_state['fund_ind_sel'] = list(ACCIONES_POR_INDUSTRIA.keys())[:1]
+        st.session_state['fund_ind_sel'] = list(ACCIONES_POR_INDUSTRIA.keys())[:2]
     modulo_fundamental()
 
 
