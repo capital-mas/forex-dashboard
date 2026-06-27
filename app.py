@@ -371,7 +371,7 @@ ACCIONES_POR_INDUSTRIA = {
     'REIT Residencial':   ['EQR','AVB','ESS','MAA','UDR','CPT'],
     'Telecomunicaciones': ['T','VZ','TMUS','AMT','CCI','SBAC'],
     'Internet':           ['GOOGL','META','NFLX','SNAP','PINS','RDDT','SPOT'],
-    'Argentina':          ['GGAL','BMA','BFR','SUPV','BBAR','CEPU','YPF','PAM','TGS','CRESY','LOMA','VISTA'],
+    'Argentina':          ['GGAL','BMA','BFR','SUPV','BBAR','CEPU','YPF','PAM','TGS','CRESY','LOMA','VIST'],
     'Brasil':             ['VALE','ITUB','PBR','BBD','ABEV','NU'],
     'México':             ['WALMEX.MX','AMXL.MX','CEMEXCPO.MX','GFINBURO.MX'],
     'China':              ['BABA','TCEHY','BIDU','JD','NIO','LI','XPEV','BYDDF','PDD','NTES'],
