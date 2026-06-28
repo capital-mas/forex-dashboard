@@ -416,15 +416,14 @@ ACCIONES_POR_INDUSTRIA = {
     'REIT Residencial':   ['EQR','AVB','ESS','MAA','UDR','CPT','ELS','AIV','NXRT','INVH', 'IRT','AMH','BRG','SUI','NXRT','MHC','UMH','ESS','EQR','AVB', 'UDR','MAA','CPT','INVH','AMH','SUI','ELS','AIRC','CUBE','CPT'],
     'Telecomunicaciones': ['T','VZ','TMUS','S','CHTR','CMCSA','LUMN','FYBR','VOD','BT', 'ORAN','TEF','TU','BCE','RCI','SKM','ZL','AMX','TIGO','TDS', 'ATUS','WOW','CNSL','QCOM','AMT','CCI','SBAC','WBD','NFLX','DIS', 'TMUS','VZ','T','CMCSA','CHTR','S','LUMN','VOD','BT','TEF'],
     'Internet':           ['GOOGL','META','NFLX','SNAP','PINS','RDDT','SPOT','ROKU','IAC','MTCH', 'BMBL','YELP','DASH','UBER','LYFT','SHOP','SE','MELI','ETSY','EBAY', 'BABA','JD','PDD','BIDU','NTES','WB','IQ','TME','WIX','RBLX', 'DUOL','TTD','PUBM','APP','NET','AKAM','DOCN','GTLB','BOX','ZI', 'YEXT','COUR','CHGG','RUM','VKTX','CRWV','FSLY','CFLT','DBX','TASK'],
-    'Argentina':          ['GGAL','BMA','BFR','SUPV','BBAR','CEPU','YPF','PAM','TGS','CRESY','LOMA','VISTA'],
+    'Argentina':          ['GGAL','BMA','BBAR','SUPV','CEPU','YPF','PAM','TGS','CRESY','LOMA', 'VIST','IRCP','EDN','TRAN','IRS','DESP','GLOB','BIOX','MTR','AGRO', 'PGR','SBS','CRESY','IRS','YPF','GGAL','BMA','SUPV','BBAR','CEPU'],
     'Brasil':             ['VALE','ITUB','PBR','BBD','ABEV','NU'],
-    'México':             ['WALMEX.MX','AMXL.MX','CEMEXCPO.MX','GFINBURO.MX'],
     'China':              ['BABA','TCEHY','BIDU','JD','NIO','LI','XPEV','BYDDF','PDD','NTES'],
     'India':              ['INFY','WIT','HDB','IBN','VEDL','RDY','TTM'],
     'Europa Tecnología':  ['SAP','ASML','IFNNY','NXPI'],
     'Europa Finanzas':    ['HSBC','BBVA','SAN','DBK.DE','LLOY.L','UBS','ING'],
     'Agro/Fertilizantes': ['MOS','NTR','CF','ADM','BG','FMC','CTVA'],
-    'Cripto (ETF/Coin)':  ['BTC-USD','ETH-USD','SOL-USD','BNB-USD','XRP-USD','ADA-USD'],
+    'Cripto (ETF/Coin)':  ['BTC-USD','ETH-USD','SOL-USD','BNB-USD','XRP-USD','ADA-USD','DOGE-USD','AVAX-USD','DOT-USD','MATIC-USD', 'LINK-USD','LTC-USD','ATOM-USD','ETC-USD','XLM-USD','FIL-USD','ICP-USD','HBAR-USD','NEAR-USD','ARB-USD', 'COIN','MARA','RIOT','CLSK','HUT','BITF','BTDR','IREN','CAN','WULF'],
 }
 
 
