@@ -1,7 +1,10 @@
 # ==============================================================
-#  ANALIZADOR CUANTITATIVO UNIFICADO — v2 (sin sidebar)
+#  ANALIZADOR CUANTITATIVO UNIFICADO — v3
 #  Corto Plazo (Top-Down) + Mediano/Largo Plazo (Cuantitativo)
-#  + Buscador Universal por Ticker
+#  + Buscador Universal + Comparador de Activos
+#  Cambios v3: Plotly interactivo, descargas en paralelo,
+#  comparador de tickers, cross-linking con un clic, glosario
+#  con tooltips, autocomplete en buscador, botones ovalados.
 # ==============================================================
 
 
@@ -12,11 +15,10 @@ warnings.filterwarnings("ignore")
 import streamlit as st
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
-import seaborn as sb
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime
-import sys, os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 try:
@@ -40,7 +42,8 @@ st.set_page_config(
 
 
 # ==============================================================
-#  CSS — diseño sin sidebar, nav superior
+#  CSS — diseño sin sidebar, nav superior, botones ovalados
+#  (sin rellenos de color — solo texto en verde monster)
 # ==============================================================
 
 
@@ -48,6 +51,11 @@ st.markdown("""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
 
+  :root {
+    --verde-monster: #6CC24A;
+    --verde-monster-hover: #8ddb5e;
+    --verde-monster-dim: #4f9438;
+  }
 
   /* ── Reset sidebar ── */
   [data-testid="stSidebar"] { display: none !important; }
@@ -61,7 +69,7 @@ st.markdown("""
     color: #c9d1d9;
   }
   .stApp { background: #07090f; }
-  .block-container { padding: 0 1.5rem 1.5rem 1.5rem !important; max-width: 1500px; }
+  .block-container { padding: 0 2rem 2rem 2rem !important; max-width: 1400px; }
 
 
   /* ── Top nav bar ── */
@@ -95,12 +103,6 @@ st.markdown("""
     font-size: 10px; color: #6b7d9a; letter-spacing: 0.2px;
   }
   .topbar-divider { width: 1px; height: 22px; background: #21262d; margin: 0 20px; flex-shrink: 0; }
-  .topbar-nav-group { display: flex; align-items: center; gap: 2px; flex: 1; }
-  .topbar-section-label {
-    font-size: 9px; font-weight: 700; color: #3a4a5f;
-    text-transform: uppercase; letter-spacing: 1.2px;
-    margin-right: 6px; white-space: nowrap;
-  }
   .topbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
   .topbar-time {
     font-size: 10px; color: #3a4a5f; font-family: 'JetBrains Mono', monospace;
@@ -108,15 +110,38 @@ st.markdown("""
   }
 
 
-  /* ── Nav pills — todos los botones de la fila de navegación ── */
+  /* ── Botones — ovalados, sin relleno de color, texto verde monster ── */
+  .stButton > button {
+    background: #0d1117 !important;
+    color: var(--verde-monster) !important;
+    border: 1px solid #21262d !important;
+    border-radius: 999px !important;
+    padding: 6px 18px !important;
+    font-weight: 600 !important;
+    font-size: 12px !important;
+    transition: all .18s ease !important;
+    box-shadow: none !important;
+  }
+  .stButton > button:hover {
+    border-color: var(--verde-monster) !important;
+    color: var(--verde-monster-hover) !important;
+    background: #11150f !important;
+    transform: translateY(-1px) !important;
+  }
+  .stButton > button:active {
+    color: var(--verde-monster) !important;
+  }
+
+
+  /* ── Nav pills — fila de navegación superior ── */
   div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button {
     border-radius: 999px !important;
     border: 1px solid #21262d !important;
     padding: 6px 16px !important;
-    font-size: 12px !important; font-weight: 500 !important;
+    font-size: 12px !important; font-weight: 600 !important;
     height: 34px !important; min-height: 34px !important;
     background: #0d1117 !important;
-    color: #8b949e !important;
+    color: var(--verde-monster) !important;
     transition: all .18s ease !important;
     box-shadow: none !important;
     white-space: nowrap !important;
@@ -124,8 +149,8 @@ st.markdown("""
   }
   div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button:hover {
     background: #161b22 !important;
-    color: #e6edf3 !important;
-    border-color: #3a4a5a !important;
+    color: var(--verde-monster-hover) !important;
+    border-color: var(--verde-monster) !important;
     transform: translateY(-1px) !important;
     box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
   }
@@ -133,9 +158,9 @@ st.markdown("""
 
   /* ── Page header ── */
   .page-header {
-    padding: 14px 0 12px 0;
+    padding: 28px 0 20px 0;
     border-bottom: 1px solid #21262d;
-    margin-bottom: 14px;
+    margin-bottom: 24px;
   }
   .page-title { font-size: 22px; font-weight: 700; color: #e6edf3; margin: 0; letter-spacing: -0.5px; }
   .page-sub { font-size: 12px; color: #6b7d9a; margin: 4px 0 0 0; }
@@ -154,22 +179,17 @@ st.markdown("""
 
 
   /* ── KPI cards ── */
-  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
   .kpi-card {
     background: #0d1117; border: 1px solid #21262d; border-radius: 10px;
-    padding: 13px 16px; position: relative; overflow: hidden;
-    transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
-    cursor: default;
+    padding: 16px 18px; position: relative; overflow: hidden; transition: border-color .2s;
+    cursor: help;
   }
-  .kpi-card:hover {
-    border-color: #3a7bd5;
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(58,123,213,0.15);
-  }
+  .kpi-card:hover { border-color: #3a7bd5; }
   .kpi-accent { position: absolute; top: 0; left: 0; width: 100%; height: 2px; border-radius: 10px 10px 0 0; }
-  .kpi-label { color: #6b7d9a; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
-  .kpi-value { color: #e6edf3; font-size: 19px; font-weight: 700; letter-spacing: -0.5px; font-family: 'JetBrains Mono', monospace; }
-  .kpi-sub { color: #6b7d9a; font-size: 10px; margin-top: 3px; line-height: 1.4; }
+  .kpi-label { color: #6b7d9a; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .kpi-value { color: #e6edf3; font-size: 20px; font-weight: 700; letter-spacing: -0.5px; font-family: 'JetBrains Mono', monospace; }
+  .kpi-sub { color: #6b7d9a; font-size: 11px; margin-top: 4px; }
 
 
   /* ── Tabs ── */
@@ -184,8 +204,8 @@ st.markdown("""
     border-bottom: 2px solid transparent;
   }
   .stTabs [aria-selected="true"] {
-    color: #3a7bd5 !important;
-    border-bottom: 2px solid #3a7bd5 !important;
+    color: var(--verde-monster) !important;
+    border-bottom: 2px solid var(--verde-monster) !important;
     background: transparent !important;
   }
 
@@ -243,15 +263,6 @@ st.markdown("""
   .sesgo-muy-baj { color: #f85149; font-weight: 700; }
 
 
-  /* ── Buttons ── */
-  .stButton > button {
-    background: linear-gradient(135deg, #1e5fbd, #3a7bd5);
-    color: white; border: none; border-radius: 7px;
-    font-weight: 600; font-size: 12px; transition: opacity .2s;
-  }
-  .stButton > button:hover { opacity: .85; }
-
-
   /* ── Selectbox / multiselect ── */
   .stSelectbox > div > div { background: #0d1117 !important; border-color: #21262d !important; color: #e6edf3 !important; }
   .stMultiSelect > div > div { background: #0d1117 !important; border-color: #21262d !important; }
@@ -271,92 +282,32 @@ st.markdown("""
   h1,h2,h3,h4 { color: #e6edf3 !important; }
   hr { border-color: #21262d !important; }
   p, label, .stMarkdown { color: #b0bcd0 !important; }
-
-  /* ── Ticker mini-card (Fundamental) ── */
-  .tk-card {
-    background: #0d1117; border: 1px solid #21262d; border-radius: 9px;
-    padding: 11px 14px; transition: all .18s ease; cursor: default;
-  }
-  .tk-card:hover { border-color: #3a7bd5; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(58,123,213,0.12); }
-
-  /* ── Filtro-chip activo ── */
-  .filter-chip {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 3px 9px; border-radius: 20px; font-size: 10px; font-weight: 700;
-    background: rgba(58,123,213,0.12); border: 1px solid rgba(58,123,213,0.3);
-    color: #3a7bd5; margin: 2px 3px; white-space: nowrap;
-  }
-
-  /* ── Buscador global en nav ── */
-  .nav-search-box {
-    display: flex; align-items: center; gap: 8px;
-    background: #0d1117; border: 1px solid #21262d; border-radius: 7px;
-    padding: 5px 12px; transition: border-color .15s;
-  }
-  .nav-search-box:focus-within { border-color: #3a7bd5; }
-
-  /* ── Metric compacto ── */
-  [data-testid="stMetric"] { background: #0d1117; border: 1px solid #21262d; border-radius: 9px; padding: 10px 14px; transition: all .18s ease; }
-  [data-testid="stMetric"]:hover { border-color: #3a7bd5; transform: translateY(-1px); }
-  [data-testid="stMetricLabel"] { color: #6b7d9a !important; font-size: 10px !important; }
-  [data-testid="stMetricValue"] { color: #e6edf3 !important; font-family: 'JetBrains Mono', monospace; }
-
-  /* ── Expander compacto ── */
-  details summary { padding: 8px 12px !important; font-size: 12px !important; }
-  details[open] { border-color: #3a4a5a !important; }
-
-  /* ── Tabs más compactos ── */
-  .stTabs [data-baseweb="tab"] { padding: 8px 14px; font-size: 11px; }
-
-  /* ── Progress bar ── */
-  .stProgress > div > div > div { background: linear-gradient(90deg, #1e5fbd, #3a7bd5) !important; border-radius: 4px !important; }
-
-  /* ── Spinner ── */
-  .stSpinner > div { border-top-color: #3a7bd5 !important; }
-
-  /* ── Scrollbar fina ── */
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
-  ::-webkit-scrollbar-track { background: #07090f; }
-  ::-webkit-scrollbar-thumb { background: #21262d; border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: #3a4a5a; }
-
-  /* ── Altura mínima para no ver pantalla vacía ── */
-  .main .block-container { min-height: 100vh; }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ==============================================================
-#  MATPLOTLIB THEME
+#  PALETA (para HTML / Plotly)
 # ==============================================================
 
 
-plt.rcParams.update({
-    'figure.facecolor': '#07090f', 'axes.facecolor': '#0d1117',
-    'text.color': '#b0bcd0', 'axes.labelcolor': '#6b7d9a',
-    'xtick.color': '#6b7d9a', 'ytick.color': '#6b7d9a',
-    'grid.color': '#21262d', 'axes.edgecolor': '#21262d',
-    'font.family': 'DejaVu Sans',
-})
+C_ACENT   = '#3a7bd5'
+C_MONSTER = '#6CC24A'
+C_TEXT    = '#e6edf3'
+C_MUTED   = '#6b7d9a'
+C_GREEN   = '#3fb950'
+C_RED     = '#f85149'
+C_YELL    = '#e3b341'
+C_LGRE    = '#7ee787'
+C_LRED    = '#f0883e'
+C_GRID    = '#21262d'
+C_BG1     = '#0d1117'
+C_BG2     = '#07090f'
 
-
-# ==============================================================
-#  PALETA
-# ==============================================================
-
-
-C_BG1   = '#0d1117'
-C_BG2   = '#07090f'
-C_ACENT = '#3a7bd5'
-C_TEXT  = '#e6edf3'
-C_MUTED = '#6b7d9a'
-C_GREEN = '#3fb950'
-C_RED   = '#f85149'
-C_YELL  = '#e3b341'
-C_GOLD  = '#f0e68c'
-C_LGRE  = '#7ee787'
-C_LRED  = '#f0883e'
-C_GRID  = '#21262d'
+PLOTLY_LAYOUT_BASE = dict(
+    plot_bgcolor=C_BG1, paper_bgcolor=C_BG2,
+    font=dict(color='#b0bcd0', family='Inter, sans-serif'),
+)
 
 
 def score_color_hex(v):
@@ -365,9 +316,6 @@ def score_color_hex(v):
     elif v <= 60: return '#e3b341'
     elif v <= 80: return '#7ee787'
     else:         return '#3fb950'
-
-
-def score_color_mpl(v): return score_color_hex(v)
 
 
 def sesgo_color_hex(s):
@@ -380,6 +328,46 @@ def clasificar_score(s):
     elif s <= 60: return 'Neutral',   '#e3b341', '🟡'
     elif s <= 80: return 'Alto',      '#7ee787', '🟢'
     else:         return 'Muy alto',  '#3fb950', '💚'
+
+
+# ==============================================================
+#  GLOSARIO — términos cuantitativos y fundamentales
+# ==============================================================
+
+
+GLOSARIO = {
+    'Score Acumulación': 'Percentil del precio actual respecto a su propio historial (3 meses), combinado con RSI y volatilidad reciente. Alto = el activo está relativamente barato dentro de su propio rango reciente (zona de acumulación). Bajo = relativamente caro / en zona de distribución.',
+    'Score Anticipación': 'Mide el momentum de corto plazo junto con la compresión de volatilidad (ATR) y de Bandas de Bollinger. Anticipa posibles movimientos fuertes inminentes, sin importar la dirección.',
+    'Score Sentimiento': 'Percentil del precio en los últimos 3 meses. Más alto = más cerca de máximos recientes (sentimiento optimista); más bajo = más cerca de mínimos.',
+    'Score Final': 'Combinación ponderada de Acumulación (45%), Anticipación (35%) y Sentimiento (20%). Resumen de corto plazo.',
+    'Trend Score': 'Fuerza de la tendencia de largo plazo: Golden Cross, MACD alcista, RSI>50 y persistencia (Hurst). Más alto = tendencia más fuerte y sostenida.',
+    'MR Score': 'Mean Reversion Score: qué tan lejos está el precio de su media de 20 días (Z-Score, Bandas de Bollinger) y su tendencia a revertir (Hurst < 0.5). Alto = mayor probabilidad estadística de reversión a la media.',
+    'Risk Score': 'Combina Sharpe, Sortino, Máximo Drawdown y volatilidad anualizada. Alto = mejor retorno ajustado por riesgo y caídas más controladas.',
+    'Global Score': 'Promedio de Trend, MR y Risk Score. Resumen cuantitativo de largo plazo (0-100).',
+    'Hurst': 'Mide si el precio se comporta de forma persistente (H>0.55, sigue su tendencia), aleatoria (H≈0.5) o reversiva (H<0.45, tiende a revertir tras un movimiento).',
+    'Z-Score': 'Cuántas desviaciones estándar está el precio respecto a su media móvil de 20 días. Muy negativo = sobreventa estadística; muy positivo = sobrecompra.',
+    'RSI': 'Oscilador de momentum (0-100). Por debajo de 30 sugiere sobreventa; por encima de 70, sobrecompra.',
+    'MACD': 'Diferencia entre dos medias móviles exponenciales (12 y 26) y su señal (9). Cruce del MACD por encima de la señal = señal alcista.',
+    'Sharpe': 'Retorno anualizado por encima de la tasa libre de riesgo, dividido por la volatilidad. Retorno obtenido por unidad de riesgo total.',
+    'Sortino': 'Similar al Sharpe, pero solo penaliza la volatilidad negativa (caídas).',
+    'Max Drawdown': 'La mayor caída porcentual desde un máximo histórico hasta el mínimo posterior.',
+    'Golden Cross': 'Cuando la media móvil de 50 días cruza por encima de la de 200 días. Señal técnica clásica de tendencia alcista de largo plazo.',
+    'Bandas de Bollinger': 'Bandas a 2 desvíos estándar de la media de 20 días. El precio fuera de las bandas indica condiciones estadísticamente extremas.',
+    'ATR': 'Average True Range: promedio del rango verdadero de precios (volatilidad absoluta) de los últimos 14 períodos.',
+    'PER': 'Precio / Ganancias por acción. Cuanto más bajo, en general más "barata" luce la acción (depende del sector).',
+    'P/B': 'Precio / Valor libro por acción. Muy usado en bancos y financieras.',
+    'EV/EBITDA': 'Valor de la empresa (Enterprise Value) / EBITDA. Múltiplo que no depende de la estructura de capital ni de impuestos.',
+    'PEG': 'PER / crecimiento esperado de ganancias. PEG < 1 sugiere que el crecimiento está "barato" respecto al precio pagado.',
+    'ROE': 'Ganancia neta / patrimonio neto. Rentabilidad sobre el capital de los accionistas.',
+    'ROA': 'Ganancia neta / activos totales. Eficiencia en el uso de los activos.',
+    'Beta': 'Sensibilidad del activo respecto al mercado. Beta > 1 = más volátil que el mercado; Beta < 1 = más defensivo.',
+    'FCF': 'Free Cash Flow: efectivo generado por operaciones, neto de CAPEX. Positivo y creciente = buena salud financiera.',
+    'Dividend Yield': 'Dividendo anual / precio de la acción.',
+}
+
+
+def G(term):
+    return GLOSARIO.get(term)
 
 
 # ==============================================================
@@ -520,6 +508,58 @@ MERCADOS_REALES = {
 
 COLORES_GRUPO_FX  = {'Majors':'#3a7bd5','Crosses EUR':'#f0883e','Crosses GBP':'#7ee787','Crosses AUD':'#bc8cff','LatAm':'#f85149'}
 COLORES_REGION    = {'América':'#3a7bd5','Asia':'#f0883e','Europa':'#7ee787','Global':'#bc8cff'}
+
+
+# ==============================================================
+#  AUTOCOMPLETE — universo de búsqueda combinado
+# ==============================================================
+
+
+def _build_universo_buscador():
+    opciones, mapa = [], {}
+    for t in ALL_TICKERS:
+        opciones.append(t); mapa[t] = t
+    for nombre, (tk, _) in FOREX.items():
+        label = f'{nombre} · {tk}'
+        opciones.append(label); mapa[label] = tk
+    for nombre, (tk, _) in PAISES.items():
+        label = f'{nombre} (ETF {tk})'
+        opciones.append(label); mapa[label] = tk
+    for nombre, (tk, _) in SECTORES.items():
+        label = f'{nombre} (ETF {tk})'
+        opciones.append(label); mapa[label] = tk
+    for nombre, (tk, cat, _) in MERCADOS_REALES.items():
+        label = f'{nombre} · {tk}'
+        opciones.append(label); mapa[label] = tk
+    return sorted(set(opciones)), mapa
+
+
+UNIVERSO_OPCIONES, UNIVERSO_MAPA = _build_universo_buscador()
+OPCION_MANUAL = '✏️ Otro símbolo (escribir manualmente)'
+
+
+def selector_ticker_autocomplete(key, prefill='', label='Buscar activo'):
+    """Selectbox con filtro por escritura (autocomplete nativo de Streamlit) + fallback manual."""
+    opciones = [OPCION_MANUAL] + UNIVERSO_OPCIONES
+    idx_default = 0
+    if prefill:
+        pf = prefill.strip().upper()
+        match = next((o for o in UNIVERSO_OPCIONES if UNIVERSO_MAPA.get(o, '').upper() == pf or o.upper() == pf), None)
+        if match:
+            idx_default = opciones.index(match)
+    elegido = st.selectbox(
+        label, opciones, index=idx_default, key=f'{key}_sel',
+        help='Escribí para filtrar: acciones, ETFs, forex, commodities y cripto.',
+        label_visibility='collapsed',
+    )
+    if elegido == OPCION_MANUAL:
+        manual = st.text_input(
+            'Símbolo manual', value=prefill, key=f'{key}_manual',
+            placeholder='Ej: NVDA · BTC-USD · EURUSD=X · GC=F',
+        )
+        return manual.strip().upper()
+    val = UNIVERSO_MAPA.get(elegido, elegido)
+    return val.strip().upper()
 
 
 # ==============================================================
@@ -791,116 +831,89 @@ def interpretar_largo(r):
 
 
 # ==============================================================
-#  CARGA DATOS CORTO PLAZO
+#  DESCARGAS EN PARALELO (corto plazo)
+# ==============================================================
+
+
+def _fetch_corto_ticker(tk, extra=None):
+    """Descarga y calcula scores de corto plazo para un ticker. Devuelve dict o None."""
+    try:
+        df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
+        if df_v is None or df_m is None: return None
+        cl_v = get_close_series(df_v); cl_m = get_close_series(df_m)
+        if cl_v is None or cl_m is None or len(cl_v.dropna()) < 15: return None
+        atr = calcular_atr(df_m)
+        sa, sn, ss = scores_corto(cl_v, cl_m, atr)
+        rsi = float(calcular_rsi(cl_m, p=7).iloc[-1])
+        ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m) >= 6 else 0
+        ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m) >= 11 else 0
+        precio  = float(cl_m.iloc[-1])
+        out = dict(sa=sa, sn=sn, ss=ss, sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi,
+                   ret_5d=ret_5d, ret_10d=ret_10d, precio=precio,
+                   accion=señal_accion_corto(sa, sn, ss))
+        if extra:
+            out.update(extra)
+        return out
+    except Exception:
+        return None
+
+
+def _fetch_paralelo(tareas, max_workers=10):
+    """tareas: {nombre: (ticker, extra_dict_o_None)}. Devuelve {nombre: resultado}."""
+    resultados = {}
+    if not tareas:
+        return resultados
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futuros = {ex.submit(_fetch_corto_ticker, tk, extra): nombre
+                   for nombre, (tk, extra) in tareas.items()}
+        for fut in as_completed(futuros):
+            nombre = futuros[fut]
+            r = fut.result()
+            if r:
+                resultados[nombre] = r
+    return resultados
+
+
+# ==============================================================
+#  CARGA DATOS CORTO PLAZO (paralelizado)
 # ==============================================================
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_forex_corto():
-    res = {}
-    for nombre, (tk, grupo) in FOREX.items():
-        try:
-            df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
-            if df_v is None: continue
-            cl_v = get_close_series(df_v); cl_m = get_close_series(df_m)
-            if cl_v is None or cl_m is None or len(cl_v.dropna())<15: continue
-            atr = calcular_atr(df_m)
-            sa, sn, ss = scores_corto(cl_v, cl_m, atr)
-            rsi     = float(calcular_rsi(cl_m, p=7).iloc[-1])
-            ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
-            ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-            precio  = float(cl_m.iloc[-1])
-            hist = cl_m.reset_index(); hist.columns = ['Fecha','Precio']
-            res[nombre] = dict(tk=tk, grupo=grupo, sa=sa, sn=sn, ss=ss,
-                sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi, ret_5d=ret_5d, ret_10d=ret_10d,
-                precio=precio, accion=señal_accion_corto(sa,sn,ss), hist=hist)
-        except: continue
-    return res
+    tareas = {nombre: (tk, dict(tk=tk, grupo=grupo)) for nombre, (tk, grupo) in FOREX.items()}
+    return _fetch_paralelo(tareas, max_workers=10)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_paises_corto():
-    res = {}
-    for nombre, (tk, region) in PAISES.items():
-        try:
-            df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
-            if df_v is None: continue
-            cl_v = get_close_series(df_v); cl_m = get_close_series(df_m)
-            if cl_v is None or cl_m is None or len(cl_v.dropna())<15: continue
-            atr = calcular_atr(df_m)
-            sa, sn, ss = scores_corto(cl_v, cl_m, atr)
-            ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
-            ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-            res[nombre] = dict(tk=tk, region=region, sa=sa, sn=sn, ss=ss,
-                sf=sa*0.45+sn*0.35+ss*0.20, ret_5d=ret_5d, ret_10d=ret_10d,
-                precio=float(cl_m.iloc[-1]), accion=señal_accion_corto(sa,sn,ss))
-        except: continue
-    return res
+    tareas = {nombre: (tk, dict(tk=tk, region=region)) for nombre, (tk, region) in PAISES.items()}
+    return _fetch_paralelo(tareas, max_workers=10)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_sectores_corto():
-    res = {}
-    for nombre, (tk, color) in SECTORES.items():
-        try:
-            df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
-            if df_v is None: continue
-            cl_v = get_close_series(df_v); cl_m = get_close_series(df_m)
-            if cl_v is None or cl_m is None or len(cl_v.dropna())<15: continue
-            atr = calcular_atr(df_m)
-            sa, sn, ss = scores_corto(cl_v, cl_m, atr)
-            rsi     = float(calcular_rsi(cl_m, p=7).iloc[-1])
-            ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
-            ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-            res[nombre] = dict(tk=tk, color=color, sa=sa, sn=sn, ss=ss,
-                sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi, ret_5d=ret_5d, ret_10d=ret_10d,
-                precio=float(cl_m.iloc[-1]), accion=señal_accion_corto(sa,sn,ss))
-        except: continue
-    return res
+    tareas = {nombre: (tk, dict(tk=tk, color=color)) for nombre, (tk, color) in SECTORES.items()}
+    return _fetch_paralelo(tareas, max_workers=10)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_mercados_corto():
-    res = {}
-    for nombre, (tk, cat, color) in MERCADOS_REALES.items():
-        try:
-            df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
-            if df_v is None or df_m is None: continue
-            cl_v = get_close_series(df_v); cl_m = get_close_series(df_m)
-            if cl_v is None or cl_m is None or len(cl_v.dropna())<20: continue
-            atr = calcular_atr(df_m)
-            sa, sn, ss = scores_corto(cl_v, cl_m, atr)
-            rsi     = float(calcular_rsi(cl_m, p=7).iloc[-1])
-            ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
-            ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-            res[nombre] = dict(tk=tk, cat=cat, color=color, sa=sa, sn=sn, ss=ss,
-                sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi, ret_5d=ret_5d, ret_10d=ret_10d,
-                precio=float(cl_m.iloc[-1]), accion=señal_accion_corto(sa,sn,ss))
-        except: continue
-    return res
+    tareas = {nombre: (tk, dict(tk=tk, cat=cat, color=color)) for nombre, (tk, cat, color) in MERCADOS_REALES.items()}
+    return _fetch_paralelo(tareas, max_workers=10)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_acciones_corto(industrias_sel):
-    res = {}
+    res = {ind: {} for ind in industrias_sel}
+    tareas = {}
     for industria in industrias_sel:
-        tickers = ACCIONES_POR_INDUSTRIA.get(industria, [])
-        res[industria] = {}
-        for tk in tickers:
-            try:
-                df_v = descargar_datos(tk, '3mo'); df_m = descargar_datos(tk, '1mo')
-                if df_v is None: continue
-                cl_v = get_close_series(df_v); cl_m = get_close_series(df_m)
-                if cl_v is None or cl_m is None or len(cl_v.dropna())<15: continue
-                atr = calcular_atr(df_m)
-                sa, sn, ss = scores_corto(cl_v, cl_m, atr)
-                rsi     = float(calcular_rsi(cl_m, p=7).iloc[-1])
-                ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
-                ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-                res[industria][tk] = dict(sa=sa, sn=sn, ss=ss,
-                    sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi, ret_5d=ret_5d, ret_10d=ret_10d,
-                    precio=float(cl_m.iloc[-1]), accion=señal_accion_corto(sa,sn,ss))
-            except: continue
+        for tk in ACCIONES_POR_INDUSTRIA.get(industria, []):
+            tareas[f'{industria}::{tk}'] = (tk, None)
+    flat = _fetch_paralelo(tareas, max_workers=12)
+    for key, data in flat.items():
+        industria, tk = key.split('::', 1)
+        res[industria][tk] = data
     return res
 
 
@@ -910,12 +923,16 @@ def cargar_resultados_largo(industrias_sel):
     if not tickers: return pd.DataFrame()
     df_all = descargar_bulk(tickers, period='2y')
     if df_all is None: return pd.DataFrame()
-    resultados = []
-    for tk in tickers:
+
+    def _proc(tk):
         precio = get_close_from_bulk(df_all, tk)
-        if len(precio) < 150: continue
-        r = analizar_largo(tk, precio)
-        if r: resultados.append(r)
+        if len(precio) < 150: return None
+        return analizar_largo(tk, precio)
+
+    resultados = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for r in ex.map(_proc, tickers):
+            if r: resultados.append(r)
     if not resultados: return pd.DataFrame()
     df_res = pd.DataFrame(resultados).sort_values('global_score', ascending=False).reset_index(drop=True)
     df_res['rank'] = df_res.index + 1
@@ -923,7 +940,7 @@ def cargar_resultados_largo(industrias_sel):
 
 
 # ==============================================================
-#  HELPERS GRÁFICOS
+#  HELPERS GENERALES
 # ==============================================================
 
 
@@ -935,13 +952,17 @@ def fmt_precio(p):
 
 
 def kpi_cards_4(items):
-    """items = list of (label, value, sub, accent_color)"""
+    """items = (label, value, sub, accent_color) o (label, value, sub, accent_color, tooltip)."""
     cols = st.columns(len(items))
-    for col, (label, value, sub, color) in zip(cols, items):
+    for col, item in zip(cols, items):
+        label, value, sub, color = item[0], item[1], item[2], item[3]
+        tooltip = item[4] if len(item) > 4 else G(label)
+        tip_attr = (tooltip or '').replace('"', "'")
+        marca_info = ' ⓘ' if tip_attr else ''
         with col:
             st.markdown(
-                f'<div class="kpi-card"><div class="kpi-accent" style="background:{color}"></div>'
-                f'<div class="kpi-label">{label}</div>'
+                f'<div class="kpi-card" title="{tip_attr}"><div class="kpi-accent" style="background:{color}"></div>'
+                f'<div class="kpi-label">{label}{marca_info}</div>'
                 f'<div class="kpi-value">{value}</div>'
                 f'<div class="kpi-sub">{sub}</div></div>',
                 unsafe_allow_html=True
@@ -949,92 +970,315 @@ def kpi_cards_4(items):
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
 
-def grafico_barras_h(items_ord, titulo, color_ant='#3a7bd5'):
+def chips_navegacion(items, key_prefix, max_chips=18):
+    """items: lista de tickers (str) o de tuplas (label_visible, ticker_real).
+    Renderiza botones-chip que llevan directo al Buscador con un clic (cross-linking)."""
+    items = list(items)[:max_chips]
+    if not items:
+        return
+    normal = [(it, it) if isinstance(it, str) else it for it in items]
+    st.markdown(
+        '<div style="font-size:11px;color:#6b7d9a;margin:10px 0 4px 0">'
+        '🔍 Ir directo al análisis completo (un clic):</div>',
+        unsafe_allow_html=True
+    )
+    n_cols = 6
+    for i in range(0, len(normal), n_cols):
+        cols = st.columns(n_cols)
+        fila = normal[i:i+n_cols]
+        for col, (label, tk) in zip(cols, fila):
+            with col:
+                if st.button(str(label), key=f'{key_prefix}_chip_{tk}_{i}', use_container_width=True):
+                    st.session_state['ticker_from_table'] = tk
+                    st.session_state['nav_horizonte'] = 'buscador'
+                    st.session_state['nav_modulo']    = 'buscador'
+                    st.rerun()
+
+
+# ==============================================================
+#  GRÁFICOS — PLOTLY
+# ==============================================================
+
+
+def fig_barras_h(items_ord, titulo, color_ant=C_MONSTER):
     ns   = [n for n,_ in items_ord]
     sas  = [d['sa'] for _,d in items_ord]
     sns_ = [d['sn'] for _,d in items_ord]
-    y    = np.arange(len(ns))
-    fig, ax = plt.subplots(figsize=(7, max(3, len(ns)*0.52)))
-    fig.patch.set_facecolor('#07090f'); ax.set_facecolor('#0d1117')
-    col_bars = [score_color_mpl(s) for s in sas]
-    brs = ax.barh(y, sas,  color=col_bars, edgecolor='none', height=0.50, alpha=.90, zorder=3)
-    ax.barh(y, sns_, color=color_ant, edgecolor='none', height=0.22, alpha=0.35, zorder=3)
-    ax.axvline(62, color='#2ea043', ls='--', alpha=.45, lw=.8)
-    ax.axvline(38, color='#cf222e', ls='--', alpha=.45, lw=.8)
-    ax.fill_betweenx([-0.5,len(ns)-0.5], 62,100, alpha=.04, color='#3fb950')
-    ax.fill_betweenx([-0.5,len(ns)-0.5],  0, 38, alpha=.04, color='#f85149')
-    ax.set_xlim(0, 118); ax.set_yticks(y)
-    ax.set_yticklabels(ns, fontsize=8.5, color='#b0bcd0')
-    ax.set_title(titulo, color='#e6edf3', fontsize=10, fontweight='600', pad=7, loc='left', x=0.01)
-    for b, s in zip(brs, sas):
-        ax.text(s+1, b.get_y()+b.get_height()/2, f'{s:.0f}', va='center', color='#e6edf3', fontsize=8, fontweight='600')
-    ax.spines['top'].set_color(C_ACENT); ax.spines['top'].set_linewidth(1.5)
-    ax.grid(axis='x', alpha=.12, zorder=0); ax.tick_params(colors='#6b7d9a')
-    ax.set_xlabel('Score Acumulación', color='#6b7d9a', fontsize=7.5)
-    plt.tight_layout(pad=1.2)
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=ns, x=sas, orientation='h', marker_color=[score_color_hex(s) for s in sas], width=0.55,
+        text=[f'{s:.0f}' for s in sas], textposition='outside', textfont=dict(color=C_TEXT, size=11),
+        name='Acumulación', hovertemplate='%{y}<br>Acum: %{x:.0f}<extra></extra>',
+    ))
+    fig.add_trace(go.Bar(
+        y=ns, x=sns_, orientation='h', marker_color=color_ant, opacity=0.35, width=0.22,
+        name='Anticipación', hovertemplate='%{y}<br>Antic: %{x:.0f}<extra></extra>',
+    ))
+    fig.add_vline(x=62, line_dash='dash', line_color=C_GREEN, opacity=0.45)
+    fig.add_vline(x=38, line_dash='dash', line_color=C_RED, opacity=0.45)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, barmode='overlay',
+        title=dict(text=titulo, font=dict(color=C_TEXT, size=13), x=0.01),
+        xaxis=dict(range=[0, 118], gridcolor=C_GRID, title='Score Acumulación', title_font=dict(size=10)),
+        yaxis=dict(autorange='reversed'),
+        height=max(260, len(ns) * 38 + 90),
+        margin=dict(l=10, r=20, t=45, b=30),
+        legend=dict(orientation='h', y=1.1, x=0, font=dict(size=9)),
+    )
     return fig
 
 
-def grafico_momentum(pares_ord):
-    ns    = [n for n,_ in pares_ord]
-    r5    = [d.get('ret_5d',0) for _,d in pares_ord]
-    r10   = [d.get('ret_10d',0) for _,d in pares_ord]
-    x_all = np.arange(len(ns))
-    fig, ax = plt.subplots(figsize=(max(10, len(ns)*0.5), 4.5))
-    fig.patch.set_facecolor('#07090f'); ax.set_facecolor('#0d1117')
-    ax.bar(x_all-.2, r5,  width=.36, color=['#2ea043' if v>=0 else '#cf222e' for v in r5],  alpha=.95, label='5 días', zorder=3)
-    ax.bar(x_all+.2, r10, width=.36, color=['#3a7bd5' if v>=0 else '#bc8cff' for v in r10], alpha=.65, label='10 días', zorder=3)
-    ax.axhline(0, color='#b0bcd0', lw=.6, alpha=.4)
-    ax.set_xticks(x_all); ax.set_xticklabels(ns, rotation=45, ha='right', fontsize=8)
-    ax.set_ylabel('Retorno %', fontsize=8.5)
-    ax.legend(facecolor='#0d1117', labelcolor='#b0bcd0', fontsize=8, framealpha=.8)
-    ax.grid(axis='y', alpha=.12, zorder=0)
-    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
-    plt.tight_layout(pad=1.2)
+def fig_momentum(pares_ord):
+    ns  = [n for n,_ in pares_ord]
+    r5  = [d.get('ret_5d',0) for _,d in pares_ord]
+    r10 = [d.get('ret_10d',0) for _,d in pares_ord]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=ns, y=r5, name='5 días',
+        marker_color=[C_GREEN if v >= 0 else C_RED for v in r5]))
+    fig.add_trace(go.Bar(x=ns, y=r10, name='10 días', opacity=0.6,
+        marker_color=[C_MONSTER if v >= 0 else '#bc8cff' for v in r10]))
+    fig.add_hline(y=0, line_color=C_MUTED, opacity=0.4)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, barmode='group',
+        yaxis=dict(title='Retorno %', gridcolor=C_GRID),
+        xaxis=dict(tickangle=-45, gridcolor=C_GRID),
+        height=460, margin=dict(l=10, r=10, t=30, b=90),
+        legend=dict(orientation='h', y=1.08),
+    )
     return fig
 
 
-def grafico_heatmap(datos_dict, titulo='Heatmap'):
+def fig_cuadrante(datos_dict, colores_dict=None, titulo='Mapa de Oportunidades'):
+    fig = go.Figure()
+    for nombre, d in datos_dict.items():
+        clave = d.get('grupo', d.get('region', d.get('cat','')))
+        col_p = colores_dict.get(clave, C_MONSTER) if colores_dict else C_MONSTER
+        fig.add_trace(go.Scatter(
+            x=[d['sn']], y=[d['sa']], mode='markers+text', text=[nombre],
+            textposition='top center', textfont=dict(size=9, color='#b0bcd0'),
+            marker=dict(size=14, color=col_p, line=dict(width=1, color=C_BG2)),
+            name=nombre, showlegend=False,
+            hovertemplate=f'{nombre}<br>Antic: %{{x:.0f}}<br>Acum: %{{y:.0f}}<extra></extra>',
+        ))
+    fig.add_hline(y=62, line_dash='dash', line_color=C_GREEN, opacity=0.35)
+    fig.add_hline(y=38, line_dash='dash', line_color=C_RED, opacity=0.35)
+    fig.add_vline(x=55, line_dash='dash', line_color=C_YELL, opacity=0.35)
+    fig.add_shape(type='rect', x0=55, x1=100, y0=62, y1=100, fillcolor=C_GREEN, opacity=0.05, line_width=0)
+    fig.add_shape(type='rect', x0=0, x1=55, y0=0, y1=38, fillcolor=C_RED, opacity=0.05, line_width=0)
+    fig.add_annotation(x=77, y=97, text='✦ Zona de entrada', font=dict(color=C_GREEN, size=10), showarrow=False)
+    fig.add_annotation(x=25, y=4, text='✦ Zona de cautela', font=dict(color=C_RED, size=10), showarrow=False)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text=titulo, font=dict(color=C_TEXT, size=14)),
+        xaxis=dict(title='Score Anticipación →', range=[0, 100], gridcolor=C_GRID),
+        yaxis=dict(title='← Score Acumulación', range=[0, 100], gridcolor=C_GRID),
+        height=560, margin=dict(l=10, r=10, t=45, b=10),
+    )
+    return fig
+
+
+def fig_heatmap(datos_dict, titulo='Heatmap'):
     df_heat = pd.DataFrame({
         'Acum':  {n:d['sa'] for n,d in datos_dict.items()},
         'Antic': {n:d['sn'] for n,d in datos_dict.items()},
         'Sent':  {n:d['ss'] for n,d in datos_dict.items()},
     }).sort_values('Acum', ascending=False)
-    fig, ax = plt.subplots(figsize=(5, max(4, len(datos_dict)*0.35)))
-    fig.patch.set_facecolor('#07090f')
-    sb.heatmap(df_heat, annot=True, fmt='.0f', cmap='RdYlGn', vmin=0, vmax=100,
-               ax=ax, linewidths=.35, linecolor='#07090f', cbar_kws={'label':'Score','shrink':.7})
-    ax.set_title(titulo, color='#e6edf3', fontsize=10, pad=8, loc='left')
-    ax.tick_params(colors='#b0bcd0')
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=0, fontsize=8.5)
-    ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=7.5)
-    plt.tight_layout(pad=1.2)
+    fig = go.Figure(data=go.Heatmap(
+        z=df_heat.values, x=list(df_heat.columns), y=list(df_heat.index),
+        colorscale='RdYlGn', zmin=0, zmax=100,
+        text=np.round(df_heat.values, 0), texttemplate='%{text}',
+        colorbar=dict(title='Score'),
+    ))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text=titulo, font=dict(color=C_TEXT)),
+        height=max(320, len(datos_dict) * 26),
+        margin=dict(l=10, r=10, t=45, b=10),
+    )
     return fig
 
 
-def grafico_cuadrante(datos_dict, colores_dict=None, titulo='Mapa de Oportunidades'):
-    fig, ax = plt.subplots(figsize=(8.5, 6.5))
-    fig.patch.set_facecolor('#07090f'); ax.set_facecolor('#0d1117')
-    for nombre, d in datos_dict.items():
-        clave = d.get('grupo', d.get('region', d.get('cat','')))
-        col_p = colores_dict.get(clave, C_ACENT) if colores_dict else C_ACENT
-        ax.scatter(d['sn'], d['sa'], color=col_p, s=130, zorder=5, edgecolors='#07090f', linewidths=1.1, alpha=.9)
-        ax.annotate(nombre[:12], (d['sn'], d['sa']), xytext=(5,3), textcoords='offset points', fontsize=7.5, color='#b0bcd0')
-    ax.axhline(62, color='#3fb950', ls='--', alpha=.35, lw=.9)
-    ax.axhline(38, color='#f85149', ls='--', alpha=.35, lw=.9)
-    ax.axvline(55, color='#e3b341', ls='--', alpha=.35, lw=.9)
-    ax.fill_between([55,100],[62,62],[100,100], alpha=.05, color='#3fb950')
-    ax.fill_between([0,55],  [0,0],  [38,38],  alpha=.05, color='#f85149')
-    ax.text(77, 97, '✦ Zona de entrada', color='#3fb950', fontsize=8, alpha=.8, ha='center', fontweight='600')
-    ax.text(25,  4, '✦ Zona de cautela', color='#f85149', fontsize=8, alpha=.8, ha='center', fontweight='600')
-    ax.set_xlabel('Score Anticipación →', fontsize=9.5)
-    ax.set_ylabel('← Score Acumulación', fontsize=9.5)
-    ax.set_title(titulo, color='#e6edf3', fontsize=10.5, pad=8)
-    ax.set_xlim(0,100); ax.set_ylim(0,100)
-    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
-    ax.grid(alpha=.10); ax.tick_params(colors='#6b7d9a')
-    plt.tight_layout(pad=1.2)
+def fig_precio_bollinger(ticker, cl):
+    ma20 = cl.rolling(20).mean(); std20 = cl.rolling(20).std()
+    upper = ma20 + 2*std20; lower = ma20 - 2*std20
+    ma50 = cl.rolling(50).mean(); ma200 = cl.rolling(200).mean()
+    trend_c = C_GREEN if float(cl.iloc[-1]) >= float(cl.iloc[0]) else C_RED
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=cl.index, y=upper, line=dict(color=C_ACENT, width=0.8), name='BB Superior', opacity=0.5))
+    fig.add_trace(go.Scatter(x=cl.index, y=lower, line=dict(color=C_ACENT, width=0.8), name='BB Inferior',
+                              fill='tonexty', fillcolor='rgba(58,123,213,0.08)', opacity=0.5))
+    fig.add_trace(go.Scatter(x=cl.index, y=ma20, line=dict(color=C_YELL, width=1.3, dash='dash'), name='MA20'))
+    fig.add_trace(go.Scatter(x=cl.index, y=ma50, line=dict(color=C_GREEN, width=1.3), name='MA50'))
+    fig.add_trace(go.Scatter(x=cl.index, y=ma200, line=dict(color=C_RED, width=1.3), name='MA200'))
+    fig.add_trace(go.Scatter(x=cl.index, y=cl, line=dict(color=trend_c, width=2.2), name='Precio'))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text=f'{ticker} — Precio + Indicadores (2 años)', font=dict(color=C_TEXT, size=14)),
+        xaxis=dict(gridcolor=C_GRID, rangeslider=dict(visible=False)),
+        yaxis=dict(gridcolor=C_GRID),
+        height=480, hovermode='x unified',
+        legend=dict(orientation='h', y=1.1, font=dict(size=9)),
+        margin=dict(l=10, r=10, t=50, b=10),
+    )
     return fig
+
+
+def fig_rsi_macd(cl):
+    rsi    = calcular_rsi(cl, 14)
+    macd   = cl.ewm(span=12, adjust=False).mean() - cl.ewm(span=26, adjust=False).mean()
+    signal = macd.ewm(span=9, adjust=False).mean()
+    hist   = macd - signal
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                         subplot_titles=('RSI (14)', 'MACD (12,26,9)'))
+    fig.add_trace(go.Scatter(x=rsi.index, y=rsi, line=dict(color='#bc8cff', width=1.6), name='RSI'), row=1, col=1)
+    fig.add_hline(y=70, line_dash='dash', line_color=C_RED, opacity=0.5, row=1, col=1)
+    fig.add_hline(y=30, line_dash='dash', line_color=C_GREEN, opacity=0.5, row=1, col=1)
+    fig.add_trace(go.Scatter(x=macd.index, y=macd, line=dict(color=C_ACENT, width=1.4), name='MACD'), row=2, col=1)
+    fig.add_trace(go.Scatter(x=signal.index, y=signal, line=dict(color=C_LRED, width=1.2), name='Signal'), row=2, col=1)
+    fig.add_trace(go.Bar(x=hist.index, y=hist,
+        marker_color=[C_GREEN if v >= 0 else C_RED for v in hist], opacity=0.5, name='Hist'), row=2, col=1)
+    fig.update_yaxes(range=[0, 100], gridcolor=C_GRID, row=1, col=1)
+    fig.update_yaxes(gridcolor=C_GRID, row=2, col=1)
+    fig.update_xaxes(gridcolor=C_GRID)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, height=560, hovermode='x unified', showlegend=True,
+        legend=dict(orientation='h', y=1.07, font=dict(size=9)),
+        margin=dict(l=10, r=10, t=45, b=10),
+    )
+    fig.update_annotations(font=dict(color=C_TEXT, size=12))
+    return fig
+
+
+def fig_drawdown(ticker, cl):
+    ret = cl.pct_change().dropna()
+    cum = (1 + ret).cumprod()
+    dd  = (cum / cum.cummax() - 1) * 100
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=dd.index, y=dd, fill='tozeroy', line=dict(color=C_RED, width=1.3),
+                              fillcolor='rgba(248,81,73,0.35)', name='Drawdown'))
+    fig.add_hline(y=-20, line_dash='dash', line_color=C_YELL, opacity=0.5, annotation_text='-20%')
+    fig.add_hline(y=-40, line_dash='dash', line_color=C_RED, opacity=0.5, annotation_text='-40%')
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text=f'{ticker} — Drawdown desde máximo · Máx: {float(dd.min()):.1f}%', font=dict(color=C_TEXT, size=13)),
+        xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='%'),
+        height=340, margin=dict(l=10, r=10, t=45, b=10),
+    )
+    return fig
+
+
+def fig_mini_precio(ticker, precios):
+    trend_c = C_GREEN if precios[-1] >= precios[0] else C_RED
+    ret_p = (precios[-1]/precios[0]-1)*100
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(y=precios, mode='lines', line=dict(color=trend_c, width=2),
+                              fill='tozeroy', fillcolor='rgba(58,123,213,0.10)', name='Precio'))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text=f'{ticker} — 30 días ({ret_p:+.2f}%)', font=dict(color=trend_c, size=13)),
+        height=260, margin=dict(l=10, r=10, t=40, b=10),
+        xaxis=dict(showticklabels=False, gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID),
+    )
+    return fig
+
+
+def fig_distribuciones(df_res_l):
+    fig = make_subplots(rows=1, cols=3, subplot_titles=('Trend Score', 'MR Score', 'Global Score'))
+    for i, c in enumerate(['trend_score', 'mr_score', 'global_score']):
+        vals = df_res_l[c].values
+        fig.add_trace(go.Histogram(x=vals, nbinsx=20, marker_color=C_MONSTER, opacity=0.85), row=1, col=i+1)
+        fig.add_vline(x=float(np.mean(vals)), line_dash='dash', line_color=C_LRED, row=1, col=i+1)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, height=380, showlegend=False, margin=dict(l=10, r=10, t=45, b=10),
+    )
+    fig.update_xaxes(gridcolor=C_GRID); fig.update_yaxes(gridcolor=C_GRID)
+    fig.update_annotations(font=dict(color=C_TEXT, size=12))
+    return fig
+
+
+def fig_topdown(fuentes):
+    fig = make_subplots(rows=1, cols=len(fuentes), subplot_titles=[f[0] for f in fuentes])
+    for i, (label, dd, col_td) in enumerate(fuentes):
+        top_items = sorted(dd.items(), key=lambda x: x[1]['sa'], reverse=True)[:12]
+        ns  = [n[:16] for n,_ in top_items]
+        sas = [d['sa'] for _,d in top_items]
+        fig.add_trace(go.Bar(y=ns, x=sas, orientation='h',
+            marker_color=[score_color_hex(s) for s in sas],
+            text=[f'{s:.0f}' for s in sas], textposition='outside'), row=1, col=i+1)
+        fig.update_yaxes(autorange='reversed', row=1, col=i+1)
+        fig.add_vline(x=62, line_dash='dot', line_color=C_GREEN, opacity=0.4, row=1, col=i+1)
+        fig.add_vline(x=38, line_dash='dot', line_color=C_RED, opacity=0.4, row=1, col=i+1)
+        fig.update_xaxes(range=[0, 118], gridcolor=C_GRID, row=1, col=i+1)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, height=500, showlegend=False, margin=dict(l=10, r=10, t=55, b=10),
+        title=dict(text='Top-Down: mejores oportunidades por nivel', font=dict(color=C_TEXT, size=14)),
+    )
+    fig.update_annotations(font=dict(color=C_TEXT, size=11))
+    return fig
+
+
+def fig_comparador_precio(series_dict):
+    fig = go.Figure()
+    palette = [C_MONSTER, C_ACENT, C_LRED, '#bc8cff', C_YELL]
+    for i, (tk, s) in enumerate(series_dict.items()):
+        base = s.dropna()
+        if len(base) == 0: continue
+        rebased = base / float(base.iloc[0]) * 100
+        fig.add_trace(go.Scatter(x=rebased.index, y=rebased, name=tk,
+            line=dict(color=palette[i % len(palette)], width=2.2)))
+    fig.add_hline(y=100, line_dash='dot', line_color=C_MUTED, opacity=0.4)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text='Comparativa de rendimiento (base 100)', font=dict(color=C_TEXT, size=14)),
+        xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='Índice (base 100)'),
+        height=480, hovermode='x unified',
+        legend=dict(orientation='h', y=1.08),
+        margin=dict(l=10, r=10, t=50, b=10),
+    )
+    return fig
+
+
+# ==============================================================
+#  RENDER ÚNICO — ANÁLISIS DE LARGO PLAZO (evita duplicación)
+# ==============================================================
+
+
+def render_largo_completo(ticker, cl, r, key_suffix=''):
+    accent = score_color_hex(r['global_score'])
+    kpi_cards_4([
+        ('Global Score',  f"{int(r['global_score'])}/100",  r['sesgo'], accent),
+        ('Trend Score',   f"{int(r['trend_score'])}/100",
+         f"GC: {'Sí' if r['golden_cross'] else 'No'} · MACD: {'Alc' if r['macd_bull'] else 'Baj'}",
+         score_color_hex(r['trend_score'])),
+        ('MR Score',      f"{int(r['mr_score'])}/100",
+         f"Z: {r['zscore']:+.2f} · RSI: {r['rsi']:.1f}", score_color_hex(r['mr_score'])),
+        ('Risk Score',    f"{int(r['risk_score'])}/100",
+         f"Sharpe: {r['sharpe']:.2f} · DD: {r['max_dd']:.1f}%", score_color_hex(r['risk_score'])),
+    ])
+
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: st.metric('Ret. Anual', f"{r['ret_anual']:+.1f}%")
+    with c2: st.metric('Volatilidad', f"{r['vol_anual']:.1f}%")
+    with c3: st.metric('Max DrawDown', f"{r['max_dd']:.1f}%", help=G('Max Drawdown'))
+    with c4: st.metric('Hurst', f"{r['hurst']:.3f}", help=G('Hurst'))
+
+    interp = interpretar_largo(r)
+    sesgo_class = {'MUY ALCISTA':'sesgo-muy-alc','ALCISTA':'sesgo-alc','NEUTRAL':'sesgo-neu',
+                   'BAJISTA':'sesgo-baj','MUY BAJISTA':'sesgo-muy-baj'}.get(r['sesgo'],'')
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">{ticker} · {r['industria']} · <span class="{sesgo_class}">{r['sesgo']}</span></div>
+      {interp}
+    </div>
+    """, unsafe_allow_html=True)
+
+    tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger', '📊 RSI & MACD', '📉 Drawdown'])
+    with tab_g1:
+        st.plotly_chart(fig_precio_bollinger(ticker, cl), use_container_width=True, key=f'fpb_{key_suffix}_{ticker}')
+    with tab_g2:
+        st.plotly_chart(fig_rsi_macd(cl), use_container_width=True, key=f'frm_{key_suffix}_{ticker}')
+    with tab_g3:
+        st.plotly_chart(fig_drawdown(ticker, cl), use_container_width=True, key=f'fdd_{key_suffix}_{ticker}')
 
 
 def _apply_score_style(df, score_cols, ret_cols=None):
@@ -1110,6 +1354,9 @@ def tabla_corto(filas_dict, key_suffix=''):
     st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
     st.caption(f'{len(df_f)} activos mostrados de {len(df)} totales')
 
+    pares = [(n, filas_dict[n].get('tk', n)) for n in df_f['Nombre'].tolist()]
+    chips_navegacion(pares, f'tc_{key_suffix}')
+
 
 def tabla_largo(df_res, key_suffix=''):
     if df_res.empty: return
@@ -1182,27 +1429,7 @@ def tabla_largo(df_res, key_suffix=''):
     st.dataframe(styled, use_container_width=True, height=min(700, max(200, len(df_f)*30+45)))
     st.caption(f'{len(df_f)} activos mostrados de {len(df_show)} totales')
 
-
-    st.markdown('<div style="margin-top:12px">', unsafe_allow_html=True)
-    tickers_disponibles = df_f['Ticker'].tolist()
-    if tickers_disponibles:
-        cc1, cc2 = st.columns([3,1])
-        with cc1:
-            ticker_click = st.selectbox(
-                '🔍 Analizar ticker de la tabla',
-                ['— Seleccioná un ticker —'] + tickers_disponibles,
-                key=f'tl_ticker_click_{key_suffix}'
-            )
-        with cc2:
-            st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
-            if st.button('▶ Ver análisis completo', use_container_width=True, key=f'tl_go_{key_suffix}'):
-                if ticker_click and ticker_click != '— Seleccioná un ticker —':
-                    st.session_state['ticker_from_table'] = ticker_click
-                    st.session_state['nav_horizonte'] = 'buscador'
-                    st.session_state['nav_modulo']    = 'buscador'
-                    st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
-
+    chips_navegacion(df_f['Ticker'].tolist(), f'tl_{key_suffix}')
 
 
 # ==============================================================
@@ -1596,7 +1823,7 @@ def modulo_buscador():
             Buscador Universal de Activos
           </div>
           <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-            Ingresá el símbolo de cualquier activo: acciones, ETF, cripto, divisas o commodities.<br>
+            Elegí cualquier activo del listado (con autocompletado) o escribilo manualmente.<br>
             Obtenés análisis completo de <b style="color:#f0883e">corto plazo</b> (percentiles históricos)
             y <b style="color:#3fb950">largo plazo</b> (cuantitativo 2 años).
           </div>
@@ -1608,14 +1835,9 @@ def modulo_buscador():
 
     col_inp, col_btn = st.columns([4, 1])
     with col_inp:
-        ticker_manual = st.text_input(
-            'Símbolo del activo',
-            value=prefill,
-            key='ticker_manual_input',
-            placeholder='Ej: NVDA · AAPL · BTC-USD · EURUSD=X · GC=F · GGAL',
-            label_visibility='collapsed',
-        )
+        ticker_final = selector_ticker_autocomplete('buscador_universal', prefill)
     with col_btn:
+        st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
         analizar = st.button('▶ Analizar', use_container_width=True, key='btn_buscar')
 
 
@@ -1635,9 +1857,6 @@ def modulo_buscador():
     """, unsafe_allow_html=True)
 
 
-    ticker_final = ticker_manual.strip().upper() if ticker_manual else ''
-
-
     auto_run = bool(prefill and ticker_final == prefill.upper())
     if prefill:
         st.session_state['ticker_from_table'] = ''
@@ -1648,7 +1867,7 @@ def modulo_buscador():
         <div style="border:1px dashed #21262d;border-radius:12px;padding:48px;text-align:center;margin-top:20px">
           <div style="font-size:44px;margin-bottom:14px;opacity:.6">📊</div>
           <div style="color:#6b7d9a;font-size:13px;font-weight:500;line-height:1.8">
-            Escribí el ticker arriba y presioná <b style="color:#e6edf3">Analizar</b><br>
+            Elegí el activo arriba y presioná <b style="color:#e6edf3">Analizar</b><br>
             para ver el análisis completo del activo.
           </div>
         </div>
@@ -1698,7 +1917,7 @@ def _renderizar_buscador(ticker):
 
 
             c1, c2, c3, c4, c5 = st.columns(5)
-            with c1: st.metric('RSI (7)', f'{rsi:.1f}')
+            with c1: st.metric('RSI (7)', f'{rsi:.1f}', help=G('RSI'))
             with c2: st.metric('Ret 5d', f'{ret_5d:+.2f}%')
             with c3: st.metric('Ret 10d', f'{ret_10d:+.2f}%')
             with c4: st.metric('Precio', fmt_precio(precio))
@@ -1710,18 +1929,7 @@ def _renderizar_buscador(ticker):
 
             precios = cl_m.values
             if len(precios) > 2:
-                fig_l, ax_l = plt.subplots(figsize=(10, 3))
-                fig_l.patch.set_facecolor('#07090f'); ax_l.set_facecolor('#0d1117')
-                trend_c = '#3fb950' if precios[-1]>=precios[0] else '#f85149'
-                ax_l.fill_between(range(len(precios)), precios, alpha=0.12, color='#3a7bd5')
-                ax_l.plot(range(len(precios)), precios, color=trend_c, lw=1.8, zorder=4)
-                ax_l.scatter(len(precios)-1, precios[-1], color=trend_c, s=55, zorder=5)
-                ax_l.grid(axis='y', alpha=.12)
-                ax_l.spines['top'].set_visible(False); ax_l.spines['right'].set_visible(False)
-                ret_p = (precios[-1]/precios[0]-1)*100
-                ax_l.set_title(f'{ticker} — 30 días ({ret_p:+.2f}%)', color=trend_c, fontsize=10, fontweight='600', loc='left')
-                plt.tight_layout(pad=1.2)
-                st.pyplot(fig_l, use_container_width=True); plt.close(fig_l)
+                st.plotly_chart(fig_mini_precio(ticker, precios), use_container_width=True, key=f'mini_{ticker}')
         else:
             st.info('Datos insuficientes para el análisis de corto plazo.')
 
@@ -1751,104 +1959,7 @@ def _renderizar_buscador(ticker):
         return
 
 
-    accent = score_color_hex(r['global_score'])
-    kpi_cards_4([
-        ('Global Score',  f"{int(r['global_score'])}/100",  r['sesgo'], accent),
-        ('Trend Score',   f"{int(r['trend_score'])}/100",   f"GC: {'Sí' if r['golden_cross'] else 'No'} · MACD: {'Alc' if r['macd_bull'] else 'Baj'}", score_color_hex(r['trend_score'])),
-        ('MR Score',      f"{int(r['mr_score'])}/100",      f"Z: {r['zscore']:+.2f} · RSI: {r['rsi']:.1f}", score_color_hex(r['mr_score'])),
-        ('Risk Score',    f"{int(r['risk_score'])}/100",    f"Sharpe: {r['sharpe']:.2f} · DD: {r['max_dd']:.1f}%", score_color_hex(r['risk_score'])),
-    ])
-
-
-    c1,c2,c3,c4 = st.columns(4)
-    with c1: st.metric('Ret. Anual', f"{r['ret_anual']:+.1f}%")
-    with c2: st.metric('Volatilidad', f"{r['vol_anual']:.1f}%")
-    with c3: st.metric('Max DrawDown', f"{r['max_dd']:.1f}%")
-    with c4: st.metric('Hurst', f"{r['hurst']:.3f}")
-
-
-    interp = interpretar_largo(r)
-    sesgo_class = {'MUY ALCISTA':'sesgo-muy-alc','ALCISTA':'sesgo-alc','NEUTRAL':'sesgo-neu',
-                   'BAJISTA':'sesgo-baj','MUY BAJISTA':'sesgo-muy-baj'}.get(r['sesgo'],'')
-    st.markdown(f"""
-    <div class="interp-card">
-      <div class="interp-header">{ticker} · {industria} · <span class="{sesgo_class}">{r['sesgo']}</span></div>
-      {interp}
-    </div>
-    """, unsafe_allow_html=True)
-
-
-    tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger', '📊 RSI & MACD', '📉 Drawdown'])
-
-
-    with tab_g1:
-        ma20_tk = cl.rolling(20).mean(); std20_tk = cl.rolling(20).std()
-        upper_tk = ma20_tk + 2*std20_tk; lower_tk = ma20_tk - 2*std20_tk
-        ma50_tk = cl.rolling(50).mean(); ma200_tk = cl.rolling(200).mean()
-        fig_p, ax_p = plt.subplots(figsize=(12, 5))
-        fig_p.patch.set_facecolor('#07090f'); ax_p.set_facecolor('#0d1117')
-        ax_p.fill_between(cl.index, lower_tk, upper_tk, alpha=0.08, color='#3a7bd5')
-        ax_p.plot(cl.index, upper_tk, color='#3a7bd5', lw=0.8, alpha=0.5)
-        ax_p.plot(cl.index, lower_tk, color='#3a7bd5', lw=0.8, alpha=0.5)
-        ax_p.plot(cl.index, ma20_tk, color='#e3b341', lw=1.2, ls='--', label='MA20')
-        ax_p.plot(cl.index, ma50_tk, color='#3fb950', lw=1.2, label='MA50')
-        ax_p.plot(cl.index, ma200_tk, color='#f85149', lw=1.2, label='MA200')
-        trend_c = '#3fb950' if float(cl.iloc[-1]) >= float(cl.iloc[0]) else '#f85149'
-        ax_p.plot(cl.index, cl, color=trend_c, lw=1.8, zorder=4, label='Precio')
-        ax_p.fill_between(cl.index, cl, float(cl.min()), alpha=0.06, color=trend_c)
-        ax_p.set_title(f'{ticker} — Precio + Indicadores (2 años)', color='#e6edf3', fontsize=11, fontweight='600')
-        ax_p.legend(fontsize=8, facecolor='#0d1117', labelcolor='#b0bcd0', ncol=3)
-        ax_p.grid(alpha=.12); ax_p.tick_params(colors='#6b7d9a')
-        ax_p.spines['top'].set_visible(False); ax_p.spines['right'].set_visible(False)
-        plt.tight_layout(pad=1.2)
-        st.pyplot(fig_p, use_container_width=True); plt.close(fig_p)
-
-
-    with tab_g2:
-        rsi_tk    = calcular_rsi(cl, 14)
-        macd_tk   = cl.ewm(span=12,adjust=False).mean() - cl.ewm(span=26,adjust=False).mean()
-        signal_tk = macd_tk.ewm(span=9,adjust=False).mean()
-        hist_macd = macd_tk - signal_tk
-        fig_rs, (ax_rsi, ax_macd) = plt.subplots(2,1, figsize=(12,6), gridspec_kw={'hspace':0.3})
-        fig_rs.patch.set_facecolor('#07090f')
-        for ax_i in [ax_rsi, ax_macd]: ax_i.set_facecolor('#0d1117')
-        ax_rsi.plot(rsi_tk.index, rsi_tk, color='#bc8cff', lw=1.5)
-        ax_rsi.axhline(70, color='#f85149', ls='--', alpha=.5, lw=.9)
-        ax_rsi.axhline(30, color='#3fb950', ls='--', alpha=.5, lw=.9)
-        ax_rsi.fill_between(rsi_tk.index, 30, rsi_tk.values, where=rsi_tk.values<30, alpha=.2, color='#3fb950')
-        ax_rsi.fill_between(rsi_tk.index, 70, rsi_tk.values, where=rsi_tk.values>70, alpha=.2, color='#f85149')
-        ax_rsi.set_title('RSI (14)', color='#e6edf3', fontsize=9.5, fontweight='600')
-        ax_rsi.set_ylim(0,100); ax_rsi.grid(alpha=.12); ax_rsi.tick_params(colors='#6b7d9a')
-        ax_macd.plot(macd_tk.index, macd_tk, color='#3a7bd5', lw=1.3, label='MACD')
-        ax_macd.plot(signal_tk.index, signal_tk, color='#f0883e', lw=1.1, label='Signal')
-        ax_macd.bar(hist_macd.index, hist_macd, color=['#3fb950' if v>=0 else '#f85149' for v in hist_macd], alpha=.5)
-        ax_macd.axhline(0, color='#b0bcd0', lw=.6, alpha=.4)
-        ax_macd.set_title('MACD (12,26,9)', color='#e6edf3', fontsize=9.5, fontweight='600')
-        ax_macd.legend(fontsize=8, facecolor='#0d1117', labelcolor='#b0bcd0')
-        ax_macd.grid(alpha=.12); ax_macd.tick_params(colors='#6b7d9a')
-        for ax_i in [ax_rsi, ax_macd]:
-            ax_i.spines['top'].set_visible(False); ax_i.spines['right'].set_visible(False)
-        plt.tight_layout(pad=1.2)
-        st.pyplot(fig_rs, use_container_width=True); plt.close(fig_rs)
-
-
-    with tab_g3:
-        retornos_tk = cl.pct_change().dropna()
-        cum_tk = (1 + retornos_tk).cumprod()
-        dd_tk  = (cum_tk / cum_tk.cummax()) - 1
-        fig_dd, ax_dd = plt.subplots(figsize=(12, 4))
-        fig_dd.patch.set_facecolor('#07090f'); ax_dd.set_facecolor('#0d1117')
-        ax_dd.fill_between(dd_tk.index, dd_tk*100, 0, alpha=0.6, color='#f85149')
-        ax_dd.plot(dd_tk.index, dd_tk*100, color='#f85149', lw=1.2)
-        ax_dd.axhline(0, color='#b0bcd0', lw=.6, alpha=.4)
-        ax_dd.axhline(-20, color='#e3b341', ls='--', alpha=.4, lw=.8, label='-20%')
-        ax_dd.axhline(-40, color='#f85149', ls='--', alpha=.4, lw=.8, label='-40%')
-        ax_dd.set_title(f'{ticker} — Drawdown desde máximo · Máx: {float(dd_tk.min()*100):.1f}%', color='#e6edf3', fontsize=10, fontweight='600')
-        ax_dd.legend(fontsize=8, facecolor='#0d1117', labelcolor='#b0bcd0')
-        ax_dd.grid(alpha=.12); ax_dd.tick_params(colors='#6b7d9a')
-        ax_dd.spines['top'].set_visible(False); ax_dd.spines['right'].set_visible(False)
-        plt.tight_layout(pad=1.2)
-        st.pyplot(fig_dd, use_container_width=True); plt.close(fig_dd)
+    render_largo_completo(ticker, cl, r, key_suffix='buscador')
 
 
     # ── ANÁLISIS FUNDAMENTAL ──────────────────────────────────────────────
@@ -1867,34 +1978,32 @@ def _renderizar_buscador(ticker):
         sc_col_b, sc_bg_b = _senal_color(res_fund['senal_final'])
         bench_b = res_fund['bench']
 
-        # KPIs fundamentales
         kpi_cards_4([
             ('Señal Fundamental', res_fund['senal_final'],
-             f"✅ {res_fund['n_ok']} positivas · ⚠️ {res_fund['n_alt']} alertas", sc_col_b),
+             f"✅ {res_fund['n_ok']} positivas · ⚠️ {res_fund['n_alt']} alertas", sc_col_b,
+             'Resumen automático basado en el conteo de señales positivas vs. alertas detectadas en los ratios.'),
             ('Valuación',
              f"PER {_fmt_num(res_fund.get('per'))}x · P/B {_fmt_num(res_fund.get('pb'))}x",
              f"EV/EBITDA: {_fmt_num(res_fund.get('ev_ebitda'))}x · PEG: {_fmt_num(res_fund.get('peg'))}",
-             '#3a7bd5'),
+             '#3a7bd5', f"{G('PER')} | {G('P/B')}"),
             ('Rentabilidad',
              f"ROE {_fmt_pct(res_fund.get('roe'))} · ROA {_fmt_pct(res_fund.get('roa'))}",
              f"Mg.Bruto: {_fmt_pct(res_fund.get('gross_margin'))} · Mg.Op: {_fmt_pct(res_fund.get('op_margin'))}",
-             '#3fb950'),
+             '#3fb950', f"{G('ROE')} | {G('ROA')}"),
             ('Solvencia / Flujo',
              f"D/E {_fmt_num(res_fund.get('debt_equity'))}x · CR {_fmt_num(res_fund.get('curr_ratio'))}x",
              f"FCF: {_fmt_big(res_fund.get('fcf'))} · Beta: {_fmt_num(res_fund.get('beta'))}",
-             '#e3b341'),
+             '#e3b341', f"{G('FCF')} | {G('Beta')}"),
         ])
 
-        # Métricas secundarias
         mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
         with mc1: st.metric('Sector', sector_fund[:16])
         with mc2: st.metric('Industria', industria_fund[:16])
         with mc3: st.metric('Rev. Growth', _fmt_pct(res_fund.get('revenue_growth')))
-        with mc4: st.metric('Div. Yield', _fmt_pct(res_fund.get('div_yield')))
+        with mc4: st.metric('Div. Yield', _fmt_pct(res_fund.get('div_yield')), help=G('Dividend Yield'))
         with mc5: st.metric('Precio Obj.', fmt_precio(res_fund.get('target_price')))
         with mc6: st.metric('Rec. Analistas', res_fund.get('recommendation') or 'N/D')
 
-        # Benchmark del sector
         st.markdown(f"""
         <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
              border-radius:8px;padding:10px 16px;margin:10px 0;font-size:11px;color:#b0bcd0;line-height:1.8'>
@@ -1904,7 +2013,6 @@ def _renderizar_buscador(ticker):
         </div>
         """, unsafe_allow_html=True)
 
-        # Señales en dos columnas
         ok_sigs_b  = [(t,m) for t,m in res_fund['senales'] if t=='OK']
         alt_sigs_b = [(t,m) for t,m in res_fund['senales'] if t=='ALT']
         col_sig1, col_sig2 = st.columns(2)
@@ -1923,13 +2031,118 @@ def _renderizar_buscador(ticker):
             else:
                 st.markdown('<div style="font-size:11px;color:#6b7d9a">Sin alertas detectadas</div>', unsafe_allow_html=True)
 
-        # Vs benchmark sectorial
         if res_fund['sector_senales']:
             st.markdown('<div style="margin-top:12px;font-size:11px;font-weight:700;color:#3a7bd5;margin-bottom:4px">📐 COMPARATIVA VS BENCHMARK SECTORIAL</div>', unsafe_allow_html=True)
             for tipo, msg in res_fund['sector_senales']:
                 col_vs_b = '#3fb950' if tipo == 'POS' else '#f85149'
                 ico_vs_b = '✔' if tipo == 'POS' else '✘'
                 st.markdown(f'<div style="font-size:11px;color:{col_vs_b};padding:3px 0;border-bottom:1px solid #21262d">{ico_vs_b} {msg}</div>', unsafe_allow_html=True)
+
+
+# ==============================================================
+#  MÓDULO COMPARADOR DE ACTIVOS
+# ==============================================================
+
+
+def modulo_comparador():
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #6CC24A;
+         border-radius:14px; padding:28px 32px; margin-bottom:24px;">
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">⚖️ Comparador de Activos</div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+        Sumá entre 2 y 5 activos para comparar su rendimiento normalizado y sus scores cuantitativos lado a lado.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    c_add, c_btn = st.columns([4, 1])
+    with c_add:
+        nuevo = selector_ticker_autocomplete('comparador_add')
+    with c_btn:
+        st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+        if st.button('➕ Agregar', use_container_width=True, key='comp_add_btn'):
+            lista = st.session_state['comparador_tickers']
+            if nuevo and nuevo not in lista and len(lista) < 5:
+                lista.append(nuevo)
+                st.session_state['comp_run_flag'] = False
+                st.rerun()
+
+    if st.session_state['comparador_tickers']:
+        st.markdown('<div style="margin:10px 0 4px 0;font-size:11px;color:#6b7d9a">Activos seleccionados (clic para quitar):</div>', unsafe_allow_html=True)
+        lista = st.session_state['comparador_tickers']
+        cols_chip = st.columns(max(len(lista), 1))
+        for i, tk in enumerate(lista):
+            with cols_chip[i]:
+                if st.button(f'✕ {tk}', key=f'comp_rm_{tk}', use_container_width=True):
+                    st.session_state['comparador_tickers'].remove(tk)
+                    st.session_state['comp_run_flag'] = False
+                    st.rerun()
+
+    tickers_cmp = st.session_state['comparador_tickers']
+    if len(tickers_cmp) < 2:
+        st.info('Agregá al menos 2 activos para comparar.')
+        return
+
+    if st.button('▶ Comparar', key='comp_run'):
+        st.session_state['comp_run_flag'] = True
+
+    if not st.session_state.get('comp_run_flag'):
+        return
+
+    def _proc_cmp(tk):
+        df_tk = descargar_datos(tk, '2y')
+        cl = get_close_series(df_tk) if df_tk is not None else None
+        r_l = analizar_largo(tk, cl) if cl is not None and len(cl) >= 150 else None
+        df_m = descargar_datos(tk, '1mo'); df_v = descargar_datos(tk, '3mo')
+        r_c = None
+        if df_m is not None and df_v is not None:
+            cl_m = get_close_series(df_m); cl_v = get_close_series(df_v)
+            if cl_m is not None and cl_v is not None and len(cl_v.dropna()) >= 15:
+                atr = calcular_atr(df_m)
+                sa, sn, ss = scores_corto(cl_v, cl_m, atr)
+                r_c = dict(sa=sa, sn=sn, ss=ss, sf=sa*0.45+sn*0.35+ss*0.20)
+        return tk, cl, r_l, r_c
+
+    with st.spinner('Descargando y calculando comparación...'):
+        series, resultados_l, resultados_c = {}, {}, {}
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            for tk, cl, r_l, r_c in ex.map(_proc_cmp, tickers_cmp):
+                if cl is not None: series[tk] = cl
+                if r_l: resultados_l[tk] = r_l
+                if r_c: resultados_c[tk] = r_c
+
+    if not series:
+        st.error('No se pudieron descargar datos para los activos seleccionados.')
+        return
+
+    st.plotly_chart(fig_comparador_precio(series), use_container_width=True, key='comp_precio_fig')
+
+    if resultados_l:
+        filas = []
+        for tk, r in resultados_l.items():
+            filas.append({
+                'Ticker': tk, 'Precio': fmt_precio(r['precio']), 'Sesgo': r['sesgo'],
+                'Global': int(r['global_score']), 'Trend': int(r['trend_score']),
+                'MR': int(r['mr_score']), 'Risk': int(r['risk_score']),
+                'Ret Anual %': round(r['ret_anual'], 1), 'Vol %': round(r['vol_anual'], 1),
+                'Sharpe': round(r['sharpe'], 2), 'Max DD %': round(r['max_dd'], 1),
+                'RSI': round(r['rsi'], 1), 'Hurst': round(r['hurst'], 3),
+                'Acum (corto)': resultados_c.get(tk, {}).get('sa'),
+            })
+        df_cmp = pd.DataFrame(filas)
+        styled_cmp = _apply_score_style(df_cmp, ['Global', 'Trend', 'MR', 'Risk'])
+        st.dataframe(styled_cmp, use_container_width=True, height=min(400, len(df_cmp)*45+60))
+
+        ganador = max(resultados_l.items(), key=lambda x: x[1]['global_score'])
+        st.markdown(f"""
+        <div class="interp-card">
+          <div class="interp-header">🏆 Mejor Global Score del grupo</div>
+          {ganador[0]} lidera la comparación con un Global Score de {int(ganador[1]['global_score'])}/100 ({ganador[1]['sesgo']}).
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info('No hay suficiente historial (2 años) para calcular el análisis cuantitativo de estos activos. Aun así, podés ver el gráfico de rendimiento comparado arriba.')
 
 
 # ==============================================================
@@ -1940,14 +2153,13 @@ def _renderizar_buscador(ticker):
 for key, default in [
     ('nav_horizonte', 'corto'),
     ('nav_modulo', 'resumen'),
-    ('nav_ind_sel_global', list(ACCIONES_POR_INDUSTRIA.keys())[:2]),
-    ('nav_ind_sel_corto', list(ACCIONES_POR_INDUSTRIA.keys())[:2]),
-    ('nav_ind_sel_largo', list(ACCIONES_POR_INDUSTRIA.keys())[:2]),
-    ('fund_ind_sel', list(ACCIONES_POR_INDUSTRIA.keys())[:2]),
+    ('nav_ind_sel_corto', list(ACCIONES_POR_INDUSTRIA.keys())[:1]),
+    ('nav_ind_sel_largo', list(ACCIONES_POR_INDUSTRIA.keys())[:1]),
     ('nav_grupos_fx', list(dict.fromkeys(v[1] for v in FOREX.values()))),
     ('ticker_from_table', ''),
     ('ticker_manual', ''),
-    ('nav_search_ticker', ''),
+    ('comparador_tickers', []),
+    ('comp_run_flag', False),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -1959,8 +2171,8 @@ for key, default in [
 
 
 _now_str = datetime.now().strftime('%H:%M')
-_h_color = {'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5'}
-_h_label = {'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda'}
+_h_color = {'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A'}
+_h_label = {'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador'}
 
 
 HORIZONTE = st.session_state['nav_horizonte']
@@ -1973,8 +2185,8 @@ st.markdown(f"""
     <div class="topbar-brand">
       <div class="topbar-brand-icon">📡</div>
       <div>
-        <div class="topbar-brand-name">QuantAnalyzer</div>
-        <div class="topbar-brand-sub">Live · Yahoo Finance</div>
+        <div class="topbar-brand-name">Analizador Cuantitativo</div>
+        <div class="topbar-brand-sub">Yahoo Finance · Caché 30min</div>
       </div>
     </div>
     <div class="topbar-divider"></div>
@@ -1990,7 +2202,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
-st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
+st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
 
 def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on_click_val_m=None):
@@ -2002,14 +2214,14 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
             st.markdown(f"""
             <style>
             .st-key-{cont_key} button {{
-                background: linear-gradient(135deg, #1a7f37, #2ea043) !important;
-                color: #ffffff !important;
-                border-color: #2ea043 !important;
+                background: #0d1117 !important;
+                color: var(--verde-monster) !important;
+                border: 1.5px solid var(--verde-monster) !important;
                 font-weight: 700 !important;
-                box-shadow: 0 0 0 3px rgba(46,160,67,0.18), 0 2px 8px rgba(46,160,67,0.25) !important;
+                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
             }}
             .st-key-{cont_key} button:hover {{
-                background: linear-gradient(135deg, #238636, #3fb950) !important;
+                background: #11150f !important;
                 transform: translateY(-1px) !important;
             }}
             </style>
@@ -2022,38 +2234,27 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
             st.rerun()
 
 
-_c = st.columns([1.1, 1.1, 0.05, 1, 1, 1, 1, 1, 1, 0.05, 2.0, 0.8])
+_c = st.columns([1.0, 1.0, 0.95, 1.0, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
 
 
 _nav_btn(_c[0], '⚡ Corto Plazo', 'nav_h_corto',
          HORIZONTE=='corto', None, 'corto', 'resumen')
 _nav_btn(_c[1], '📈 Largo Plazo', 'nav_h_largo',
          HORIZONTE=='largo', None, 'largo', 'ranking')
-
-
-# Buscador global siempre visible
-with _c[10]:
-    _search_val = st.text_input('', placeholder='🔍  Ticker: NVDA, AAPL, GGAL...',
-                                 label_visibility='collapsed', key='nav_global_search')
-with _c[11]:
-    _search_btn = st.button('Buscar', key='nav_global_search_btn', use_container_width=True)
-
-if _search_btn and _search_val.strip():
-    _tk_nav = _search_val.strip().upper()
-    st.session_state['ticker_from_table'] = _tk_nav
-    st.session_state['nav_horizonte'] = 'buscador'
-    st.session_state['nav_modulo']    = 'buscador'
-    st.rerun()
+_nav_btn(_c[2], '🔍 Buscador', 'nav_buscador',
+         HORIZONTE=='buscador', None, 'buscador', 'buscador')
+_nav_btn(_c[3], '⚖️ Comparar', 'nav_comparador',
+         HORIZONTE=='comparador', None, 'comparador', 'comparador')
 
 
 if HORIZONTE == 'corto':
     _mods_corto = [
-        ('💱 Forex',    'forex',    3),
-        ('🌍 Países',   'paises',   4),
-        ('📊 Sectores', 'sectores', 5),
-        ('🛢️ Mercados', 'mercados', 6),
-        ('📈 Acciones', 'acciones', 7),
-        ('🎯 Top-Down', 'topdown',  8),
+        ('💱 Forex',    'forex',    5),
+        ('🌍 Países',   'paises',   6),
+        ('📊 Sectores', 'sectores', 7),
+        ('🛢️ Mercados', 'mercados', 8),
+        ('📈 Acciones', 'acciones', 9),
+        ('🎯 Top-Down', 'topdown',  10),
     ]
     for label, mod_key, col_idx in _mods_corto:
         _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
@@ -2062,39 +2263,53 @@ if HORIZONTE == 'corto':
 
 elif HORIZONTE == 'largo':
     _mods_largo = [
-        ('📋 Ranking',      'ranking',      3),
-        ('🔄 Reversión',    'reversion',    4),
-        ('🏭 Industria',    'industria',    5),
-        ('🔍 Ticker',       'ticker',       6),
-        ('📊 Fundamental',  'fundamental',  7),
+        ('📋 Ranking',      'ranking',      5),
+        ('🔄 Reversión',    'reversion',    6),
+        ('🏭 Industria',    'industria',    7),
+        ('🔍 Ticker',       'ticker',       8),
+        ('📊 Fundamental',  'fundamental',  9),
     ]
     for label, mod_key, col_idx in _mods_largo:
         _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
                  MODULO==mod_key, None, None, mod_key)
 
 
-with _c[9]:
+with _c[12]:
     with st.container(key='nav_refresh_cont'):
-        if st.button('↺', use_container_width=True, key='nav_refresh'):
+        if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
             st.cache_data.clear(); st.rerun()
 st.markdown("""
 <style>
 .st-key-nav_refresh_cont button {
     background: transparent !important;
-    color: #6b7d9a !important;
+    color: var(--verde-monster-dim) !important;
     border-color: #21262d !important;
     font-size: 11px !important;
 }
 .st-key-nav_refresh_cont button:hover {
-    background: #161b22 !important;
-    color: #e6edf3 !important;
-    border-color: #3a4a5a !important;
+    background: #11150f !important;
+    color: var(--verde-monster) !important;
+    border-color: var(--verde-monster) !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 
 st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
+
+
+with st.expander('❓ Glosario de términos cuantitativos y fundamentales', expanded=False):
+    _terms = list(GLOSARIO.items())
+    _mitad = len(_terms)//2 + (len(_terms) % 2)
+    _col_g1, _col_g2 = st.columns(2)
+    for _col, _chunk in zip([_col_g1, _col_g2], [_terms[:_mitad], _terms[_mitad:]]):
+        with _col:
+            for _term, _desc in _chunk:
+                st.markdown(
+                    f"<div style='margin-bottom:10px'><b style='color:#6CC24A;font-size:12px'>{_term}</b><br>"
+                    f"<span style='color:#8b949e;font-size:11.5px;line-height:1.5'>{_desc}</span></div>",
+                    unsafe_allow_html=True
+                )
 
 
 HORIZONTE = st.session_state['nav_horizonte']
@@ -2108,6 +2323,7 @@ MODULO    = st.session_state['nav_modulo']
 
 titulos = {
     'buscador':  ('Buscador Universal', '🔍', 'Análisis completo por ticker — corto y largo plazo'),
+    'comparador':('Comparador de Activos', '⚖️', 'Comparación lado a lado — rendimiento y scores cuantitativos'),
     'forex':     ('Análisis Forex', '💱', 'Pares de divisas — ranking y oportunidades de acumulación'),
     'paises':    ('Países / Índices Globales', '🌍', 'Índices nacionales y regionales — flujo de capital macro'),
     'sectores':  ('Sectores S&P500', '📊', '11 sectores GICS — rotación y momentum'),
@@ -2125,9 +2341,10 @@ titulo_h, icono_h, subtitulo_h = titulos.get(MODULO, ('Analizador', '📡', ''))
 
 
 badge_map = {
-    'corto':    ('#f0883e', 'rgba(240,136,62,0.12)', 'CORTO PLAZO'),
-    'largo':    ('#3fb950', 'rgba(63,185,80,0.10)',  'LARGO PLAZO'),
-    'buscador': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BÚSQUEDA'),
+    'corto':      ('#f0883e', 'rgba(240,136,62,0.12)', 'CORTO PLAZO'),
+    'largo':      ('#3fb950', 'rgba(63,185,80,0.10)',  'LARGO PLAZO'),
+    'buscador':   ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BÚSQUEDA'),
+    'comparador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'COMPARADOR'),
 }
 badge_color, badge_bg, badge_txt = badge_map.get(HORIZONTE, ('#3a7bd5','rgba(58,123,213,0.12)',''))
 
@@ -2165,6 +2382,10 @@ if MODULO == 'buscador':
     modulo_buscador()
 
 
+elif MODULO == 'comparador':
+    modulo_comparador()
+
+
 elif HORIZONTE == 'corto':
 
 
@@ -2179,27 +2400,7 @@ elif HORIZONTE == 'corto':
             d_m = cargar_mercados_corto(); prog.progress(100, '✅ Listo'); prog.empty()
             fuentes = [(l,d,c) for l,d,c in [('Países',d_p,'#3a7bd5'),('Sectores',d_s,'#3fb950'),('Mercados',d_m,'#f0883e')] if d]
             if fuentes:
-                fig_td, axes_td = plt.subplots(1, len(fuentes), figsize=(5*len(fuentes), 8))
-                fig_td.patch.set_facecolor('#07090f')
-                if len(fuentes)==1: axes_td=[axes_td]
-                for ax_td, (label, dd, col_td) in zip(axes_td, fuentes):
-                    ax_td.set_facecolor('#0d1117')
-                    top_items = sorted(dd.items(), key=lambda x: x[1]['sa'], reverse=True)[:12]
-                    ns_td=[n[:14] for n,_ in top_items]; sas_td=[d['sa'] for _,d in top_items]
-                    sns_td=[d['sn'] for _,d in top_items]; y_td=np.arange(len(ns_td))
-                    brs_td = ax_td.barh(y_td, sas_td, color=[score_color_mpl(s) for s in sas_td], edgecolor='none', height=0.52, alpha=.88)
-                    ax_td.barh(y_td, sns_td, color=col_td, edgecolor='none', height=0.22, alpha=0.32)
-                    ax_td.axvline(62, color='#3fb950', ls=':', alpha=.4)
-                    ax_td.axvline(38, color='#f85149', ls=':', alpha=.4)
-                    ax_td.set_xlim(0,118); ax_td.set_yticks(y_td)
-                    ax_td.set_yticklabels(ns_td, fontsize=8)
-                    ax_td.set_title(label, color='#e6edf3', fontsize=10, fontweight='600', pad=5)
-                    for b, s in zip(brs_td, sas_td):
-                        ax_td.text(s+1, b.get_y()+b.get_height()/2, f'{s:.0f}', va='center', color='white', fontsize=7.5)
-                    ax_td.spines['top'].set_color(col_td); ax_td.grid(axis='x', alpha=.15)
-                plt.suptitle('Top-Down: mejores oportunidades por nivel', color='#e6edf3', fontsize=12, fontweight='bold', y=1.01)
-                plt.tight_layout(pad=1.5)
-                st.pyplot(fig_td, use_container_width=True); plt.close(fig_td)
+                st.plotly_chart(fig_topdown(fuentes), use_container_width=True, key='topdown_fig')
         else:
             st.markdown("""
             <div style='background:#0d1117;border:1px dashed #21262d;border-radius:10px;padding:40px;text-align:center'>
@@ -2224,16 +2425,16 @@ elif HORIZONTE == 'corto':
                 for j, grupo in enumerate(grupos_en[i:i+2]):
                     items = sorted([(n,d) for n,d in datos_f.items() if d['grupo']==grupo], key=lambda x: x[1]['sa'], reverse=True)
                     if not items: continue
-                    fig = grafico_barras_h(items, grupo, COLORES_GRUPO_FX.get(grupo, C_ACENT))
-                    with cols[j]: st.pyplot(fig, use_container_width=True); plt.close(fig)
+                    fig = fig_barras_h(items, grupo, COLORES_GRUPO_FX.get(grupo, C_MONSTER))
+                    with cols[j]: st.plotly_chart(fig, use_container_width=True, key=f'fx_barras_{grupo}')
         with tab2:
-            fig2 = grafico_momentum(sorted(datos_f.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
-            st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+            fig2 = fig_momentum(sorted(datos_f.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
+            st.plotly_chart(fig2, use_container_width=True, key='fx_momentum')
         with tab3:
             c_m, _ = st.columns([2,1])
             with c_m:
-                fig3 = grafico_cuadrante(datos_f, COLORES_GRUPO_FX, 'Mapa Oportunidades Forex')
-                st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+                fig3 = fig_cuadrante(datos_f, COLORES_GRUPO_FX, 'Mapa Oportunidades Forex')
+                st.plotly_chart(fig3, use_container_width=True, key='fx_cuadrante')
         with tab4:
             tabla_corto(datos_f)
 
@@ -2250,16 +2451,16 @@ elif HORIZONTE == 'corto':
                 for j, region in enumerate(regiones[i:i+2]):
                     items = sorted([(n,d) for n,d in datos_p.items() if d['region']==region], key=lambda x: x[1]['sa'], reverse=True)
                     if not items: continue
-                    fig = grafico_barras_h(items, region, COLORES_REGION.get(region, C_ACENT))
-                    with cols[j]: st.pyplot(fig, use_container_width=True); plt.close(fig)
+                    fig = fig_barras_h(items, region, COLORES_REGION.get(region, C_MONSTER))
+                    with cols[j]: st.plotly_chart(fig, use_container_width=True, key=f'pa_barras_{region}')
         with tab2:
-            fig2 = grafico_momentum(sorted(datos_p.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
-            st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+            fig2 = fig_momentum(sorted(datos_p.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
+            st.plotly_chart(fig2, use_container_width=True, key='pa_momentum')
         with tab3:
             c_m, _ = st.columns([2,1])
             with c_m:
-                fig3 = grafico_cuadrante(datos_p, COLORES_REGION, 'Mapa Oportunidades Países')
-                st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+                fig3 = fig_cuadrante(datos_p, COLORES_REGION, 'Mapa Oportunidades Países')
+                st.plotly_chart(fig3, use_container_width=True, key='pa_cuadrante')
         with tab4:
             tabla_corto(datos_p)
 
@@ -2271,16 +2472,16 @@ elif HORIZONTE == 'corto':
         tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
         with tab1:
             items_ord = sorted(datos_s.items(), key=lambda x: x[1]['sa'], reverse=True)
-            fig = grafico_barras_h(items_ord, 'S&P500 — Sectores')
-            st.pyplot(fig, use_container_width=True); plt.close(fig)
+            fig = fig_barras_h(items_ord, 'S&P500 — Sectores')
+            st.plotly_chart(fig, use_container_width=True, key='sec_barras')
         with tab2:
-            fig2 = grafico_momentum(sorted(datos_s.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
-            st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+            fig2 = fig_momentum(sorted(datos_s.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
+            st.plotly_chart(fig2, use_container_width=True, key='sec_momentum')
         with tab3:
             c_m, _ = st.columns([2,1])
             with c_m:
-                fig3 = grafico_cuadrante(datos_s, None, 'Mapa Oportunidades Sectores')
-                st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+                fig3 = fig_cuadrante(datos_s, None, 'Mapa Oportunidades Sectores')
+                st.plotly_chart(fig3, use_container_width=True, key='sec_cuadrante')
         with tab4:
             tabla_corto(datos_s)
 
@@ -2297,16 +2498,16 @@ elif HORIZONTE == 'corto':
                 for j, cat in enumerate(cats[i:i+2]):
                     items = sorted([(n,d) for n,d in datos_m.items() if d['cat']==cat], key=lambda x: x[1]['sa'], reverse=True)
                     if not items: continue
-                    fig = grafico_barras_h(items, cat)
-                    with cols[j]: st.pyplot(fig, use_container_width=True); plt.close(fig)
+                    fig = fig_barras_h(items, cat)
+                    with cols[j]: st.plotly_chart(fig, use_container_width=True, key=f'merc_barras_{cat}')
         with tab2:
-            fig2 = grafico_momentum(sorted(datos_m.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
-            st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+            fig2 = fig_momentum(sorted(datos_m.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
+            st.plotly_chart(fig2, use_container_width=True, key='merc_momentum')
         with tab3:
             c_m, _ = st.columns([2,1])
             with c_m:
-                fig3 = grafico_cuadrante(datos_m, None, 'Mapa Mercados Reales')
-                st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+                fig3 = fig_cuadrante(datos_m, None, 'Mapa Mercados Reales')
+                st.plotly_chart(fig3, use_container_width=True, key='merc_cuadrante')
         with tab4:
             tabla_corto(datos_m)
 
@@ -2318,7 +2519,7 @@ elif HORIZONTE == 'corto':
         if not ind_sel_c:
             st.info('Seleccioná al menos una industria.')
             st.stop()
-        with st.spinner(f'Analizando {len(ind_sel_c)} industrias...'):
+        with st.spinner(f'Analizando {len(ind_sel_c)} industrias en paralelo...'):
             datos_acc_c = cargar_acciones_corto(tuple(ind_sel_c))
         datos_acc_c = {ind: tks for ind, tks in datos_acc_c.items() if tks}
         if not datos_acc_c: st.error('Sin datos.'); st.stop()
@@ -2329,13 +2530,13 @@ elif HORIZONTE == 'corto':
                 if not tickers: continue
                 st.markdown(f'<div class="sec-title">📂 {industria}</div>', unsafe_allow_html=True)
                 items_ord = sorted(tickers.items(), key=lambda x: x[1]['sa'], reverse=True)
-                fig = grafico_barras_h(items_ord, industria)
-                st.pyplot(fig, use_container_width=True); plt.close(fig)
+                fig = fig_barras_h(items_ord, industria)
+                st.plotly_chart(fig, use_container_width=True, key=f'acc_barras_{industria}')
         with tab2:
             c_m, _ = st.columns([2,1])
             with c_m:
-                fig3 = grafico_cuadrante(todas_c, None, 'Mapa Oportunidades Acciones')
-                st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+                fig3 = fig_cuadrante(todas_c, None, 'Mapa Oportunidades Acciones')
+                st.plotly_chart(fig3, use_container_width=True, key='acc_cuadrante')
         with tab3:
             filas = []
             for industria, tickers in datos_acc_c.items():
@@ -2387,21 +2588,7 @@ elif HORIZONTE == 'corto':
             st.dataframe(styled, use_container_width=True, height=min(700, max(200, len(df_show_a)*32+45)))
             st.caption(f'{len(df_show_a)} activos mostrados de {len(df_acc)} totales')
 
-
-            tickers_disp = df_show_a['Ticker'].tolist()
-            if tickers_disp:
-                cca1, cca2 = st.columns([3,1])
-                with cca1:
-                    tk_click_a = st.selectbox('🔍 Analizar ticker de la tabla',
-                        ['— Seleccioná —'] + tickers_disp, key='acc_corto_click')
-                with cca2:
-                    st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
-                    if st.button('▶ Ver análisis completo', use_container_width=True, key='acc_corto_go'):
-                        if tk_click_a and tk_click_a != '— Seleccioná —':
-                            st.session_state['ticker_from_table'] = tk_click_a
-                            st.session_state['nav_horizonte'] = 'buscador'
-                            st.session_state['nav_modulo']    = 'buscador'
-                            st.rerun()
+            chips_navegacion(df_show_a['Ticker'].tolist(), 'acc_corto')
 
 
 elif HORIZONTE == 'largo':
@@ -2409,13 +2596,9 @@ elif HORIZONTE == 'largo':
         pass  # handled by modulo_fundamental() below
     else:
         ind_disp = list(ACCIONES_POR_INDUSTRIA.keys())
-        _largo_default = st.session_state.get('nav_ind_sel_global',
-                         st.session_state.get('nav_ind_sel_largo', ind_disp[:2]))
-        ind_sel  = st.multiselect('Industrias a analizar (2 años)', ind_disp,
-                                   default=_largo_default, key='largo_ind_sel')
-        st.session_state['nav_ind_sel_largo']  = ind_sel
-        st.session_state['nav_ind_sel_global'] = ind_sel
-        st.session_state['fund_ind_sel']       = ind_sel
+        ind_sel  = st.multiselect('Industrias a analizar (2 años de historia)', ind_disp,
+                                   default=st.session_state['nav_ind_sel_largo'], key='largo_ind_sel')
+        st.session_state['nav_ind_sel_largo'] = ind_sel
 
 
         if not ind_sel:
@@ -2440,27 +2623,13 @@ elif HORIZONTE == 'largo':
             with tab1:
                 tabla_largo(df_res_l, key_suffix='ranking')
             with tab2:
-                fig_dist, axes_dist = plt.subplots(1, 3, figsize=(14, 4))
-                fig_dist.patch.set_facecolor('#07090f')
-                for ax_d, col_d, titulo_d in zip(axes_dist, ['trend_score','mr_score','global_score'],
-                                                  ['Trend Score','MR Score','Global Score']):
-                    ax_d.set_facecolor('#0d1117')
-                    vals = df_res_l[col_d].values
-                    ax_d.hist(vals, bins=20, color=C_ACENT, alpha=0.8, edgecolor='#07090f')
-                    ax_d.axvline(vals.mean(), color='#f0883e', lw=1.5, ls='--', label=f'Media: {vals.mean():.1f}')
-                    ax_d.axvline(70, color='#3fb950', lw=1, ls=':', alpha=.6)
-                    ax_d.axvline(30, color='#f85149', lw=1, ls=':', alpha=.6)
-                    ax_d.set_title(titulo_d, color='#e6edf3', fontsize=10, fontweight='600')
-                    ax_d.legend(fontsize=8, facecolor='#0d1117', labelcolor='#b0bcd0')
-                    ax_d.grid(alpha=.12); ax_d.tick_params(colors='#6b7d9a')
-                plt.tight_layout(pad=1.5)
-                st.pyplot(fig_dist, use_container_width=True); plt.close(fig_dist)
+                st.plotly_chart(fig_distribuciones(df_res_l), use_container_width=True, key='ranking_dist')
             with tab3:
                 datos_cuad = {r['ticker']:{'sa':r['trend_score'],'sn':r['mr_score'],'ss':r['risk_score'],'grupo':r['industria']} for _,r in df_res_l.iterrows()}
                 c_m, _ = st.columns([2,1])
                 with c_m:
-                    fig_c = grafico_cuadrante(datos_cuad, None, 'Trend Score vs MR Score')
-                    st.pyplot(fig_c, use_container_width=True); plt.close(fig_c)
+                    fig_c = fig_cuadrante(datos_cuad, None, 'Trend Score vs MR Score')
+                    st.plotly_chart(fig_c, use_container_width=True, key='ranking_cuadrante')
 
 
         elif MODULO == 'reversion':
@@ -2502,6 +2671,7 @@ elif HORIZONTE == 'largo':
                 styled_rev = _apply_score_style(df_rv_f, ['MR','Risk','Global'])
                 st.dataframe(styled_rev, use_container_width=True, height=min(700, max(200, len(df_rv_f)*32+45)))
                 st.caption(f'{len(df_rv_f)} activos mostrados de {len(df_rv)} totales')
+                chips_navegacion(df_rv_f['Ticker'].tolist(), 'reversion')
 
 
         elif MODULO == 'industria':
@@ -2563,151 +2733,76 @@ elif HORIZONTE == 'largo':
                 r = analizar_largo(ticker_sel, cl)
                 if r is None:
                     st.error('No se pudo calcular el análisis.'); st.stop()
-                accent = score_color_hex(r['global_score'])
-                kpi_cards_4([
-                    ('Global Score',  f"{int(r['global_score'])}/100",  r['sesgo'], accent),
-                    ('Trend Score',   f"{int(r['trend_score'])}/100",   f"GC: {'Sí' if r['golden_cross'] else 'No'} · MACD: {'Alc' if r['macd_bull'] else 'Baj'}", score_color_hex(r['trend_score'])),
-                    ('MR Score',      f"{int(r['mr_score'])}/100",      f"Z: {r['zscore']:+.2f} · RSI: {r['rsi']:.1f}", score_color_hex(r['mr_score'])),
-                    ('Risk Score',    f"{int(r['risk_score'])}/100",    f"Sharpe: {r['sharpe']:.2f} · DD: {r['max_dd']:.1f}%", score_color_hex(r['risk_score'])),
-                ])
-                c1,c2,c3,c4 = st.columns(4)
-                with c1: st.metric('Ret. Anual', f"{r['ret_anual']:+.1f}%")
-                with c2: st.metric('Volatilidad', f"{r['vol_anual']:.1f}%")
-                with c3: st.metric('Max DrawDown', f"{r['max_dd']:.1f}%")
-                with c4: st.metric('Hurst', f"{r['hurst']:.3f}")
-                interp = interpretar_largo(r)
-                sesgo_class = {'MUY ALCISTA':'sesgo-muy-alc','ALCISTA':'sesgo-alc','NEUTRAL':'sesgo-neu',
-                               'BAJISTA':'sesgo-baj','MUY BAJISTA':'sesgo-muy-baj'}.get(r['sesgo'],'')
-                st.markdown(f"""
-                <div class="interp-card">
-                  <div class="interp-header">{ticker_sel} · {r['industria']} · <span class="{sesgo_class}">{r['sesgo']}</span></div>
-                  {interp}
-                </div>
-                """, unsafe_allow_html=True)
-                tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger','📊 RSI & MACD','📉 Drawdown'])
-                with tab_g1:
-                    ma20_tk=cl.rolling(20).mean(); std20_tk=cl.rolling(20).std()
-                    upper_tk=ma20_tk+2*std20_tk; lower_tk=ma20_tk-2*std20_tk
-                    ma50_tk=cl.rolling(50).mean(); ma200_tk=cl.rolling(200).mean()
-                    fig_p, ax_p = plt.subplots(figsize=(12, 5))
-                    fig_p.patch.set_facecolor('#07090f'); ax_p.set_facecolor('#0d1117')
-                    ax_p.fill_between(cl.index, lower_tk, upper_tk, alpha=0.08, color='#3a7bd5')
-                    ax_p.plot(cl.index, upper_tk, color='#3a7bd5', lw=0.8, alpha=0.5)
-                    ax_p.plot(cl.index, lower_tk, color='#3a7bd5', lw=0.8, alpha=0.5)
-                    ax_p.plot(cl.index, ma20_tk, color='#e3b341', lw=1.2, ls='--', label='MA20')
-                    ax_p.plot(cl.index, ma50_tk, color='#3fb950', lw=1.2, label='MA50')
-                    ax_p.plot(cl.index, ma200_tk, color='#f85149', lw=1.2, label='MA200')
-                    trend_c = '#3fb950' if float(cl.iloc[-1])>=float(cl.iloc[0]) else '#f85149'
-                    ax_p.plot(cl.index, cl, color=trend_c, lw=1.8, zorder=4, label='Precio')
-                    ax_p.fill_between(cl.index, cl, float(cl.min()), alpha=0.06, color=trend_c)
-                    ax_p.set_title(f'{ticker_sel} — Precio + Indicadores (2 años)', color='#e6edf3', fontsize=11, fontweight='600')
-                    ax_p.legend(fontsize=8, facecolor='#0d1117', labelcolor='#b0bcd0', ncol=3)
-                    ax_p.grid(alpha=.12); ax_p.tick_params(colors='#6b7d9a')
-                    ax_p.spines['top'].set_visible(False); ax_p.spines['right'].set_visible(False)
-                    plt.tight_layout(pad=1.2); st.pyplot(fig_p, use_container_width=True); plt.close(fig_p)
-                with tab_g2:
-                    rsi_tk=calcular_rsi(cl, 14); macd_tk=cl.ewm(span=12,adjust=False).mean()-cl.ewm(span=26,adjust=False).mean()
-                    signal_tk=macd_tk.ewm(span=9,adjust=False).mean(); hist_macd=macd_tk-signal_tk
-                    fig_rs, (ax_rsi, ax_macd) = plt.subplots(2,1, figsize=(12,6), gridspec_kw={'hspace':0.3})
-                    fig_rs.patch.set_facecolor('#07090f')
-                    for ax_i in [ax_rsi, ax_macd]: ax_i.set_facecolor('#0d1117')
-                    ax_rsi.plot(rsi_tk.index, rsi_tk, color='#bc8cff', lw=1.5)
-                    ax_rsi.axhline(70, color='#f85149', ls='--', alpha=.5, lw=.9); ax_rsi.axhline(30, color='#3fb950', ls='--', alpha=.5, lw=.9)
-                    ax_rsi.fill_between(rsi_tk.index, 30, rsi_tk.values, where=rsi_tk.values<30, alpha=.2, color='#3fb950')
-                    ax_rsi.fill_between(rsi_tk.index, 70, rsi_tk.values, where=rsi_tk.values>70, alpha=.2, color='#f85149')
-                    ax_rsi.set_title('RSI (14)', color='#e6edf3', fontsize=9.5, fontweight='600')
-                    ax_rsi.set_ylim(0,100); ax_rsi.grid(alpha=.12); ax_rsi.tick_params(colors='#6b7d9a')
-                    ax_macd.plot(macd_tk.index, macd_tk, color='#3a7bd5', lw=1.3, label='MACD')
-                    ax_macd.plot(signal_tk.index, signal_tk, color='#f0883e', lw=1.1, label='Signal')
-                    ax_macd.bar(hist_macd.index, hist_macd, color=['#3fb950' if v>=0 else '#f85149' for v in hist_macd], alpha=.5)
-                    ax_macd.axhline(0, color='#b0bcd0', lw=.6, alpha=.4)
-                    ax_macd.set_title('MACD (12,26,9)', color='#e6edf3', fontsize=9.5, fontweight='600')
-                    ax_macd.legend(fontsize=8, facecolor='#0d1117', labelcolor='#b0bcd0')
-                    ax_macd.grid(alpha=.12); ax_macd.tick_params(colors='#6b7d9a')
-                    for ax_i in [ax_rsi, ax_macd]: ax_i.spines['top'].set_visible(False); ax_i.spines['right'].set_visible(False)
-                    plt.tight_layout(pad=1.2); st.pyplot(fig_rs, use_container_width=True); plt.close(fig_rs)
-                with tab_g3:
-                    retornos_tk=cl.pct_change().dropna(); cum_tk=(1+retornos_tk).cumprod(); dd_tk=(cum_tk/cum_tk.cummax())-1
-                    fig_dd, ax_dd = plt.subplots(figsize=(12, 4))
-                    fig_dd.patch.set_facecolor('#07090f'); ax_dd.set_facecolor('#0d1117')
-                    ax_dd.fill_between(dd_tk.index, dd_tk*100, 0, alpha=0.6, color='#f85149')
-                    ax_dd.plot(dd_tk.index, dd_tk*100, color='#f85149', lw=1.2)
-                    ax_dd.axhline(0, color='#b0bcd0', lw=.6, alpha=.4)
-                    ax_dd.axhline(-20, color='#e3b341', ls='--', alpha=.4, lw=.8, label='-20%')
-                    ax_dd.axhline(-40, color='#f85149', ls='--', alpha=.4, lw=.8, label='-40%')
-                    ax_dd.set_title(f'{ticker_sel} — Drawdown · Máx: {float(dd_tk.min()*100):.1f}%', color='#e6edf3', fontsize=10, fontweight='600')
-                    ax_dd.legend(fontsize=8, facecolor='#0d1117', labelcolor='#b0bcd0')
-                    ax_dd.grid(alpha=.12); ax_dd.tick_params(colors='#6b7d9a')
-                    ax_dd.spines['top'].set_visible(False); ax_dd.spines['right'].set_visible(False)
-                    plt.tight_layout(pad=1.2); st.pyplot(fig_dd, use_container_width=True); plt.close(fig_dd)
+                render_largo_completo(ticker_sel, cl, r, key_suffix='tickermod')
 
 
 
 def modulo_fundamental():
     ind_disp_f = list(ACCIONES_POR_INDUSTRIA.keys())
-    # Sincronizar con estado global de industrias
-    _fund_default = st.session_state.get('fund_ind_sel',
-                    st.session_state.get('nav_ind_sel_largo',
-                    st.session_state.get('nav_ind_sel_global', ind_disp_f[:2])))
     ind_sel_f  = st.multiselect(
-        'Industrias a analizar', ind_disp_f,
-        default=_fund_default,
+        'Industrias a analizar (Fundamental)', ind_disp_f,
+        default=st.session_state.get('fund_ind_sel', ind_disp_f[:1]),
         key='fund_ind_sel_widget'
     )
-    # Guardar en estado global para que otros módulos lo compartan
     st.session_state['fund_ind_sel'] = ind_sel_f
-    st.session_state['nav_ind_sel_global'] = ind_sel_f
 
     if not ind_sel_f:
         st.info('Seleccioná al menos una industria.')
         return
 
-    # Modo: industria vs ticker único
     tab_modo_f, tab_ticker_f = st.tabs(['🏭 Por Industria', '🔍 Ticker Individual'])
 
     # ── TAB 1: Por industria ──────────────────────────────────────────────
     with tab_modo_f:
-        # Carga automática — sin botón, spinner inline en los cards
-        _fund_key = f'fund_cache_{"_".join(sorted(ind_sel_f))}'
-        if _fund_key not in st.session_state:
-            todos_resultados = {}
-            prog_f = st.progress(0, text='⟳ Iniciando descarga...')
-            tickers_total = [tk for ind in ind_sel_f for tk in ACCIONES_POR_INDUSTRIA.get(ind, [])]
-            procesados = 0
-            for industria in ind_sel_f:
-                todos_resultados[industria] = []
-                for tk in ACCIONES_POR_INDUSTRIA.get(industria, []):
-                    r = analizar_fundamental(tk, industria)
-                    if r: todos_resultados[industria].append(r)
-                    procesados += 1
-                    pct = int(procesados / max(len(tickers_total), 1) * 100)
-                    prog_f.progress(min(pct, 100), text=f'⟳ {tk} ({procesados}/{len(tickers_total)})...')
-            prog_f.empty()
-            st.session_state[_fund_key] = todos_resultados
-        else:
-            todos_resultados = st.session_state[_fund_key]
+        if st.button('▶ Cargar análisis fundamental', key='btn_fund_load'):
+            st.session_state['fund_loaded'] = True
+
+        if not st.session_state.get('fund_loaded'):
+            st.markdown("""
+            <div style='background:#0d1117;border:1px dashed #21262d;border-radius:10px;
+                 padding:40px;text-align:center;margin-top:16px'>
+              <div style='font-size:40px;margin-bottom:12px'>📊</div>
+              <div style='color:#e6edf3;font-size:14px;font-weight:600;margin-bottom:6px'>Análisis Fundamental</div>
+              <div style='color:#6b7d9a;font-size:12px'>Ratios financieros + benchmarks por sector.<br>
+              La descarga se hace en paralelo para que sea más rápida.</div>
+            </div>
+            """, unsafe_allow_html=True)
+            return
+
+        todos_resultados = {ind: [] for ind in ind_sel_f}
+        tickers_industria = [(tk, ind) for ind in ind_sel_f for tk in ACCIONES_POR_INDUSTRIA.get(ind, [])]
+        total_t = len(tickers_industria)
+        prog_f = st.progress(0, text='Descargando datos fundamentales en paralelo...')
+        procesados = 0
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futuros = {ex.submit(analizar_fundamental, tk, ind): (tk, ind) for tk, ind in tickers_industria}
+            for fut in as_completed(futuros):
+                tk, ind = futuros[fut]
+                r = fut.result()
+                if r: todos_resultados[ind].append(r)
+                procesados += 1
+                pct = int(procesados / max(total_t, 1) * 100)
+                prog_f.progress(min(pct, 100), text=f'Procesado {tk} ({procesados}/{total_t})')
+
+        prog_f.empty()
 
         total_emp = sum(len(v) for v in todos_resultados.values())
         if total_emp == 0:
             st.error('No se pudieron obtener datos fundamentales.')
             return
 
-        # KPIs globales
         todas_emp = [e for lst in todos_resultados.values() for e in lst]
         n_compra   = sum(1 for e in todas_emp if 'COMPRA' in e['senal_final'])
         n_mantener = sum(1 for e in todas_emp if 'MANTENER' in e['senal_final'])
         n_riesgo   = sum(1 for e in todas_emp if 'RIESGO' in e['senal_final'])
-        pct_compra = round(n_compra/max(total_emp,1)*100)
-        pct_mantener = round(n_mantener/max(total_emp,1)*100)
-        pct_riesgo = round(n_riesgo/max(total_emp,1)*100)
         kpi_cards_4([
-            ('Analizadas', str(total_emp), f'{len(ind_sel_f)} industrias seleccionadas', '#3a7bd5'),
-            ('Compra Fuerte', str(n_compra),   f'{pct_compra}% del total · ≥ 8 señales OK', '#3fb950'),
-            ('Mantener',      str(n_mantener), f'{pct_mantener}% del total · 5-7 señales OK', '#e3b341'),
-            ('Riesgo / Vender', str(n_riesgo), f'{pct_riesgo}% del total · < 5 señales OK', '#f85149'),
+            ('Total analizadas', str(total_emp), f'{len(ind_sel_f)} industrias', '#3a7bd5'),
+            ('✅ Compra Fuerte', str(n_compra),   'score_ok ≥ 8 señales positivas', '#3fb950'),
+            ('🟡 Mantener',      str(n_mantener), 'score_ok 5-7', '#e3b341'),
+            ('🔴 Riesgo/Vender', str(n_riesgo),   'score_ok < 5', '#f85149'),
         ])
 
-        # Tabla global resumen
         filas_res = []
         for e in sorted(todas_emp, key=lambda x: x['n_ok'], reverse=True):
             fp = _fmt_pct
@@ -2738,34 +2833,7 @@ def modulo_fundamental():
 
         df_fund = pd.DataFrame(filas_res)
 
-        # ── FILTROS AVANZADOS ─────────────────────────────────────────────
-        # ── Chips de filtros activos ──────────────────────────────────────
-        _DEFS_CHIP = {
-            'per': (0.0,200.0), 'pb': (0.0,30.0), 'eveb': (0.0,60.0),
-            'roe': (-50.0,100.0), 'gm': (-20.0,100.0), 'om': (-50.0,60.0),
-            'rg': (-50.0,100.0), 'de': (0.0,10.0), 'beta': (0.0,4.0),
-            'div': (0.0,20.0), 'ytd': (-80.0,300.0), 'ok': (0,20),
-        }
-        _NAMES_CHIP = {'per':'PER','pb':'P/B','eveb':'EV/EBITDA','roe':'ROE%',
-                       'gm':'Mg.Bruto%','om':'Mg.Op%','rg':'Rev.Growth%',
-                       'de':'D/E','beta':'Beta','div':'Div.Yield%','ytd':'YTD%','ok':'OK'}
-        _active_chips = []
-        for _ck, _cd in _DEFS_CHIP.items():
-            _rng_val = st.session_state.get(f'fund_f_{_ck}_rng', _cd)
-            if _rng_val != _cd:
-                _active_chips.append(f'{_NAMES_CHIP[_ck]}: {_rng_val[0]}–{_rng_val[1]}')
-        if st.session_state.get('fund_f_fcf', False):
-            _active_chips.append('FCF+')
-        if st.session_state.get('fund_f_senal','Todas') != 'Todas':
-            _active_chips.append(f"Señal: {st.session_state['fund_f_senal']}")
-        if st.session_state.get('fund_f_ind','Todas') != 'Todas':
-            _active_chips.append(f"Ind: {st.session_state['fund_f_ind']}")
-
-        if _active_chips:
-            _chips_html = ''.join(f'<span class="filter-chip">✕ {c}</span>' for c in _active_chips)
-            st.markdown(f'<div style="margin-bottom:8px;line-height:2.2"><b style="font-size:10px;color:#6b7d9a;text-transform:uppercase;letter-spacing:.8px">Filtros activos: </b>{_chips_html}</div>', unsafe_allow_html=True)
-
-        with st.expander('🎛️ Filtros avanzados', expanded=not bool(_active_chips)):
+        with st.expander('🎛️ Filtros avanzados', expanded=True):
             frow1 = st.columns(4)
             with frow1[0]:
                 f_senal_f = st.selectbox('Señal', ['Todas','COMPRA FUERTE','MANTENER','RIESGO / VENDER'], key='fund_f_senal')
@@ -2784,16 +2852,16 @@ def modulo_fundamental():
             st.markdown('<div style="margin-top:10px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">📐 VALUACIÓN</div>', unsafe_allow_html=True)
             vrow = st.columns(3)
             with vrow[0]:
-                f_per_rng = st.slider('PER', min_value=0.0, max_value=200.0, value=(0.0, 200.0), step=1.0, key='fund_f_per_rng')
+                f_per_rng = st.slider('PER', min_value=0.0, max_value=200.0, value=(0.0, 200.0), step=1.0, key='fund_f_per_rng', help=G('PER'))
             with vrow[1]:
-                f_pb_rng = st.slider('P/B', min_value=0.0, max_value=30.0, value=(0.0, 30.0), step=0.5, key='fund_f_pb_rng')
+                f_pb_rng = st.slider('P/B', min_value=0.0, max_value=30.0, value=(0.0, 30.0), step=0.5, key='fund_f_pb_rng', help=G('P/B'))
             with vrow[2]:
-                f_eveb_rng = st.slider('EV/EBITDA', min_value=0.0, max_value=60.0, value=(0.0, 60.0), step=1.0, key='fund_f_eveb_rng')
+                f_eveb_rng = st.slider('EV/EBITDA', min_value=0.0, max_value=60.0, value=(0.0, 60.0), step=1.0, key='fund_f_eveb_rng', help=G('EV/EBITDA'))
 
             st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">📈 RENTABILIDAD Y MÁRGENES</div>', unsafe_allow_html=True)
             rrow = st.columns(4)
             with rrow[0]:
-                f_roe_rng = st.slider('ROE %', min_value=-50.0, max_value=100.0, value=(-50.0, 100.0), step=1.0, key='fund_f_roe_rng')
+                f_roe_rng = st.slider('ROE %', min_value=-50.0, max_value=100.0, value=(-50.0, 100.0), step=1.0, key='fund_f_roe_rng', help=G('ROE'))
             with rrow[1]:
                 f_gm_rng = st.slider('Mg. Bruto %', min_value=-20.0, max_value=100.0, value=(-20.0, 100.0), step=1.0, key='fund_f_gm_rng')
             with rrow[2]:
@@ -2806,9 +2874,9 @@ def modulo_fundamental():
             with srow[0]:
                 f_de_rng = st.slider('D/E', min_value=0.0, max_value=10.0, value=(0.0, 10.0), step=0.1, key='fund_f_de_rng')
             with srow[1]:
-                f_beta_rng = st.slider('Beta', min_value=0.0, max_value=4.0, value=(0.0, 4.0), step=0.1, key='fund_f_beta_rng')
+                f_beta_rng = st.slider('Beta', min_value=0.0, max_value=4.0, value=(0.0, 4.0), step=0.1, key='fund_f_beta_rng', help=G('Beta'))
             with srow[2]:
-                f_div_rng = st.slider('Div. Yield %', min_value=0.0, max_value=20.0, value=(0.0, 20.0), step=0.5, key='fund_f_div_rng')
+                f_div_rng = st.slider('Div. Yield %', min_value=0.0, max_value=20.0, value=(0.0, 20.0), step=0.5, key='fund_f_div_rng', help=G('Dividend Yield'))
             with srow[3]:
                 f_ytd_rng = st.slider('YTD %', min_value=-80.0, max_value=300.0, value=(-80.0, 300.0), step=5.0, key='fund_f_ytd_rng')
 
@@ -2821,7 +2889,6 @@ def modulo_fundamental():
             with qrow[2]:
                 st.markdown('<div style="font-size:10px;color:#6b7d9a;padding-top:28px">N/D: la empresa se excluye si el rango es distinto al default.</div>', unsafe_allow_html=True)
 
-        # ── APLICAR FILTROS ───────────────────────────────────────────────
         df_f2 = df_fund.copy()
         if f_senal_f != 'Todas':
             df_f2 = df_f2[df_f2['Señal'] == f_senal_f]
@@ -2936,8 +3003,8 @@ def modulo_fundamental():
         )
         st.dataframe(styled_fund, use_container_width=True, height=min(700, max(200, len(df_f2)*32+45)))
         st.caption(f'{len(df_f2)} empresas de {len(df_fund)} totales')
+        chips_navegacion(df_f2['Ticker'].tolist(), 'fund_tabla')
 
-        # Detalle por industria con benchmark y señales
         for industria in ind_sel_f:
             emps = todos_resultados.get(industria, [])
             if not emps: continue
@@ -2946,7 +3013,6 @@ def modulo_fundamental():
             best_emp   = max(emps, key=lambda e: e['n_ok'])
 
             with st.expander(f'📂 {industria}  ·  Sector: {sector_ind}  ·  {len(emps)} empresas  ·  Mejor: {best_emp["ticker"]} ({best_emp["senal_final"]})', expanded=False):
-                # Benchmark del sector
                 st.markdown(f"""
                 <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
                      border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:11px;color:#b0bcd0;line-height:1.7'>
@@ -2993,7 +3059,6 @@ def modulo_fundamental():
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # Señales internas
                     if e['senales']:
                         sig_cols = st.columns(2)
                         ok_sigs  = [(t,m) for t,m in e['senales'] if t=='OK']
@@ -3005,7 +3070,6 @@ def modulo_fundamental():
                             for _,msg in alt_sigs:
                                 st.markdown(f'<div style="font-size:11px;color:#f85149;padding:2px 0">⚠️ {msg}</div>', unsafe_allow_html=True)
 
-                    # Vs benchmark sector
                     if e['sector_senales']:
                         st.markdown('<div style="margin-top:6px;font-size:11px;color:#6b7d9a;font-weight:700">VS SECTOR:</div>', unsafe_allow_html=True)
                         for tipo, msg in e['sector_senales']:
@@ -3019,13 +3083,12 @@ def modulo_fundamental():
     with tab_ticker_f:
         col_tk1, col_tk2 = st.columns([4,1])
         with col_tk1:
-            tk_fund = st.text_input('Ticker', placeholder='Ej: NVDA · AAPL · GGAL · TSLA',
-                                    key='fund_ticker_input', label_visibility='collapsed')
+            tk_fund = selector_ticker_autocomplete('fund_ticker', label='Ticker')
         with col_tk2:
+            st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
             analizar_fund = st.button('▶ Analizar', key='btn_fund_ticker')
 
         if tk_fund and analizar_fund:
-            tk_fund = tk_fund.strip().upper()
             industria_f = TICKER_INDUSTRY.get(tk_fund, 'Sin Clasificar')
             with st.spinner(f'Descargando datos fundamentales para {tk_fund}...'):
                 res_f = analizar_fundamental(tk_fund, industria_f)
@@ -3041,18 +3104,17 @@ def modulo_fundamental():
                 kpi_cards_4([
                     ('Señal Final', res_f['senal_final'], f"{res_f['n_ok']} OK · {res_f['n_alt']} Alertas", sc_col_f),
                     ('Precio', fmt_precio(res_f.get('precio')), f"Obj: {fmt_precio(res_f.get('target_price'))}", '#3a7bd5'),
-                    ('PER / P/B', f"{fn_f(res_f.get('per'))}x / {fn_f(res_f.get('pb'))}x", f"EV/EBITDA: {fn_f(res_f.get('ev_ebitda'))}x", '#e3b341'),
-                    ('ROE / Mg.Bruto', f"{fp_f(res_f.get('roe'))} / {fp_f(res_f.get('gross_margin'))}", f"Rev.Growth: {fp_f(res_f.get('revenue_growth'))}", '#3fb950'),
+                    ('PER / P/B', f"{fn_f(res_f.get('per'))}x / {fn_f(res_f.get('pb'))}x", f"EV/EBITDA: {fn_f(res_f.get('ev_ebitda'))}x", '#e3b341', f"{G('PER')} | {G('P/B')}"),
+                    ('ROE / Mg.Bruto', f"{fp_f(res_f.get('roe'))} / {fp_f(res_f.get('gross_margin'))}", f"Rev.Growth: {fp_f(res_f.get('revenue_growth'))}", '#3fb950', G('ROE')),
                 ])
 
                 c1f, c2f, c3f, c4f, c5f = st.columns(5)
                 with c1f: st.metric('Sector', res_f['sector'][:18])
-                with c2f: st.metric('Beta', fn_f(res_f.get('beta')))
+                with c2f: st.metric('Beta', fn_f(res_f.get('beta')), help=G('Beta'))
                 with c3f: st.metric('D/E', fn_f(res_f.get('debt_equity')))
-                with c4f: st.metric('FCF', fb_f(res_f.get('fcf')))
+                with c4f: st.metric('FCF', fb_f(res_f.get('fcf')), help=G('FCF'))
                 with c5f: st.metric('YTD', f"{res_f['alza_ytd']:.1f}%" if res_f.get('alza_ytd') is not None else 'N/D')
 
-                # Benchmark
                 bench_f = res_f['bench']
                 st.markdown(f"""
                 <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
@@ -3062,7 +3124,6 @@ def modulo_fundamental():
                 </div>
                 """, unsafe_allow_html=True)
 
-                # Señales en dos columnas
                 col_ok_f, col_alt_f = st.columns(2)
                 with col_ok_f:
                     st.markdown('<div style="font-size:11px;font-weight:700;color:#3fb950;margin-bottom:4px">✅ POSITIVAS</div>', unsafe_allow_html=True)
@@ -3075,7 +3136,6 @@ def modulo_fundamental():
                         if t == 'ALT':
                             st.markdown(f'<div style="font-size:11px;color:#f85149;padding:2px 0">• {msg}</div>', unsafe_allow_html=True)
 
-                # Vs Sector
                 if res_f['sector_senales']:
                     st.markdown('<div class="sec-title">VS BENCHMARK SECTORIAL</div>', unsafe_allow_html=True)
                     for tipo, msg in res_f['sector_senales']:
@@ -3090,7 +3150,7 @@ def modulo_fundamental():
 
 if HORIZONTE == 'largo' and MODULO == 'fundamental':
     if 'fund_ind_sel' not in st.session_state:
-        st.session_state['fund_ind_sel'] = list(ACCIONES_POR_INDUSTRIA.keys())[:2]
+        st.session_state['fund_ind_sel'] = list(ACCIONES_POR_INDUSTRIA.keys())[:1]
     modulo_fundamental()
 
 
