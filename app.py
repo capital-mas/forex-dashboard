@@ -1238,6 +1238,64 @@ def fig_comparador_precio(series_dict):
     return fig
 
 
+def fig_radar_comparador(resultados_l):
+    """Radar de Trend/MR/Risk/Global Score — comparación visual entre tickers."""
+    categorias = ['Trend', 'MR', 'Risk', 'Global']
+    palette = [C_MONSTER, C_ACENT, C_LRED, '#bc8cff', C_YELL]
+    fig = go.Figure()
+    for i, (tk, r) in enumerate(resultados_l.items()):
+        valores = [r['trend_score'], r['mr_score'], r['risk_score'], r['global_score']]
+        color = palette[i % len(palette)]
+        fig.add_trace(go.Scatterpolar(
+            r=valores + [valores[0]], theta=categorias + [categorias[0]],
+            fill='toself', name=tk, opacity=0.55,
+            line=dict(color=color, width=2), fillcolor=color,
+        ))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        polar=dict(
+            bgcolor=C_BG1,
+            radialaxis=dict(visible=True, range=[0, 100], gridcolor=C_GRID, color=C_MUTED),
+            angularaxis=dict(gridcolor=C_GRID, color=C_TEXT),
+        ),
+        title=dict(text='Scores cuantitativos — comparación', font=dict(color=C_TEXT, size=14)),
+        height=460, showlegend=True, legend=dict(orientation='h', y=-0.12),
+        margin=dict(l=40, r=40, t=50, b=40),
+    )
+    return fig
+
+
+def fig_comparador_fundamental(datos_fund):
+    """Pequeños múltiplos comparando PER, P/B, ROE, Mg.Bruto, Beta y Div.Yield entre tickers."""
+    metricas = [
+        ('PER', lambda e: e.get('per')),
+        ('P/B', lambda e: e.get('pb')),
+        ('ROE %', lambda e: e.get('roe') * 100 if e.get('roe') is not None else None),
+        ('Mg. Bruto %', lambda e: e.get('gross_margin') * 100 if e.get('gross_margin') is not None else None),
+        ('Beta', lambda e: e.get('beta')),
+        ('Div. Yield %', lambda e: e.get('div_yield') * 100 if e.get('div_yield') is not None else None),
+    ]
+    tickers = list(datos_fund.keys())
+    palette = [C_MONSTER, C_ACENT, C_LRED, '#bc8cff', C_YELL]
+    colores = [palette[j % len(palette)] for j in range(len(tickers))]
+    fig = make_subplots(rows=2, cols=3, subplot_titles=[m[0] for m in metricas])
+    for i, (nombre, extractor) in enumerate(metricas):
+        row, col = i // 3 + 1, i % 3 + 1
+        vals = [extractor(datos_fund[tk]) for tk in tickers]
+        fig.add_trace(go.Bar(
+            x=tickers, y=vals, marker_color=colores, showlegend=False,
+            text=[f'{v:.1f}' if v is not None else 'N/D' for v in vals], textposition='outside',
+        ), row=row, col=col)
+        fig.update_yaxes(gridcolor=C_GRID, row=row, col=col)
+        fig.update_xaxes(gridcolor=C_GRID, row=row, col=col)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, height=560, margin=dict(l=10, r=10, t=60, b=10),
+        title=dict(text='Comparación fundamental por métrica', font=dict(color=C_TEXT, size=14)),
+    )
+    fig.update_annotations(font=dict(color=C_TEXT, size=11))
+    return fig
+
+
 # ==============================================================
 #  RENDER ÚNICO — ANÁLISIS DE LARGO PLAZO (evita duplicación)
 # ==============================================================
@@ -1279,6 +1337,44 @@ def render_largo_completo(ticker, cl, r, key_suffix=''):
         st.plotly_chart(fig_rsi_macd(cl), use_container_width=True, key=f'frm_{key_suffix}_{ticker}')
     with tab_g3:
         st.plotly_chart(fig_drawdown(ticker, cl), use_container_width=True, key=f'fdd_{key_suffix}_{ticker}')
+
+
+def _resaltar_mejor(df, menor_mejor=None, mayor_mejor=None):
+    """Resalta en verde el mejor valor de cada columna numérica (usado en el Comparador fundamental).
+    menor_mejor: columnas donde el valor más bajo es mejor (PER, P/B, D/E, Beta, etc.)
+    mayor_mejor: columnas donde el valor más alto es mejor (ROE, márgenes, dividend yield, etc.)
+    """
+    menor_mejor = menor_mejor or []
+    mayor_mejor = mayor_mejor or []
+    cols_num = [c for c in (menor_mejor + mayor_mejor) if c in df.columns]
+
+    def _highlight(col):
+        vals = pd.to_numeric(col, errors='coerce')
+        out = [''] * len(col)
+        if vals.notna().sum() == 0:
+            return out
+        if col.name in menor_mejor:
+            best = vals.idxmin()
+        elif col.name in mayor_mejor:
+            best = vals.idxmax()
+        else:
+            return out
+        pos = col.index.get_loc(best)
+        out[pos] = 'background-color:#0d2410;color:#3fb950;font-weight:700'
+        return out
+
+    fmt = {c: '{:.2f}' for c in cols_num}
+    styled = (df.style
+        .apply(_highlight, subset=cols_num)
+        .format(fmt, na_rep='N/D')
+        .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+        .set_table_styles([
+            {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                ('font-weight', '700'), ('text-align', 'center'),
+                ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+            {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+        ]))
+    return styled
 
 
 def _apply_score_style(df, score_cols, ret_cols=None):
@@ -2102,15 +2198,18 @@ def modulo_comparador():
                 atr = calcular_atr(df_m)
                 sa, sn, ss = scores_corto(cl_v, cl_m, atr)
                 r_c = dict(sa=sa, sn=sn, ss=ss, sf=sa*0.45+sn*0.35+ss*0.20)
-        return tk, cl, r_l, r_c
+        industria_tk = TICKER_INDUSTRY.get(tk, 'Sin Clasificar')
+        r_f = analizar_fundamental(tk, industria_tk)
+        return tk, cl, r_l, r_c, r_f
 
     with st.spinner('Descargando y calculando comparación...'):
-        series, resultados_l, resultados_c = {}, {}, {}
+        series, resultados_l, resultados_c, resultados_f = {}, {}, {}, {}
         with ThreadPoolExecutor(max_workers=5) as ex:
-            for tk, cl, r_l, r_c in ex.map(_proc_cmp, tickers_cmp):
+            for tk, cl, r_l, r_c, r_f in ex.map(_proc_cmp, tickers_cmp):
                 if cl is not None: series[tk] = cl
                 if r_l: resultados_l[tk] = r_l
                 if r_c: resultados_c[tk] = r_c
+                if r_f: resultados_f[tk] = r_f
 
     if not series:
         st.error('No se pudieron descargar datos para los activos seleccionados.')
@@ -2134,6 +2233,10 @@ def modulo_comparador():
         styled_cmp = _apply_score_style(df_cmp, ['Global', 'Trend', 'MR', 'Risk'])
         st.dataframe(styled_cmp, use_container_width=True, height=min(400, len(df_cmp)*45+60))
 
+        col_radar, col_vacio = st.columns([2, 1])
+        with col_radar:
+            st.plotly_chart(fig_radar_comparador(resultados_l), use_container_width=True, key='comp_radar_fig')
+
         ganador = max(resultados_l.items(), key=lambda x: x[1]['global_score'])
         st.markdown(f"""
         <div class="interp-card">
@@ -2143,6 +2246,63 @@ def modulo_comparador():
         """, unsafe_allow_html=True)
     else:
         st.info('No hay suficiente historial (2 años) para calcular el análisis cuantitativo de estos activos. Aun así, podés ver el gráfico de rendimiento comparado arriba.')
+
+    # ── COMPARACIÓN FUNDAMENTAL ───────────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 📊 Comparación Fundamental')
+
+    if resultados_f:
+        st.plotly_chart(fig_comparador_fundamental(resultados_f), use_container_width=True, key='comp_fund_fig')
+
+        filas_f = []
+        for tk in tickers_cmp:
+            e = resultados_f.get(tk)
+            if not e: continue
+            filas_f.append({
+                'Ticker': tk,
+                'Señal': e['senal_final'],
+                'PER': e.get('per'),
+                'P/B': e.get('pb'),
+                'EV/EBITDA': e.get('ev_ebitda'),
+                'ROE %': e.get('roe') * 100 if e.get('roe') is not None else None,
+                'ROA %': e.get('roa') * 100 if e.get('roa') is not None else None,
+                'Mg.Bruto %': e.get('gross_margin') * 100 if e.get('gross_margin') is not None else None,
+                'Mg.Op. %': e.get('op_margin') * 100 if e.get('op_margin') is not None else None,
+                'D/E': e.get('debt_equity'),
+                'Beta': e.get('beta'),
+                'Div.Yield %': e.get('div_yield') * 100 if e.get('div_yield') is not None else None,
+                'FCF': e.get('fcf'),
+            })
+
+        if filas_f:
+            df_fund_cmp = pd.DataFrame(filas_f)
+            df_fund_show = df_fund_cmp.drop(columns=['FCF']).copy()
+
+            def style_senal_cmp(val):
+                c, bg = _senal_color(val)
+                return f'color:{c};font-weight:700;background:{bg}'
+
+            styled_fc = _resaltar_mejor(
+                df_fund_show,
+                menor_mejor=['PER', 'P/B', 'EV/EBITDA', 'D/E', 'Beta'],
+                mayor_mejor=['ROE %', 'ROA %', 'Mg.Bruto %', 'Mg.Op. %', 'Div.Yield %'],
+            )
+            _map_fc = 'map' if hasattr(df_fund_show.style, 'map') else 'applymap'
+            styled_fc = styled_fc.pipe(lambda s: getattr(s, _map_fc)(style_senal_cmp, subset=['Señal']))
+            st.dataframe(styled_fc, use_container_width=True, height=min(300, len(df_fund_show)*45+60))
+
+            fc1, fc2 = st.columns(2)
+            with fc1:
+                st.caption('🟢 resaltado = mejor valor del grupo en esa métrica (PER/P/B/EV-EBITDA/D-E/Beta: menor es mejor · ROE/márgenes/Div.Yield: mayor es mejor).')
+            with fc2:
+                candidatos_fcf = [f for f in filas_f if f['FCF'] is not None]
+                if candidatos_fcf:
+                    mejor_fcf = max(candidatos_fcf, key=lambda f: f['FCF'])
+                    st.caption(f"💰 FCF más alto: **{mejor_fcf['Ticker']}** ({_fmt_big(mejor_fcf['FCF'])})")
+        else:
+            st.info('No se pudieron calcular ratios fundamentales para estos activos.')
+    else:
+        st.info('No hay datos fundamentales disponibles para estos activos (puede tratarse de cripto, forex o commodities sin estados financieros).')
 
 
 # ==============================================================
