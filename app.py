@@ -2755,7 +2755,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
 with st.container(key='nav_mobile_wrap'):
     _OPCIONES_HORIZONTE_MOBILE = {
         '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
@@ -2767,24 +2766,35 @@ with st.container(key='nav_mobile_wrap'):
         'largo': {'📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
                   '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental'},
     }
+
+    # IMPORTANTE: sincronizamos el session_state ANTES de crear los selectbox,
+    # porque Streamlit ignora 'index' una vez que el widget ya existe en la sesión.
+    # Sin esto, estos selectbox (ocultos por CSS en desktop, pero igual ejecutados
+    # en Python) quedan "pegados" en su valor inicial y al final del bloque
+    # fuerzan un st.rerun() de vuelta a Corto Plazo/Resumen.
+    _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '⚡ Corto Plazo')
+    if st.session_state.get('nav_mobile_h') != _label_h_actual:
+        st.session_state['nav_mobile_h'] = _label_h_actual
+
     _mc1, _mc2 = st.columns(2)
     with _mc1:
-        _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '⚡ Corto Plazo')
         _sel_h = st.selectbox('Sección', list(_OPCIONES_HORIZONTE_MOBILE.keys()),
-                               index=list(_OPCIONES_HORIZONTE_MOBILE.keys()).index(_label_h_actual),
                                key='nav_mobile_h', label_visibility='collapsed')
     _h_nuevo = _OPCIONES_HORIZONTE_MOBILE[_sel_h]
+
     with _mc2:
         if _h_nuevo in _OPCIONES_MODULO_MOBILE:
             _mods_disp = _OPCIONES_MODULO_MOBILE[_h_nuevo]
             _label_m_actual = next((k for k, v in _mods_disp.items() if v == MODULO), list(_mods_disp.keys())[0])
+            if st.session_state.get('nav_mobile_m') != _label_m_actual:
+                st.session_state['nav_mobile_m'] = _label_m_actual
             _sel_m = st.selectbox('Módulo', list(_mods_disp.keys()),
-                                   index=list(_mods_disp.keys()).index(_label_m_actual),
                                    key='nav_mobile_m', label_visibility='collapsed')
             _m_nuevo = _mods_disp[_sel_m]
         else:
             st.write('')
             _m_nuevo = _h_nuevo
+
     if _h_nuevo != HORIZONTE or _m_nuevo != MODULO:
         st.session_state['nav_horizonte'] = _h_nuevo
         st.session_state['nav_modulo'] = _m_nuevo
