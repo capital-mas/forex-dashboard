@@ -2136,6 +2136,8 @@ def _senal_color(s):
 
 def modulo_buscador():
     prefill = st.session_state.get('ticker_from_table', '')
+    if prefill:
+        st.session_state['ticker_from_table'] = ''
 
 
     st.markdown("""
@@ -2174,12 +2176,13 @@ def modulo_buscador():
         with col_q:
             if st.button(label_q, key=f'btn_rapido_{tk_q}', use_container_width=True):
                 st.session_state['ticker_from_table'] = tk_q
+                st.session_state['nav_horizonte'] = 'buscador'
+                st.session_state['nav_modulo'] = 'buscador'
                 st.rerun()
 
 
-    auto_run = bool(prefill and ticker_final == prefill.upper())
-    if prefill:
-        st.session_state['ticker_from_table'] = ''
+    auto_run = bool(prefill and ticker_final == prefill.strip().upper()
+                    and st.session_state.get('nav_modulo') == 'buscador')
 
 
     if not ticker_final or not (analizar or auto_run):
