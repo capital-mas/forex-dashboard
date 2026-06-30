@@ -110,6 +110,41 @@ st.markdown("""
   }
 
 
+  /* ── Ticker tape — barra deslizante de cotizaciones ── */
+  .ticker-tape-wrap {
+    width: 100%;
+    overflow: hidden;
+    background: #0a0c12;
+    border-bottom: 1px solid #21262d;
+    padding: 7px 0;
+  }
+  .ticker-tape-track {
+    display: flex;
+    width: max-content;
+    animation: tape-scroll 55s linear infinite;
+  }
+  .ticker-tape-wrap:hover .ticker-tape-track {
+    animation-play-state: paused;
+  }
+  .ticker-tape-content {
+    display: flex;
+    white-space: nowrap;
+    padding-right: 48px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+  }
+  .tape-item { display: inline-flex; align-items: center; gap: 5px; }
+  .tape-sep { color: #2a3a4f; padding: 0 14px; }
+  @keyframes tape-scroll {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+  }
+  @media (max-width: 768px) {
+    .ticker-tape-content { font-size: 10.5px; }
+    .ticker-tape-track { animation-duration: 38s; }
+  }
+
+
   /* ── Botones — ovalados, sin relleno de color, texto verde monster ── */
   .stButton > button {
     background: #0d1117 !important;
@@ -363,6 +398,21 @@ GLOSARIO = {
     'Beta': 'Sensibilidad del activo respecto al mercado. Beta > 1 = más volátil que el mercado; Beta < 1 = más defensivo.',
     'FCF': 'Free Cash Flow: efectivo generado por operaciones, neto de CAPEX. Positivo y creciente = buena salud financiera.',
     'Dividend Yield': 'Dividendo anual / precio de la acción.',
+    'P/S': 'Precio / Ventas por acción. Útil para valuar empresas con ganancias bajas o negativas, ya que las ventas son menos volátiles que las ganancias.',
+    'Margen Bruto': 'Ganancia bruta (ingresos − costo de ventas) / ingresos totales. Lo que le queda a la empresa después de producir lo que vende, antes de gastos operativos.',
+    'Margen Operativo': 'Ganancia operativa / ingresos totales. Mide la eficiencia del negocio antes de intereses e impuestos.',
+    'Margen Neto': 'Ganancia neta / ingresos totales. Porcentaje de cada peso/dólar de ventas que termina siendo ganancia final.',
+    'Revenue Growth': 'Crecimiento de los ingresos totales respecto al período anterior (interanual).',
+    'EPS Growth': 'Crecimiento de las ganancias por acción (EPS) respecto al período anterior.',
+    'Earnings Growth': 'Crecimiento de las ganancias totales de la empresa respecto al período anterior.',
+    'D/E': 'Deuda total / patrimonio neto. Mide cuánto apalancamiento financiero usa la empresa respecto a su capital propio. Más alto implica más riesgo financiero.',
+    'Current Ratio': 'Activo corriente / pasivo corriente. Capacidad de pagar obligaciones de corto plazo. Por encima de 1.5-2 se considera saludable.',
+    'Market Cap': 'Capitalización de mercado: precio de la acción × cantidad de acciones en circulación. Tamaño total de la empresa según el mercado.',
+    'Enterprise Value': 'Valor de la empresa: Market Cap + deuda total − caja. Costo teórico de comprar toda la empresa.',
+    'Cash': 'Efectivo y equivalentes en el balance. Recursos líquidos disponibles de forma inmediata.',
+    'Operating Cash Flow': 'Efectivo generado por las operaciones del negocio, antes de inversiones de capital (CAPEX).',
+    'YTD': 'Year to Date: variación del precio desde el 1° de enero del año en curso hasta hoy.',
+    'Precio Objetivo': 'Precio promedio que estiman los analistas que cubren la acción, a 12 meses.',
 }
 
 
@@ -376,54 +426,55 @@ def G(term):
 
 
 ACCIONES_POR_INDUSTRIA = {
-    'Semiconductores':    ['NVDA','AMD','AVGO','TSM','ASML','QCOM','TXN','ADI','NXPI','MCHP', 'MRVL','ON','MU','INTC','ARM','GFS','STM','UMC','SNDK','MPWR', 'SYNA','QRVO','CRUS','LSCC','DIOD','RMBS','CEVA','AEHR','ALAB','ACLS', 'AMAT','LRCX','KLAC','TER','ONTO','UCTT','FORM','KLIC','CAMT','COHR', 'ENTG','SMTC','MTSI','POWI','VECO','HIMX','SIMO','INDI','MACOM','ICHR'],
-    'Software':           ['MSFT','ORCL','CRM','ADBE','SAP','NOW','INTU','WDAY','SNOW','PLTR', 'TEAM','HUBS','DOCU','MDB','DDOG','ESTC','BOX','ASAN','SMAR','PATH', 'PAYC','PAYX','TYL','PTC','ANSS','ADSK','GWRE','MANH','PEGA','APPF', 'NCNO','QTWO','SPSC','WK','FIVN','BILL','DUOL','GTLB','CFLT','ZI', 'BL','CVLT','PD','DBX','INFA','PCOR','RELY','MNDY','TWLO','FRSH'],
-    'Ciberseguridad':     ['CRWD','PANW','ZS','FTNT','OKTA','QLYS','TENB','RPD','VRNS','NET', 'CHKP','GEN','AKAM','CSCO','FFIV','EXTR','JNPR','RDWR','BB','OSIS', 'TLS','SCWX','S','NABL','CYXT','MSI','LDOS','LHX','SAIC','CACI', 'MRCY','ANET','VRSN','DOCN','BLZE','AI','IBM','ORCL','DDOG','NET'],
-    'Cloud/AI':           ['MSFT','AMZN','GOOGL','META','ORCL','IBM','SNOW','MDB','DDOG','NET', 'PLTR','AI','CFLT','ESTC','SMCI','DELL','NVDA','AMD','CRM','SAP', 'NOW','INTU','ADBE','PATH','AKAM','GTLB','APP','ANET','HPE','NTAP', 'PSTG','BOX','ASAN','ARM','TSM','AVGO','COHR','VRT','EQIX','DLR', 'CIEN','SNPS','CDNS','MU','SNDK','WDC','CRWV','DOCN','FSLY','RBRK'],
-    'Hardware/Equipos':   ['AAPL','DELL','HPE','HPQ','SMCI','CSCO','ANET','NTAP','PSTG','STX', 'WDC','SNDK','GLW','LOGI','JNPR','CIEN','KEYS','ZBRA','FLEX','SANM', 'ARW','JBL','APH','TEL','PLXS','FN','COMM','CRDO','LITE','COHR', 'IPGP','VSH','BELFA','TTMI','KLIC','CAMT','AEIS','MTSI','OLED','VRT', 'CDNS','SNPS','TER','ENTG','RMBS','SIMO','HIMX','AZTA','SMTC','FORM'],
-    'Fintech':            ['XYZ','PYPL','AFRM','SOFI','UPST','LC','ENVA','NU','STNE','PAGS', 'DLO','PAYO','MQ','FOUR','COIN','HOOD','GPN','FI','FIS','JKHY', 'EEFT','PAY','FLT','WU','RM','NVEI','PSFE','BILL','MARA','RIOT', 'CIFR','CLSK','IREN','BTDR','CORZ','GLXY','BMNR','HUT','BTM','ML'],
-    'Biotecnología':      ['AMGN','REGN','VRTX','GILD','BIIB','MRNA','BNTX','ALNY','INCY','EXEL', 'NBIX','HALO','IONS','LEGN','SRPT','CRSP','NTLA','BEAM','EDIT','RXRX', 'RNA','DNLI','ADPT','XENE','SANA','VERV','ARWR','FOLD','BMRN','TECH', 'ABCL','NTRA','GH','CDNA','PACB','TWST','ILMN','OMIC','RARE','ACAD', 'KYMR','CGON','IMVT','APLS','RVMD','MRUS','AUTL','BLUE','KROS','XNCR'],
-    'Farmacéuticas':      ['LLY','JNJ','PFE','MRK','ABBV','BMY','AZN','NVO','NVS','SNY', 'GSK','TAK','TEVA','VTRS','OGN','BHC','RDY','EYPT','ZTS','ELV', 'CVS','HIMS','PHR','SUPN','ITCI','ACAD','ARRY','CPRX','BCRX','AMRX', 'PRGO','EOLS','AMPH','ANIP','COLL','EGRX','KNSA','MYOV','NGM','TVTX', 'XERS','ZYME','SLNO','ADMA','PTGX','ARDX','CRNX','MNKD','HROW','ETON'],
-    'Equipos Médicos':    ['ISRG','ABT','SYK','BSX','MDT','EW','ZBH','BDX','BAX','HOLX', 'DXCM','PODD','MASI','RMD','STE','TFX','ICUI','HAE','OMCL','PEN', 'GKOS','INSP','NVCR','ALGN','XRAY','SEM','LIVN','IRTC','TMDX','PROF', 'LNTH','NEOG','OSUR','AXNX','SIBN','NARI','OFIX','AVNS','AORT','CVAC', 'PHG','SONVY','GEHC','SOLV','STER','MMSI','ENVX','ATRC','OM','SKTX'],
-    'Servicios de Salud': ['UNH','ELV','CI','HUM','CVS','CNC','MOH','OSCR','DVA','HCA', 'UHS','THC','EHC','ACHC','SEM','LFST','PGNY','DOCS','AMED','ENSG', 'CHE','PNTG','FMS','OPCH','ADUS','SGRY','BKD','PACS','GH','DGX', 'LH','NEO','MEDP','IQV','ICON','SYNH','CRL','CTLT','TDOC','VEEV', 'EVH','AGL','ALHC','PRVA','ACCD','ONEM','SHC','ARDT','HIMS','LFMD'],
-    'Bancos':             ['JPM','BAC','WFC','C','GS','MS','USB','PNC','TFC','COF', 'BK','STT','MTB','FITB','HBAN','RF','CFG','KEY','CMA','ZION', 'FHN','WTFC','EWBC','ONB','SNV','BPOP','FULT','FFIN','CADE','UBSI', 'ASB','OZK','PNFP','WBS','HOMB','BKU','SBSI','IBOC','TCBI','COLB', 'WAL','FIBK','FCNCA','CVBF','CATY','BANF','NBHC','GBCI','SFNC','FNB'],
-    'Seguros':            ['BRK-B','PGR','CB','TRV','ALL','AFL','MET','PRU','AIG','HIG', 'CINF','WRB','RGA','LNC','GL','UNM','EG','MKL','BRO','AON', 'MMC','AJG','WTW','ACGL','RLI','ORI','KNSL','THG','AXS','RE', 'PFG','VOYA','SLF','MFC','EQH','AMP','FNF','FAF','AIZ','CNO', 'PIPR','JRVR','UFCS','NMIH','ESNT','MTG','RDN','HCI','TRUP','ROOT'],
-    'Mercados Capitales': ['BX','KKR','APO','ARES','CG','OWL','BAM','BN','SCHW','IBKR', 'CME','ICE','NDAQ','MKTX','MS','GS','RJF','EVR','LAZ','PIPR', 'SF','LPLA','HOOD','COIN','SEIC','BEN','TROW','BLK','IVZ','AMG', 'JHG','PFG','CNS','MC','PJT','HLI','TREE','OPY','VIRT','XP', 'STNE','NMR','NOMD','DB','UBS','CS','RY','TD','BMO','BNS'],
-    'Bancos Regionales':  ['FITB','HBAN','RF','CFG','ZION','FHN','WTFC','KEY','CMA','MTB', 'EWBC','ONB','SNV','FULT','FFIN','CADE','UBSI','ASB','OZK','PNFP', 'WBS','HOMB','BKU','SBSI','IBOC','TCBI','COLB','WAL','FIBK','FCNCA', 'CVBF','BANF','NBHC','GBCI','SFNC','FNB','CATY','PACW','UCBI','INDB'],
-    'Finanzas Diversif.': ['V','MA','AXP','DFS','SYF','ALLY','COF','CACC','SLM','NAVI', 'RKT','OMF','WU','GPN','FI','FIS','JKHY','FLT','EEFT','PAY', 'PYPL','XYZ','AFRM','SOFI','UPST','LC','HOOD','COIN','NU','STNE', 'PAGS','DLO','PAYO','MQ','FOUR','TRU','EFX','EXPGY','SPGI','MCO', 'FICO','CINF','AMP','VOYA','EQH','BEN','TROW','BLK','IVZ','JHG'],
-    'Petróleo Integrado': ['XOM','CVX','COP','EOG','OXY','DVN','MRO','APA','FANG','HES', 'PXD','CTRA','EQT','AR','RRC','CNX','CIVI','SM','MTDR','PR', 'MPC','PSX','VLO','PBF','DK','SUN','MUSA','SLB','HAL','BKR', 'NOV','CHX','LBRT','NBR','PTEN','HP','WTTR','TDW','RIG','VAL', 'PBR','SHEL','BP','TTE','EQNR','ENI','REPYY','YPF','VIST','EC'],
-    'Energía Renovable':  ['NEE','BEP','BEPC','CWEN','CWEN-A','NEP','AES','ORA','AY', 'ENPH','FSLR','SEDG','RUN','ARRY','NXT','SHLS','FLNC','STEM', 'BE','PLUG','GEV','VRT','CSIQ','JKS','MAXN','NOVA','SPWR', 'AMRC','HASI','RNW','BLDP','HYLN','EVGO','CHPT','FREY', 'SES','EOSE','ENVX','SLDP','QS','MVST','LICY','LAC','ALTM','PLL'],
-    'Gas Natural':        ['LNG','EQT','AR','RRC','CNX','KMI','WMB','OKE','TRGP','ET', 'EPD','MPLX','PAA','AM','DTM','HESM','KGS','MGY','CRK','GPOR', 'CTRA','OVV','SM','CIVI','EXE','NFG','SWX','ATO','NWN','UGI', 'NI','OGS','POR','SJI','SR','CPK','MMP','ENLC','WES','PAGP', 'GLNG','FLNG','GLOP','TGS','TGNP','ENB','TRP','KEYUF','KNTK','HUN'],
-    'Energía Solar':      ['FSLR','ENPH','SEDG','RUN','ARRY','NXT','SHLS','CSIQ','JKS','MAXN', 'NOVA','SPWR','EMBK','BE','PLUG','FLNC','STEM','AMRC','ORA', 'NEE','CWEN','BEP','BEPC','NEP','AES','GEV','VRT','HASI','RNW', 'BLDP','CHPT','EVGO','EOSE','FREY','SES','SLDP','QS','ENVX','MVST'],
-    'Aeroespacial':       ['BA','RTX','LMT','NOC','GD','HII','TDG','HEI','HEI-A','CW','TXT','KTOS','AVAV','BWXT','LHX','LDOS','MRCY','OSIS','SPR','COL','HON','AER','AJRD','IRDM','MAXR','RKLB','SPCE','ASTS','DRS','NOC','LMT','RTX','GD','BA','HII','TDG','HEI','CW','VSEC','ATRO','HXL','CWST','KAMN','TGI','MOG-A','DCO','ESLT','ARL','AVX','HEI-A','AIM','JOBY','ACHR','EH','LILAK','NNDM','PL'],
-    'Transporte':         ['UPS','FDX','UNP','CSX','NSC','JBHT','ODFL','XPO','CHRW','EXPD', 'KEX','MATX','ZIM','DAC','SBLK','GOGL','PANL','GNK','TRTN','SFL', 'CAI','SINO','NM','DSX','LPG','STNG','INSW','TNK','EURN','FRO'],
-    'Construcción':       ['CAT','DE','EMR','ETN','HON','GE','ROK','PH','ITW','MMM', 'VMC','MLM','EXP','BLDR','NVR','DHI','LEN','PHM','KBH','TOL', 'JCI','TT','URI','PWR','FIX','MTZ','ACM','FLR','HUBG','MAS'],
-    'Defensa':            ['LMT','RTX','NOC','GD','HII','BA','TDG','HEI','CW','TXT', 'KTOS','AVAV','BWXT','LHX','LDOS','MRCY','OSIS','CACI','SAIC','NOC', 'GD','RTX','LMT','HII','BA','TDG','CW','HEI','TXT','KTOS'],
-    'Retail':             ['AMZN','WMT','TGT','COST','HD','LOW','TJX','ROST','DG','DLTR', 'BBY','KR','BJ','WBA','CVS','ULTA','M','KSS','JWN','GPS', 'BURL','FIVE','WSM','RH','ORLY','AZO','AAP','TSCO','Ollies','OLLI', 'FND','TPR','RL','NKE','DECK','CROX','LEVI','PVH','URBN','AEO'],
-    'Autos':              ['TSLA','GM','F','TM','HMC','STLA','RIVN','LCID','NIO','XPEV', 'LI','FCAU','MBGYY','BMWYY','VWAGY','RACE','GM','F','APTV','BWA', 'VC','GT','LEA','ALV','HOG','PII','THO','MBLY','ZK','XPEL'],
-    'Hotelería/Viajes':   ['MAR','HLT','H','IHG','ABNB','BKNG','EXPE','RCL','CCL','NCLH', 'TRIP','DESP','TCOM','LVS','MGM','WYNN','CZR','SIX','SIXF','PLAY', 'DKNG','BALY','WYNN','HLT','MAR','VAC','WH','HGV','SVC','PK'],
-    'E-commerce':         ['AMZN','SHOP','ETSY','EBAY','MELI','SE','PDD','BABA','JD','CPNG', 'W','CVNA','OSTK','WISH','BZUN','EXFY','REAL','GRPN','WIX','DOCN', 'FVRR','UPWK','RBLX','TTD','APP','NET','GTLB','FSLY','BIGC','BOX'],
-    'Alimentos':          ['KO','PEP','MDLZ','KHC','GIS','CPB','SJM','K','KDP','HSY', 'MDLZ','TSN','HRL','ADM','BG','CHD','CLX','CAG','POST','MKC', 'EL','PG','UL','NOMD','LANC','COKE','FLO','DAR','INGR','SMPL'],
-    'Bebidas':            ['KO','PEP','MNST','STZ','BUD','TAP','DEO','KDP','CELH','FIZZ', 'PRMW','CCEP','FMX','SAM','BFB','BUD','TAP','WULF','COKE','NAPA', 'VIV','BRBR','SPB','SOVO','REX','KOF','ABEV','CCU','AGRO','COTY'],
-    'Minería Oro':        ['NEM','GOLD','AEM','WPM','KGC','PAAS','AG','CDE','HL','SSRM', 'NGD','AUX','DRD','BTG','EGO','HMY','IAG','AU','SA','GFI', 'OR','FNV','RGLD','KNT','WDO','EQX','TGB','SILV','BVN','CGAU'],
-    'Cobre/Metales':      ['FCX','SCCO','TECK','HBM','NUE','STLD','CLF','NUE','AA','CDE', 'KGC','PAAS','AG','HL','WPM','AEM','NEM','GOLD','SSRM','NGD', 'ERO','LUNMF','LAC','ALB','PLL','MP','CRS','ATI','X','HBM','TECK'],
-    'Químicos':           ['LIN','APD','DD','DOW','LYB','EMN','CE','IFF','PPG','SHW', 'ECL','ALB','FMC','CF','MOS','NTR','OLN','ASH','AVNT','HUN', 'X','BC','RPM','WLK','TSE','SXT','SCL','NEU','IOSP','CBT'],
-    'Acero':              ['NUE','STLD','CLF','X','MT','RS','CMC','SID','GGB','TX', 'PKX','NWL','CRS','ATI','SCHN','ZEUS','NBR','X','STLD','CLF', 'CLF','NUE','STLD','CMC','MT','RS','X','PKX','SID','GGB'],
-    'Eléctricas':         ['NEE','DUK','SO','D','AEP','EXC','XEL','ED','ETR','PEG', 'PCG','PPL','FE','ES','EIX','AES','CNP','NI','ATO','LNT', 'WEC','CMS','DTE','SRE','XEL','EVRG','IDA','BEP','BEPC','NEP', 'ORA','PEGI','UGI','BIP','BIPC','AVA','PNW','NRG','NRZ','CVA'],
-    'Agua':               ['AWK','WTRG','WTR','AWR','YORW','MSEX','SJW','CWCO','GWRS','ARTNA', 'PNW','AWK','AWK','WTRG','SJW','CWT','CWT','SJW','AWR','YORW', 'WSO','AQUA','ECL','XYL','PUMP','GRC','MEG','H2O','CWCO','PRMW'],
-    'REIT Comercial':     ['SPG','O','VICI','NNN','BXP','KIM','REG','MAC','PEAK','FRT', 'SLG','EPR','WPC','ARE','HST','PK','VNO','CUZ','HIW','KRC', 'DEI','BRX','ADC','STAG','PLD','EQIX','DLR','CONE','COR','AMT', 'CCI','SBAC','WY','IRM','GOOD','LAND','SLG','BXP','O','SPG'],
-    'REIT Industrial':    ['PLD','AMT','CCI','DLR','EQIX','STAG','EGP','FR','REXR','TRNO', 'PLYM','LXP','COLD','ILPT','PSTL','STAG','IRM','CUBE','GOOD','O', 'PLD','EQIX','DLR','AMT','CCI','SBAC','CONE','COR','DLR','PLD'],
-    'REIT Residencial':   ['EQR','AVB','ESS','MAA','UDR','CPT','ELS','AIV','NXRT','INVH', 'IRT','AMH','BRG','SUI','NXRT','MHC','UMH','ESS','EQR','AVB', 'UDR','MAA','CPT','INVH','AMH','SUI','ELS','AIRC','CUBE','CPT'],
-    'Telecomunicaciones': ['T','VZ','TMUS','S','CHTR','CMCSA','LUMN','FYBR','VOD','BT', 'ORAN','TEF','TU','BCE','RCI','SKM','ZL','AMX','TIGO','TDS', 'ATUS','WOW','CNSL','QCOM','AMT','CCI','SBAC','WBD','NFLX','DIS', 'TMUS','VZ','T','CMCSA','CHTR','S','LUMN','VOD','BT','TEF'],
-    'Internet':           ['GOOGL','META','NFLX','SNAP','PINS','RDDT','SPOT','ROKU','IAC','MTCH', 'BMBL','YELP','DASH','UBER','LYFT','SHOP','SE','MELI','ETSY','EBAY', 'BABA','JD','PDD','BIDU','NTES','WB','IQ','TME','WIX','RBLX', 'DUOL','TTD','PUBM','APP','NET','AKAM','DOCN','GTLB','BOX','ZI', 'YEXT','COUR','CHGG','RUM','VKTX','CRWV','FSLY','CFLT','DBX','TASK'],
-    'Argentina':          ['GGAL','BMA','BBAR','SUPV','CEPU','YPF','PAM','TGS','CRESY','LOMA', 'VIST','IRCP','EDN','TRAN','IRS','DESP','GLOB','BIOX','MTR','AGRO', 'PGR','SBS','CRESY','IRS','YPF','GGAL','BMA','SUPV','BBAR','CEPU'],
+    'Semiconductores':    ['NVDA','AMD','INTC','TSM','ASML','QCOM','AVGO','MU','AMAT','LRCX'],
+    'Software':           ['MSFT','ORCL','CRM','ADBE','SAP','NOW','INTU','WDAY','SNOW','PLTR'],
+    'Ciberseguridad':     ['CRWD','PANW','ZS','FTNT','OKTA','S','CYBR','QLYS','TENB'],
+    'Cloud/AI':           ['AMZN','GOOGL','META','MSFT','ORCL','IBM','SNOW','MDB','DDOG','NET'],
+    'Hardware/Equipos':   ['AAPL','HPQ','HPE','DELL','STX','WDC','NTAP','PSTG','GLW'],
+    'Fintech':            ['PYPL','SQ','AFRM','UPST','SOFI','LC','ENVA'],
+    'Biotecnología':      ['MRNA','BNTX','REGN','VRTX','BIIB','GILD','AMGN','ILMN','BMRN'],
+    'Farmacéuticas':      ['JNJ','PFE','LLY','ABBV','MRK','BMY','AZN','NVO'],
+    'Equipos Médicos':    ['MDT','ABT','SYK','BSX','EW','ISRG','ZBH','BAX','BDX','HOLX'],
+    'Servicios de Salud': ['UNH','CVS','CI','HUM','CNC','MOH','ELV','DVA'],
+    'Bancos':             ['JPM','BAC','WFC','C','GS','MS','USB','TFC','PNC','COF'],
+    'Seguros':            ['BRK-B','CB','AON','MMC','TRV','AIG','PRU','MET','ALL','AFL'],
+    'Mercados Capitales': ['BX','KKR','APO','ARES','CG','BAM','SCHW','IBKR'],
+    'Bancos Regionales':  ['FITB','HBAN','RF','CFG','ZION','FHN','WTFC'],
+    'Finanzas Diversif.': ['V','MA','AXP','DFS','SYF','ALLY','CACC'],
+    'Petróleo Integrado': ['XOM','CVX','COP','EOG','DVN','MPC','VLO'],
+    'Energía Renovable':  ['NEE','ENPH','SEDG','FSLR','RUN','PLUG','BE','AES'],
+    'Gas Natural':        ['LNG','AR','EQT','RRC','SWN','CNX'],
+    'Energía Solar':      ['FSLR','ENPH','SEDG','MAXN','CSIQ','JKS','RUN'],
+    'Aeroespacial':       ['BA','RTX','LMT','NOC','GD','HII','TDG','HEICO','CW'],
+    'Transporte':         ['UPS','FDX','UNP','CSX','NSC','JBHT','ODFL','XPO'],
+    'Construcción':       ['CAT','DE','EMR','ETN','HON','GE','ROK','AME','PH','IR'],
+    'Defensa':            ['LMT','RTX','NOC','GD','HII','KTOS','AVAV','BWXT'],
+    'Retail':             ['AMZN','WMT','TGT','COST','HD','LOW','TJX','ROST','DG','DLTR'],
+    'Autos':              ['TSLA','GM','F','TM','NIO','RIVN','LCID','XPEV'],
+    'Hotelería/Viajes':   ['MAR','HLT','H','IHG','ABNB','BKNG','EXPE'],
+    'E-commerce':         ['AMZN','SHOP','ETSY','EBAY','W','CHWY','SE','MELI','PDD'],
+    'Alimentos':          ['KHC','GIS','CPB','SJM','MKC','CAG','POST'],
+    'Bebidas':            ['KO','PEP','MNST','STZ','BUD','TAP','CELH'],
+    'Minería Oro':        ['NEM','GOLD','AEM','WPM','KGC','AG','PAAS','CDE','HL'],
+    'Cobre/Metales':      ['FCX','SCCO','TECK','HBM','CLF','NUE','STLD','CMC'],
+    'Químicos':           ['LIN','APD','DD','DOW','LYB','EMN','CE'],
+    'Acero':              ['NUE','STLD','CLF','RS','CMC','X','MT'],
+    'Eléctricas':         ['NEE','DUK','SO','D','AEP','EXC','XEL','ED','ETR'],
+    'Agua':               ['AWK','WTR','WTRG','SJW','MSEX'],
+    'REIT Comercial':     ['SPG','O','VICI','NNN','BXP','KIM','REG'],
+    'REIT Industrial':    ['PLD','EGP','FR','REXR','STAG'],
+    'REIT Residencial':   ['EQR','AVB','ESS','MAA','UDR','CPT'],
+    'Telecomunicaciones': ['T','VZ','TMUS','AMT','CCI','SBAC'],
+    'Internet':           ['GOOGL','META','NFLX','SNAP','PINS','RDDT','SPOT'],
+    'Argentina':          ['GGAL','BMA','BFR','SUPV','BBAR','CEPU','YPF','PAM','TGS','CRESY','LOMA','VISTA'],
     'Brasil':             ['VALE','ITUB','PBR','BBD','ABEV','NU'],
+    'México':             ['WALMEX.MX','AMXL.MX','CEMEXCPO.MX','GFINBURO.MX'],
     'China':              ['BABA','TCEHY','BIDU','JD','NIO','LI','XPEV','BYDDF','PDD','NTES'],
     'India':              ['INFY','WIT','HDB','IBN','VEDL','RDY','TTM'],
     'Europa Tecnología':  ['SAP','ASML','IFNNY','NXPI'],
     'Europa Finanzas':    ['HSBC','BBVA','SAN','DBK.DE','LLOY.L','UBS','ING'],
     'Agro/Fertilizantes': ['MOS','NTR','CF','ADM','BG','FMC','CTVA'],
-    'Cripto (ETF/Coin)':  ['BTC-USD','ETH-USD','SOL-USD','BNB-USD','XRP-USD','ADA-USD','DOGE-USD','AVAX-USD','DOT-USD','MATIC-USD', 'LINK-USD','LTC-USD','ATOM-USD','ETC-USD','XLM-USD','FIL-USD','ICP-USD','HBAR-USD','NEAR-USD','ARB-USD', 'COIN','MARA','RIOT','CLSK','HUT','BITF','BTDR','IREN','CAN','WULF'],
+    'Cripto (ETF/Coin)':  ['BTC-USD','ETH-USD','SOL-USD','BNB-USD','XRP-USD','ADA-USD'],
 }
 
 
@@ -485,46 +536,23 @@ SECTORES = {
 
 
 MERCADOS_REALES = {
-    'Petróleo WTI':   ('CL=F',    'Energía',    '#f0883e'),
-    'Petróleo Brent': ('BZ=F',    'Energía',    '#ffa657'),
-    'Gas Natural':    ('NG=F',    'Energía',    '#79c0ff'),
-    'Oro':            ('GC=F',    'Met. Prec.', '#e3b341'),
-    'Plata':          ('SI=F',    'Met. Prec.', '#8b949e'),
-    'Platino':        ('PL=F',    'Met. Prec.', '#bc8cff'),
-    'Cobre':          ('HG=F',    'Met. Ind.',  '#cd7f32'),
-    'Mineras Oro':    ('GDX',     'Minería',    '#e3b341'),
-    'Mineras Plata':  ('SIL',     'Minería',    '#8b949e'),
-    'Mineras Cobre':  ('COPX',    'Minería',    '#cd7f32'),
-    'Soja':           ('ZS=F',    'Agro',       '#3fb950'),
-    'Maíz':           ('ZC=F',    'Agro',       '#7ee787'),
-    'Trigo':          ('ZW=F',    'Agro',       '#ffa657'),
-    'Bitcoin':        ('BTC-USD', 'Cripto', '#f7931a'),
-    'Ethereum':       ('ETH-USD', 'Cripto', '#627eea'),
-    'Solana':         ('SOL-USD', 'Cripto', '#bc8cff'),
-    'BNB':            ('BNB-USD', 'Cripto', '#f3ba2f'),
-    'Cardano':        ('ADA-USD', 'Cripto', '#3cc8c8'),
-    'Avalanche':      ('AVAX-USD', 'Cripto', '#e84142'),
-    'Polkadot':       ('DOT-USD', 'Cripto', '#e6007a'),
-    'NEAR':           ('NEAR-USD','Cripto', '#00c08b'),
-    'Aptos':          ('APT-USD', 'Cripto', '#00d18c'),
-    'Sui':            ('SUI-USD', 'Cripto', '#6fbcf0'),
-    'Toncoin':        ('TON-USD', 'Cripto', '#0098ea'),
-    'Chainlink':      ('LINK-USD','Cripto', '#2a5ada'),
-    'Uniswap':        ('UNI-USD', 'Cripto', '#ff007a'),
-    'Aave':           ('AAVE-USD','Cripto', '#b6509e'),
-    'Maker':          ('MKR-USD', 'Cripto', '#1aab9b'),
-    'Render':         ('RNDR-USD','Cripto', '#ff4f4f'),
-    'Arbitrum':       ('ARB-USD', 'Cripto', '#28a0f0'),
-    'Optimism':       ('OP-USD',  'Cripto', '#ff0420'),
-    'XRP':            ('XRP-USD', 'Cripto', '#3a7bd5'),
-    'Litecoin':       ('LTC-USD', 'Cripto', '#bebebe'),
-    'Stellar':        ('XLM-USD', 'Cripto', '#14b6e7'),
-    'Ethereum Classic':('ETC-USD','Cripto', '#3ab83a'),
-    'Coinbase Stock': ('COIN',    'Cripto', '#0052ff'),
-    'Marathon Digital':('MARA',   'Cripto', '#f7931a'),
-    'Riot Platforms': ('RIOT',    'Cripto', '#f7931a'),
-    'CleanSpark':     ('CLSK',    'Cripto', '#f7931a'),
-    'Hut 8':          ('HUT',     'Cripto', '#f7931a')
+    'Petróleo WTI':  ('CL=F',    'Energía',    '#f0883e'),
+    'Petróleo Brent':('BZ=F',    'Energía',    '#ffa657'),
+    'Gas Natural':   ('NG=F',    'Energía',    '#79c0ff'),
+    'Oro':           ('GC=F',    'Met. Prec.', '#e3b341'),
+    'Plata':         ('SI=F',    'Met. Prec.', '#8b949e'),
+    'Platino':       ('PL=F',    'Met. Prec.', '#bc8cff'),
+    'Cobre':         ('HG=F',    'Met. Ind.',  '#cd7f32'),
+    'Mineras Oro':   ('GDX',     'Minería',    '#e3b341'),
+    'Mineras Plata': ('SIL',     'Minería',    '#8b949e'),
+    'Mineras Cobre': ('COPX',    'Minería',    '#cd7f32'),
+    'Soja':          ('ZS=F',    'Agro',       '#3fb950'),
+    'Maíz':          ('ZC=F',    'Agro',       '#7ee787'),
+    'Trigo':         ('ZW=F',    'Agro',       '#ffa657'),
+    'Bitcoin':       ('BTC-USD', 'Cripto',     '#f0883e'),
+    'Ethereum':      ('ETH-USD', 'Cripto',     '#7ee787'),
+    'Solana':        ('SOL-USD', 'Cripto',     '#bc8cff'),
+    'XRP':           ('XRP-USD', 'Cripto',     '#3a7bd5'),
 }
 
 
@@ -561,16 +589,19 @@ OPCION_MANUAL = '✏️ Otro símbolo (escribir manualmente)'
 
 
 def selector_ticker_autocomplete(key, prefill='', label='Buscar activo'):
-    """Selectbox con filtro por escritura (autocomplete nativo de Streamlit) + fallback manual."""
+    """Selectbox con filtro por escritura (autocomplete nativo de Streamlit) + fallback manual.
+    Importante: forzamos el valor vía session_state (no con index=) porque Streamlit ignora
+    'index' una vez que el widget ya existe en la sesión — así el prefill (chips, accesos rápidos)
+    funciona siempre, no solo la primera vez que se usa el buscador."""
     opciones = [OPCION_MANUAL] + UNIVERSO_OPCIONES
-    idx_default = 0
+    sel_key = f'{key}_sel'
     if prefill:
         pf = prefill.strip().upper()
         match = next((o for o in UNIVERSO_OPCIONES if UNIVERSO_MAPA.get(o, '').upper() == pf or o.upper() == pf), None)
-        if match:
-            idx_default = opciones.index(match)
+        if match and st.session_state.get(sel_key) != match:
+            st.session_state[sel_key] = match
     elegido = st.selectbox(
-        label, opciones, index=idx_default, key=f'{key}_sel',
+        label, opciones, key=sel_key,
         help='Escribí para filtrar: acciones, ETFs, forex, commodities y cripto.',
         label_visibility='collapsed',
     )
@@ -880,10 +911,16 @@ def _fetch_corto_ticker(tk, extra=None):
         return None
 
 
-def _fetch_paralelo(tareas, max_workers=10):
-    """tareas: {nombre: (ticker, extra_dict_o_None)}. Devuelve {nombre: resultado}."""
+def _fetch_paralelo(tareas, max_workers=10, grupo=None):
+    """tareas: {nombre: (ticker, extra_dict_o_None)}. Devuelve {nombre: resultado}.
+    Si se pasa 'grupo', deja registro en session_state de cuántos/qué tickers fallaron
+    y a qué hora se hizo esta descarga real (no cuenta los cache-hits, solo ejecuciones reales)."""
     resultados = {}
+    fallidos = []
     if not tareas:
+        if grupo:
+            st.session_state[f'_fallidos_{grupo}'] = fallidos
+            st.session_state[f'_ts_{grupo}'] = datetime.now()
         return resultados
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futuros = {ex.submit(_fetch_corto_ticker, tk, extra): nombre
@@ -893,7 +930,39 @@ def _fetch_paralelo(tareas, max_workers=10):
             r = fut.result()
             if r:
                 resultados[nombre] = r
+            else:
+                fallidos.append(nombre)
+    if grupo:
+        st.session_state[f'_fallidos_{grupo}'] = fallidos
+        st.session_state[f'_ts_{grupo}'] = datetime.now()
     return resultados
+
+
+def badge_actualizacion(grupo, ttl_min=30):
+    """Muestra hace cuánto se hizo la última descarga real de este grupo (no cuenta cache-hits)."""
+    ts = st.session_state.get(f'_ts_{grupo}')
+    if not ts:
+        return
+    mins = int((datetime.now() - ts).total_seconds() // 60)
+    if mins <= 0:
+        texto = '🕐 Datos recién actualizados'
+    else:
+        texto = f'🕐 Datos de hace {mins} min · caché de {ttl_min} min'
+    st.caption(texto)
+
+
+def aviso_fallidos(grupo, etiqueta='activos'):
+    """Si algún ticker no pudo descargarse en la última actualización real, avisa al usuario
+    en vez de hacerlo desaparecer en silencio de la tabla."""
+    fallidos = st.session_state.get(f'_fallidos_{grupo}', [])
+    if not fallidos:
+        return
+    listado = ', '.join(fallidos[:10])
+    extra = f' (+{len(fallidos) - 10} más)' if len(fallidos) > 10 else ''
+    st.warning(
+        f'⚠️ {len(fallidos)} {etiqueta} no pudieron cargarse: {listado}{extra}. '
+        'Puede ser un límite temporal de Yahoo Finance — probá tocar "↺ Actualizar" en unos minutos.'
+    )
 
 
 # ==============================================================
@@ -904,25 +973,25 @@ def _fetch_paralelo(tareas, max_workers=10):
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_forex_corto():
     tareas = {nombre: (tk, dict(tk=tk, grupo=grupo)) for nombre, (tk, grupo) in FOREX.items()}
-    return _fetch_paralelo(tareas, max_workers=10)
+    return _fetch_paralelo(tareas, max_workers=10, grupo='forex')
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_paises_corto():
     tareas = {nombre: (tk, dict(tk=tk, region=region)) for nombre, (tk, region) in PAISES.items()}
-    return _fetch_paralelo(tareas, max_workers=10)
+    return _fetch_paralelo(tareas, max_workers=10, grupo='paises')
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_sectores_corto():
     tareas = {nombre: (tk, dict(tk=tk, color=color)) for nombre, (tk, color) in SECTORES.items()}
-    return _fetch_paralelo(tareas, max_workers=10)
+    return _fetch_paralelo(tareas, max_workers=10, grupo='sectores')
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_mercados_corto():
     tareas = {nombre: (tk, dict(tk=tk, cat=cat, color=color)) for nombre, (tk, cat, color) in MERCADOS_REALES.items()}
-    return _fetch_paralelo(tareas, max_workers=10)
+    return _fetch_paralelo(tareas, max_workers=10, grupo='mercados')
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -932,7 +1001,7 @@ def cargar_acciones_corto(industrias_sel):
     for industria in industrias_sel:
         for tk in ACCIONES_POR_INDUSTRIA.get(industria, []):
             tareas[f'{industria}::{tk}'] = (tk, None)
-    flat = _fetch_paralelo(tareas, max_workers=12)
+    flat = _fetch_paralelo(tareas, max_workers=12, grupo='acciones')
     for key, data in flat.items():
         industria, tk = key.split('::', 1)
         res[industria][tk] = data
@@ -952,9 +1021,18 @@ def cargar_resultados_largo(industrias_sel):
         return analizar_largo(tk, precio)
 
     resultados = []
+    fallidos_largo = []
     with ThreadPoolExecutor(max_workers=8) as ex:
-        for r in ex.map(_proc, tickers):
-            if r: resultados.append(r)
+        futuros = {ex.submit(_proc, tk): tk for tk in tickers}
+        for fut in as_completed(futuros):
+            tk = futuros[fut]
+            r = fut.result()
+            if r:
+                resultados.append(r)
+            else:
+                fallidos_largo.append(tk)
+    st.session_state['_fallidos_largo'] = fallidos_largo
+    st.session_state['_ts_largo'] = datetime.now()
     if not resultados: return pd.DataFrame()
     df_res = pd.DataFrame(resultados).sort_values('global_score', ascending=False).reset_index(drop=True)
     df_res['rank'] = df_res.index + 1
@@ -1015,6 +1093,80 @@ def chips_navegacion(items, key_prefix, max_chips=18):
                     st.session_state['nav_horizonte'] = 'buscador'
                     st.session_state['nav_modulo']    = 'buscador'
                     st.rerun()
+
+
+# ==============================================================
+#  TICKER TAPE — barra deslizante de cotizaciones (estilo Bloomberg)
+# ==============================================================
+
+
+TICKER_TAPE_SIMBOLOS = [
+    ('S&P 500', 'SPY'), ('NASDAQ', 'QQQ'),
+    ('Bitcoin', 'BTC-USD'), ('Ethereum', 'ETH-USD'),
+    ('EUR/USD', 'EURUSD=X'), ('USD/ARS', 'USDARS=X'), ('USD/BRL', 'USDBRL=X'),
+    ('Oro', 'GC=F'), ('Petróleo WTI', 'CL=F'),
+    ('NVDA', 'NVDA'), ('AAPL', 'AAPL'), ('TSLA', 'TSLA'), ('MSFT', 'MSFT'),
+]
+
+
+def _fetch_tape_item(nombre, tk):
+    try:
+        df = descargar_datos(tk, '5d')
+        cl = get_close_series(df)
+        if cl is None or len(cl) < 2:
+            return None
+        precio = float(cl.iloc[-1])
+        previo = float(cl.iloc[-2])
+        var_pct = (precio / previo - 1) * 100 if previo else 0.0
+        return dict(nombre=nombre, tk=tk, precio=precio, var_pct=var_pct)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_ticker_tape():
+    """Cotizaciones para la barra deslizante. TTL corto (5 min) para que se sienta 'vivo',
+    pero reutiliza el caché de descargar_datos (30 min) así no multiplica las llamadas a Yahoo."""
+    resultados = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futuros = {ex.submit(_fetch_tape_item, nombre, tk): nombre for nombre, tk in TICKER_TAPE_SIMBOLOS}
+        for fut in as_completed(futuros):
+            r = fut.result()
+            if r:
+                resultados.append(r)
+    orden = {nombre: i for i, (nombre, _tk) in enumerate(TICKER_TAPE_SIMBOLOS)}
+    resultados.sort(key=lambda r: orden.get(r['nombre'], 999))
+    return resultados
+
+
+def render_ticker_tape():
+    """Renderiza la barra deslizante de cotizaciones. Si falla, no rompe el resto de la app."""
+    try:
+        datos = cargar_ticker_tape()
+    except Exception:
+        return
+    if not datos:
+        return
+    piezas = []
+    for d in datos:
+        color = '#3fb950' if d['var_pct'] >= 0 else '#f85149'
+        flecha = '▲' if d['var_pct'] >= 0 else '▼'
+        piezas.append(
+            f'<span class="tape-item">'
+            f'<b style="color:#e6edf3">{d["nombre"]}</b>'
+            f'<span style="color:#8b949e">{fmt_precio(d["precio"])}</span>'
+            f'<span style="color:{color};font-weight:700">{flecha} {abs(d["var_pct"]):.2f}%</span>'
+            f'</span>'
+        )
+    contenido = '<span class="tape-sep">•</span>'.join(piezas)
+    st.markdown(f"""
+    <div class="ticker-tape-wrap">
+      <div class="ticker-tape-track">
+        <div class="ticker-tape-content">{contenido}</div>
+        <div class="ticker-tape-content">{contenido}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ==============================================================
@@ -1287,32 +1439,84 @@ def fig_radar_comparador(resultados_l):
     return fig
 
 
-def fig_comparador_fundamental(datos_fund):
-    """Pequeños múltiplos comparando PER, P/B, ROE, Mg.Bruto, Beta y Div.Yield entre tickers."""
-    metricas = [
-        ('PER', lambda e: e.get('per')),
-        ('P/B', lambda e: e.get('pb')),
-        ('ROE %', lambda e: e.get('roe') * 100 if e.get('roe') is not None else None),
-        ('Mg. Bruto %', lambda e: e.get('gross_margin') * 100 if e.get('gross_margin') is not None else None),
-        ('Beta', lambda e: e.get('beta')),
-        ('Div. Yield %', lambda e: e.get('div_yield') * 100 if e.get('div_yield') is not None else None),
-    ]
+def _pct100(v):
+    """Convierte una fracción (0.25) a porcentaje (25.0), preservando None."""
+    return v * 100 if v is not None else None
+
+
+# Categorías de métricas fundamentales: (título, [(label, extractor, dirección, clave_glosario), ...])
+# dirección: 'menor' = el valor más bajo es mejor · 'mayor' = el valor más alto es mejor · None = informativo
+CATEGORIAS_FUNDAMENTAL = [
+    ('📐 Valuación', [
+        ('PER', lambda e: e.get('per'), 'menor', 'PER'),
+        ('P/B', lambda e: e.get('pb'), 'menor', 'P/B'),
+        ('P/S', lambda e: e.get('ps'), 'menor', 'P/S'),
+        ('PEG', lambda e: e.get('peg'), 'menor', 'PEG'),
+        ('EV/EBITDA', lambda e: e.get('ev_ebitda'), 'menor', 'EV/EBITDA'),
+    ]),
+    ('📈 Rentabilidad', [
+        ('ROE %', lambda e: _pct100(e.get('roe')), 'mayor', 'ROE'),
+        ('ROA %', lambda e: _pct100(e.get('roa')), 'mayor', 'ROA'),
+        ('Mg. Bruto %', lambda e: _pct100(e.get('gross_margin')), 'mayor', 'Margen Bruto'),
+        ('Mg. Operativo %', lambda e: _pct100(e.get('op_margin')), 'mayor', 'Margen Operativo'),
+        ('Mg. Neto %', lambda e: _pct100(e.get('profit_margin')), 'mayor', 'Margen Neto'),
+    ]),
+    ('🚀 Crecimiento', [
+        ('Rev. Growth %', lambda e: _pct100(e.get('revenue_growth')), 'mayor', 'Revenue Growth'),
+        ('EPS Growth %', lambda e: _pct100(e.get('eps_growth')), 'mayor', 'EPS Growth'),
+        ('Earnings Growth %', lambda e: _pct100(e.get('earnings_growth')), 'mayor', 'Earnings Growth'),
+        ('Alza YTD %', lambda e: e.get('alza_ytd'), 'mayor', 'YTD'),
+    ]),
+    ('🔒 Riesgo y Solvencia', [
+        ('Beta', lambda e: e.get('beta'), 'menor', 'Beta'),
+        ('D/E', lambda e: e.get('debt_equity'), 'menor', 'D/E'),
+        ('Current Ratio', lambda e: e.get('curr_ratio'), 'mayor', 'Current Ratio'),
+    ]),
+    ('💰 Dividendos y Flujo', [
+        ('Div. Yield %', lambda e: _pct100(e.get('div_yield')), 'mayor', 'Dividend Yield'),
+        ('FCF', lambda e: e.get('fcf'), 'mayor', 'FCF'),
+        ('Operating CF', lambda e: e.get('op_cf'), 'mayor', 'Operating Cash Flow'),
+        ('Cash', lambda e: e.get('cash'), 'mayor', 'Cash'),
+    ]),
+    ('🏢 Tamaño y Precio', [
+        ('Market Cap', lambda e: e.get('market_cap'), None, 'Market Cap'),
+        ('Enterprise Value', lambda e: e.get('ev'), None, 'Enterprise Value'),
+        ('Precio', lambda e: e.get('precio'), None, None),
+        ('Precio Objetivo', lambda e: e.get('target_price'), None, 'Precio Objetivo'),
+    ]),
+]
+
+
+def fig_categoria_fundamental(datos_fund, metricas, titulo):
+    """Pequeños múltiplos comparando un grupo de métricas fundamentales entre tickers.
+    metricas: lista de (label, extractor, direccion, clave_glosario) — se usan label y extractor."""
     tickers = list(datos_fund.keys())
     palette = [C_MONSTER, C_ACENT, C_LRED, '#bc8cff', C_YELL]
     colores = [palette[j % len(palette)] for j in range(len(tickers))]
-    fig = make_subplots(rows=2, cols=3, subplot_titles=[m[0] for m in metricas])
-    for i, (nombre, extractor) in enumerate(metricas):
-        row, col = i // 3 + 1, i % 3 + 1
+    n = len(metricas)
+    cols_n = min(3, n) if n > 0 else 1
+    rows_n = max(1, (n + cols_n - 1) // cols_n)
+    fig = make_subplots(rows=rows_n, cols=cols_n, subplot_titles=[m[0] for m in metricas])
+    for i, (nombre, extractor, _direccion, _glos_key) in enumerate(metricas):
+        row, col = i // cols_n + 1, i % cols_n + 1
         vals = [extractor(datos_fund[tk]) for tk in tickers]
+        textos = []
+        for v in vals:
+            if v is None:
+                textos.append('N/D')
+            elif abs(v) >= 1e6:
+                textos.append(_fmt_big(v))
+            else:
+                textos.append(f'{v:.2f}')
         fig.add_trace(go.Bar(
             x=tickers, y=vals, marker_color=colores, showlegend=False,
-            text=[f'{v:.1f}' if v is not None else 'N/D' for v in vals], textposition='outside',
+            text=textos, textposition='outside',
         ), row=row, col=col)
         fig.update_yaxes(gridcolor=C_GRID, row=row, col=col)
         fig.update_xaxes(gridcolor=C_GRID, row=row, col=col)
     fig.update_layout(
-        **PLOTLY_LAYOUT_BASE, height=560, margin=dict(l=10, r=10, t=60, b=10),
-        title=dict(text='Comparación fundamental por métrica', font=dict(color=C_TEXT, size=14)),
+        **PLOTLY_LAYOUT_BASE, height=max(320, rows_n * 270), margin=dict(l=10, r=10, t=60, b=10),
+        title=dict(text=titulo, font=dict(color=C_TEXT, size=14)),
     )
     fig.update_annotations(font=dict(color=C_TEXT, size=11))
     return fig
@@ -1361,33 +1565,37 @@ def render_largo_completo(ticker, cl, r, key_suffix=''):
         st.plotly_chart(fig_drawdown(ticker, cl), use_container_width=True, key=f'fdd_{key_suffix}_{ticker}')
 
 
-def _resaltar_mejor(df, menor_mejor=None, mayor_mejor=None):
-    """Resalta en verde el mejor valor de cada columna numérica (usado en el Comparador fundamental).
-    menor_mejor: columnas donde el valor más bajo es mejor (PER, P/B, D/E, Beta, etc.)
-    mayor_mejor: columnas donde el valor más alto es mejor (ROE, márgenes, dividend yield, etc.)
+def _tabla_fundamental_completa(df, columnas, fmt_overrides=None):
+    """Tabla con TODAS las métricas fundamentales: resalta en verde el mejor valor por columna
+    cuando corresponde, y formatea cada columna (incluyendo números grandes vía fmt_overrides).
+    columnas: lista de (nombre_columna, direccion) — direccion en {'menor','mayor', None}.
+    'menor' = el valor más bajo es mejor (PER, P/B, D/E, Beta...).
+    'mayor' = el valor más alto es mejor (ROE, márgenes, Dividend Yield...).
+    None    = informativo, no se resalta (Market Cap, Precio, etc.).
     """
-    menor_mejor = menor_mejor or []
-    mayor_mejor = mayor_mejor or []
-    cols_num = [c for c in (menor_mejor + mayor_mejor) if c in df.columns]
+    fmt_overrides = fmt_overrides or {}
+    direcciones = {c: d for c, d in columnas if c in df.columns}
+    cols_resaltar = [c for c, d in direcciones.items() if d is not None]
+    cols_formato = list(direcciones.keys())
 
     def _highlight(col):
-        vals = pd.to_numeric(col, errors='coerce')
         out = [''] * len(col)
+        direction = direcciones.get(col.name)
+        if direction is None:
+            return out
+        vals = pd.to_numeric(col, errors='coerce')
         if vals.notna().sum() == 0:
             return out
-        if col.name in menor_mejor:
-            best = vals.idxmin()
-        elif col.name in mayor_mejor:
-            best = vals.idxmax()
-        else:
-            return out
+        best = vals.idxmin() if direction == 'menor' else vals.idxmax()
         pos = col.index.get_loc(best)
         out[pos] = 'background-color:#0d2410;color:#3fb950;font-weight:700'
         return out
 
-    fmt = {c: '{:.2f}' for c in cols_num}
-    styled = (df.style
-        .apply(_highlight, subset=cols_num)
+    fmt = {c: fmt_overrides.get(c, '{:.2f}') for c in cols_formato}
+    styled = df.style
+    if cols_resaltar:
+        styled = styled.apply(_highlight, subset=cols_resaltar)
+    styled = (styled
         .format(fmt, na_rep='N/D')
         .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
         .set_table_styles([
@@ -1959,20 +2167,14 @@ def modulo_buscador():
         analizar = st.button('▶ Analizar', use_container_width=True, key='btn_buscar')
 
 
-    st.markdown("""
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;margin-bottom:4px">
-      <span style="font-size:10px;color:#3a4a5f;font-weight:600;align-self:center">Ejemplos →</span>
-      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">NVDA</code>
-      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">AAPL</code>
-      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">TSLA</code>
-      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">BTC-USD</code>
-      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">ETH-USD</code>
-      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">EURUSD=X</code>
-      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">GC=F</code>
-      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">GGAL</code>
-      <code style="background:#161b22;border:1px solid #21262d;color:#8b949e;padding:2px 8px;border-radius:5px;font-size:10px">YPF</code>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div style="font-size:10px;color:#3a4a5f;font-weight:600;margin-top:6px">¿No sabés por dónde arrancar? Probá con un clic →</div>', unsafe_allow_html=True)
+    cq1, cq2, cq3, cq4 = st.columns(4)
+    ejemplos_rapidos = [('🎲 NVDA', 'NVDA'), ('₿ BTC-USD', 'BTC-USD'), ('🇦🇷 GGAL', 'GGAL'), ('🥇 Oro (GC=F)', 'GC=F')]
+    for col_q, (label_q, tk_q) in zip([cq1, cq2, cq3, cq4], ejemplos_rapidos):
+        with col_q:
+            if st.button(label_q, key=f'btn_rapido_{tk_q}', use_container_width=True):
+                st.session_state['ticker_from_table'] = tk_q
+                st.rerun()
 
 
     auto_run = bool(prefill and ticker_final == prefill.upper())
@@ -2226,9 +2428,13 @@ def modulo_comparador():
 
     with st.spinner('Descargando y calculando comparación...'):
         series, resultados_l, resultados_c, resultados_f = {}, {}, {}, {}
+        sin_precio = []
         with ThreadPoolExecutor(max_workers=5) as ex:
             for tk, cl, r_l, r_c, r_f in ex.map(_proc_cmp, tickers_cmp):
-                if cl is not None: series[tk] = cl
+                if cl is not None:
+                    series[tk] = cl
+                else:
+                    sin_precio.append(tk)
                 if r_l: resultados_l[tk] = r_l
                 if r_c: resultados_c[tk] = r_c
                 if r_f: resultados_f[tk] = r_f
@@ -2236,6 +2442,9 @@ def modulo_comparador():
     if not series:
         st.error('No se pudieron descargar datos para los activos seleccionados.')
         return
+
+    if sin_precio:
+        st.warning(f"⚠️ No se pudo descargar precio para: {', '.join(sin_precio)}. Probá tocar \"↺ Actualizar\" en unos minutos.")
 
     st.plotly_chart(fig_comparador_precio(series), use_container_width=True, key='comp_precio_fig')
 
@@ -2271,11 +2480,36 @@ def modulo_comparador():
 
     # ── COMPARACIÓN FUNDAMENTAL ───────────────────────────────────────────
     st.markdown('---')
-    st.markdown('### 📊 Comparación Fundamental')
+    st.markdown('### 📊 Comparación Fundamental — todos los datos')
 
     if resultados_f:
-        st.plotly_chart(fig_comparador_fundamental(resultados_f), use_container_width=True, key='comp_fund_fig')
+        # Explicación de cada métrica, organizada por categoría (siempre visible arriba de los datos)
+        with st.expander('❓ ¿Qué significa cada métrica? (referencia rápida)', expanded=True):
+            for categoria, metricas_cat in CATEGORIAS_FUNDAMENTAL:
+                st.markdown(
+                    f"<div style='margin-top:10px;font-size:12px;font-weight:700;color:#6CC24A'>{categoria}</div>",
+                    unsafe_allow_html=True,
+                )
+                for label, _extractor, _direccion, glos_key in metricas_cat:
+                    desc = GLOSARIO.get(glos_key, '') if glos_key else ''
+                    if not desc:
+                        continue
+                    st.markdown(
+                        f"<div style='margin:3px 0 3px 8px;font-size:11px'>"
+                        f"<b style='color:#e6edf3'>{label}</b> — <span style='color:#8b949e'>{desc}</span></div>",
+                        unsafe_allow_html=True,
+                    )
 
+        # Gráficos agrupados por categoría (pestañas para no amontonar todo en una sola imagen)
+        tabs_cat = st.tabs([c for c, _ in CATEGORIAS_FUNDAMENTAL])
+        for tab_obj, (categoria, metricas_cat) in zip(tabs_cat, CATEGORIAS_FUNDAMENTAL):
+            with tab_obj:
+                st.plotly_chart(
+                    fig_categoria_fundamental(resultados_f, metricas_cat, categoria),
+                    use_container_width=True, key=f'comp_fund_{categoria}',
+                )
+
+        # Tabla con TODOS los datos fundamentales disponibles
         filas_f = []
         for tk in tickers_cmp:
             e = resultados_f.get(tk)
@@ -2283,44 +2517,71 @@ def modulo_comparador():
             filas_f.append({
                 'Ticker': tk,
                 'Señal': e['senal_final'],
+                'Rec. Analistas': e.get('recommendation') or 'N/D',
                 'PER': e.get('per'),
                 'P/B': e.get('pb'),
+                'P/S': e.get('ps'),
+                'PEG': e.get('peg'),
                 'EV/EBITDA': e.get('ev_ebitda'),
-                'ROE %': e.get('roe') * 100 if e.get('roe') is not None else None,
-                'ROA %': e.get('roa') * 100 if e.get('roa') is not None else None,
-                'Mg.Bruto %': e.get('gross_margin') * 100 if e.get('gross_margin') is not None else None,
-                'Mg.Op. %': e.get('op_margin') * 100 if e.get('op_margin') is not None else None,
-                'D/E': e.get('debt_equity'),
+                'ROE %': _pct100(e.get('roe')),
+                'ROA %': _pct100(e.get('roa')),
+                'Mg.Bruto %': _pct100(e.get('gross_margin')),
+                'Mg.Op. %': _pct100(e.get('op_margin')),
+                'Mg.Neto %': _pct100(e.get('profit_margin')),
+                'Rev.Growth %': _pct100(e.get('revenue_growth')),
+                'EPS Growth %': _pct100(e.get('eps_growth')),
+                'Earnings Growth %': _pct100(e.get('earnings_growth')),
+                'Alza YTD %': e.get('alza_ytd'),
                 'Beta': e.get('beta'),
-                'Div.Yield %': e.get('div_yield') * 100 if e.get('div_yield') is not None else None,
+                'D/E': e.get('debt_equity'),
+                'Current Ratio': e.get('curr_ratio'),
+                'Div.Yield %': _pct100(e.get('div_yield')),
                 'FCF': e.get('fcf'),
+                'Operating CF': e.get('op_cf'),
+                'Cash': e.get('cash'),
+                'Market Cap': e.get('market_cap'),
+                'Enterprise Value': e.get('ev'),
+                'Precio': e.get('precio'),
+                'Precio Objetivo': e.get('target_price'),
             })
 
         if filas_f:
             df_fund_cmp = pd.DataFrame(filas_f)
-            df_fund_show = df_fund_cmp.drop(columns=['FCF']).copy()
+
+            columnas_directivas = [
+                ('PER', 'menor'), ('P/B', 'menor'), ('P/S', 'menor'), ('PEG', 'menor'), ('EV/EBITDA', 'menor'),
+                ('ROE %', 'mayor'), ('ROA %', 'mayor'), ('Mg.Bruto %', 'mayor'), ('Mg.Op. %', 'mayor'), ('Mg.Neto %', 'mayor'),
+                ('Rev.Growth %', 'mayor'), ('EPS Growth %', 'mayor'), ('Earnings Growth %', 'mayor'), ('Alza YTD %', 'mayor'),
+                ('Beta', 'menor'), ('D/E', 'menor'), ('Current Ratio', 'mayor'),
+                ('Div.Yield %', 'mayor'), ('FCF', 'mayor'), ('Operating CF', 'mayor'), ('Cash', 'mayor'),
+                ('Market Cap', None), ('Enterprise Value', None), ('Precio', None), ('Precio Objetivo', None),
+            ]
+            fmt_overrides_fund = {
+                'FCF': (lambda v: _fmt_big(v)),
+                'Operating CF': (lambda v: _fmt_big(v)),
+                'Cash': (lambda v: _fmt_big(v)),
+                'Market Cap': (lambda v: _fmt_big(v)),
+                'Enterprise Value': (lambda v: _fmt_big(v)),
+                'Precio': (lambda v: fmt_precio(v)),
+                'Precio Objetivo': (lambda v: fmt_precio(v)),
+            }
 
             def style_senal_cmp(val):
                 c, bg = _senal_color(val)
                 return f'color:{c};font-weight:700;background:{bg}'
 
-            styled_fc = _resaltar_mejor(
-                df_fund_show,
-                menor_mejor=['PER', 'P/B', 'EV/EBITDA', 'D/E', 'Beta'],
-                mayor_mejor=['ROE %', 'ROA %', 'Mg.Bruto %', 'Mg.Op. %', 'Div.Yield %'],
-            )
-            _map_fc = 'map' if hasattr(df_fund_show.style, 'map') else 'applymap'
+            styled_fc = _tabla_fundamental_completa(df_fund_cmp, columnas_directivas, fmt_overrides=fmt_overrides_fund)
+            _map_fc = 'map' if hasattr(df_fund_cmp.style, 'map') else 'applymap'
             styled_fc = styled_fc.pipe(lambda s: getattr(s, _map_fc)(style_senal_cmp, subset=['Señal']))
-            st.dataframe(styled_fc, use_container_width=True, height=min(300, len(df_fund_show)*45+60))
+            st.caption('↔️ Desliza horizontalmente para ver todas las columnas (son muchas métricas).')
+            st.dataframe(styled_fc, use_container_width=True, height=min(560, len(df_fund_cmp)*45+90))
 
-            fc1, fc2 = st.columns(2)
-            with fc1:
-                st.caption('🟢 resaltado = mejor valor del grupo en esa métrica (PER/P/B/EV-EBITDA/D-E/Beta: menor es mejor · ROE/márgenes/Div.Yield: mayor es mejor).')
-            with fc2:
-                candidatos_fcf = [f for f in filas_f if f['FCF'] is not None]
-                if candidatos_fcf:
-                    mejor_fcf = max(candidatos_fcf, key=lambda f: f['FCF'])
-                    st.caption(f"💰 FCF más alto: **{mejor_fcf['Ticker']}** ({_fmt_big(mejor_fcf['FCF'])})")
+            st.caption(
+                '🟢 resaltado = mejor valor del grupo en esa métrica. '
+                'PER · P/B · P/S · PEG · EV/EBITDA · Beta · D/E: el valor más bajo se considera mejor. '
+                'ROE · ROA · márgenes · crecimiento · Current Ratio · Dividend Yield · FCF · Operating CF · Cash: el valor más alto se considera mejor. '
+                'Market Cap, Enterprise Value, Precio y Precio Objetivo son solo informativos (no se resaltan).'
+            )
         else:
             st.info('No se pudieron calcular ratios fundamentales para estos activos.')
     else:
@@ -2384,6 +2645,9 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
+render_ticker_tape()
+
+
 st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
 
@@ -2416,50 +2680,52 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
             st.rerun()
 
 
-_c = st.columns([1.0, 1.0, 0.95, 1.0, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
+with st.container(key='nav_pills_wrap'):
+    _c = st.columns([1.0, 1.0, 0.95, 1.0, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
 
 
-_nav_btn(_c[0], '⚡ Corto Plazo', 'nav_h_corto',
-         HORIZONTE=='corto', None, 'corto', 'resumen')
-_nav_btn(_c[1], '📈 Largo Plazo', 'nav_h_largo',
-         HORIZONTE=='largo', None, 'largo', 'ranking')
-_nav_btn(_c[2], '🔍 Buscador', 'nav_buscador',
-         HORIZONTE=='buscador', None, 'buscador', 'buscador')
-_nav_btn(_c[3], '⚖️ Comparar', 'nav_comparador',
-         HORIZONTE=='comparador', None, 'comparador', 'comparador')
+    _nav_btn(_c[0], '⚡ Corto Plazo', 'nav_h_corto',
+             HORIZONTE=='corto', None, 'corto', 'resumen')
+    _nav_btn(_c[1], '📈 Largo Plazo', 'nav_h_largo',
+             HORIZONTE=='largo', None, 'largo', 'ranking')
+    _nav_btn(_c[2], '🔍 Buscador', 'nav_buscador',
+             HORIZONTE=='buscador', None, 'buscador', 'buscador')
+    _nav_btn(_c[3], '⚖️ Comparar', 'nav_comparador',
+             HORIZONTE=='comparador', None, 'comparador', 'comparador')
 
 
-if HORIZONTE == 'corto':
-    _mods_corto = [
-        ('💱 Forex',    'forex',    5),
-        ('🌍 Países',   'paises',   6),
-        ('📊 Sectores', 'sectores', 7),
-        ('🛢️ Mercados', 'mercados', 8),
-        ('📈 Acciones', 'acciones', 9),
-        ('🎯 Top-Down', 'topdown',  10),
-    ]
-    for label, mod_key, col_idx in _mods_corto:
-        _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
-                 MODULO==mod_key, None, None, mod_key)
+    if HORIZONTE == 'corto':
+        _mods_corto = [
+            ('💱 Forex',    'forex',    5),
+            ('🌍 Países',   'paises',   6),
+            ('📊 Sectores', 'sectores', 7),
+            ('🛢️ Mercados', 'mercados', 8),
+            ('📈 Acciones', 'acciones', 9),
+            ('🎯 Top-Down', 'topdown',  10),
+        ]
+        for label, mod_key, col_idx in _mods_corto:
+            _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
+                     MODULO==mod_key, None, None, mod_key)
 
 
-elif HORIZONTE == 'largo':
-    _mods_largo = [
-        ('📋 Ranking',      'ranking',      5),
-        ('🔄 Reversión',    'reversion',    6),
-        ('🏭 Industria',    'industria',    7),
-        ('🔍 Ticker',       'ticker',       8),
-        ('📊 Fundamental',  'fundamental',  9),
-    ]
-    for label, mod_key, col_idx in _mods_largo:
-        _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
-                 MODULO==mod_key, None, None, mod_key)
+    elif HORIZONTE == 'largo':
+        _mods_largo = [
+            ('📋 Ranking',      'ranking',      5),
+            ('🔄 Reversión',    'reversion',    6),
+            ('🏭 Industria',    'industria',    7),
+            ('🔍 Ticker',       'ticker',       8),
+            ('📊 Fundamental',  'fundamental',  9),
+        ]
+        for label, mod_key, col_idx in _mods_largo:
+            _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
+                     MODULO==mod_key, None, None, mod_key)
 
 
-with _c[12]:
-    with st.container(key='nav_refresh_cont'):
-        if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
-            st.cache_data.clear(); st.rerun()
+    with _c[12]:
+        with st.container(key='nav_refresh_cont'):
+            if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
+                st.cache_data.clear(); st.rerun()
+
 st.markdown("""
 <style>
 .st-key-nav_refresh_cont button {
@@ -2473,8 +2739,53 @@ st.markdown("""
     color: var(--verde-monster) !important;
     border-color: var(--verde-monster) !important;
 }
+
+/* ── Nav alternativo para pantallas chicas (celular) ──
+   En desktop se ve la fila de botones; en mobile esa fila se
+   esconde y aparecen 2 selectbox en su lugar, mucho más usables
+   con el dedo que botones angostos en una fila scrolleable. */
+.st-key-nav_mobile_wrap { display: none; }
+@media (max-width: 768px) {
+  .st-key-nav_pills_wrap { display: none !important; }
+  .st-key-nav_mobile_wrap { display: block !important; }
+}
 </style>
 """, unsafe_allow_html=True)
+
+
+with st.container(key='nav_mobile_wrap'):
+    _OPCIONES_HORIZONTE_MOBILE = {
+        '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
+        '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
+    }
+    _OPCIONES_MODULO_MOBILE = {
+        'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
+                  '📊 Sectores': 'sectores', '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones'},
+        'largo': {'📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
+                  '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental'},
+    }
+    _mc1, _mc2 = st.columns(2)
+    with _mc1:
+        _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '⚡ Corto Plazo')
+        _sel_h = st.selectbox('Sección', list(_OPCIONES_HORIZONTE_MOBILE.keys()),
+                               index=list(_OPCIONES_HORIZONTE_MOBILE.keys()).index(_label_h_actual),
+                               key='nav_mobile_h', label_visibility='collapsed')
+    _h_nuevo = _OPCIONES_HORIZONTE_MOBILE[_sel_h]
+    with _mc2:
+        if _h_nuevo in _OPCIONES_MODULO_MOBILE:
+            _mods_disp = _OPCIONES_MODULO_MOBILE[_h_nuevo]
+            _label_m_actual = next((k for k, v in _mods_disp.items() if v == MODULO), list(_mods_disp.keys())[0])
+            _sel_m = st.selectbox('Módulo', list(_mods_disp.keys()),
+                                   index=list(_mods_disp.keys()).index(_label_m_actual),
+                                   key='nav_mobile_m', label_visibility='collapsed')
+            _m_nuevo = _mods_disp[_sel_m]
+        else:
+            st.write('')
+            _m_nuevo = _h_nuevo
+    if _h_nuevo != HORIZONTE or _m_nuevo != MODULO:
+        st.session_state['nav_horizonte'] = _h_nuevo
+        st.session_state['nav_modulo'] = _m_nuevo
+        st.rerun()
 
 
 st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
@@ -2572,6 +2883,45 @@ elif HORIZONTE == 'corto':
 
 
     if MODULO in ('resumen', 'topdown'):
+        if not st.session_state.get('td_loaded'):
+            st.markdown("""
+            <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
+                 border:1px solid #21262d; border-top:2px solid #6CC24A;
+                 border-radius:14px; padding:30px 34px; margin-bottom:22px;">
+              <div style="font-size:19px;font-weight:700;color:#e6edf3;margin-bottom:6px">
+                👋 ¿Qué querés hacer hoy?
+              </div>
+              <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+                Este es un analizador cuantitativo de mercados: combina scores estadísticos de corto plazo,
+                un modelo cuantitativo de largo plazo (tendencia, reversión y riesgo) y ratios fundamentales,
+                para acciones, ETFs, forex, commodities y cripto. Elegí por dónde arrancar:
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            cc1, cc2, cc3, cc4 = st.columns(4)
+            with cc1:
+                if st.button('🔍 Analizar un ticker', use_container_width=True, key='onb_buscador'):
+                    st.session_state['nav_horizonte'] = 'buscador'
+                    st.session_state['nav_modulo'] = 'buscador'
+                    st.rerun()
+            with cc2:
+                if st.button('⚖️ Comparar activos', use_container_width=True, key='onb_comparador'):
+                    st.session_state['nav_horizonte'] = 'comparador'
+                    st.session_state['nav_modulo'] = 'comparador'
+                    st.rerun()
+            with cc3:
+                if st.button('🎯 Ver oportunidades macro', use_container_width=True, key='onb_topdown'):
+                    st.session_state['td_loaded'] = True
+                    st.rerun()
+            with cc4:
+                if st.button('📋 Ranking de largo plazo', use_container_width=True, key='onb_ranking'):
+                    st.session_state['nav_horizonte'] = 'largo'
+                    st.session_state['nav_modulo'] = 'ranking'
+                    st.rerun()
+
+            st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+
         st.markdown('<div class="info-banner">Vista ejecutiva Top-Down. Presioná <b>Cargar</b> para analizar todos los niveles.</div>', unsafe_allow_html=True)
         if st.button('▶ Cargar resumen completo', key='btn_td'):
             st.session_state['td_loaded'] = True
@@ -2599,6 +2949,8 @@ elif HORIZONTE == 'corto':
         with st.spinner('Descargando Forex...'):
             datos_f = {n:d for n,d in cargar_forex_corto().items() if d['grupo'] in grupos_sel}
         if not datos_f: st.error('Sin datos.'); st.stop()
+        badge_actualizacion('forex')
+        aviso_fallidos('forex', etiqueta='pares de Forex')
         tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
         with tab1:
             grupos_en = [g for g in grupos_disp if g in grupos_sel and any(d['grupo']==g for d in datos_f.values())]
@@ -2625,6 +2977,8 @@ elif HORIZONTE == 'corto':
         with st.spinner('Descargando países...'):
             datos_p = cargar_paises_corto()
         if not datos_p: st.error('Sin datos.'); st.stop()
+        badge_actualizacion('paises')
+        aviso_fallidos('paises', etiqueta='países/índices')
         tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
         with tab1:
             regiones = list(dict.fromkeys(d['region'] for d in datos_p.values()))
@@ -2651,6 +3005,8 @@ elif HORIZONTE == 'corto':
         with st.spinner('Descargando sectores...'):
             datos_s = cargar_sectores_corto()
         if not datos_s: st.error('Sin datos.'); st.stop()
+        badge_actualizacion('sectores')
+        aviso_fallidos('sectores', etiqueta='sectores')
         tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
         with tab1:
             items_ord = sorted(datos_s.items(), key=lambda x: x[1]['sa'], reverse=True)
@@ -2672,6 +3028,8 @@ elif HORIZONTE == 'corto':
         with st.spinner('Descargando commodities...'):
             datos_m = cargar_mercados_corto()
         if not datos_m: st.error('Sin datos.'); st.stop()
+        badge_actualizacion('mercados')
+        aviso_fallidos('mercados', etiqueta='mercados')
         tab1, tab2, tab3, tab4 = st.tabs(['📊 Por categoría','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
         with tab1:
             cats = list(dict.fromkeys(d['cat'] for d in datos_m.values()))
@@ -2705,6 +3063,8 @@ elif HORIZONTE == 'corto':
             datos_acc_c = cargar_acciones_corto(tuple(ind_sel_c))
         datos_acc_c = {ind: tks for ind, tks in datos_acc_c.items() if tks}
         if not datos_acc_c: st.error('Sin datos.'); st.stop()
+        badge_actualizacion('acciones')
+        aviso_fallidos('acciones', etiqueta='acciones')
         todas_c = {tk: d for ind, tks in datos_acc_c.items() for tk, d in tks.items()}
         tab1, tab2, tab3 = st.tabs(['📊 Por industria','🗺️ Cuadrante','📋 Ranking'])
         with tab1:
@@ -2792,6 +3152,8 @@ elif HORIZONTE == 'largo':
             with st.spinner(f'Descargando 2 años de datos — {len(ind_sel)} industrias...'):
                 df_res_l = cargar_resultados_largo(tuple(ind_sel))
             if df_res_l.empty: st.error('Sin datos.'); st.stop()
+            badge_actualizacion('largo', ttl_min=60)
+            aviso_fallidos('largo', etiqueta='tickers (necesitan ≥150 sesiones de historia)')
             n_alc = len(df_res_l[df_res_l['sesgo'].isin(['ALCISTA','MUY ALCISTA'])])
             n_baj = len(df_res_l[df_res_l['sesgo'].isin(['BAJISTA','MUY BAJISTA'])])
             n_rev = int(df_res_l['reversion_signal'].sum())
@@ -2956,23 +3318,32 @@ def modulo_fundamental():
         total_t = len(tickers_industria)
         prog_f = st.progress(0, text='Descargando datos fundamentales en paralelo...')
         procesados = 0
+        fallidos_fund = []
 
         with ThreadPoolExecutor(max_workers=8) as ex:
             futuros = {ex.submit(analizar_fundamental, tk, ind): (tk, ind) for tk, ind in tickers_industria}
             for fut in as_completed(futuros):
                 tk, ind = futuros[fut]
                 r = fut.result()
-                if r: todos_resultados[ind].append(r)
+                if r:
+                    todos_resultados[ind].append(r)
+                else:
+                    fallidos_fund.append(tk)
                 procesados += 1
                 pct = int(procesados / max(total_t, 1) * 100)
                 prog_f.progress(min(pct, 100), text=f'Procesado {tk} ({procesados}/{total_t})')
 
         prog_f.empty()
+        st.session_state['_fallidos_fundamental'] = fallidos_fund
+        st.session_state['_ts_fundamental'] = datetime.now()
 
         total_emp = sum(len(v) for v in todos_resultados.values())
         if total_emp == 0:
             st.error('No se pudieron obtener datos fundamentales.')
             return
+
+        badge_actualizacion('fundamental', ttl_min=60)
+        aviso_fallidos('fundamental', etiqueta='empresas (sin datos fundamentales en Yahoo Finance)')
 
         todas_emp = [e for lst in todos_resultados.values() for e in lst]
         n_compra   = sum(1 for e in todas_emp if 'COMPRA' in e['senal_final'])
@@ -3015,61 +3386,78 @@ def modulo_fundamental():
 
         df_fund = pd.DataFrame(filas_res)
 
-        with st.expander('🎛️ Filtros avanzados', expanded=True):
-            frow1 = st.columns(4)
-            with frow1[0]:
-                f_senal_f = st.selectbox('Señal', ['Todas','COMPRA FUERTE','MANTENER','RIESGO / VENDER'], key='fund_f_senal')
-            with frow1[1]:
-                inds_u_f = ['Todas'] + sorted(df_fund['Industria'].unique().tolist())
-                f_ind_f  = st.selectbox('Industria', inds_u_f, key='fund_f_ind')
-            with frow1[2]:
-                sects_u  = ['Todos'] + sorted(df_fund['Sector'].unique().tolist())
-                f_sect_f = st.selectbox('Sector', sects_u, key='fund_f_sect')
-            with frow1[3]:
-                f_sort = st.selectbox('Ordenar por', [
-                    'OK ↓ (más señales positivas)', 'ALT ↑ (más alertas)',
-                    'YTD % ↓', 'PER ↑ (más barato)', 'ROE % ↓'
-                ], key='fund_f_sort')
+        modo_avanzado = st.toggle(
+            '🎛️ Modo avanzado (todos los filtros y columnas)',
+            value=st.session_state.get('fund_modo_avanzado', False),
+            key='fund_modo_avanzado',
+            help='Desactivado: vista simple con lo esencial. Activado: todos los filtros, columnas y fichas por empresa.',
+        )
 
-            st.markdown('<div style="margin-top:10px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">📐 VALUACIÓN</div>', unsafe_allow_html=True)
-            vrow = st.columns(3)
-            with vrow[0]:
-                f_per_rng = st.slider('PER', min_value=0.0, max_value=200.0, value=(0.0, 200.0), step=1.0, key='fund_f_per_rng', help=G('PER'))
-            with vrow[1]:
-                f_pb_rng = st.slider('P/B', min_value=0.0, max_value=30.0, value=(0.0, 30.0), step=0.5, key='fund_f_pb_rng', help=G('P/B'))
-            with vrow[2]:
-                f_eveb_rng = st.slider('EV/EBITDA', min_value=0.0, max_value=60.0, value=(0.0, 60.0), step=1.0, key='fund_f_eveb_rng', help=G('EV/EBITDA'))
+        if modo_avanzado:
+            with st.expander('🎛️ Filtros avanzados', expanded=True):
+                frow1 = st.columns(4)
+                with frow1[0]:
+                    f_senal_f = st.selectbox('Señal', ['Todas','COMPRA FUERTE','MANTENER','RIESGO / VENDER'], key='fund_f_senal')
+                with frow1[1]:
+                    inds_u_f = ['Todas'] + sorted(df_fund['Industria'].unique().tolist())
+                    f_ind_f  = st.selectbox('Industria', inds_u_f, key='fund_f_ind')
+                with frow1[2]:
+                    sects_u  = ['Todos'] + sorted(df_fund['Sector'].unique().tolist())
+                    f_sect_f = st.selectbox('Sector', sects_u, key='fund_f_sect')
+                with frow1[3]:
+                    f_sort = st.selectbox('Ordenar por', [
+                        'OK ↓ (más señales positivas)', 'ALT ↑ (más alertas)',
+                        'YTD % ↓', 'PER ↑ (más barato)', 'ROE % ↓'
+                    ], key='fund_f_sort')
 
-            st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">📈 RENTABILIDAD Y MÁRGENES</div>', unsafe_allow_html=True)
-            rrow = st.columns(4)
-            with rrow[0]:
-                f_roe_rng = st.slider('ROE %', min_value=-50.0, max_value=100.0, value=(-50.0, 100.0), step=1.0, key='fund_f_roe_rng', help=G('ROE'))
-            with rrow[1]:
-                f_gm_rng = st.slider('Mg. Bruto %', min_value=-20.0, max_value=100.0, value=(-20.0, 100.0), step=1.0, key='fund_f_gm_rng')
-            with rrow[2]:
-                f_om_rng = st.slider('Mg. Operativo %', min_value=-50.0, max_value=60.0, value=(-50.0, 60.0), step=1.0, key='fund_f_om_rng')
-            with rrow[3]:
-                f_rg_rng = st.slider('Rev. Growth %', min_value=-50.0, max_value=100.0, value=(-50.0, 100.0), step=1.0, key='fund_f_rg_rng')
+                st.markdown('<div style="margin-top:10px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">📐 VALUACIÓN</div>', unsafe_allow_html=True)
+                vrow = st.columns(3)
+                with vrow[0]:
+                    f_per_rng = st.slider('PER', min_value=0.0, max_value=200.0, value=(0.0, 200.0), step=1.0, key='fund_f_per_rng', help=G('PER'))
+                with vrow[1]:
+                    f_pb_rng = st.slider('P/B', min_value=0.0, max_value=30.0, value=(0.0, 30.0), step=0.5, key='fund_f_pb_rng', help=G('P/B'))
+                with vrow[2]:
+                    f_eveb_rng = st.slider('EV/EBITDA', min_value=0.0, max_value=60.0, value=(0.0, 60.0), step=1.0, key='fund_f_eveb_rng', help=G('EV/EBITDA'))
 
-            st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">🔒 SOLVENCIA, RIESGO Y FLUJO</div>', unsafe_allow_html=True)
-            srow = st.columns(4)
-            with srow[0]:
-                f_de_rng = st.slider('D/E', min_value=0.0, max_value=10.0, value=(0.0, 10.0), step=0.1, key='fund_f_de_rng')
-            with srow[1]:
-                f_beta_rng = st.slider('Beta', min_value=0.0, max_value=4.0, value=(0.0, 4.0), step=0.1, key='fund_f_beta_rng', help=G('Beta'))
-            with srow[2]:
-                f_div_rng = st.slider('Div. Yield %', min_value=0.0, max_value=20.0, value=(0.0, 20.0), step=0.5, key='fund_f_div_rng', help=G('Dividend Yield'))
-            with srow[3]:
-                f_ytd_rng = st.slider('YTD %', min_value=-80.0, max_value=300.0, value=(-80.0, 300.0), step=5.0, key='fund_f_ytd_rng')
+                st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">📈 RENTABILIDAD Y MÁRGENES</div>', unsafe_allow_html=True)
+                rrow = st.columns(4)
+                with rrow[0]:
+                    f_roe_rng = st.slider('ROE %', min_value=-50.0, max_value=100.0, value=(-50.0, 100.0), step=1.0, key='fund_f_roe_rng', help=G('ROE'))
+                with rrow[1]:
+                    f_gm_rng = st.slider('Mg. Bruto %', min_value=-20.0, max_value=100.0, value=(-20.0, 100.0), step=1.0, key='fund_f_gm_rng')
+                with rrow[2]:
+                    f_om_rng = st.slider('Mg. Operativo %', min_value=-50.0, max_value=60.0, value=(-50.0, 60.0), step=1.0, key='fund_f_om_rng')
+                with rrow[3]:
+                    f_rg_rng = st.slider('Rev. Growth %', min_value=-50.0, max_value=100.0, value=(-50.0, 100.0), step=1.0, key='fund_f_rg_rng')
 
-            st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">✅ SEÑALES Y FCF</div>', unsafe_allow_html=True)
-            qrow = st.columns(3)
-            with qrow[0]:
-                f_ok_rng = st.slider('Señales OK', min_value=0, max_value=20, value=(0, 20), step=1, key='fund_f_ok_rng')
-            with qrow[1]:
-                f_fcf_pos = st.checkbox('Solo FCF positivo', key='fund_f_fcf', value=False)
-            with qrow[2]:
-                st.markdown('<div style="font-size:10px;color:#6b7d9a;padding-top:28px">N/D: la empresa se excluye si el rango es distinto al default.</div>', unsafe_allow_html=True)
+                st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">🔒 SOLVENCIA, RIESGO Y FLUJO</div>', unsafe_allow_html=True)
+                srow = st.columns(4)
+                with srow[0]:
+                    f_de_rng = st.slider('D/E', min_value=0.0, max_value=10.0, value=(0.0, 10.0), step=0.1, key='fund_f_de_rng')
+                with srow[1]:
+                    f_beta_rng = st.slider('Beta', min_value=0.0, max_value=4.0, value=(0.0, 4.0), step=0.1, key='fund_f_beta_rng', help=G('Beta'))
+                with srow[2]:
+                    f_div_rng = st.slider('Div. Yield %', min_value=0.0, max_value=20.0, value=(0.0, 20.0), step=0.5, key='fund_f_div_rng', help=G('Dividend Yield'))
+                with srow[3]:
+                    f_ytd_rng = st.slider('YTD %', min_value=-80.0, max_value=300.0, value=(-80.0, 300.0), step=5.0, key='fund_f_ytd_rng')
+
+                st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">✅ SEÑALES Y FCF</div>', unsafe_allow_html=True)
+                qrow = st.columns(3)
+                with qrow[0]:
+                    f_ok_rng = st.slider('Señales OK', min_value=0, max_value=20, value=(0, 20), step=1, key='fund_f_ok_rng')
+                with qrow[1]:
+                    f_fcf_pos = st.checkbox('Solo FCF positivo', key='fund_f_fcf', value=False)
+                with qrow[2]:
+                    st.markdown('<div style="font-size:10px;color:#6b7d9a;padding-top:28px">N/D: la empresa se excluye si el rango es distinto al default.</div>', unsafe_allow_html=True)
+        else:
+            st.caption('💡 Vista simple activa — mostrando lo esencial. Activá "Modo avanzado" arriba para filtros detallados, todas las columnas y fichas por empresa.')
+            f_senal_f, f_ind_f, f_sect_f = 'Todas', 'Todas', 'Todos'
+            f_sort = 'OK ↓ (más señales positivas)'
+            f_per_rng, f_pb_rng, f_eveb_rng = (0.0, 200.0), (0.0, 30.0), (0.0, 60.0)
+            f_roe_rng, f_gm_rng, f_om_rng, f_rg_rng = (-50.0, 100.0), (-20.0, 100.0), (-50.0, 60.0), (-50.0, 100.0)
+            f_de_rng, f_beta_rng, f_div_rng, f_ytd_rng = (0.0, 10.0), (0.0, 4.0), (0.0, 20.0), (-80.0, 300.0)
+            f_ok_rng = (0, 20)
+            f_fcf_pos = False
 
         df_f2 = df_fund.copy()
         if f_senal_f != 'Todas':
@@ -3170,24 +3558,35 @@ def modulo_fundamental():
                 return 'color:#3fb950;font-weight:700'
             except: return ''
 
-        _map_f = 'map' if hasattr(df_f2.style, 'map') else 'applymap'
-        styled_fund = (df_f2.style
-            .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
-            .pipe(lambda s: getattr(s,_map_f)(style_senal_fund, subset=['Señal']))
-            .pipe(lambda s: getattr(s,_map_f)(style_ok,  subset=['OK']))
-            .pipe(lambda s: getattr(s,_map_f)(style_alt, subset=['ALT']))
-            .set_table_styles([
-                {'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),
-                    ('font-weight','700'),('text-align','center'),
-                    ('border-bottom','2px solid #3a7bd5'),('font-size','11px')]},
-                {'selector':'td','props':[('text-align','center'),('font-size','11px')]},
-            ])
-        )
-        st.dataframe(styled_fund, use_container_width=True, height=min(700, max(200, len(df_f2)*32+45)))
-        st.caption(f'{len(df_f2)} empresas de {len(df_fund)} totales')
-        chips_navegacion(df_f2['Ticker'].tolist(), 'fund_tabla')
+        if modo_avanzado:
+            df_f2_show = df_f2
+        else:
+            cols_simple = ['Ticker', 'Nombre', 'Industria', 'Señal', 'Precio', 'PER', 'ROE %', 'Rev.Growth %', 'YTD %', 'OK']
+            df_f2_show = df_f2[[c for c in cols_simple if c in df_f2.columns]]
+
+        _map_f = 'map' if hasattr(df_f2_show.style, 'map') else 'applymap'
+        styled_fund = df_f2_show.style.set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
+        if 'Señal' in df_f2_show.columns:
+            styled_fund = styled_fund.pipe(lambda s: getattr(s,_map_f)(style_senal_fund, subset=['Señal']))
+        if 'OK' in df_f2_show.columns:
+            styled_fund = styled_fund.pipe(lambda s: getattr(s,_map_f)(style_ok, subset=['OK']))
+        if 'ALT' in df_f2_show.columns:
+            styled_fund = styled_fund.pipe(lambda s: getattr(s,_map_f)(style_alt, subset=['ALT']))
+        styled_fund = styled_fund.set_table_styles([
+            {'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),
+                ('font-weight','700'),('text-align','center'),
+                ('border-bottom','2px solid #3a7bd5'),('font-size','11px')]},
+            {'selector':'td','props':[('text-align','center'),('font-size','11px')]},
+        ])
+        if modo_avanzado:
+            st.caption('↔️ Desliza horizontalmente para ver todas las columnas.')
+        st.dataframe(styled_fund, use_container_width=True, height=min(700, max(200, len(df_f2_show)*32+45)))
+        st.caption(f'{len(df_f2_show)} empresas de {len(df_fund)} totales')
+        chips_navegacion(df_f2_show['Ticker'].tolist(), 'fund_tabla')
 
         for industria in ind_sel_f:
+            if not modo_avanzado:
+                break
             emps = todos_resultados.get(industria, [])
             if not emps: continue
             sector_ind = SECTOR_MAP_FUND.get(industria, 'Sin Clasificar')
