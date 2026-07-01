@@ -361,6 +361,7 @@ def pantalla_login():
                     try:
                         res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                         st.session_state["usuario"] = res.user
+                        cookies.set("sb_refresh_token", res.session.refresh_token)
                         st.rerun()
                     except Exception:
                         st.error("Email o contraseña incorrectos.")
@@ -385,6 +386,25 @@ def pantalla_login():
 
 
 # ── GATE: si no hay sesión, mostrar login y frenar acá ──
+from streamlit_cookies_controller import CookieController
+
+cookies = CookieController()
+
+def restaurar_sesion():
+    """Intenta restaurar la sesión desde la cookie del navegador si session_state la perdió."""
+    if "usuario" in st.session_state:
+        return  # ya está logueado en esta ejecución
+    refresh_token = cookies.get("sb_refresh_token")
+    if refresh_token:
+        try:
+            res = supabase.auth.refresh_session(refresh_token)
+            st.session_state["usuario"] = res.user
+            cookies.set("sb_refresh_token", res.session.refresh_token)
+        except Exception:
+            cookies.remove("sb_refresh_token")
+
+restaurar_sesion()
+
 if "usuario" not in st.session_state:
     pantalla_login()
     st.stop()
