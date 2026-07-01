@@ -3647,6 +3647,7 @@ with st.container(key='nav_pills_wrap'):
     with col_logout:
         if st.button('🚪 Cerrar sesión', key='btn_logout'):
             supabase.auth.sign_out()
+            cookies.remove("sb_refresh_token")
             del st.session_state["usuario"]
             st.rerun()
 
