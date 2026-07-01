@@ -329,7 +329,7 @@ st.markdown("""
 
 @st.cache_resource
 def init_supabase():
-    url = st.secrets["https://atphpbxvevypjaaivynn.supabase.co/rest/v1/"]
+    url = st.secrets["https://atphpbxvevypjaaivynn.supabase.co"]
     key = st.secrets["sb_publishable_QAz4MFFAPRlVzmyjtYTULA_wn91dTDw"]
     return create_client(url, key)
 
