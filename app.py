@@ -3623,6 +3623,13 @@ with st.container(key='nav_pills_wrap'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 st.cache_data.clear(); st.rerun()
 
+    col_logout, _ = st.columns([1, 6])
+    with col_logout:
+        if st.button('🚪 Cerrar sesión', key='btn_logout'):
+            supabase.auth.sign_out()
+            del st.session_state["usuario"]
+            st.rerun()
+
 st.markdown("""
 <style>
 .st-key-nav_refresh_cont button {
