@@ -3180,6 +3180,30 @@ def _sec_inicio(titulo, icono, items_config, datos_precios):
     st.markdown(_cards_html(items_config, datos_precios), unsafe_allow_html=True)
 
 
+def _kpi_resumen_seccion(datos_dict, etiqueta_extra=''):
+    """Calcula y renderiza los 4 KPI cards (Subiendo/Bajando/Neutros/Mejor)
+    para un diccionario {ticker: {precio, cambio_pct, cambio_abs}} específico
+    de una sección (índices, sectores, mercados, forex o acciones)."""
+    if not datos_dict:
+        st.info('Sin datos disponibles para esta sección.')
+        return
+
+    todos_pct = [d['cambio_pct'] for d in datos_dict.values()]
+    n_sub = sum(1 for v in todos_pct if v > 0.2)
+    n_baj = sum(1 for v in todos_pct if v < -0.2)
+    n_neu = len(todos_pct) - n_sub - n_baj
+    mejor = max(datos_dict.items(), key=lambda x: x[1]['cambio_pct'], default=(None, {'cambio_pct': 0}))
+
+    sufijo = f' {etiqueta_extra}' if etiqueta_extra else ''
+    kpi_cards_4([
+        ('Subiendo hoy', str(n_sub), f'de {len(todos_pct)}{sufijo}', '#3fb950'),
+        ('Bajando hoy',  str(n_baj), f'de {len(todos_pct)}{sufijo}', '#f85149'),
+        ('Neutros',      str(n_neu), 'variación < ±0.2%', '#e3b341'),
+        ('Mejor del día', mejor[0] or '-',
+         f"{mejor[1]['cambio_pct']:+.2f}%" if mejor[0] else '', '#3fb950'),
+    ])
+
+
 def modulo_inicio():
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
@@ -3203,29 +3227,21 @@ def modulo_inicio():
     with st.spinner('Cargando cotizaciones...'):
         datos_base = cargar_precios_inicio_base()
 
-    # ── Resumen rápido (KPIs) ─────────────────────────────────────────────
-    todos_pct = [d['cambio_pct'] for d in datos_base.values()]
-    n_sub  = sum(1 for v in todos_pct if v > 0.2)
-    n_baj  = sum(1 for v in todos_pct if v < -0.2)
-    n_neu  = len(todos_pct) - n_sub - n_baj
-    mejor  = max(datos_base.items(), key=lambda x: x[1]['cambio_pct'], default=(None, {'cambio_pct': 0}))
-    peor   = min(datos_base.items(), key=lambda x: x[1]['cambio_pct'], default=(None, {'cambio_pct': 0}))
+    # ── Subconjuntos de datos_base por sección (para los KPI por tab) ─────
+    tks_paises_all   = [tk for tk, _ in PAISES.values()]
+    tks_sectores_all = [tk for tk, _ in SECTORES.values()]
+    tks_mercados_all = [tk for tk, _, _ in MERCADOS_REALES.values()]
+    tks_forex_all    = [tk for tk, _ in FOREX.values()]
 
-    kpi_cards_4([
-        ('Subiendo hoy',   str(n_sub),
-         f'de {len(todos_pct)} activos base',  '#3fb950'),
-        ('Bajando hoy',    str(n_baj),
-         f'de {len(todos_pct)} activos base',  '#f85149'),
-        ('Neutros',        str(n_neu),
-         'variación < ±0.2%',                   '#e3b341'),
-        ('Mejor del día',
-         mejor[0] or '-',
-         f"{mejor[1]['cambio_pct']:+.2f}%" if mejor[0] else '',
-         '#3fb950'),
-    ])
+    datos_indices_kpi  = {tk: d for tk, d in datos_base.items() if tk in tks_paises_all}
+    datos_sectores_kpi = {tk: d for tk, d in datos_base.items() if tk in tks_sectores_all}
+    datos_mercados_kpi = {tk: d for tk, d in datos_base.items() if tk in tks_mercados_all}
+    datos_forex_kpi    = {tk: d for tk, d in datos_base.items() if tk in tks_forex_all}
 
     # ── TAB: Índices ──────────────────────────────────────────────────────
     with tab_indices:
+        _kpi_resumen_seccion(datos_indices_kpi, 'índices')
+
         regiones = {}
         for nombre, (tk, region) in PAISES.items():
             regiones.setdefault(region, []).append((nombre, tk))
@@ -3242,6 +3258,8 @@ def modulo_inicio():
 
     # ── TAB: Sectores ─────────────────────────────────────────────────────
     with tab_sectores:
+        _kpi_resumen_seccion(datos_sectores_kpi, 'sectores')
+
         items_sec = [(nombre, tk) for nombre, (tk, _) in SECTORES.items()]
         _sec_inicio('Sectores S&P500', '📊', items_sec, datos_base)
 
@@ -3278,6 +3296,8 @@ def modulo_inicio():
 
     # ── TAB: Mercados ─────────────────────────────────────────────────────
     with tab_mercados:
+        _kpi_resumen_seccion(datos_mercados_kpi, 'mercados')
+
         cats_merc = {}
         for nombre, (tk, cat, _) in MERCADOS_REALES.items():
             cats_merc.setdefault(cat, []).append((nombre, tk))
@@ -3293,6 +3313,8 @@ def modulo_inicio():
 
     # ── TAB: Forex ────────────────────────────────────────────────────────
     with tab_forex:
+        _kpi_resumen_seccion(datos_forex_kpi, 'pares')
+
         grupos_fx = {}
         for nombre, (tk, grupo) in FOREX.items():
             grupos_fx.setdefault(grupo, []).append((nombre, tk))
@@ -3322,6 +3344,9 @@ def modulo_inicio():
         else:
             with st.spinner('Cargando precios de acciones...'):
                 datos_acc_ini = cargar_precios_acciones_inicio(tuple(ind_sel_ini))
+
+            # KPIs propios de Acciones, en base a las industrias seleccionadas
+            _kpi_resumen_seccion(datos_acc_ini, 'acciones seleccionadas')
 
             filas_acc = []
             for ind in ind_sel_ini:
@@ -3362,7 +3387,7 @@ def modulo_inicio():
 
                 st.caption(f'{len(df_acc_f)} acciones mostradas de {len(df_acc_ini)} totales')
 
-                # ── Cards agrupadas por industria (reemplaza la tabla) ──────
+                # ── Cards agrupadas por industria ────────────────────────
                 industrias_con_datos = [
                     ind for ind in ind_sel_ini
                     if (f_ind_ini == 'Todas' or f_ind_ini == ind)
