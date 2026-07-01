@@ -329,8 +329,8 @@ st.markdown("""
 
 @st.cache_resource
 def init_supabase():
-    url = st.secrets["https://atphpbxvevypjaaivynn.supabase.co"]
-    key = st.secrets["sb_publishable_QAz4MFFAPRlVzmyjtYTULA_wn91dTDw"]
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
 
 supabase = init_supabase()
