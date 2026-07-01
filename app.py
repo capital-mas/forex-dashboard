@@ -1,10 +1,12 @@
 # ==============================================================
 #  ANALIZADOR CUANTITATIVO UNIFICADO — v3
 #  Corto Plazo (Top-Down) + Mediano/Largo Plazo (Cuantitativo)
-#  + Buscador Universal + Comparador de Activos
+#  + Buscador Universal + Comparador de Activos + Optimizador de Cartera
 #  Cambios v3: Plotly interactivo, descargas en paralelo,
 #  comparador de tickers, cross-linking con un clic, glosario
 #  con tooltips, autocomplete en buscador, botones ovalados.
+#  Cambios v4: módulo Optimizador de Cartera (Monte Carlo + informe
+#  comparativo vs benchmark), integrado como módulo nativo de Streamlit.
 # ==============================================================
 
 
@@ -426,13 +428,13 @@ def G(term):
 
 
 ACCIONES_POR_INDUSTRIA = {
-    'Semiconductores':    ['NVDA','AMD','AVGO','TSM','ASML','QCOM','TXN','ADI','NXPI','MCHP', 'MRVL','ON','MU','INTC','ARM','GFS','STM','UMC','SNDK','MPWR', 'SYNA','QRVO','CRUS','LSCC','DIOD','RMBS','CEVA','AEHR','ALAB','ACLS', 'AMAT','LRCX','KLAC','TER','ONTO','UCTT','FORM','KLIC','CAMT','COHR', 'ENTG','SMTC','MTSI','POWI','VECO','HIMX','SIMO','INDI','MACOM','ICHR'],
-    'Software':           ['MSFT','ORCL','CRM','ADBE','SAP','NOW','INTU','WDAY','SNOW','PLTR', 'TEAM','HUBS','DOCU','MDB','DDOG','ESTC','BOX','ASAN','SMAR','PATH', 'PAYC','PAYX','TYL','PTC','ANSS','ADSK','GWRE','MANH','PEGA','APPF', 'NCNO','QTWO','SPSC','WK','FIVN','BILL','DUOL','GTLB','CFLT','ZI', 'BL','CVLT','PD','DBX','INFA','PCOR','RELY','MNDY','TWLO','FRSH'],
-    'Ciberseguridad':     ['CRWD','PANW','ZS','FTNT','OKTA','QLYS','TENB','RPD','VRNS','NET', 'CHKP','GEN','AKAM','CSCO','FFIV','EXTR','JNPR','RDWR','BB','OSIS', 'TLS','SCWX','S','NABL','CYXT','MSI','LDOS','LHX','SAIC','CACI', 'MRCY','ANET','VRSN','DOCN','BLZE','AI','IBM','ORCL','DDOG','NET'],
-    'Cloud/AI':           ['MSFT','AMZN','GOOGL','META','ORCL','IBM','SNOW','MDB','DDOG','NET', 'PLTR','AI','CFLT','ESTC','SMCI','DELL','NVDA','AMD','CRM','SAP', 'NOW','INTU','ADBE','PATH','AKAM','GTLB','APP','ANET','HPE','NTAP', 'PSTG','BOX','ASAN','ARM','TSM','AVGO','COHR','VRT','EQIX','DLR', 'CIEN','SNPS','CDNS','MU','SNDK','WDC','CRWV','DOCN','FSLY','RBRK'],
-    'Hardware/Equipos':   ['AAPL','DELL','HPE','HPQ','SMCI','CSCO','ANET','NTAP','PSTG','STX', 'WDC','SNDK','GLW','LOGI','JNPR','CIEN','KEYS','ZBRA','FLEX','SANM', 'ARW','JBL','APH','TEL','PLXS','FN','COMM','CRDO','LITE','COHR', 'IPGP','VSH','BELFA','TTMI','KLIC','CAMT','AEIS','MTSI','OLED','VRT', 'CDNS','SNPS','TER','ENTG','RMBS','SIMO','HIMX','AZTA','SMTC','FORM'],
-    'Fintech':            ['XYZ','PYPL','AFRM','SOFI','UPST','LC','ENVA','NU','STNE','PAGS', 'DLO','PAYO','MQ','FOUR','COIN','HOOD','GPN','FI','FIS','JKHY', 'EEFT','PAY','FLT','WU','RM','NVEI','PSFE','BILL','MARA','RIOT', 'CIFR','CLSK','IREN','BTDR','CORZ','GLXY','BMNR','HUT','BTM','ML'],
-    'Biotecnología':      ['AMGN','REGN','VRTX','GILD','BIIB','MRNA','BNTX','ALNY','INCY','EXEL', 'NBIX','HALO','IONS','LEGN','SRPT','CRSP','NTLA','BEAM','EDIT','RXRX', 'RNA','DNLI','ADPT','XENE','SANA','VERV','ARWR','FOLD','BMRN','TECH', 'ABCL','NTRA','GH','CDNA','PACB','TWST','ILMN','OMIC','RARE','ACAD', 'KYMR','CGON','IMVT','APLS','RVMD','MRUS','AUTL','BLUE','KROS','XNCR'],
+    'Semiconductores':    ['NVDA','AMD','INTC','TSM','ASML','QCOM','AVGO','MU','AMAT','LRCX'],
+    'Software':           ['MSFT','ORCL','CRM','ADBE','SAP','NOW','INTU','WDAY','SNOW','PLTR'],
+    'Ciberseguridad':     ['CRWD','PANW','ZS','FTNT','OKTA','S','CYBR','QLYS','TENB'],
+    'Cloud/AI':           ['AMZN','GOOGL','META','MSFT','ORCL','IBM','SNOW','MDB','DDOG','NET'],
+    'Hardware/Equipos':   ['AAPL','HPQ','HPE','DELL','STX','WDC','NTAP','PSTG','GLW'],
+    'Fintech':            ['PYPL','SQ','AFRM','UPST','SOFI','LC','ENVA'],
+    'Biotecnología':      ['MRNA','BNTX','REGN','VRTX','BIIB','GILD','AMGN','ILMN','BMRN'],
     'Farmacéuticas':      ['JNJ','PFE','LLY','ABBV','MRK','BMY','AZN','NVO'],
     'Equipos Médicos':    ['MDT','ABT','SYK','BSX','EW','ISRG','ZBH','BAX','BDX','HOLX'],
     'Servicios de Salud': ['UNH','CVS','CI','HUM','CNC','MOH','ELV','DVA'],
@@ -1037,6 +1039,79 @@ def cargar_resultados_largo(industrias_sel):
     df_res = pd.DataFrame(resultados).sort_values('global_score', ascending=False).reset_index(drop=True)
     df_res['rank'] = df_res.index + 1
     return df_res
+
+
+# ==============================================================
+#  DATOS INICIO — precios del día en bulk
+# ==============================================================
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_precios_inicio_base():
+    """Descarga precios del día (period=5d) para índices, sectores, mercados y forex en bulk.
+    TTL corto (5 min) para que la página de inicio se sienta viva."""
+    try:
+        import yfinance as yf
+        tks_paises   = [tk for tk, _ in PAISES.values()]
+        tks_sectores = [tk for tk, _ in SECTORES.values()]
+        tks_mercados = [tk for tk, _, _ in MERCADOS_REALES.values()]
+        tks_forex    = [tk for tk, _ in FOREX.values()]
+        todos = sorted(set(tks_paises + tks_sectores + tks_mercados + tks_forex))
+        df = yf.download(todos, period='5d', interval='1d',
+                         auto_adjust=True, progress=False, group_by='ticker')
+        if df is None or df.empty:
+            return {}
+        resultados = {}
+        for tk in todos:
+            try:
+                close = get_close_from_bulk(df, tk)
+                if close is None or len(close) < 2:
+                    continue
+                precio = float(close.iloc[-1])
+                previo = float(close.iloc[-2])
+                resultados[tk] = {
+                    'precio': precio,
+                    'cambio_pct': (precio / previo - 1) * 100,
+                    'cambio_abs': precio - previo,
+                }
+            except:
+                continue
+        return resultados
+    except:
+        return {}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_precios_acciones_inicio(industrias_tuple):
+    """Descarga precios del día para acciones de las industrias seleccionadas."""
+    try:
+        import yfinance as yf
+        tickers = sorted(set(t for ind in industrias_tuple
+                             for t in ACCIONES_POR_INDUSTRIA.get(ind, [])))
+        if not tickers:
+            return {}
+        df = yf.download(tickers, period='5d', interval='1d',
+                         auto_adjust=True, progress=False, group_by='ticker')
+        if df is None or df.empty:
+            return {}
+        resultados = {}
+        for tk in tickers:
+            try:
+                close = get_close_from_bulk(df, tk)
+                if close is None or len(close) < 2:
+                    continue
+                precio = float(close.iloc[-1])
+                previo = float(close.iloc[-2])
+                resultados[tk] = {
+                    'precio': precio,
+                    'cambio_pct': (precio / previo - 1) * 100,
+                    'cambio_abs': precio - previo,
+                }
+            except:
+                continue
+        return resultados
+    except:
+        return {}
 
 
 # ==============================================================
@@ -2592,13 +2667,749 @@ def modulo_comparador():
 
 
 # ==============================================================
+#  MÓDULO OPTIMIZADOR DE CARTERA — Monte Carlo + informe comparativo
+#  (Adaptado de script Colab/ipywidgets a Streamlit nativo)
+# ==============================================================
+
+
+TASA_LIBRE_RIESGO_OPT = 0.00
+
+
+def _opt_drawdown(equity_arr):
+    maximos = np.maximum.accumulate(equity_arr)
+    return equity_arr / maximos - 1
+
+
+def _opt_cagr_serie(ret):
+    ret = ret.dropna()
+    if len(ret) == 0: return np.nan
+    equity = (1 + ret).cumprod()
+    anios = len(ret) / 252
+    return equity.iloc[-1] ** (1 / anios) - 1 if anios > 0 else np.nan
+
+
+def _opt_metricas_completas(ret, ret_bench=None, rf=TASA_LIBRE_RIESGO_OPT):
+    ret = ret.dropna()
+    equity = (1 + ret).cumprod()
+    anios = len(ret) / 252
+    cagr = equity.iloc[-1] ** (1 / anios) - 1
+    rent_acum = equity.iloc[-1] - 1
+    vol = ret.std() * np.sqrt(252)
+    sharpe = (cagr - rf) / vol if vol != 0 else np.nan
+    downside = ret[ret < 0].std() * np.sqrt(252)
+    sortino = (cagr - rf) / downside if downside != 0 else np.nan
+    dd = pd.Series(_opt_drawdown(equity.values), index=equity.index)
+    max_dd = dd.min()
+    calmar = cagr / abs(max_dd) if max_dd != 0 else np.nan
+    ulcer = np.sqrt(np.mean((dd[dd < 0] * 100) ** 2)) if (dd < 0).any() else 0.0
+
+    maximos = equity.cummax()
+    dias, max_dias = 0, 0
+    eq_vals = equity.values; max_vals = maximos.values
+    for i in range(len(eq_vals)):
+        if eq_vals[i] < max_vals[i]:
+            dias += 1; max_dias = max(max_dias, dias)
+        else:
+            dias = 0
+    recuperacion = max_dias
+
+    var95 = np.percentile(ret, 5)
+    cvar95 = ret[ret <= var95].mean()
+
+    meses = ret.resample('ME').apply(lambda x: (1 + x).prod() - 1)
+    meses_pos = int((meses > 0).sum()); meses_neg = int((meses < 0).sum())
+    mejor_mes = meses.max() if len(meses) else np.nan
+    peor_mes = meses.min() if len(meses) else np.nan
+
+    if ret_bench is not None:
+        ret_bench = ret_bench.dropna()
+        cov = np.cov(ret, ret_bench)[0, 1]
+        var_b = np.var(ret_bench)
+        beta = cov / var_b if var_b != 0 else np.nan
+        cagr_b = _opt_cagr_serie(ret_bench)
+        alpha = cagr - (rf + beta * (cagr_b - rf))
+        track_err = (ret - ret_bench).std() * np.sqrt(252)
+        info_ratio = (cagr - cagr_b) / track_err if track_err != 0 else np.nan
+        corr = ret.corr(ret_bench)
+        prob_sup = (ret > ret_bench).mean()
+    else:
+        beta, alpha, track_err, info_ratio = 1.0, 0.0, 0.0, np.nan
+        corr, prob_sup = 1.0, np.nan
+
+    return {
+        'CAGR': cagr, 'Rentabilidad Acumulada': rent_acum, 'Volatilidad': vol,
+        'Sharpe': sharpe, 'Sortino': sortino, 'Max Drawdown': max_dd, 'Calmar': calmar,
+        'Ulcer Index': ulcer, 'Tiempo Recuperacion': recuperacion, 'Beta': beta,
+        'Alpha': alpha, 'Tracking Error': track_err, 'Information Ratio': info_ratio,
+        'VaR 95%': var95, 'CVaR 95%': cvar95, 'Meses Positivos': meses_pos,
+        'Meses Negativos': meses_neg, 'Mejor Mes': mejor_mes, 'Peor Mes': peor_mes,
+        'Correlacion Benchmark': corr, 'Prob Superar Benchmark': prob_sup,
+        'Equity': equity, 'Drawdown': dd,
+    }
+
+
+def _opt_pct(x):
+    return f'{x*100:.2f}%' if x is not None and not pd.isna(x) else '-'
+
+
+def _opt_estrellas(v):
+    if v is None or pd.isna(v): return ''
+    if v >= 2: return '★★★★★'
+    if v >= 1.5: return '★★★★'
+    if v >= 1: return '★★★'
+    if v >= 0.5: return '★★'
+    return '★'
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _opt_descargar_precios(universo_tuple, fecha_inicio):
+    try:
+        import yfinance as yf
+        universo = sorted(universo_tuple)
+        data = yf.download(universo, start=fecha_inicio, auto_adjust=True, progress=False)
+        if data is None or data.empty: return None
+        if isinstance(data.columns, pd.MultiIndex):
+            precios = data['Close'].copy()
+        else:
+            precios = data.copy()
+            if len(universo) == 1 and 'Close' in precios.columns:
+                precios = precios[['Close']].rename(columns={'Close': universo[0]})
+        return precios.dropna()
+    except Exception:
+        return None
+
+
+def _opt_simular_carteras(retornos, tickers, simulaciones, rf=TASA_LIBRE_RIESGO_OPT, seed=42):
+    rng = np.random.default_rng(seed)
+    n = len(tickers)
+    pesos = rng.dirichlet(np.ones(n), size=simulaciones)            # (sims, n)
+    ret_mat = retornos[tickers].values                              # (days, n)
+    ret_cart = ret_mat @ pesos.T                                    # (days, sims)
+
+    equity = np.cumprod(1 + ret_cart, axis=0)
+    anios = ret_cart.shape[0] / 252
+    cagr = equity[-1, :] ** (1 / anios) - 1
+    vol = ret_cart.std(axis=0, ddof=1) * np.sqrt(252)
+    sharpe = np.where(vol != 0, (cagr - rf) / vol, np.nan)
+
+    neg = np.where(ret_cart < 0, ret_cart, np.nan)
+    with np.errstate(invalid='ignore'):
+        downside = np.nanstd(neg, axis=0) * np.sqrt(252)
+    sortino = np.where(downside != 0, (cagr - rf) / downside, np.nan)
+
+    running_max = np.maximum.accumulate(equity, axis=0)
+    dd = equity / running_max - 1
+    max_dd = dd.min(axis=0)
+    calmar = np.where(max_dd != 0, cagr / np.abs(max_dd), np.nan)
+
+    df = pd.DataFrame({
+        'CAGR': cagr, 'Volatilidad': vol, 'Sharpe': sharpe, 'Sortino': sortino,
+        'Max Drawdown': max_dd, 'Calmar': calmar,
+    })
+    for i, tk in enumerate(tickers):
+        df[tk] = pesos[:, i]
+
+    df['Score Global'] = (
+        df['CAGR'].rank(pct=True) * 0.35 +
+        df['Sharpe'].rank(pct=True) * 0.25 +
+        df['Sortino'].rank(pct=True) * 0.20 +
+        df['Calmar'].rank(pct=True) * 0.10 +
+        (1 - df['Max Drawdown'].abs().rank(pct=True)) * 0.10
+    )
+    return df
+
+
+def _opt_fig_equity(series_dict, capital_inicial, benchmark):
+    fig = go.Figure()
+    palette = [C_MONSTER, C_ACENT, '#bc8cff', C_YELL, C_LGRE]
+    for i, (nombre, eq) in enumerate(series_dict.items()):
+        valores = capital_inicial * eq
+        dash = 'dash' if nombre == benchmark else 'solid'
+        color = C_RED if nombre == benchmark else palette[i % len(palette)]
+        fig.add_trace(go.Scatter(x=valores.index, y=valores, name=nombre,
+            line=dict(color=color, width=2.2, dash=dash)))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text=f'Evolución de USD {capital_inicial:,.0f}', font=dict(color=C_TEXT, size=14)),
+        xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='Valor de la inversión'),
+        height=460, hovermode='x unified', legend=dict(orientation='h', y=1.1),
+        margin=dict(l=10, r=10, t=50, b=10),
+    )
+    return fig
+
+
+def _opt_fig_drawdown(dd_dict, benchmark):
+    fig = go.Figure()
+    palette = [C_MONSTER, C_ACENT, '#bc8cff', C_YELL, C_LGRE]
+    for i, (nombre, dd) in enumerate(dd_dict.items()):
+        dash = 'dash' if nombre == benchmark else 'solid'
+        color = C_RED if nombre == benchmark else palette[i % len(palette)]
+        fig.add_trace(go.Scatter(x=dd.index, y=dd*100, name=nombre, line=dict(color=color, width=1.6, dash=dash)))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text='Drawdown histórico comparado', font=dict(color=C_TEXT, size=14)),
+        xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='Caída desde máximo (%)'),
+        height=380, hovermode='x unified', legend=dict(orientation='h', y=1.1),
+        margin=dict(l=10, r=10, t=50, b=10),
+    )
+    return fig
+
+
+def _opt_fig_corr(corr):
+    fig = go.Figure(data=go.Heatmap(
+        z=corr.values, x=list(corr.columns), y=list(corr.index),
+        colorscale='RdBu', zmin=-1, zmax=1, reversescale=True,
+        text=np.round(corr.values, 2), texttemplate='%{text}',
+        colorbar=dict(title='Corr'),
+    ))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text='Correlación entre activos', font=dict(color=C_TEXT, size=14)),
+        height=max(360, len(corr)*32), margin=dict(l=10, r=10, t=45, b=10),
+    )
+    return fig
+
+
+def _opt_fig_frontera(df_sim, carteras_candidatas, vol_bench, cagr_bench, benchmark):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df_sim['Volatilidad'], y=df_sim['CAGR'], mode='markers',
+        marker=dict(size=5, color=df_sim['Sharpe'], colorscale='Viridis',
+                    colorbar=dict(title='Sharpe'), opacity=0.45),
+        name='Simulaciones', hovertemplate='Vol: %{x:.2%}<br>CAGR: %{y:.2%}<extra></extra>',
+    ))
+    simbolos = ['star', 'diamond', 'cross', 'square', 'triangle-up']
+    colores_c = [C_MONSTER, C_ACENT, '#bc8cff', C_YELL, C_LGRE]
+    for (nombre, cart), simb, col in zip(carteras_candidatas.items(), simbolos, colores_c):
+        fig.add_trace(go.Scatter(
+            x=[cart['Volatilidad']], y=[cart['CAGR']], mode='markers',
+            marker=dict(size=16, symbol=simb, color=col, line=dict(width=1.5, color='#0d1117')),
+            name=nombre,
+        ))
+    fig.add_trace(go.Scatter(
+        x=[vol_bench], y=[cagr_bench], mode='markers',
+        marker=dict(size=16, symbol='circle', color=C_RED, line=dict(width=1.5, color='#0d1117')),
+        name=benchmark,
+    ))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text='Frontera eficiente simulada', font=dict(color=C_TEXT, size=14)),
+        xaxis=dict(title='Volatilidad anual', tickformat='.0%', gridcolor=C_GRID),
+        yaxis=dict(title='CAGR', tickformat='.0%', gridcolor=C_GRID),
+        height=520, legend=dict(orientation='h', y=1.12), margin=dict(l=10, r=10, t=50, b=10),
+    )
+    return fig
+
+
+def modulo_optimizador():
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#150d20 0%,#1c0a30 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #bc8cff;
+         border-radius:14px; padding:28px 32px; margin-bottom:24px;">
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🧮 Optimizador de Cartera</div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+        Simulación Monte Carlo sobre los activos elegidos: encuentra 5 carteras candidatas
+        (más rentable, mejor Sharpe, mejor Sortino, menor drawdown y recomendada por Score Global)
+        y las compara entre sí y contra un benchmark, con informe descargable en Excel.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if 'opt_tickers' not in st.session_state:
+        st.session_state['opt_tickers'] = ['VIST', 'PFE', 'MU', 'SPXL', 'TQQQ', 'GDX', 'SLV', 'XLE', 'GGAL']
+
+    c_add, c_btn = st.columns([4, 1])
+    with c_add:
+        nuevo_opt = selector_ticker_autocomplete('opt_add')
+    with c_btn:
+        st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+        if st.button('➕ Agregar', use_container_width=True, key='opt_add_btn'):
+            if nuevo_opt and nuevo_opt not in st.session_state['opt_tickers'] and len(st.session_state['opt_tickers']) < 15:
+                st.session_state['opt_tickers'].append(nuevo_opt)
+                st.rerun()
+
+    if st.session_state['opt_tickers']:
+        st.markdown('<div style="margin:10px 0 4px 0;font-size:11px;color:#6b7d9a">Activos en la cartera (clic para quitar):</div>', unsafe_allow_html=True)
+        lista_opt = st.session_state['opt_tickers']
+        n_chip_cols = min(max(len(lista_opt), 1), 8)
+        cols_chip = st.columns(n_chip_cols)
+        for i, tk in enumerate(lista_opt):
+            with cols_chip[i % n_chip_cols]:
+                if st.button(f'✕ {tk}', key=f'opt_rm_{tk}_{i}', use_container_width=True):
+                    st.session_state['opt_tickers'].remove(tk)
+                    st.rerun()
+
+    if len(st.session_state['opt_tickers']) < 2:
+        st.info('Agregá al menos 2 activos para poder optimizar la cartera.')
+        return
+
+    st.markdown('---')
+    cb1, cb2, cb3 = st.columns(3)
+    with cb1:
+        bench_opciones = {
+            'S&P 500 (SPY)': 'SPY', 'Nasdaq 100 (QQQ)': 'QQQ', 'Dow Jones (DIA)': 'DIA',
+            'Russell 2000 (IWM)': 'IWM', 'Mercado total EE.UU. (VTI)': 'VTI',
+            'Innovación / growth (ARKK)': 'ARKK', 'Mercados emergentes (EEM)': 'EEM',
+        }
+        bench_label = st.selectbox('Benchmark', list(bench_opciones.keys()), key='opt_bench_sel')
+        benchmark_opt = bench_opciones[bench_label]
+    with cb2:
+        capital_opt = st.number_input('Capital inicial (USD)', min_value=100.0, value=10000.0, step=500.0, key='opt_capital')
+    with cb3:
+        sim_opt = st.slider('Simulaciones', 1000, 30000, 10000, 1000, key='opt_sims')
+
+    fecha_inicio_opt = st.text_input('Fecha de inicio del histórico (AAAA-MM-DD)', value='2019-01-01', key='opt_fecha')
+
+    correr = st.button('▶ Ejecutar análisis', key='opt_run', type='primary')
+
+    if not correr and not st.session_state.get('opt_resultado_ok'):
+        return
+    if correr:
+        st.session_state['opt_resultado_ok'] = True
+
+    tickers_opt = sorted(set(st.session_state['opt_tickers']))
+    if benchmark_opt in tickers_opt:
+        st.warning(f"'{benchmark_opt}' está tanto entre los activos como en el benchmark elegido. Se lo deja en ambos lados, tenelo en cuenta al leer los resultados.")
+
+    with st.spinner('Descargando precios históricos...'):
+        universo_opt = tuple(sorted(set(tickers_opt) | {benchmark_opt}))
+        precios_opt = _opt_descargar_precios(universo_opt, fecha_inicio_opt)
+
+    if precios_opt is None or precios_opt.empty:
+        st.error('No se pudieron descargar precios. Revisá que los tickers y el benchmark sean válidos en Yahoo Finance.')
+        return
+
+    faltantes = [t for t in universo_opt if t not in precios_opt.columns]
+    if faltantes:
+        st.warning(f"No se encontraron datos para: {', '.join(faltantes)}. Se excluyen del análisis.")
+        tickers_opt = [t for t in tickers_opt if t not in faltantes]
+        if benchmark_opt in faltantes or len(tickers_opt) < 2:
+            st.error('No hay suficientes activos válidos para continuar.')
+            return
+
+    retornos_opt = precios_opt[tickers_opt].pct_change().dropna()
+    ret_bench_opt = precios_opt[benchmark_opt].pct_change().dropna()
+    fechas_comunes = retornos_opt.index.intersection(ret_bench_opt.index)
+    retornos_opt = retornos_opt.loc[fechas_comunes]
+    ret_bench_opt = ret_bench_opt.loc[fechas_comunes]
+
+    if len(retornos_opt) < 100:
+        st.error('Muy pocas ruedas de historial común entre los activos y el benchmark. Probá una fecha de inicio más reciente o cambiá algún ticker.')
+        return
+
+    st.caption(f"📅 Período: {retornos_opt.index[0].date()} → {retornos_opt.index[-1].date()} · {len(retornos_opt)} ruedas")
+
+    with st.spinner(f'Simulando {sim_opt:,} carteras...'):
+        df_sim = _opt_simular_carteras(retornos_opt, tickers_opt, sim_opt)
+
+    candidatas_idx = {
+        'Más Rentable': df_sim['CAGR'].idxmax(),
+        'Mejor Sharpe': df_sim['Sharpe'].idxmax(),
+        'Mejor Sortino': df_sim['Sortino'].idxmax(),
+        'Menor Drawdown': df_sim['Max Drawdown'].idxmax(),  # el menos negativo
+        'Recomendada (Score Global)': df_sim['Score Global'].idxmax(),
+    }
+    carteras_candidatas = {nombre: df_sim.loc[idx] for nombre, idx in candidatas_idx.items()}
+
+    series_ret, metricas_cart = {}, {}
+    for nombre, cart in carteras_candidatas.items():
+        pesos_arr = cart[tickers_opt].values.astype(float)
+        ret_serie = retornos_opt[tickers_opt] @ pesos_arr
+        series_ret[nombre] = ret_serie
+        metricas_cart[nombre] = _opt_metricas_completas(ret_serie, ret_bench_opt)
+    series_ret[benchmark_opt] = ret_bench_opt
+    metricas_cart[benchmark_opt] = _opt_metricas_completas(ret_bench_opt, None)
+    nombres_col = list(carteras_candidatas.keys()) + [benchmark_opt]
+
+    st.markdown('### 🏆 Carteras candidatas')
+    for nombre, cart in carteras_candidatas.items():
+        m = metricas_cart[nombre]
+        with st.expander(
+            f"{nombre} — CAGR {_opt_pct(m['CAGR'])} · Sharpe {m['Sharpe']:.2f} {_opt_estrellas(m['Sharpe'])}",
+            expanded=(nombre == 'Recomendada (Score Global)')
+        ):
+            kpi_cards_4([
+                ('CAGR', _opt_pct(m['CAGR']), 'Anualizado', '#3fb950'),
+                ('Volatilidad', _opt_pct(m['Volatilidad']), 'Anual', '#e3b341'),
+                ('Sharpe', f"{m['Sharpe']:.2f}", _opt_estrellas(m['Sharpe']), '#3a7bd5'),
+                ('Max Drawdown', _opt_pct(m['Max Drawdown']), f"Recup: {m['Tiempo Recuperacion']} ruedas", '#f85149'),
+            ])
+            pesos_orden = cart[tickers_opt].sort_values(ascending=False)
+            txt_pesos = ' · '.join(f"{tk}: {p*100:.1f}%" for tk, p in pesos_orden.items() if p > 0.005)
+            st.markdown(f"<div style='font-size:12px;color:#b0bcd0'>{txt_pesos}</div>", unsafe_allow_html=True)
+
+    st.markdown('---')
+    st.markdown(f'### 📋 Tabla comparativa vs {benchmark_opt}')
+
+    filas_m = ['CAGR','Rentabilidad Acumulada','Volatilidad','Sharpe','Sortino','Calmar','Max Drawdown',
+               'Ulcer Index','Beta','Alpha','Tracking Error','Information Ratio','VaR 95%','CVaR 95%',
+               'Meses Positivos','Meses Negativos','Mejor Mes','Peor Mes','Tiempo Recuperacion',
+               'Correlacion Benchmark','Prob Superar Benchmark']
+    pct_fields = {'CAGR','Rentabilidad Acumulada','Volatilidad','Max Drawdown','Alpha','Tracking Error',
+                  'VaR 95%','CVaR 95%','Mejor Mes','Peor Mes','Prob Superar Benchmark'}
+    tabla_cmp = {}
+    for nombre in nombres_col:
+        m = metricas_cart[nombre]
+        col_vals = []
+        for clave in filas_m:
+            v = m[clave]
+            if clave in {'Meses Positivos','Meses Negativos','Tiempo Recuperacion'}:
+                col_vals.append(f'{v}')
+            elif clave in pct_fields:
+                col_vals.append(_opt_pct(v))
+            else:
+                col_vals.append(f'{v:.2f}' if v is not None and not pd.isna(v) else '-')
+        tabla_cmp[nombre] = col_vals
+    df_cmp_opt = pd.DataFrame(tabla_cmp, index=filas_m)
+    st.dataframe(df_cmp_opt, use_container_width=True, height=min(700, len(filas_m)*35+45))
+
+    st.markdown('### 📅 Rentabilidad por año')
+    rent_anual = pd.DataFrame({n: s.resample('YE').apply(lambda x: (1+x).prod()-1) for n, s in series_ret.items()})
+    rent_anual.index = rent_anual.index.year
+    st.dataframe(rent_anual.style.format('{:.2%}'), use_container_width=True)
+
+    cap_final = {n: capital_opt * metricas_cart[n]['Equity'].iloc[-1] for n in nombres_col}
+    st.markdown('### 💵 Capital final simulado')
+    df_cap = pd.DataFrame({'Cartera': list(cap_final.keys()), 'Capital Final': list(cap_final.values())}).sort_values('Capital Final', ascending=False)
+    df_cap['Capital Final'] = df_cap['Capital Final'].apply(lambda v: f'USD {v:,.2f}')
+    st.dataframe(df_cap, use_container_width=True, hide_index=True)
+
+    st.markdown('---')
+    tabg1, tabg2, tabg3, tabg4 = st.tabs(['📈 Evolución capital', '📉 Drawdown', '🔥 Correlación', '🗺️ Frontera eficiente'])
+    with tabg1:
+        eq_dict = {n: metricas_cart[n]['Equity'] for n in nombres_col}
+        st.plotly_chart(_opt_fig_equity(eq_dict, capital_opt, benchmark_opt), use_container_width=True, key='opt_equity_fig')
+    with tabg2:
+        dd_dict = {n: metricas_cart[n]['Drawdown'] for n in nombres_col}
+        st.plotly_chart(_opt_fig_drawdown(dd_dict, benchmark_opt), use_container_width=True, key='opt_dd_fig')
+    with tabg3:
+        corr_opt = retornos_opt[tickers_opt].corr()
+        st.plotly_chart(_opt_fig_corr(corr_opt), use_container_width=True, key='opt_corr_fig')
+    with tabg4:
+        vol_b = ret_bench_opt.std() * np.sqrt(252)
+        cagr_b = _opt_cagr_serie(ret_bench_opt)
+        st.plotly_chart(_opt_fig_frontera(df_sim, carteras_candidatas, vol_b, cagr_b, benchmark_opt), use_container_width=True, key='opt_frontera_fig')
+
+    st.markdown('---')
+    mejor_nombre_opt = max((n for n in nombres_col if n != benchmark_opt), key=lambda n: metricas_cart[n]['Sharpe'])
+    m_mejor, m_bench = metricas_cart[mejor_nombre_opt], metricas_cart[benchmark_opt]
+    if m_mejor['CAGR'] > m_bench['CAGR'] and m_mejor['Sharpe'] > m_bench['Sharpe']:
+        veredicto = f"superó a {benchmark_opt} tanto en rentabilidad como en eficiencia riesgo-retorno."
+    elif m_mejor['CAGR'] > m_bench['CAGR']:
+        veredicto = f"superó a {benchmark_opt} en rentabilidad, aunque con más riesgo."
+    else:
+        veredicto = f"no superó claramente a {benchmark_opt}. Conviene revisar los activos elegidos."
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">🏁 Veredicto — {mejor_nombre_opt}</div>
+      De las 5 carteras candidatas, la de mejor Sharpe es <b>{mejor_nombre_opt}</b> y {veredicto}<br>
+      <span style="color:#6b7d9a;font-size:11px">Basado en datos históricos y simulación — no garantiza resultados futuros, no es asesoramiento financiero.</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+
+
+
+
+# ==============================================================
+#  MÓDULO INICIO — cotizaciones del día por sección
+# ==============================================================
+
+
+def _cards_html(items_config, datos_precios):
+    """Genera HTML de grilla de cards de cotización.
+    items_config: lista de (display_name, ticker)
+    datos_precios: dict {ticker: {precio, cambio_pct, cambio_abs}}
+    """
+    cards = []
+    for nombre, tk in items_config:
+        d = datos_precios.get(tk)
+        if not d:
+            cards.append(f"""
+            <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #21262d;
+                 border-radius:8px;padding:12px 14px;min-width:0">
+              <div style="font-size:11px;font-weight:700;color:#8b949e;font-family:'JetBrains Mono',monospace">{tk}</div>
+              <div style="font-size:10px;color:#3a4a5f;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{nombre[:22]}</div>
+              <div style="font-size:14px;color:#3a4a5f">S/D</div>
+            </div>""")
+            continue
+
+        precio   = d['precio']
+        pct      = d['cambio_pct']
+        abs_c    = d['cambio_abs']
+        color    = '#3fb950' if pct >= 0 else '#f85149'
+        flecha   = '▲' if pct >= 0 else '▼'
+        pct_str  = f'{flecha} {abs(pct):.2f}%'
+
+        # formato del cambio absoluto según magnitud del precio
+        if abs(precio) >= 1000:
+            abs_str = f'{abs_c:+.2f}'
+        elif abs(precio) >= 1:
+            abs_str = f'{abs_c:+.3f}'
+        else:
+            abs_str = f'{abs_c:+.6f}'
+
+        cards.append(f"""
+        <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid {color};
+             border-radius:8px;padding:12px 14px;min-width:0">
+          <div style="font-size:11px;font-weight:700;color:#e6edf3;font-family:'JetBrains Mono',monospace;
+               white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{tk}</div>
+          <div style="font-size:10px;color:#6b7d9a;margin-bottom:8px;white-space:nowrap;overflow:hidden;
+               text-overflow:ellipsis" title="{nombre}">{nombre[:22]}</div>
+          <div style="font-size:15px;font-weight:700;color:#e6edf3;font-family:'JetBrains Mono',monospace">{fmt_precio(precio)}</div>
+          <div style="font-size:12px;font-weight:700;color:{color};margin-top:3px">{pct_str}</div>
+          <div style="font-size:10px;color:#6b7d9a;margin-top:1px">{abs_str}</div>
+        </div>""")
+
+    html = (
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));'
+        'gap:8px;margin-bottom:4px">'
+        + ''.join(cards)
+        + '</div>'
+    )
+    return html
+
+
+def _sec_inicio(titulo, icono, items_config, datos_precios):
+    """Renderiza un bloque de sección con título y grilla de cards."""
+    st.markdown(
+        f'<div class="sec-title">{icono} {titulo}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(_cards_html(items_config, datos_precios), unsafe_allow_html=True)
+
+
+def modulo_inicio():
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #e3b341;
+         border-radius:14px; padding:22px 28px; margin-bottom:20px;">
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:4px">
+        📊 Cotizaciones del día
+      </div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
+        Precios y variación diaria para índices, sectores, mercados, forex y acciones.
+        Datos de Yahoo Finance · caché 5 min · tocá <b style="color:#e6edf3">↺ Actualizar</b> para forzar recarga.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Tabs principales ─────────────────────────────────────────────────
+    tab_indices, tab_sectores, tab_mercados, tab_forex, tab_acciones = st.tabs([
+        '🌍 Índices', '📊 Sectores', '🛢️ Mercados', '💱 Forex', '📈 Acciones',
+    ])
+
+    with st.spinner('Cargando cotizaciones...'):
+        datos_base = cargar_precios_inicio_base()
+
+    # ── Resumen rápido (KPIs) ─────────────────────────────────────────────
+    todos_pct = [d['cambio_pct'] for d in datos_base.values()]
+    n_sub  = sum(1 for v in todos_pct if v > 0.2)
+    n_baj  = sum(1 for v in todos_pct if v < -0.2)
+    n_neu  = len(todos_pct) - n_sub - n_baj
+    mejor  = max(datos_base.items(), key=lambda x: x[1]['cambio_pct'], default=(None, {'cambio_pct': 0}))
+    peor   = min(datos_base.items(), key=lambda x: x[1]['cambio_pct'], default=(None, {'cambio_pct': 0}))
+
+    kpi_cards_4([
+        ('Subiendo hoy',   str(n_sub),
+         f'de {len(todos_pct)} activos base',  '#3fb950'),
+        ('Bajando hoy',    str(n_baj),
+         f'de {len(todos_pct)} activos base',  '#f85149'),
+        ('Neutros',        str(n_neu),
+         'variación < ±0.2%',                   '#e3b341'),
+        ('Mejor del día',
+         mejor[0] or '-',
+         f"{mejor[1]['cambio_pct']:+.2f}%" if mejor[0] else '',
+         '#3fb950'),
+    ])
+
+    # ── TAB: Índices ──────────────────────────────────────────────────────
+    with tab_indices:
+        regiones = {}
+        for nombre, (tk, region) in PAISES.items():
+            regiones.setdefault(region, []).append((nombre, tk))
+
+        for region, items in regiones.items():
+            color_r = COLORES_REGION.get(region, C_MONSTER)
+            st.markdown(
+                f'<div style="font-size:11px;font-weight:700;color:{color_r};'
+                f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
+                f'◆ {region}</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(_cards_html(items, datos_base), unsafe_allow_html=True)
+
+    # ── TAB: Sectores ─────────────────────────────────────────────────────
+    with tab_sectores:
+        items_sec = [(nombre, tk) for nombre, (tk, _) in SECTORES.items()]
+        _sec_inicio('Sectores S&P500', '📊', items_sec, datos_base)
+
+        # mini-ranking subida/baja
+        filas_sec = []
+        for nombre, (tk, _) in SECTORES.items():
+            d = datos_base.get(tk)
+            if d:
+                filas_sec.append({
+                    'Sector': nombre, 'ETF': tk,
+                    'Precio': fmt_precio(d['precio']),
+                    'Cambio %': round(d['cambio_pct'], 2),
+                    'Cambio $': round(d['cambio_abs'], 3),
+                })
+        if filas_sec:
+            df_sec = pd.DataFrame(filas_sec).sort_values('Cambio %', ascending=False)
+            def _color_pct(v):
+                try:
+                    return f'color:{"#3fb950" if float(v) >= 0 else "#f85149"};font-weight:700'
+                except:
+                    return ''
+            _m = 'map' if hasattr(df_sec.style, 'map') else 'applymap'
+            styled_sec = (df_sec.style
+                .pipe(lambda s: getattr(s, _m)(_color_pct, subset=['Cambio %', 'Cambio $']))
+                .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+                .set_table_styles([
+                    {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                     ('font-weight', '700'), ('text-align', 'center'),
+                     ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                    {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+                ])
+            )
+            st.dataframe(styled_sec, use_container_width=True, height=min(440, len(df_sec) * 35 + 45), hide_index=True)
+
+    # ── TAB: Mercados ─────────────────────────────────────────────────────
+    with tab_mercados:
+        cats_merc = {}
+        for nombre, (tk, cat, _) in MERCADOS_REALES.items():
+            cats_merc.setdefault(cat, []).append((nombre, tk))
+
+        for cat, items in cats_merc.items():
+            st.markdown(
+                f'<div style="font-size:11px;font-weight:700;color:#f0883e;'
+                f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
+                f'◆ {cat}</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(_cards_html(items, datos_base), unsafe_allow_html=True)
+
+    # ── TAB: Forex ────────────────────────────────────────────────────────
+    with tab_forex:
+        grupos_fx = {}
+        for nombre, (tk, grupo) in FOREX.items():
+            grupos_fx.setdefault(grupo, []).append((nombre, tk))
+
+        for grupo, items in grupos_fx.items():
+            color_fx = COLORES_GRUPO_FX.get(grupo, C_MONSTER)
+            st.markdown(
+                f'<div style="font-size:11px;font-weight:700;color:{color_fx};'
+                f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
+                f'◆ {grupo}</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(_cards_html(items, datos_base), unsafe_allow_html=True)
+
+    # ── TAB: Acciones ─────────────────────────────────────────────────────
+    with tab_acciones:
+        ind_disp_ini = list(ACCIONES_POR_INDUSTRIA.keys())
+        ind_sel_ini  = st.multiselect(
+            'Industrias', ind_disp_ini,
+            default=ind_disp_ini[:3],
+            key='inicio_ind_sel',
+            help='Elegí una o más industrias para ver sus cotizaciones del día.',
+        )
+
+        if not ind_sel_ini:
+            st.info('Seleccioná al menos una industria para ver cotizaciones.')
+        else:
+            with st.spinner('Cargando precios de acciones...'):
+                datos_acc_ini = cargar_precios_acciones_inicio(tuple(ind_sel_ini))
+
+            # Tabla completa ordenable
+            filas_acc = []
+            for ind in ind_sel_ini:
+                for tk in ACCIONES_POR_INDUSTRIA.get(ind, []):
+                    d = datos_acc_ini.get(tk)
+                    if d:
+                        filas_acc.append({
+                            'Ticker': tk,
+                            'Industria': ind,
+                            'Precio': d['precio'],
+                            'Cambio %': round(d['cambio_pct'], 2),
+                            'Cambio $': round(d['cambio_abs'], 4),
+                        })
+
+            if not filas_acc:
+                st.warning('No se pudieron cargar datos. Intentá ↺ Actualizar.')
+            else:
+                df_acc_ini = pd.DataFrame(filas_acc).sort_values('Cambio %', ascending=False)
+
+                # Filtros rápidos
+                fc1, fc2, fc3 = st.columns(3)
+                with fc1:
+                    inds_u_ini = ['Todas'] + sorted(df_acc_ini['Industria'].unique().tolist())
+                    f_ind_ini  = st.selectbox('Industria', inds_u_ini, key='ini_f_ind')
+                with fc2:
+                    f_dir = st.selectbox('Dirección', ['Todas', '▲ Subiendo', '▼ Bajando'], key='ini_f_dir')
+                with fc3:
+                    f_pct_ini = st.slider('Cambio % mín/máx', -30.0, 30.0, (-30.0, 30.0), 0.5, key='ini_f_pct')
+
+                df_acc_f = df_acc_ini.copy()
+                if f_ind_ini != 'Todas':
+                    df_acc_f = df_acc_f[df_acc_f['Industria'] == f_ind_ini]
+                if f_dir == '▲ Subiendo':
+                    df_acc_f = df_acc_f[df_acc_f['Cambio %'] > 0]
+                elif f_dir == '▼ Bajando':
+                    df_acc_f = df_acc_f[df_acc_f['Cambio %'] < 0]
+                df_acc_f = df_acc_f[df_acc_f['Cambio %'].between(*f_pct_ini)]
+
+                # Formato precio
+                df_acc_show = df_acc_f.copy()
+                df_acc_show['Precio'] = df_acc_show['Precio'].apply(fmt_precio)
+
+                def _color_pct_acc(v):
+                    try:
+                        return f'color:{"#3fb950" if float(v) >= 0 else "#f85149"};font-weight:700'
+                    except:
+                        return ''
+
+                _m2 = 'map' if hasattr(df_acc_show.style, 'map') else 'applymap'
+                styled_acc = (df_acc_show.style
+                    .pipe(lambda s: getattr(s, _m2)(_color_pct_acc, subset=['Cambio %', 'Cambio $']))
+                    .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+                    .set_table_styles([
+                        {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                         ('font-weight', '700'), ('text-align', 'center'),
+                         ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                        {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+                    ])
+                )
+                st.caption(f'{len(df_acc_show)} acciones mostradas de {len(df_acc_ini)} totales')
+                st.dataframe(styled_acc, use_container_width=True,
+                             height=min(700, max(200, len(df_acc_show) * 32 + 45)),
+                             hide_index=True)
+
+                # Cards visuales por industria (colapsables)
+                st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+                for ind in ind_sel_ini:
+                    tks_ind = [tk for tk in ACCIONES_POR_INDUSTRIA.get(ind, [])
+                               if tk in datos_acc_ini]
+                    if not tks_ind:
+                        continue
+                    with st.expander(f'📂 {ind} — cards ({len(tks_ind)} activos)', expanded=False):
+                        items_ind = [(tk, tk) for tk in tks_ind]
+                        st.markdown(_cards_html(items_ind, datos_acc_ini), unsafe_allow_html=True)
+
+                # Chips para ir al buscador
+                chips_navegacion(df_acc_show['Ticker'].tolist(), 'inicio_acc')
+
+
+# ==============================================================
 #  ESTADO DE NAVEGACIÓN
 # ==============================================================
 
 
 for key, default in [
-    ('nav_horizonte', 'corto'),
-    ('nav_modulo', 'resumen'),
+    ('nav_horizonte', 'inicio'),
+    ('nav_modulo', 'inicio'),
     ('nav_ind_sel_corto', list(ACCIONES_POR_INDUSTRIA.keys())[:1]),
     ('nav_ind_sel_largo', list(ACCIONES_POR_INDUSTRIA.keys())[:1]),
     ('nav_grupos_fx', list(dict.fromkeys(v[1] for v in FOREX.values()))),
@@ -2617,8 +3428,8 @@ for key, default in [
 
 
 _now_str = datetime.now().strftime('%H:%M')
-_h_color = {'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A'}
-_h_label = {'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador'}
+_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador'}
 
 
 HORIZONTE = st.session_state['nav_horizonte']
@@ -2684,27 +3495,31 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
 
 
 with st.container(key='nav_pills_wrap'):
-    _c = st.columns([1.0, 1.0, 0.95, 1.0, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
+    _c = st.columns([0.9, 1.0, 1.0, 0.95, 1.0, 0.95, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
 
 
-    _nav_btn(_c[0], '⚡ Corto Plazo', 'nav_h_corto',
+    _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
+             HORIZONTE=='inicio', None, 'inicio', 'inicio')
+    _nav_btn(_c[1], '⚡ Corto Plazo', 'nav_h_corto',
              HORIZONTE=='corto', None, 'corto', 'resumen')
-    _nav_btn(_c[1], '📈 Largo Plazo', 'nav_h_largo',
+    _nav_btn(_c[2], '📈 Largo Plazo', 'nav_h_largo',
              HORIZONTE=='largo', None, 'largo', 'ranking')
-    _nav_btn(_c[2], '🔍 Buscador', 'nav_buscador',
+    _nav_btn(_c[3], '🔍 Buscador', 'nav_buscador',
              HORIZONTE=='buscador', None, 'buscador', 'buscador')
-    _nav_btn(_c[3], '⚖️ Comparar', 'nav_comparador',
+    _nav_btn(_c[4], '⚖️ Comparar', 'nav_comparador',
              HORIZONTE=='comparador', None, 'comparador', 'comparador')
+    _nav_btn(_c[5], '🧮 Optimizar', 'nav_optimizador',
+             HORIZONTE=='optimizador', None, 'optimizador', 'optimizador')
 
 
     if HORIZONTE == 'corto':
         _mods_corto = [
-            ('💱 Forex',    'forex',    5),
-            ('🌍 Países',   'paises',   6),
-            ('📊 Sectores', 'sectores', 7),
-            ('🛢️ Mercados', 'mercados', 8),
-            ('📈 Acciones', 'acciones', 9),
-            ('🎯 Top-Down', 'topdown',  10),
+            ('💱 Forex',    'forex',    7),
+            ('🌍 Países',   'paises',   8),
+            ('📊 Sectores', 'sectores', 9),
+            ('🛢️ Mercados', 'mercados', 10),
+            ('📈 Acciones', 'acciones', 11),
+            ('🎯 Top-Down', 'topdown',  12),
         ]
         for label, mod_key, col_idx in _mods_corto:
             _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
@@ -2713,18 +3528,18 @@ with st.container(key='nav_pills_wrap'):
 
     elif HORIZONTE == 'largo':
         _mods_largo = [
-            ('📋 Ranking',      'ranking',      5),
-            ('🔄 Reversión',    'reversion',    6),
-            ('🏭 Industria',    'industria',    7),
-            ('🔍 Ticker',       'ticker',       8),
-            ('📊 Fundamental',  'fundamental',  9),
+            ('📋 Ranking',      'ranking',      7),
+            ('🔄 Reversión',    'reversion',    8),
+            ('🏭 Industria',    'industria',    9),
+            ('🔍 Ticker',       'ticker',       10),
+            ('📊 Fundamental',  'fundamental',  11),
         ]
         for label, mod_key, col_idx in _mods_largo:
             _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
                      MODULO==mod_key, None, None, mod_key)
 
 
-    with _c[12]:
+    with _c[14]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 st.cache_data.clear(); st.rerun()
@@ -2757,8 +3572,9 @@ st.markdown("""
 
 with st.container(key='nav_mobile_wrap'):
     _OPCIONES_HORIZONTE_MOBILE = {
-        '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
+        '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
+        '🧮 Optimizar': 'optimizador',
     }
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
@@ -2772,7 +3588,7 @@ with st.container(key='nav_mobile_wrap'):
     # Sin esto, estos selectbox (ocultos por CSS en desktop, pero igual ejecutados
     # en Python) quedan "pegados" en su valor inicial y al final del bloque
     # fuerzan un st.rerun() de vuelta a Corto Plazo/Resumen.
-    _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '⚡ Corto Plazo')
+    _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '🏠 Inicio')
     if st.session_state.get('nav_mobile_h') != _label_h_actual:
         st.session_state['nav_mobile_h'] = _label_h_actual
 
@@ -2828,8 +3644,10 @@ MODULO    = st.session_state['nav_modulo']
 
 
 titulos = {
+    'inicio':    ('Cotizaciones del Día', '📊', 'Precios y variación diaria — índices, sectores, mercados, forex y acciones'),
     'buscador':  ('Buscador Universal', '🔍', 'Análisis completo por ticker — corto y largo plazo'),
     'comparador':('Comparador de Activos', '⚖️', 'Comparación lado a lado — rendimiento y scores cuantitativos'),
+    'optimizador': ('Optimizador de Cartera', '🧮', 'Monte Carlo · Frontera eficiente · Comparación vs benchmark'),
     'forex':     ('Análisis Forex', '💱', 'Pares de divisas — ranking y oportunidades de acumulación'),
     'paises':    ('Países / Índices Globales', '🌍', 'Índices nacionales y regionales — flujo de capital macro'),
     'sectores':  ('Sectores S&P500', '📊', '11 sectores GICS — rotación y momentum'),
@@ -2847,10 +3665,12 @@ titulo_h, icono_h, subtitulo_h = titulos.get(MODULO, ('Analizador', '📡', ''))
 
 
 badge_map = {
+    'inicio':     ('#e3b341', 'rgba(227,179,65,0.12)',  'INICIO'),
     'corto':      ('#f0883e', 'rgba(240,136,62,0.12)', 'CORTO PLAZO'),
     'largo':      ('#3fb950', 'rgba(63,185,80,0.10)',  'LARGO PLAZO'),
     'buscador':   ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BÚSQUEDA'),
     'comparador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'COMPARADOR'),
+    'optimizador':('#bc8cff', 'rgba(188,140,255,0.12)','OPTIMIZADOR'),
 }
 badge_color, badge_bg, badge_txt = badge_map.get(HORIZONTE, ('#3a7bd5','rgba(58,123,213,0.12)',''))
 
@@ -2884,12 +3704,20 @@ st.markdown(f"""
 # ==============================================================
 
 
-if MODULO == 'buscador':
+if MODULO == 'inicio':
+    modulo_inicio()
+
+
+elif MODULO == 'buscador':
     modulo_buscador()
 
 
 elif MODULO == 'comparador':
     modulo_comparador()
+
+
+elif MODULO == 'optimizador':
+    modulo_optimizador()
 
 
 elif HORIZONTE == 'corto':
@@ -2906,13 +3734,14 @@ elif HORIZONTE == 'corto':
               </div>
               <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
                 Este es un analizador cuantitativo de mercados: combina scores estadísticos de corto plazo,
-                un modelo cuantitativo de largo plazo (tendencia, reversión y riesgo) y ratios fundamentales,
-                para acciones, ETFs, forex, commodities y cripto. Elegí por dónde arrancar:
+                un modelo cuantitativo de largo plazo (tendencia, reversión y riesgo), ratios fundamentales
+                y un optimizador de cartera por Monte Carlo, para acciones, ETFs, forex, commodities y cripto.
+                Elegí por dónde arrancar:
               </div>
             </div>
             """, unsafe_allow_html=True)
 
-            cc1, cc2, cc3, cc4 = st.columns(4)
+            cc1, cc2, cc3, cc4, cc5 = st.columns(5)
             with cc1:
                 if st.button('🔍 Analizar un ticker', use_container_width=True, key='onb_buscador'):
                     st.session_state['nav_horizonte'] = 'buscador'
@@ -2931,6 +3760,11 @@ elif HORIZONTE == 'corto':
                 if st.button('📋 Ranking de largo plazo', use_container_width=True, key='onb_ranking'):
                     st.session_state['nav_horizonte'] = 'largo'
                     st.session_state['nav_modulo'] = 'ranking'
+                    st.rerun()
+            with cc5:
+                if st.button('🧮 Optimizar cartera', use_container_width=True, key='onb_optimizador'):
+                    st.session_state['nav_horizonte'] = 'optimizador'
+                    st.session_state['nav_modulo'] = 'optimizador'
                     st.rerun()
 
             st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
