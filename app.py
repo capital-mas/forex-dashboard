@@ -3323,7 +3323,6 @@ def modulo_inicio():
             with st.spinner('Cargando precios de acciones...'):
                 datos_acc_ini = cargar_precios_acciones_inicio(tuple(ind_sel_ini))
 
-            # Tabla completa ordenable
             filas_acc = []
             for ind in ind_sel_ini:
                 for tk in ACCIONES_POR_INDUSTRIA.get(ind, []):
@@ -3361,46 +3360,35 @@ def modulo_inicio():
                     df_acc_f = df_acc_f[df_acc_f['Cambio %'] < 0]
                 df_acc_f = df_acc_f[df_acc_f['Cambio %'].between(*f_pct_ini)]
 
-                # Formato precio
-                df_acc_show = df_acc_f.copy()
-                df_acc_show['Precio'] = df_acc_show['Precio'].apply(fmt_precio)
+                st.caption(f'{len(df_acc_f)} acciones mostradas de {len(df_acc_ini)} totales')
 
-                def _color_pct_acc(v):
-                    try:
-                        return f'color:{"#3fb950" if float(v) >= 0 else "#f85149"};font-weight:700'
-                    except:
-                        return ''
+                # ── Cards agrupadas por industria (reemplaza la tabla) ──────
+                industrias_con_datos = [
+                    ind for ind in ind_sel_ini
+                    if (f_ind_ini == 'Todas' or f_ind_ini == ind)
+                    and not df_acc_f[df_acc_f['Industria'] == ind].empty
+                ]
 
-                _m2 = 'map' if hasattr(df_acc_show.style, 'map') else 'applymap'
-                styled_acc = (df_acc_show.style
-                    .pipe(lambda s: getattr(s, _m2)(_color_pct_acc, subset=['Cambio %', 'Cambio $']))
-                    .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
-                    .set_table_styles([
-                        {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
-                         ('font-weight', '700'), ('text-align', 'center'),
-                         ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
-                        {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
-                    ])
-                )
-                st.caption(f'{len(df_acc_show)} acciones mostradas de {len(df_acc_ini)} totales')
-                st.dataframe(styled_acc, use_container_width=True,
-                             height=min(700, max(200, len(df_acc_show) * 32 + 45)),
-                             hide_index=True)
-
-                # Cards visuales por industria (colapsables)
-                st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-                for ind in ind_sel_ini:
-                    tks_ind = [tk for tk in ACCIONES_POR_INDUSTRIA.get(ind, [])
-                               if tk in datos_acc_ini]
-                    if not tks_ind:
-                        continue
-                    with st.expander(f'📂 {ind} — cards ({len(tks_ind)} activos)', expanded=False):
+                if not industrias_con_datos:
+                    st.info('Ningún activo cumple los filtros seleccionados.')
+                else:
+                    for ind in industrias_con_datos:
+                        tks_ind = df_acc_f[df_acc_f['Industria'] == ind].sort_values(
+                            'Cambio %', ascending=False
+                        )['Ticker'].tolist()
+                        if not tks_ind:
+                            continue
+                        st.markdown(
+                            f'<div style="font-size:11px;font-weight:700;color:{C_MONSTER};'
+                            f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
+                            f'◆ {ind} ({len(tks_ind)})</div>',
+                            unsafe_allow_html=True,
+                        )
                         items_ind = [(tk, tk) for tk in tks_ind]
                         st.markdown(_cards_html(items_ind, datos_acc_ini), unsafe_allow_html=True)
 
                 # Chips para ir al buscador
-                chips_navegacion(df_acc_show['Ticker'].tolist(), 'inicio_acc')
-
+                chips_navegacion(df_acc_f['Ticker'].tolist(), 'inicio_acc')
 
 # ==============================================================
 #  ESTADO DE NAVEGACIÓN
