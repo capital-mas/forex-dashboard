@@ -1,6 +1,6 @@
-streamlit>=1.32
+streamlit
+yfinance
 pandas
 numpy
-yfinance
-plotly>=5.18
+plotly
 hurst
