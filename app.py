@@ -29,6 +29,7 @@ try:
 except ImportError:
     HURST_OK = False
 
+from supabase import create_client, Client
 
 # ==============================================================
 #  CONFIG
@@ -322,6 +323,71 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ==============================================================
+#  SUPABASE — Conexión + Autenticación
+# ==============================================================
+
+@st.cache_resource
+def init_supabase():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+supabase = init_supabase()
+
+
+def pantalla_login():
+    st.markdown("""
+    <div style="max-width:420px;margin:60px auto 0 auto;">
+      <div style="text-align:center;margin-bottom:24px">
+        <div style="font-size:32px;margin-bottom:6px">📡</div>
+        <div style="font-size:18px;font-weight:700;color:#e6edf3">Analizador Cuantitativo</div>
+        <div style="font-size:12px;color:#6b7d9a;margin-top:4px">Iniciá sesión para acceder</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    _, col_centro, _ = st.columns([1, 2, 1])
+    with col_centro:
+        tab_login, tab_registro = st.tabs(["Iniciar sesión", "Registrarme"])
+
+        with tab_login:
+            email = st.text_input("Email", key="login_email")
+            password = st.text_input("Contraseña", type="password", key="login_pass")
+            if st.button("Entrar", use_container_width=True, key="btn_login"):
+                if not email or not password:
+                    st.error("Completá email y contraseña.")
+                else:
+                    try:
+                        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                        st.session_state["usuario"] = res.user
+                        st.rerun()
+                    except Exception:
+                        st.error("Email o contraseña incorrectos.")
+
+        with tab_registro:
+            email_r = st.text_input("Email", key="reg_email")
+            password_r = st.text_input("Contraseña", type="password", key="reg_pass")
+            password_r2 = st.text_input("Confirmar contraseña", type="password", key="reg_pass2")
+            if st.button("Crear cuenta", use_container_width=True, key="btn_registro"):
+                if not email_r or not password_r:
+                    st.error("Completá email y contraseña.")
+                elif password_r != password_r2:
+                    st.error("Las contraseñas no coinciden.")
+                elif len(password_r) < 6:
+                    st.error("La contraseña debe tener al menos 6 caracteres.")
+                else:
+                    try:
+                        supabase.auth.sign_up({"email": email_r, "password": password_r})
+                        st.success("¡Cuenta creada! Revisá tu email para confirmarla y después iniciá sesión.")
+                    except Exception as e:
+                        st.error(f"Error al registrarse: {e}")
+
+
+# ── GATE: si no hay sesión, mostrar login y frenar acá ──
+if "usuario" not in st.session_state:
+    pantalla_login()
+    st.stop()
 
 # ==============================================================
 #  PALETA (para HTML / Plotly)
