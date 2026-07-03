@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from itertools import combinations
 
 
 try:
@@ -3516,6 +3517,7 @@ for key, default in [
     ('ticker_manual', ''),
     ('comparador_tickers', []),
     ('comp_run_flag', False),
+    ('pares_run_flag', False),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -3527,8 +3529,8 @@ for key, default in [
 
 
 _now_str = datetime.now().strftime('%H:%M')
-_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff'}
-_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador'}
+_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Pares'}
 
 
 HORIZONTE = st.session_state['nav_horizonte']
@@ -3594,7 +3596,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
 
 
 with st.container(key='nav_pills_wrap'):
-    _c = st.columns([0.9, 1.0, 1.0, 0.95, 1.0, 0.95, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
+    _c = st.columns([0.9, 1.0, 1.0, 0.95, 1.0, 0.95, 1.0, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
 
 
     _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
@@ -3609,16 +3611,18 @@ with st.container(key='nav_pills_wrap'):
              HORIZONTE=='comparador', None, 'comparador', 'comparador')
     _nav_btn(_c[5], '🧮 Optimizar', 'nav_optimizador',
              HORIZONTE=='optimizador', None, 'optimizador', 'optimizador')
+    _nav_btn(_c[6], '🔗 Pares', 'nav_pares',
+             HORIZONTE=='pares', None, 'pares', 'pares')
 
 
     if HORIZONTE == 'corto':
         _mods_corto = [
-            ('💱 Forex',    'forex',    7),
-            ('🌍 Países',   'paises',   8),
-            ('📊 Sectores', 'sectores', 9),
-            ('🛢️ Mercados', 'mercados', 10),
-            ('📈 Acciones', 'acciones', 11),
-            ('🎯 Top-Down', 'topdown',  12),
+            ('💱 Forex',    'forex',    8),
+            ('🌍 Países',   'paises',   9),
+            ('📊 Sectores', 'sectores', 10),
+            ('🛢️ Mercados', 'mercados', 11),
+            ('📈 Acciones', 'acciones', 12),
+            ('🎯 Top-Down', 'topdown',  13),
         ]
         for label, mod_key, col_idx in _mods_corto:
             _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
@@ -3627,18 +3631,18 @@ with st.container(key='nav_pills_wrap'):
 
     elif HORIZONTE == 'largo':
         _mods_largo = [
-            ('📋 Ranking',      'ranking',      7),
-            ('🔄 Reversión',    'reversion',    8),
-            ('🏭 Industria',    'industria',    9),
-            ('🔍 Ticker',       'ticker',       10),
-            ('📊 Fundamental',  'fundamental',  11),
+            ('📋 Ranking',      'ranking',      8),
+            ('🔄 Reversión',    'reversion',    9),
+            ('🏭 Industria',    'industria',    10),
+            ('🔍 Ticker',       'ticker',       11),
+            ('📊 Fundamental',  'fundamental',  12),
         ]
         for label, mod_key, col_idx in _mods_largo:
             _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
                      MODULO==mod_key, None, None, mod_key)
 
 
-    with _c[14]:
+    with _c[15]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 st.cache_data.clear(); st.rerun()
@@ -3681,7 +3685,7 @@ with st.container(key='nav_mobile_wrap'):
     _OPCIONES_HORIZONTE_MOBILE = {
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
-        '🧮 Optimizar': 'optimizador',
+        '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares',
     }
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
@@ -3755,6 +3759,7 @@ titulos = {
     'buscador':  ('Buscador Universal', '🔍', 'Análisis completo por ticker — corto y largo plazo'),
     'comparador':('Comparador de Activos', '⚖️', 'Comparación lado a lado — rendimiento y scores cuantitativos'),
     'optimizador': ('Optimizador de Cartera', '🧮', 'Monte Carlo · Frontera eficiente · Comparación vs benchmark'),
+    'pares': ('Scanner de Pares (Mean Reversion)', '🔗', 'Ratios entre activos del mismo sector — Z-Score y bandas de reversión'),
     'forex':     ('Análisis Forex', '💱', 'Pares de divisas — ranking y oportunidades de acumulación'),
     'paises':    ('Países / Índices Globales', '🌍', 'Índices nacionales y regionales — flujo de capital macro'),
     'sectores':  ('Sectores S&P500', '📊', '11 sectores GICS — rotación y momentum'),
@@ -3778,6 +3783,7 @@ badge_map = {
     'buscador':   ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BÚSQUEDA'),
     'comparador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'COMPARADOR'),
     'optimizador':('#bc8cff', 'rgba(188,140,255,0.12)','OPTIMIZADOR'),
+    'pares':      ('#79c0ff', 'rgba(121,192,255,0.12)','PARES'),
 }
 badge_color, badge_bg, badge_txt = badge_map.get(HORIZONTE, ('#3a7bd5','rgba(58,123,213,0.12)',''))
 
@@ -3825,6 +3831,10 @@ elif MODULO == 'comparador':
 
 elif MODULO == 'optimizador':
     modulo_optimizador()
+
+
+elif MODULO == 'pares':
+    modulo_scanner_pares()
 
 
 elif HORIZONTE == 'corto':
