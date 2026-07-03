@@ -70,7 +70,8 @@ st.markdown("""
   html, body, [class*="css"] {
     font-family: 'Inter', sans-serif;
     background: #07090f;
-    color: #c9d1d9;
+    color: #ffffff;
+    font-size: 14px;
   }
   .stApp { background: #07090f; }
   .block-container { padding: 0 2rem 2rem 2rem !important; max-width: 1400px; }
@@ -104,12 +105,12 @@ st.markdown("""
     letter-spacing: -0.3px; line-height: 1.2;
   }
   .topbar-brand-sub {
-    font-size: 10px; color: #6b7d9a; letter-spacing: 0.2px;
+    font-size: 12px; color: #f5f7fa; letter-spacing: 0.2px;
   }
   .topbar-divider { width: 1px; height: 22px; background: #21262d; margin: 0 20px; flex-shrink: 0; }
   .topbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
   .topbar-time {
-    font-size: 10px; color: #3a4a5f; font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: #f5f7fa; font-family: 'JetBrains Mono', monospace;
     white-space: nowrap;
   }
 
@@ -173,17 +174,18 @@ st.markdown("""
 
 
   /* ── Nav pills — fila de navegación superior ── */
-  div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button {
+div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button {
     border-radius: 999px !important;
     border: 1px solid #21262d !important;
-    padding: 6px 16px !important;
-    font-size: 12px !important; font-weight: 600 !important;
-    height: 34px !important; min-height: 34px !important;
+    padding: 8px 16px !important;
+    font-size: 13px !important; font-weight: 600 !important;
+    height: auto !important; min-height: 40px !important;
     background: #0d1117 !important;
     color: var(--verde-monster) !important;
     transition: all .18s ease !important;
     box-shadow: none !important;
-    white-space: nowrap !important;
+    white-space: normal !important;
+    line-height: 1.25 !important;
     letter-spacing: 0.1px !important;
   }
   div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button:hover {
@@ -200,9 +202,10 @@ st.markdown("""
     padding: 28px 0 20px 0;
     border-bottom: 1px solid #21262d;
     margin-bottom: 24px;
+    text-align: center;
   }
-  .page-title { font-size: 22px; font-weight: 700; color: #e6edf3; margin: 0; letter-spacing: -0.5px; }
-  .page-sub { font-size: 12px; color: #6b7d9a; margin: 4px 0 0 0; }
+  .page-title { font-size: 26px; font-weight: 700; color: #e6edf3; margin: 0; letter-spacing: -0.5px; }
+  .page-sub { font-size: 14px; color: #f5f7fa; margin: 4px 0 0 0; }
 
 
   /* ── Toolbar (filtros debajo del header) ── */
@@ -214,7 +217,7 @@ st.markdown("""
     margin-bottom: 20px;
     display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   }
-  .toolbar-label { font-size: 11px; font-weight: 600; color: #6b7d9a; text-transform: uppercase; letter-spacing: 0.8px; }
+  .toolbar-label { font-size: 13px; font-weight: 600; color: #f5f7fa; text-transform: uppercase; letter-spacing: 0.8px; }
 
 
   /* ── KPI cards ── */
@@ -226,9 +229,9 @@ st.markdown("""
   }
   .kpi-card:hover { border-color: #3a7bd5; }
   .kpi-accent { position: absolute; top: 0; left: 0; width: 100%; height: 2px; border-radius: 10px 10px 0 0; }
-  .kpi-label { color: #6b7d9a; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
-  .kpi-value { color: #e6edf3; font-size: 20px; font-weight: 700; letter-spacing: -0.5px; font-family: 'JetBrains Mono', monospace; }
-  .kpi-sub { color: #6b7d9a; font-size: 11px; margin-top: 4px; }
+  .kpi-label { color: #f5f7fa; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .kpi-value { color: #e6edf3; font-size: 22px; font-weight: 700; letter-spacing: -0.5px; font-family: 'JetBrains Mono', monospace; }
+  .kpi-sub { color: #f5f7fa; font-size: 13px; margin-top: 4px; }
 
 
   /* ── Tabs ── */
@@ -251,18 +254,19 @@ st.markdown("""
 
   /* ── Section title ── */
   .sec-title {
-    font-size: 12px; font-weight: 700; color: #e6edf3;
+    font-size: 14px; font-weight: 700; color: #e6edf3;
     text-transform: uppercase; letter-spacing: 0.8px;
     margin: 20px 0 12px 0; padding-bottom: 8px;
     border-bottom: 1px solid #21262d;
+    text-align: center;
   }
 
 
   /* ── Info banner ── */
   .info-banner {
     background: rgba(58,123,213,0.07); border: 1px solid rgba(58,123,213,0.2);
-    border-radius: 8px; padding: 10px 14px; color: #6b7d9a;
-    font-size: 11px; margin-bottom: 16px; line-height: 1.6;
+    border-radius: 8px; padding: 10px 14px; color: #f5f7fa;
+    font-size: 13px; margin-bottom: 16px; line-height: 1.6;
   }
 
 
@@ -272,7 +276,7 @@ st.markdown("""
     padding: 24px 28px; margin-bottom: 24px;
   }
   .search-title { font-size: 15px; font-weight: 700; color: #e6edf3; margin-bottom: 4px; }
-  .search-sub { font-size: 12px; color: #6b7d9a; margin-bottom: 16px; }
+  .search-sub { font-size: 14px; color: #f5f7fa; margin-bottom: 16px; }
 
 
   /* ── Signal pill ── */
@@ -289,7 +293,7 @@ st.markdown("""
     background: #0d1117; border: 1px solid #21262d;
     border-left: 3px solid #3a7bd5; border-radius: 8px;
     padding: 12px 16px; margin-bottom: 10px;
-    font-size: 12px; line-height: 1.7; color: #b0bcd0;
+    font-size: 14px; line-height: 1.7; color: #f5f7fa;
   }
   .interp-header {
     color: #3a7bd5; font-weight: 700; font-size: 12px;
@@ -309,7 +313,7 @@ st.markdown("""
 
   /* ── Metric ── */
   [data-testid="stMetric"] { background: #0d1117; border: 1px solid #21262d; border-radius: 9px; padding: 12px 16px; }
-  [data-testid="stMetricLabel"] { color: #6b7d9a !important; font-size: 10px !important; }
+  [data-testid="stMetricLabel"] { color: #f5f7fa !important; font-size: 12px !important; }
   [data-testid="stMetricValue"] { color: #e6edf3 !important; font-family: 'JetBrains Mono', monospace; }
 
 
@@ -318,9 +322,9 @@ st.markdown("""
 
 
   /* General ── */
-  h1,h2,h3,h4 { color: #e6edf3 !important; }
+  h1,h2,h3,h4 { color: #e6edf3 !important; text-align: center !important; }
   hr { border-color: #21262d !important; }
-  p, label, .stMarkdown { color: #b0bcd0 !important; }
+  p, label, .stMarkdown { color: #f5f7fa !important; font-size: 14px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -4016,8 +4020,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
 
 
 with st.container(key='nav_pills_wrap'):
-    _c = st.columns([0.9, 1.0, 1.0, 0.95, 1.0, 0.95, 1.0, 0.05, 1, 1, 1, 1, 1, 1, 0.08, 1])
-
+    _c = st.columns([1.05, 1.25, 1.25, 1.15, 1.25, 1.2, 1.05, 0.3, 1.15, 0.15, 1.35])
 
     _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
              HORIZONTE=='inicio', None, 'inicio', 'inicio')
@@ -4034,46 +4037,51 @@ with st.container(key='nav_pills_wrap'):
     _nav_btn(_c[6], '🔗 Pares', 'nav_pares',
              HORIZONTE=='pares', None, 'pares', 'pares')
 
-
-    if HORIZONTE == 'corto':
-        _mods_corto = [
-            ('💱 Forex',    'forex',    8),
-            ('🌍 Países',   'paises',   9),
-            ('📊 Sectores', 'sectores', 10),
-            ('🛢️ Mercados', 'mercados', 11),
-            ('📈 Acciones', 'acciones', 12),
-            ('🎯 Top-Down', 'topdown',  13),
-        ]
-        for label, mod_key, col_idx in _mods_corto:
-            _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
-                     MODULO==mod_key, None, None, mod_key)
-
-
-    elif HORIZONTE == 'largo':
-        _mods_largo = [
-            ('📋 Ranking',      'ranking',      8),
-            ('🔄 Reversión',    'reversion',    9),
-            ('🏭 Industria',    'industria',    10),
-            ('🔍 Ticker',       'ticker',       11),
-            ('📊 Fundamental',  'fundamental',  12),
-        ]
-        for label, mod_key, col_idx in _mods_largo:
-            _nav_btn(_c[col_idx], label, f'nav_{mod_key}',
-                     MODULO==mod_key, None, None, mod_key)
-
-
-    with _c[15]:
+    with _c[8]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 st.cache_data.clear(); st.rerun()
 
-    col_logout, _ = st.columns([1, 6])
-    with col_logout:
-        if st.button('🚪 Cerrar sesión', key='btn_logout'):
-            supabase.auth.sign_out()
-            cookies.remove("sb_refresh_token")
-            del st.session_state["usuario"]
-            st.rerun()
+    with _c[10]:
+        with st.container(key='nav_logout_cont'):
+            if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout'):
+                supabase.auth.sign_out()
+                cookies.remove("sb_refresh_token")
+                del st.session_state["usuario"]
+                st.rerun()
+
+# ── Submenú como lista desplegable (no empuja los botones principales) ──
+if HORIZONTE == 'corto':
+    _opciones_sub_corto = {
+        '🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
+        '📊 Sectores': 'sectores', '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones',
+    }
+    _label_sub_actual = next(
+        (k for k, v in _opciones_sub_corto.items()
+         if v == MODULO or (MODULO == 'topdown' and v == 'resumen')),
+        '🎯 Resumen Top-Down'
+    )
+    if st.session_state.get('nav_sub_corto') != _label_sub_actual:
+        st.session_state['nav_sub_corto'] = _label_sub_actual
+    _sel_sub_c = st.selectbox('Módulo de Corto Plazo', list(_opciones_sub_corto.keys()), key='nav_sub_corto')
+    _mod_nuevo_c = _opciones_sub_corto[_sel_sub_c]
+    if _mod_nuevo_c != MODULO:
+        st.session_state['nav_modulo'] = _mod_nuevo_c
+        st.rerun()
+
+elif HORIZONTE == 'largo':
+    _opciones_sub_largo = {
+        '📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
+        '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
+    }
+    _label_sub_actual_l = next((k for k, v in _opciones_sub_largo.items() if v == MODULO), '📋 Ranking')
+    if st.session_state.get('nav_sub_largo') != _label_sub_actual_l:
+        st.session_state['nav_sub_largo'] = _label_sub_actual_l
+    _sel_sub_l = st.selectbox('Módulo de Largo Plazo', list(_opciones_sub_largo.keys()), key='nav_sub_largo')
+    _mod_nuevo_l = _opciones_sub_largo[_sel_sub_l]
+    if _mod_nuevo_l != MODULO:
+        st.session_state['nav_modulo'] = _mod_nuevo_l
+        st.rerun()
 
 st.markdown("""
 <style>
@@ -4081,12 +4089,23 @@ st.markdown("""
     background: transparent !important;
     color: var(--verde-monster-dim) !important;
     border-color: #21262d !important;
-    font-size: 11px !important;
+    font-size: 12px !important;
 }
 .st-key-nav_refresh_cont button:hover {
     background: #11150f !important;
     color: var(--verde-monster) !important;
     border-color: var(--verde-monster) !important;
+}
+.st-key-nav_logout_cont button {
+    background: transparent !important;
+    color: #f0883e !important;
+    border-color: #21262d !important;
+    font-size: 12px !important;
+}
+.st-key-nav_logout_cont button:hover {
+    background: #201008 !important;
+    color: #f85149 !important;
+    border-color: #f85149 !important;
 }
 
 /* ── Nav alternativo para pantallas chicas (celular) ──
@@ -4210,26 +4229,22 @@ badge_color, badge_bg, badge_txt = badge_map.get(HORIZONTE, ('#3a7bd5','rgba(58,
 
 st.markdown(f"""
 <div class="page-header">
-  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
-    <div>
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:5px">
-        <span style="font-size:22px;line-height:1">{icono_h}</span>
-        <span class="page-title">{titulo_h}</span>
-        <span style="padding:3px 10px;border-radius:20px;font-size:9px;font-weight:700;
-          letter-spacing:1px;text-transform:uppercase;background:{badge_bg};
-          border:1px solid {badge_color};color:{badge_color}">{badge_txt}</span>
-      </div>
-      <div class="page-sub">{subtitulo_h}</div>
+  <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px">
+    <div style="display:flex;align-items:center;justify-content:center;gap:12px">
+      <span style="font-size:24px;line-height:1">{icono_h}</span>
+      <span class="page-title">{titulo_h}</span>
+      <span style="padding:3px 10px;border-radius:20px;font-size:9px;font-weight:700;
+        letter-spacing:1px;text-transform:uppercase;background:{badge_bg};
+        border:1px solid {badge_color};color:{badge_color}">{badge_txt}</span>
     </div>
-    <div style="text-align:right;flex-shrink:0">
-      <div style="font-size:11px;color:#3a4a5f;font-family:'JetBrains Mono',monospace">
-        {datetime.now().strftime('%d/%m/%Y · %H:%M')}
-      </div>
-      <div style="font-size:10px;color:#2a3a4f;margin-top:2px">Yahoo Finance</div>
+    <div class="page-sub">{subtitulo_h}</div>
+    <div style="font-size:12px;color:#f5f7fa;font-family:'JetBrains Mono',monospace;margin-top:4px">
+      {datetime.now().strftime('%d/%m/%Y · %H:%M')} &nbsp;·&nbsp; Yahoo Finance
     </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 # ==============================================================
