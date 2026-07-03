@@ -3196,6 +3196,426 @@ def modulo_optimizador():
 
 
 
+# ==============================================================
+#  MÓDULO SCANNER DE PARES (MEAN REVERSION)
+#  Adaptado del script standalone: mismo motor (ratio + Z-Score
+#  + bandas), ahora con Plotly, caché y filtros interactivos.
+# ==============================================================
+
+PARES_SECTORES = {
+    "Metales Preciosos": {
+        "benchmark": "GLD",
+        "empresas": ["B", "AEM", "KGC", "CDE", "NG", "HL", "HMY", "PAAS"],
+        "tickers": {
+            "GLD": "GLD", "SLV": "SLV", "GDX": "GDX",
+            "B": "GOLD", "AEM": "AEM", "KGC": "KGC", "CDE": "CDE",
+            "NG": "NG", "HL": "HL", "HMY": "HMY", "PAAS": "PAAS",
+        },
+    },
+    "Tecnología": {
+        "benchmark": "XLK",
+        "empresas": ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "ORCL", "CRM", "ADBE", "AMD"],
+        "tickers": {
+            "XLK": "XLK", "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL",
+            "META": "META", "NVDA": "NVDA", "ORCL": "ORCL", "CRM": "CRM",
+            "ADBE": "ADBE", "AMD": "AMD",
+        },
+    },
+    "Semiconductores": {
+        "benchmark": "SOXX",
+        "empresas": ["NVDA", "AMD", "INTC", "TSM", "QCOM", "AVGO", "MU", "TXN", "ASML"],
+        "tickers": {
+            "SOXX": "SOXX", "NVDA": "NVDA", "AMD": "AMD", "INTC": "INTC",
+            "TSM": "TSM", "QCOM": "QCOM", "AVGO": "AVGO", "MU": "MU",
+            "TXN": "TXN", "ASML": "ASML",
+        },
+    },
+    "Financieras": {
+        "benchmark": "XLF",
+        "empresas": ["JPM", "BAC", "WFC", "C", "GS", "MS", "USB", "PNC", "TFC"],
+        "tickers": {
+            "XLF": "XLF", "JPM": "JPM", "BAC": "BAC", "WFC": "WFC", "C": "C",
+            "GS": "GS", "MS": "MS", "USB": "USB", "PNC": "PNC", "TFC": "TFC",
+        },
+    },
+    "Energía": {
+        "benchmark": "XLE",
+        "empresas": ["XOM", "CVX", "COP", "SLB", "EOG", "PSX", "MPC", "OXY", "HAL"],
+        "tickers": {
+            "XLE": "XLE", "XOM": "XOM", "CVX": "CVX", "COP": "COP", "SLB": "SLB",
+            "EOG": "EOG", "PSX": "PSX", "MPC": "MPC", "OXY": "OXY", "HAL": "HAL",
+        },
+    },
+    "Salud": {
+        "benchmark": "XLV",
+        "empresas": ["JNJ", "PFE", "MRK", "ABBV", "LLY", "UNH", "BMY", "GILD", "AMGN"],
+        "tickers": {
+            "XLV": "XLV", "JNJ": "JNJ", "PFE": "PFE", "MRK": "MRK", "ABBV": "ABBV",
+            "LLY": "LLY", "UNH": "UNH", "BMY": "BMY", "GILD": "GILD", "AMGN": "AMGN",
+        },
+    },
+    "Consumo Discrecional": {
+        "benchmark": "XLY",
+        "empresas": ["AMZN", "TSLA", "HD", "MCD", "NKE", "SBUX", "LOW", "TJX", "BKNG"],
+        "tickers": {
+            "XLY": "XLY", "AMZN": "AMZN", "TSLA": "TSLA", "HD": "HD", "MCD": "MCD",
+            "NKE": "NKE", "SBUX": "SBUX", "LOW": "LOW", "TJX": "TJX", "BKNG": "BKNG",
+        },
+    },
+    "Consumo Básico": {
+        "benchmark": "XLP",
+        "empresas": ["PG", "KO", "PEP", "WMT", "COST", "PM", "MO", "CL", "KMB"],
+        "tickers": {
+            "XLP": "XLP", "PG": "PG", "KO": "KO", "PEP": "PEP", "WMT": "WMT",
+            "COST": "COST", "PM": "PM", "MO": "MO", "CL": "CL", "KMB": "KMB",
+        },
+    },
+    "Industriales": {
+        "benchmark": "XLI",
+        "empresas": ["BA", "CAT", "GE", "HON", "UPS", "RTX", "LMT", "DE", "MMM"],
+        "tickers": {
+            "XLI": "XLI", "BA": "BA", "CAT": "CAT", "GE": "GE", "HON": "HON",
+            "UPS": "UPS", "RTX": "RTX", "LMT": "LMT", "DE": "DE", "MMM": "MMM",
+        },
+    },
+    "Utilities": {
+        "benchmark": "XLU",
+        "empresas": ["NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "XEL", "ED"],
+        "tickers": {
+            "XLU": "XLU", "NEE": "NEE", "DUK": "DUK", "SO": "SO", "D": "D",
+            "AEP": "AEP", "EXC": "EXC", "SRE": "SRE", "XEL": "XEL", "ED": "ED",
+        },
+    },
+    "Real Estate": {
+        "benchmark": "XLRE",
+        "empresas": ["AMT", "PLD", "CCI", "EQIX", "PSA", "O", "SPG", "DLR", "WELL"],
+        "tickers": {
+            "XLRE": "XLRE", "AMT": "AMT", "PLD": "PLD", "CCI": "CCI", "EQIX": "EQIX",
+            "PSA": "PSA", "O": "O", "SPG": "SPG", "DLR": "DLR", "WELL": "WELL",
+        },
+    },
+    "Comunicaciones": {
+        "benchmark": "XLC",
+        "empresas": ["GOOGL", "META", "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS", "EA"],
+        "tickers": {
+            "XLC": "XLC", "GOOGL": "GOOGL", "META": "META", "NFLX": "NFLX",
+            "DIS": "DIS", "CMCSA": "CMCSA", "T": "T", "VZ": "VZ", "TMUS": "TMUS", "EA": "EA",
+        },
+    },
+    "Materiales": {
+        "benchmark": "XLB",
+        "empresas": ["LIN", "APD", "SHW", "ECL", "FCX", "NEM", "DOW", "DD", "PPG"],
+        "tickers": {
+            "XLB": "XLB", "LIN": "LIN", "APD": "APD", "SHW": "SHW", "ECL": "ECL",
+            "FCX": "FCX", "NEM": "NEM", "DOW": "DOW", "DD": "DD", "PPG": "PPG",
+        },
+    },
+    "Argentina": {
+        "benchmark": "ARGT",
+        "empresas": ["GGAL", "YPF", "PAM", "BMA", "CRESY", "IRS", "LOMA", "EDN", "SUPV", "CEPU", "TGS"],
+        "tickers": {
+            "ARGT": "ARGT", "GGAL": "GGAL", "YPF": "YPF", "PAM": "PAM", "BMA": "BMA",
+            "CRESY": "CRESY", "IRS": "IRSA", "LOMA": "LOMA", "EDN": "EDN",
+            "SUPV": "SUPV", "CEPU": "CEPU", "TGS": "TGS",
+        },
+    },
+    "Brasil": {
+        "benchmark": "EWZ",
+        "empresas": ["VALE", "PBR", "ITUB", "BBD", "ABEV", "SBS", "UGP", "BSBR", "ERJ", "GGB", "CIG", "VIV"],
+        "tickers": {
+            "EWZ": "EWZ", "VALE": "VALE", "PBR": "PBR", "ITUB": "ITUB", "BBD": "BBD",
+            "ABEV": "ABEV", "SBS": "SBS", "UGP": "UGP", "BSBR": "BSBR", "ERJ": "ERJ",
+            "GGB": "GGB", "CIG": "CIG", "VIV": "VIV",
+        },
+    },
+    "Criptomonedas": {
+        "benchmark": "BTC",
+        "empresas": ["ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "DOT", "LINK", "LTC"],
+        "tickers": {
+            "BTC": "BTC-USD", "ETH": "ETH-USD", "SOL": "SOL-USD", "BNB": "BNB-USD",
+            "XRP": "XRP-USD", "ADA": "ADA-USD", "DOGE": "DOGE-USD", "AVAX": "AVAX-USD",
+            "DOT": "DOT-USD", "LINK": "LINK-USD", "LTC": "LTC-USD",
+        },
+    },
+}
+
+
+def _pares_armar_parejas(sectores_sel, incluir_cruces=False):
+    """Benchmark vs cada empresa (siempre) y, si incluir_cruces=True, también
+    todas las combinaciones empresa-empresa dentro del sector."""
+    parejas = {}
+    tickers_codigos = {}
+    for sector in sectores_sel:
+        info = PARES_SECTORES[sector]
+        benchmark = info["benchmark"]
+        empresas = info["empresas"]
+        tickers_codigos.update(info["tickers"])
+        for empresa in empresas:
+            parejas[f'[{sector}] {benchmark}/{empresa}'] = (benchmark, empresa, sector)
+        if incluir_cruces:
+            for a, b in combinations(empresas, 2):
+                parejas[f'[{sector}] {a}/{b}'] = (a, b, sector)
+    return parejas, tickers_codigos
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _pares_descargar_precios(tickers_items, inicio):
+    """tickers_items: tupla ordenada de (codigo, symbol_yahoo) — clave de caché estable."""
+    try:
+        import yfinance as yf
+        tickers_dict = dict(tickers_items)
+        symbols = sorted(set(tickers_dict.values()))
+        data = yf.download(symbols, start=inicio, auto_adjust=True, progress=False, group_by='column')
+        if data is None or data.empty:
+            return None
+        if isinstance(data.columns, pd.MultiIndex):
+            if 'Close' in data.columns.get_level_values(0):
+                precios_symbol = data['Close'].copy()
+            elif 'Adj Close' in data.columns.get_level_values(0):
+                precios_symbol = data['Adj Close'].copy()
+            else:
+                return None
+        else:
+            precios_symbol = data.copy()
+            if len(symbols) == 1 and 'Close' in precios_symbol.columns:
+                precios_symbol = precios_symbol[['Close']].rename(columns={'Close': symbols[0]})
+        precios = pd.DataFrame(index=precios_symbol.index)
+        for codigo, symbol in tickers_dict.items():
+            precios[codigo] = precios_symbol[symbol] if symbol in precios_symbol.columns else np.nan
+        return precios.dropna(how='all').ffill()
+    except Exception:
+        return None
+
+
+def _pares_generar_ratio(precios, num, den, ventana, z_entry, z_exit):
+    df = pd.DataFrame(index=precios.index)
+    df['NUM'] = precios[num]
+    df['DEN'] = precios[den]
+    df = df.dropna()
+    if df.empty:
+        return df
+    df['RATIO'] = df['NUM'] / df['DEN']
+    df['MEDIA'] = df['RATIO'].rolling(ventana).mean()
+    df['STD'] = df['RATIO'].rolling(ventana).std()
+    df['Z'] = (df['RATIO'] - df['MEDIA']) / df['STD']
+    df['UPPER'] = df['MEDIA'] + df['STD'] * z_entry
+    df['LOWER'] = df['MEDIA'] - df['STD'] * z_entry
+    df['SEÑAL'] = 'NEUTRO'
+    df.loc[df['Z'] > z_entry, 'SEÑAL'] = f'🔴 VENDER {num} / COMPRAR {den}'
+    df.loc[df['Z'] < -z_entry, 'SEÑAL'] = f'🟢 COMPRAR {num} / VENDER {den}'
+    df.loc[df['Z'].abs() < z_exit, 'SEÑAL'] = '⚪ CERRAR / NEUTRO'
+    return df
+
+
+def _pares_interpretar(z, z_entry, z_exit):
+    if z > z_entry:
+        return 'Ratio caro respecto a su historia reciente. Posible reversión bajista del ratio.'
+    elif z < -z_entry:
+        return 'Ratio barato respecto a su historia reciente. Posible reversión alcista del ratio.'
+    elif abs(z) < z_exit:
+        return 'El ratio volvió a su zona de equilibrio histórico — sin ventaja estadística clara.'
+    else:
+        return 'Z-Score dentro de rango normal, sin señal extrema.'
+
+
+def _pares_fig_ratio(nombre, df, z_entry):
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+                         row_heights=[0.65, 0.35], subplot_titles=(f'Ratio {nombre}', 'Z-Score'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['UPPER'], line=dict(color=C_MUTED, width=0.8, dash='dash'),
+                              name='Banda superior'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['LOWER'], line=dict(color=C_MUTED, width=0.8, dash='dash'),
+                              name='Banda inferior', fill='tonexty', fillcolor='rgba(58,123,213,0.08)'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['MEDIA'], line=dict(color=C_YELL, width=1.2, dash='dot'),
+                              name='Media móvil'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['RATIO'], line=dict(color=C_ACENT, width=1.8),
+                              name='Ratio'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['Z'], line=dict(color=C_MONSTER, width=1.4),
+                              name='Z-Score'), row=2, col=1)
+    fig.add_hline(y=z_entry, line_dash='dash', line_color=C_RED, opacity=0.6, row=2, col=1)
+    fig.add_hline(y=-z_entry, line_dash='dash', line_color=C_GREEN, opacity=0.6, row=2, col=1)
+    fig.add_hline(y=0, line_color=C_MUTED, opacity=0.4, row=2, col=1)
+    fig.update_yaxes(gridcolor=C_GRID, row=1, col=1)
+    fig.update_yaxes(gridcolor=C_GRID, row=2, col=1)
+    fig.update_xaxes(gridcolor=C_GRID)
+    fig.update_layout(**PLOTLY_LAYOUT_BASE, height=560, hovermode='x unified',
+                       legend=dict(orientation='h', y=1.08, font=dict(size=9)),
+                       margin=dict(l=10, r=10, t=50, b=10))
+    fig.update_annotations(font=dict(color=C_TEXT, size=12))
+    return fig
+
+
+def modulo_scanner_pares():
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0d1c20 0%,#0a2530 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #79c0ff;
+         border-radius:14px; padding:28px 32px; margin-bottom:24px;">
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🔗 Scanner de Pares (Mean Reversion)</div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+        Calcula el ratio entre el ETF benchmark de cada sector y sus empresas (y, opcionalmente,
+        entre empresas del mismo sector), mide su Z-Score respecto a la media móvil y señala
+        cuándo el ratio está estadísticamente "caro" o "barato" — candidato a reversión a la media.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    sectores_disp = list(PARES_SECTORES.keys())
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        sectores_sel = st.multiselect('Sectores a escanear', sectores_disp,
+                                       default=sectores_disp[:2], key='pares_sectores_sel')
+    with c2:
+        incluir_cruces = st.checkbox('Incluir cruces empresa-empresa', value=False, key='pares_cruces',
+                                      help='Suma todas las combinaciones entre empresas del mismo sector. Crece rápido: usar con pocos sectores.')
+
+    cparam1, cparam2, cparam3, cparam4 = st.columns(4)
+    with cparam1:
+        ventana = st.slider('Ventana (ruedas)', 60, 504, 252, 6, key='pares_ventana')
+    with cparam2:
+        z_entry = st.slider('Z de entrada', 0.5, 3.0, 1.5, 0.1, key='pares_z_entry')
+    with cparam3:
+        z_exit = st.slider('Z de salida (neutro)', 0.1, 1.5, 0.5, 0.1, key='pares_z_exit')
+    with cparam4:
+        inicio_fecha = st.text_input('Inicio histórico', value='2020-01-01', key='pares_inicio')
+
+    if not sectores_sel:
+        st.info('Seleccioná al menos un sector para escanear.')
+        return
+
+    correr = st.button('▶ Escanear pares', key='pares_run', type='primary')
+    if not correr and not st.session_state.get('pares_run_flag'):
+        st.markdown("""
+        <div style='background:#0d1117;border:1px dashed #21262d;border-radius:10px;padding:40px;text-align:center'>
+          <div style='font-size:40px;margin-bottom:12px'>🔗</div>
+          <div style='color:#e6edf3;font-size:14px;font-weight:600;margin-bottom:6px'>Scanner de Pares</div>
+          <div style='color:#6b7d9a;font-size:12px'>Elegí sectores y presioná "Escanear pares" para calcular los ratios.</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    if correr:
+        st.session_state['pares_run_flag'] = True
+
+    parejas, tickers_codigos = _pares_armar_parejas(sectores_sel, incluir_cruces)
+    if not parejas:
+        st.warning('No se generaron parejas para los sectores elegidos.')
+        return
+    if len(parejas) > 300:
+        st.warning(f'⚠️ Se generaron {len(parejas)} parejas — puede tardar. Considerá reducir sectores o desactivar los cruces.')
+
+    with st.spinner(f'Descargando precios para {len(tickers_codigos)} activos...'):
+        tickers_items = tuple(sorted(tickers_codigos.items()))
+        precios = _pares_descargar_precios(tickers_items, inicio_fecha)
+
+    if precios is None or precios.empty:
+        st.error('No se pudieron descargar precios. Revisá la fecha de inicio o probá con otros sectores.')
+        return
+
+    resumen = []
+    dataframes = {}
+    fallidas = []
+    prog = st.progress(0, text='Calculando ratios y Z-Scores...')
+    total_p = len(parejas)
+    for i, (nombre_ratio, (num, den, sector)) in enumerate(parejas.items()):
+        try:
+            if num not in precios.columns or den not in precios.columns:
+                fallidas.append(nombre_ratio); continue
+            df = _pares_generar_ratio(precios, num, den, ventana, z_entry, z_exit)
+            df_clean = df.dropna(subset=['Z']) if not df.empty else df
+            if df_clean.empty:
+                fallidas.append(nombre_ratio); continue
+            ultimo = df_clean.iloc[-1]
+            z = float(ultimo['Z'])
+            resumen.append({
+                'Sector': sector, 'Pareja': nombre_ratio, 'Numerador': num, 'Denominador': den,
+                'Ratio': round(float(ultimo['RATIO']), 4), 'Media': round(float(ultimo['MEDIA']), 4),
+                'Z-Score': round(z, 2), 'Señal': ultimo['SEÑAL'],
+                'Lectura': _pares_interpretar(z, z_entry, z_exit),
+            })
+            dataframes[nombre_ratio] = df
+        except Exception:
+            fallidas.append(nombre_ratio)
+        if i % 10 == 0:
+            prog.progress(min(int((i + 1) / total_p * 100), 100), text=f'Calculando... {i+1}/{total_p}')
+    prog.empty()
+
+    if not resumen:
+        st.error('No se pudo calcular ningún ratio (historia insuficiente para la ventana elegida).')
+        return
+    if fallidas:
+        st.caption(f'⚠️ {len(fallidas)} parejas sin datos suficientes y excluidas del resumen.')
+
+    df_res = pd.DataFrame(resumen).sort_values('Z-Score', key=lambda s: s.abs(), ascending=False).reset_index(drop=True)
+
+    n_compra = int((df_res['Z-Score'] < -z_entry).sum())
+    n_venta  = int((df_res['Z-Score'] > z_entry).sum())
+    n_neutro = int((df_res['Z-Score'].abs() < z_exit).sum())
+    kpi_cards_4([
+        ('Pares analizados', str(len(df_res)), f'{len(sectores_sel)} sectores', '#3a7bd5'),
+        ('🟢 Señal compra ratio', str(n_compra), f'Z < -{z_entry}', '#3fb950'),
+        ('🔴 Señal venta ratio', str(n_venta), f'Z > {z_entry}', '#f85149'),
+        ('⚪ Neutros', str(n_neutro), f'|Z| < {z_exit}', '#e3b341'),
+    ])
+
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1:
+        sec_u = ['Todos'] + sorted(df_res['Sector'].unique().tolist())
+        f_sec = st.selectbox('Sector', sec_u, key='pares_f_sector')
+    with fc2:
+        sen_u = ['Todas'] + sorted(df_res['Señal'].unique().tolist())
+        f_sen = st.selectbox('Señal', sen_u, key='pares_f_senal')
+    with fc3:
+        max_z_data = float(max(3.0, df_res['Z-Score'].abs().max()))
+        if 'pares_f_z' not in st.session_state:
+            st.session_state['pares_f_z'] = (0.0, max_z_data)
+        else:
+            lo_prev, hi_prev = st.session_state['pares_f_z']
+            if hi_prev > max_z_data or lo_prev > max_z_data:
+                st.session_state['pares_f_z'] = (0.0, max_z_data)
+        f_z = st.slider('Rango |Z-Score|', 0.0, max_z_data, key='pares_f_z')
+
+    df_f = df_res.copy()
+    if f_sec != 'Todos': df_f = df_f[df_f['Sector'] == f_sec]
+    if f_sen != 'Todas': df_f = df_f[df_f['Señal'] == f_sen]
+    df_f = df_f[df_f['Z-Score'].abs().between(*f_z)]
+
+    def _color_z(val):
+        try:
+            v = abs(float(val))
+            if v >= z_entry: return 'color:#f85149;font-weight:700' if val > 0 else 'color:#3fb950;font-weight:700'
+            if v < z_exit: return 'color:#8b949e'
+            return 'color:#e3b341;font-weight:600'
+        except: return ''
+
+    _map = 'map' if hasattr(df_f.style, 'map') else 'applymap'
+    styled = (df_f[['Sector','Pareja','Ratio','Media','Z-Score','Señal']].style
+              .pipe(lambda s: getattr(s, _map)(_color_z, subset=['Z-Score']))
+              .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
+              .set_table_styles([
+                  {'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),
+                      ('font-weight','700'),('text-align','center'),
+                      ('border-bottom','2px solid #3a7bd5'),('font-size','11px')]},
+                  {'selector':'td','props':[('text-align','center'),('font-size','11px')]},
+              ]))
+    st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
+    st.caption(f'{len(df_f)} pares mostrados de {len(df_res)} totales')
+
+    st.markdown('---')
+    st.markdown('### 📈 Detalle de un par')
+    pares_disp = df_f['Pareja'].tolist()
+    if pares_disp:
+        par_sel = st.selectbox('Elegí un par para ver el gráfico', pares_disp, key='pares_detalle_sel')
+        fila = df_res[df_res['Pareja'] == par_sel].iloc[0]
+        st.plotly_chart(_pares_fig_ratio(par_sel, dataframes[par_sel], z_entry),
+                         use_container_width=True, key=f'pares_fig_{par_sel}')
+        st.markdown(f"""
+        <div class="interp-card">
+          <div class="interp-header">{par_sel} · Sector: {fila['Sector']} · Z-Score: {fila['Z-Score']:+.2f}</div>
+          {fila['Lectura']}<br>
+          <span style="color:#6b7d9a;font-size:11px">Señal actual: {fila['Señal']}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        chips_navegacion([(fila['Numerador'], fila['Numerador']), (fila['Denominador'], fila['Denominador'])], 'pares_detalle')
+    else:
+        st.info('Ningún par cumple los filtros seleccionados.')
 
 
 
