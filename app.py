@@ -4307,41 +4307,40 @@ with st.container(key='nav_pills_wrap'):
                 st.rerun()
 
 # ── Submenú como lista desplegable (no empuja los botones principales) ──
+def _cambiar_submodulo_corto():
+    st.session_state['nav_modulo'] = _OPCIONES_SUB_CORTO[st.session_state['nav_sub_corto']]
+
+def _cambiar_submodulo_largo():
+    st.session_state['nav_modulo'] = _OPCIONES_SUB_LARGO[st.session_state['nav_sub_largo']]
+
 if HORIZONTE == 'corto':
-    _opciones_sub_corto = {
+    _OPCIONES_SUB_CORTO = {
         '🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
         '📊 Sectores': 'sectores', '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones',
     }
     _label_sub_actual = next(
-        (k for k, v in _opciones_sub_corto.items()
+        (k for k, v in _OPCIONES_SUB_CORTO.items()
          if v == MODULO or (MODULO == 'topdown' and v == 'resumen')),
         '🎯 Resumen Top-Down'
     )
-    # Solo forzamos el valor del selectbox si MODULO cambió por una vía EXTERNA
-    # (botón superior, chip, onboarding). Si no, dejamos que el propio selectbox
-    # mande — si no, la selección del usuario se pisa antes de aplicarse.
-    if st.session_state.get('_modulo_snapshot_corto') != MODULO:
-        if st.session_state.get('nav_sub_corto') != _label_sub_actual:
-            st.session_state['nav_sub_corto'] = _label_sub_actual
-    _sel_sub_c = st.selectbox('Módulo de Corto Plazo', list(_opciones_sub_corto.keys()), key='nav_sub_corto')
-    _mod_nuevo_c = _opciones_sub_corto[_sel_sub_c]
-    if _mod_nuevo_c != MODULO:
-        st.session_state['nav_modulo'] = _mod_nuevo_c
-        st.session_state['_modulo_snapshot_corto'] = _mod_nuevo_c
-        st.rerun()
-    else:
-        st.session_state['_modulo_snapshot_corto'] = MODULO
+    # Con on_change, si el cambio vino de ESTE selectbox, MODULO ya llega
+    # actualizado acá arriba y este if no hace nada. Solo entra en juego
+    # cuando el módulo cambió por otra vía (botón, chip, onboarding).
+    if st.session_state.get('nav_sub_corto') != _label_sub_actual:
+        st.session_state['nav_sub_corto'] = _label_sub_actual
+    st.selectbox('Módulo de Corto Plazo', list(_OPCIONES_SUB_CORTO.keys()),
+                  key='nav_sub_corto', on_change=_cambiar_submodulo_corto)
 
 elif HORIZONTE == 'largo':
-    _opciones_sub_largo = {
+    _OPCIONES_SUB_LARGO = {
         '📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
         '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
     }
-    _label_sub_actual_l = next((k for k, v in _opciones_sub_largo.items() if v == MODULO), '📋 Ranking')
-    if st.session_state.get('_modulo_snapshot_largo') != MODULO:
-        if st.session_state.get('nav_sub_largo') != _label_sub_actual_l:
-            st.session_state['nav_sub_largo'] = _label_sub_actual_l
-    _sel_sub_l = st.selectbox('Módulo de Largo Plazo', list(_opciones_sub_largo.keys()), key='nav_sub_largo')
+    _label_sub_actual_l = next((k for k, v in _OPCIONES_SUB_LARGO.items() if v == MODULO), '📋 Ranking')
+    if st.session_state.get('nav_sub_largo') != _label_sub_actual_l:
+        st.session_state['nav_sub_largo'] = _label_sub_actual_l
+    st.selectbox('Módulo de Largo Plazo', list(_OPCIONES_SUB_LARGO.keys()),
+                  key='nav_sub_largo', on_change=_cambiar_submodulo_largo)
     _mod_nuevo_l = _opciones_sub_largo[_sel_sub_l]
     if _mod_nuevo_l != MODULO:
         st.session_state['nav_modulo'] = _mod_nuevo_l
@@ -4387,6 +4386,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def _mobile_cambiar_horizonte():
+    nuevo_h = _OPCIONES_HORIZONTE_MOBILE[st.session_state['nav_mobile_h']]
+    st.session_state['nav_horizonte'] = nuevo_h
+    if nuevo_h in _OPCIONES_MODULO_MOBILE:
+        st.session_state['nav_modulo'] = list(_OPCIONES_MODULO_MOBILE[nuevo_h].values())[0]
+    else:
+        st.session_state['nav_modulo'] = nuevo_h
+    st.session_state.pop('nav_mobile_m', None)
+
+def _mobile_cambiar_modulo():
+    h_actual = st.session_state['nav_horizonte']
+    st.session_state['nav_modulo'] = _OPCIONES_MODULO_MOBILE[h_actual][st.session_state['nav_mobile_m']]
+
 with st.container(key='nav_mobile_wrap'):
     _OPCIONES_HORIZONTE_MOBILE = {
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
@@ -4401,37 +4413,26 @@ with st.container(key='nav_mobile_wrap'):
     }
 
     _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '🏠 Inicio')
-    if st.session_state.get('_h_snapshot_mobile') != HORIZONTE:
-        if st.session_state.get('nav_mobile_h') != _label_h_actual:
-            st.session_state['nav_mobile_h'] = _label_h_actual
+    if st.session_state.get('nav_mobile_h') != _label_h_actual:
+        st.session_state['nav_mobile_h'] = _label_h_actual
 
     _mc1, _mc2 = st.columns(2)
     with _mc1:
-        _sel_h = st.selectbox('Sección', list(_OPCIONES_HORIZONTE_MOBILE.keys()),
-                               key='nav_mobile_h', label_visibility='collapsed')
-    _h_nuevo = _OPCIONES_HORIZONTE_MOBILE[_sel_h]
+        st.selectbox('Sección', list(_OPCIONES_HORIZONTE_MOBILE.keys()),
+                      key='nav_mobile_h', label_visibility='collapsed',
+                      on_change=_mobile_cambiar_horizonte)
 
     with _mc2:
-        if _h_nuevo in _OPCIONES_MODULO_MOBILE:
-            _mods_disp = _OPCIONES_MODULO_MOBILE[_h_nuevo]
+        if HORIZONTE in _OPCIONES_MODULO_MOBILE:
+            _mods_disp = _OPCIONES_MODULO_MOBILE[HORIZONTE]
             _label_m_actual = next((k for k, v in _mods_disp.items() if v == MODULO), list(_mods_disp.keys())[0])
-            if st.session_state.get('_m_snapshot_mobile') != MODULO:
-                if st.session_state.get('nav_mobile_m') != _label_m_actual:
-                    st.session_state['nav_mobile_m'] = _label_m_actual
-            _sel_m = st.selectbox('Módulo', list(_mods_disp.keys()),
-                                   key='nav_mobile_m', label_visibility='collapsed')
-            _m_nuevo = _mods_disp[_sel_m]
+            if st.session_state.get('nav_mobile_m') != _label_m_actual:
+                st.session_state['nav_mobile_m'] = _label_m_actual
+            st.selectbox('Módulo', list(_mods_disp.keys()),
+                          key='nav_mobile_m', label_visibility='collapsed',
+                          on_change=_mobile_cambiar_modulo)
         else:
             st.write('')
-            _m_nuevo = _h_nuevo
-
-    st.session_state['_h_snapshot_mobile'] = _h_nuevo
-    st.session_state['_m_snapshot_mobile'] = _m_nuevo
-
-    if _h_nuevo != HORIZONTE or _m_nuevo != MODULO:
-        st.session_state['nav_horizonte'] = _h_nuevo
-        st.session_state['nav_modulo'] = _m_nuevo
-        st.rerun()
 
 
 st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
