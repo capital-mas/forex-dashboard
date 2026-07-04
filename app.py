@@ -232,6 +232,9 @@ div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button 
   .kpi-label { color: #f5f7fa; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
   .kpi-value { color: #e6edf3; font-size: 22px; font-weight: 700; letter-spacing: -0.5px; font-family: 'JetBrains Mono', monospace; }
   .kpi-sub { color: #f5f7fa; font-size: 13px; margin-top: 4px; }
+  .kpi-card-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; margin-top:6px; }
+  .kpi-metric-label { font-size:11px; color:#f5f7fa; text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
+  .kpi-metric-value { font-size:16px; font-weight:700; color:#e6edf3; font-family:'JetBrains Mono',monospace; }
 
 
   /* ── Tabs ── */
@@ -1235,7 +1238,22 @@ def kpi_cards_4(items):
             )
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
-
+def kpi_card_fundamental(titulo, color, metrics, tooltip=None):
+    """Card con 4 métricas (label, valor) del mismo tamaño, en grilla 2x2."""
+    tip_attr = (tooltip or '').replace('"', "'")
+    marca_info = ' ⓘ' if tip_attr else ''
+    celdas = ''.join(
+        f'<div><div class="kpi-metric-label">{lbl}</div>'
+        f'<div class="kpi-metric-value">{val}</div></div>'
+        for lbl, val in metrics
+    )
+    st.markdown(
+        f'<div class="kpi-card" title="{tip_attr}"><div class="kpi-accent" style="background:{color}"></div>'
+        f'<div class="kpi-label">{titulo}{marca_info}</div>'
+        f'<div class="kpi-card-grid">{celdas}</div></div>',
+        unsafe_allow_html=True
+    )
+    
 def chips_navegacion(items, key_prefix, max_chips=18):
     """items: lista de tickers (str) o de tuplas (label_visible, ticker_real).
     Renderiza botones-chip que llevan directo al Buscador con un clic (cross-linking)."""
@@ -2467,23 +2485,38 @@ def _renderizar_buscador(ticker):
         sc_col_b, sc_bg_b = _senal_color(res_fund['senal_final'])
         bench_b = res_fund['bench']
 
-        kpi_cards_4([
-            ('Señal Fundamental', res_fund['senal_final'],
-             f"✅ {res_fund['n_ok']} positivas · ⚠️ {res_fund['n_alt']} alertas", sc_col_b,
-             'Resumen automático basado en el conteo de señales positivas vs. alertas detectadas en los ratios.'),
-            ('Valuación',
-             f"PER {_fmt_num(res_fund.get('per'))}x · P/B {_fmt_num(res_fund.get('pb'))}x",
-             f"EV/EBITDA: {_fmt_num(res_fund.get('ev_ebitda'))}x · PEG: {_fmt_num(res_fund.get('peg'))}",
-             '#3a7bd5', f"{G('PER')} | {G('P/B')}"),
-            ('Rentabilidad',
-             f"ROE {_fmt_pct(res_fund.get('roe'))} · ROA {_fmt_pct(res_fund.get('roa'))}",
-             f"Mg.Bruto: {_fmt_pct(res_fund.get('gross_margin'))} · Mg.Op: {_fmt_pct(res_fund.get('op_margin'))}",
-             '#3fb950', f"{G('ROE')} | {G('ROA')}"),
-            ('Solvencia / Flujo',
-             f"D/E {_fmt_num(res_fund.get('debt_equity'))}x · CR {_fmt_num(res_fund.get('curr_ratio'))}x",
-             f"FCF: {_fmt_big(res_fund.get('fcf'))} · Beta: {_fmt_num(res_fund.get('beta'))}",
-             '#e3b341', f"{G('FCF')} | {G('Beta')}"),
-        ])
+        cols_fund_kpi = st.columns(4)
+        with cols_fund_kpi[0]:
+            _tip_senal = 'Resumen automático basado en el conteo de señales positivas vs. alertas detectadas en los ratios.'
+            st.markdown(
+                f'<div class="kpi-card" title="{_tip_senal}"><div class="kpi-accent" style="background:{sc_col_b}"></div>'
+                f'<div class="kpi-label">Señal Fundamental ⓘ</div>'
+                f'<div class="kpi-value">{res_fund["senal_final"]}</div>'
+                f'<div class="kpi-sub">✅ {res_fund["n_ok"]} positivas · ⚠️ {res_fund["n_alt"]} alertas</div></div>',
+                unsafe_allow_html=True
+            )
+        with cols_fund_kpi[1]:
+            kpi_card_fundamental('Valuación', '#3a7bd5', [
+                ('PER', f"{_fmt_num(res_fund.get('per'))}x"),
+                ('P/B', f"{_fmt_num(res_fund.get('pb'))}x"),
+                ('EV/EBITDA', f"{_fmt_num(res_fund.get('ev_ebitda'))}x"),
+                ('PEG', f"{_fmt_num(res_fund.get('peg'))}"),
+            ], f"{G('PER')} | {G('P/B')}")
+        with cols_fund_kpi[2]:
+            kpi_card_fundamental('Rentabilidad', '#3fb950', [
+                ('ROE', _fmt_pct(res_fund.get('roe'))),
+                ('ROA', _fmt_pct(res_fund.get('roa'))),
+                ('Mg.Bruto', _fmt_pct(res_fund.get('gross_margin'))),
+                ('Mg.Op.', _fmt_pct(res_fund.get('op_margin'))),
+            ], f"{G('ROE')} | {G('ROA')}")
+        with cols_fund_kpi[3]:
+            kpi_card_fundamental('Solvencia / Flujo', '#e3b341', [
+                ('D/E', f"{_fmt_num(res_fund.get('debt_equity'))}x"),
+                ('Curr.Ratio', f"{_fmt_num(res_fund.get('curr_ratio'))}x"),
+                ('FCF', _fmt_big(res_fund.get('fcf'))),
+                ('Beta', _fmt_num(res_fund.get('beta'))),
+            ], f"{G('FCF')} | {G('Beta')}")
+        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
         mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
         with mc1: st.metric('Sector', sector_fund[:16])
@@ -2495,10 +2528,10 @@ def _renderizar_buscador(ticker):
 
         st.markdown(f"""
         <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
-             border-radius:8px;padding:10px 16px;margin:10px 0;font-size:11px;color:#b0bcd0;line-height:1.8'>
-          <b style='color:#3a7bd5;font-size:12px'>BENCHMARK {sector_fund.upper()}</b><br>
+             border-radius:8px;padding:10px 16px;margin:10px 0;font-size:13px;color:#f5f7fa;line-height:1.8'>
+          <b style='color:#3a7bd5;font-size:13px'>BENCHMARK {sector_fund.upper()}</b><br>
           {bench_b['descripcion']}<br>
-          <b style='color:#6b7d9a'>Métricas clave:</b> {' · '.join(bench_b.get('metricas_clave', []))}
+          <b style='color:#f5f7fa'>Métricas clave:</b> {' · '.join(bench_b.get('metricas_clave', []))}
         </div>
         """, unsafe_allow_html=True)
 
@@ -4178,8 +4211,8 @@ with st.expander('❓ Glosario de términos cuantitativos y fundamentales', expa
         with _col:
             for _term, _desc in _chunk:
                 st.markdown(
-                    f"<div style='margin-bottom:10px'><b style='color:#6CC24A;font-size:12px'>{_term}</b><br>"
-                    f"<span style='color:#8b949e;font-size:11.5px;line-height:1.5'>{_desc}</span></div>",
+                    f"<div style='margin-bottom:10px'><b style='color:#6CC24A;font-size:13px'>{_term}</b><br>"
+                    f"<span style='color:#f5f7fa;font-size:12.5px;line-height:1.5'>{_desc}</span></div>",
                     unsafe_allow_html=True
                 )
 
