@@ -2358,6 +2358,9 @@ def _traducir_es(texto):
         return GoogleTranslator(source='en', target='es').translate(texto)
     except Exception:
         return texto  # si falla la traducción, mostramos el original en vez de romper la página
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
 def obtener_perfil_empresa(ticker):
     """Datos de perfil: nombre, logo, capitalización, sector/industria, empleados,
     sede, descripción del negocio (traducida), exchange, rango 52 semanas,
@@ -2438,8 +2441,13 @@ def render_perfil_empresa(ticker, key_suffix=''):
     with st.spinner('Cargando perfil de la empresa...'):
         perfil = obtener_perfil_empresa(ticker)
 
-    if perfil is None or not perfil.get('descripcion'):
-        return  # cripto, forex, commodities: no tienen perfil corporativo
+    if perfil is None:
+        st.warning(f'⚠️ No se pudo obtener el perfil de {ticker} (puede ser cripto, forex, commodity, o falló la descarga de Yahoo Finance).')
+        return
+
+    if not perfil.get('descripcion'):
+        st.info(f'ℹ️ {ticker} no tiene descripción de negocio disponible en Yahoo Finance. Mostrando el resto de los datos igual.')
+        perfil['descripcion'] = 'Descripción no disponible.'
 
     logo = logo_html(perfil['logo_url'], size=48, dominio_fallback=perfil.get('dominio'))
     mc = _fmt_big(perfil.get('market_cap'))
@@ -2861,6 +2869,8 @@ def modulo_comparador():
           {ganador[0]} lidera la comparación con un Global Score de {int(ganador[1]['global_score'])}/100 ({ganador[1]['sesgo']}).
         </div>
         """, unsafe_allow_html=True)
+    else:
+        st.info('No hay suficiente historial (2 años) para calcular el análisis cuantitativo de estos activos. Aun así, podés ver el gráfico de rendimiento comparado arriba.')
 
     # ── Perfiles de cada empresa comparada ─────────────────────────────
     st.markdown('---')
@@ -2869,8 +2879,6 @@ def modulo_comparador():
     for tab_p, tk_p in zip(tabs_perfil, tickers_cmp):
         with tab_p:
             render_perfil_empresa(tk_p, key_suffix=f'comp_{tk_p}')
-    else:
-        st.info('No hay suficiente historial (2 años) para calcular el análisis cuantitativo de estos activos. Aun así, podés ver el gráfico de rendimiento comparado arriba.')
 
     # ── COMPARACIÓN FUNDAMENTAL ───────────────────────────────────────────
     st.markdown('---')
