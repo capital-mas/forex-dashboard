@@ -2317,24 +2317,50 @@ def _senal_color(s):
 #  PERFIL DE EMPRESA — logo, capitalización, descripción del negocio
 # ==============================================================
 
-def _logo_url_desde_dominio(website):
-    """Clearbit Logo API: gratis, sin key, a partir del dominio de la web de la empresa."""
+def _extraer_dominio(website):
     if not website:
         return None
     try:
         dominio = website.replace('https://', '').replace('http://', '').split('/')[0]
         dominio = dominio.replace('www.', '')
-        if not dominio or '.' not in dominio:
-            return None
-        return f'https://logo.clearbit.com/{dominio}'
+        return dominio if dominio and '.' in dominio else None
     except Exception:
         return None
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
+def _logo_url_desde_dominio(website):
+    """Clearbit como principal; si falla, se usa Google Favicons como respaldo (ver logo_html)."""
+    dominio = _extraer_dominio(website)
+    return f'https://logo.clearbit.com/{dominio}' if dominio else None
+
+
+SECTOR_ES = {
+    'Technology': 'Tecnología', 'Financial Services': 'Servicios Financieros',
+    'Healthcare': 'Salud', 'Energy': 'Energía', 'Industrials': 'Industriales',
+    'Consumer Cyclical': 'Consumo Cíclico', 'Consumer Defensive': 'Consumo Defensivo',
+    'Basic Materials': 'Materiales Básicos', 'Communication Services': 'Comunicaciones',
+    'Utilities': 'Servicios Públicos', 'Real Estate': 'Bienes Raíces',
+}
+
+
+@st.cache_data(ttl=604800, show_spinner=False)
+def _traducir_es(texto):
+    """Traduce el resumen de negocio al español. Cacheado 7 días porque el texto
+    de una empresa no cambia seguido y así no volvemos a traducir en cada carga."""
+    if not texto:
+        return texto
+    try:
+        from deep_translator import GoogleTranslator
+        # GoogleTranslator tiene límite ~5000 caracteres por llamada
+        if len(texto) > 4500:
+            partes = [texto[i:i+4500] for i in range(0, len(texto), 4500)]
+            return ' '.join(GoogleTranslator(source='en', target='es').translate(p) for p in partes)
+        return GoogleTranslator(source='en', target='es').translate(texto)
+    except Exception:
+        return texto  # si falla la traducción, mostramos el original en vez de romper la página
 def obtener_perfil_empresa(ticker):
     """Datos de perfil: nombre, logo, capitalización, sector/industria, empleados,
-    sede, descripción del negocio, modelo de negocio, exchange, rango 52 semanas,
+    sede, descripción del negocio (traducida), exchange, rango 52 semanas,
     % institucional/insider y CEO (todo sale de yfinance.info, sin requests extra)."""
     try:
         import yfinance as yf
@@ -2352,24 +2378,34 @@ def obtener_perfil_empresa(ticker):
         if ceo is None and oficiales:
             ceo = oficiales[0].get('name')
 
+        sector_en = info.get('sector')
+        precio_actual = info.get('currentPrice') or info.get('regularMarketPrice')
+        max52 = info.get('fiftyTwoWeekHigh')
+        min52 = info.get('fiftyTwoWeekLow')
+        pct_desde_max = ((precio_actual - max52) / max52 * 100) if precio_actual and max52 else None
+        pct_desde_min = ((precio_actual - min52) / min52 * 100) if precio_actual and min52 else None
+
         return {
             'ticker': ticker,
             'nombre': info.get('longName') or info.get('shortName') or ticker,
             'logo_url': _logo_url_desde_dominio(website),
+            'dominio': _extraer_dominio(website),
             'website': website,
             'market_cap': info.get('marketCap'),
             'enterprise_value': info.get('enterpriseValue'),
-            'sector': info.get('sector'),
+            'sector': SECTOR_ES.get(sector_en, sector_en),
             'industria_yahoo': info.get('industry'),
             'empleados': info.get('fullTimeEmployees'),
             'pais': info.get('country'),
             'ciudad': info.get('city'),
-            'descripcion': info.get('longBusinessSummary'),
-            'precio': info.get('currentPrice') or info.get('regularMarketPrice'),
+            'descripcion': _traducir_es(info.get('longBusinessSummary')),
+            'precio': precio_actual,
             'moneda': info.get('currency'),
             'exchange': info.get('fullExchangeName') or info.get('exchange'),
-            'semana52_max': info.get('fiftyTwoWeekHigh'),
-            'semana52_min': info.get('fiftyTwoWeekLow'),
+            'semana52_max': max52,
+            'semana52_min': min52,
+            'pct_desde_max52': pct_desde_max,
+            'pct_desde_min52': pct_desde_min,
             'pct_institucional': info.get('heldPercentInstitutions'),
             'pct_insiders': info.get('heldPercentInsiders'),
             'ceo': ceo,
@@ -2378,14 +2414,21 @@ def obtener_perfil_empresa(ticker):
         return None
 
 
-def logo_html(logo_url, size=28):
-    """Devuelve el <img> del logo con fallback silencioso si no carga (empresa sin logo en Clearbit)."""
-    if not logo_url:
+def logo_html(logo_url, size=28, dominio_fallback=None):
+    """Devuelve el <img> del logo. Si Clearbit falla, cae al ícono de Google Favicons;
+    si eso también falla, oculta la imagen en vez de mostrar un cuadro roto."""
+    if not logo_url and not dominio_fallback:
         return ''
+    fallback = f'https://www.google.com/s2/favicons?sz=128&domain={dominio_fallback}' if dominio_fallback else ''
+    src = logo_url or fallback
+    if fallback and fallback != src:
+        onerror = f"this.onerror=null;this.src='{fallback}';"
+    else:
+        onerror = "this.style.display='none';"
     return (
-        f'<img src="{logo_url}" width="{size}" height="{size}" '
+        f'<img src="{src}" width="{size}" height="{size}" '
         f'style="border-radius:6px;object-fit:contain;background:#fff;padding:2px;vertical-align:middle" '
-        f'onerror="this.style.display=\'none\'">'
+        f'onerror="{onerror}">'
     )
 
 
@@ -2398,17 +2441,23 @@ def render_perfil_empresa(ticker, key_suffix=''):
     if perfil is None or not perfil.get('descripcion'):
         return  # cripto, forex, commodities: no tienen perfil corporativo
 
-    logo = logo_html(perfil['logo_url'], size=48)
+    logo = logo_html(perfil['logo_url'], size=48, dominio_fallback=perfil.get('dominio'))
     mc = _fmt_big(perfil.get('market_cap'))
     ev = _fmt_big(perfil.get('enterprise_value'))
     empleados = f"{perfil['empleados']:,}" if perfil.get('empleados') else 'N/D'
     ubicacion = ', '.join(x for x in [perfil.get('ciudad'), perfil.get('pais')] if x) or 'N/D'
     exchange = perfil.get('exchange') or 'N/D'
     ceo = perfil.get('ceo') or 'N/D'
-    rango52 = (
-        f"{fmt_precio(perfil['semana52_min'])} – {fmt_precio(perfil['semana52_max'])}"
-        if perfil.get('semana52_min') and perfil.get('semana52_max') else 'N/D'
-    )
+    if perfil.get('semana52_min') and perfil.get('semana52_max'):
+        pct_max_txt = f"{perfil['pct_desde_max52']:+.1f}%" if perfil.get('pct_desde_max52') is not None else ''
+        pct_min_txt = f"{perfil['pct_desde_min52']:+.1f}%" if perfil.get('pct_desde_min52') is not None else ''
+        rango52 = (
+            f"{fmt_precio(perfil['semana52_min'])} – {fmt_precio(perfil['semana52_max'])}"
+            f'<br><span style="font-size:10px;color:#6b7d9a">'
+            f'{pct_max_txt} desde máx · {pct_min_txt} desde mín</span>'
+        )
+    else:
+        rango52 = 'N/D'
     pct_inst = _fmt_pct(perfil.get('pct_institucional'))
     pct_ins  = _fmt_pct(perfil.get('pct_insiders'))
     website_html = (
@@ -2525,6 +2574,7 @@ def _renderizar_buscador(ticker):
 
     industria = TICKER_INDUSTRY.get(ticker, 'Externo / Manual')
 
+    render_perfil_empresa(ticker, key_suffix='buscador_top')
 
     st.markdown('### ⚡ Análisis Corto Plazo (1–30 días)')
     with st.spinner('Cargando datos de corto plazo...'):
@@ -2602,11 +2652,6 @@ def _renderizar_buscador(ticker):
 
     render_largo_completo(ticker, cl, r, key_suffix='buscador')
 
-
-    # ── PERFIL DE EMPRESA ───────────────────────────────────────────────
-    st.markdown('---')
-    st.markdown('### 🏢 Perfil de la Empresa')
-    render_perfil_empresa(ticker, key_suffix='buscador')
 
     # ── ANÁLISIS FUNDAMENTAL ──────────────────────────────────────────────
     st.markdown('---')
