@@ -2314,6 +2314,103 @@ def _senal_color(s):
 
 
 # ==============================================================
+#  PERFIL DE EMPRESA — logo, capitalización, descripción del negocio
+# ==============================================================
+
+def _logo_url_desde_dominio(website):
+    """Clearbit Logo API: gratis, sin key, a partir del dominio de la web de la empresa."""
+    if not website:
+        return None
+    try:
+        dominio = website.replace('https://', '').replace('http://', '').split('/')[0]
+        dominio = dominio.replace('www.', '')
+        if not dominio or '.' not in dominio:
+            return None
+        return f'https://logo.clearbit.com/{dominio}'
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def obtener_perfil_empresa(ticker):
+    """Datos de perfil: nombre, logo, capitalización, sector/industria, empleados,
+    sede, descripción del negocio y modelo de negocio (resumen largo de Yahoo Finance)."""
+    try:
+        import yfinance as yf
+        stock = yf.Ticker(ticker)
+        info = stock.info or {}
+        website = info.get('website')
+        return {
+            'ticker': ticker,
+            'nombre': info.get('longName') or info.get('shortName') or ticker,
+            'logo_url': _logo_url_desde_dominio(website),
+            'website': website,
+            'market_cap': info.get('marketCap'),
+            'enterprise_value': info.get('enterpriseValue'),
+            'sector': info.get('sector'),
+            'industria_yahoo': info.get('industry'),
+            'empleados': info.get('fullTimeEmployees'),
+            'pais': info.get('country'),
+            'ciudad': info.get('city'),
+            'descripcion': info.get('longBusinessSummary'),
+            'precio': info.get('currentPrice') or info.get('regularMarketPrice'),
+            'moneda': info.get('currency'),
+        }
+    except Exception:
+        return None
+
+
+def logo_html(logo_url, size=28):
+    """Devuelve el <img> del logo con fallback silencioso si no carga (empresa sin logo en Clearbit)."""
+    if not logo_url:
+        return ''
+    return (
+        f'<img src="{logo_url}" width="{size}" height="{size}" '
+        f'style="border-radius:6px;object-fit:contain;background:#fff;padding:2px;vertical-align:middle" '
+        f'onerror="this.style.display=\'none\'">'
+    )
+
+
+def render_perfil_empresa(ticker, key_suffix=''):
+    """Card con logo, capitalización y descripción del negocio. Usar en cualquier
+    pantalla donde se analice un ticker individual (Buscador, Comparador, Fundamental)."""
+    with st.spinner('Cargando perfil de la empresa...'):
+        perfil = obtener_perfil_empresa(ticker)
+
+    if perfil is None or not perfil.get('descripcion'):
+        return  # cripto, forex, commodities: no tienen perfil corporativo
+
+    logo = logo_html(perfil['logo_url'], size=48)
+    mc = _fmt_big(perfil.get('market_cap'))
+    ev = _fmt_big(perfil.get('enterprise_value'))
+    empleados = f"{perfil['empleados']:,}" if perfil.get('empleados') else 'N/D'
+    ubicacion = ', '.join(x for x in [perfil.get('ciudad'), perfil.get('pais')] if x) or 'N/D'
+
+    st.markdown(f"""
+    <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #3a7bd5;
+         border-radius:12px;padding:20px 24px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap">
+        {logo}
+        <div>
+          <div style="font-size:16px;font-weight:700;color:#e6edf3">{perfil['nombre']} <span style="color:#6b7d9a;font-size:12px">({ticker})</span></div>
+          <div style="font-size:12px;color:#f5f7fa">{perfil.get('sector') or 'N/D'} · {perfil.get('industria_yahoo') or 'N/D'}</div>
+        </div>
+      </div>
+      <div class="kpi-card-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+        <div><div class="kpi-metric-label">Market Cap</div><div class="kpi-metric-value">{mc}</div></div>
+        <div><div class="kpi-metric-label">Enterprise Value</div><div class="kpi-metric-value">{ev}</div></div>
+        <div><div class="kpi-metric-label">Empleados</div><div class="kpi-metric-value">{empleados}</div></div>
+        <div><div class="kpi-metric-label">Sede</div><div class="kpi-metric-value" style="font-size:13px">{ubicacion}</div></div>
+      </div>
+      <div style="font-size:11px;font-weight:700;color:#6CC24A;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">
+        🏢 A qué se dedica / Modelo de negocio
+      </div>
+      <div style="font-size:13px;color:#f5f7fa;line-height:1.7">{perfil['descripcion']}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ==============================================================
 #  MÓDULO BUSCADOR UNIVERSAL
 # ==============================================================
 
@@ -2468,6 +2565,11 @@ def _renderizar_buscador(ticker):
 
     render_largo_completo(ticker, cl, r, key_suffix='buscador')
 
+
+    # ── PERFIL DE EMPRESA ───────────────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🏢 Perfil de la Empresa')
+    render_perfil_empresa(ticker, key_suffix='buscador')
 
     # ── ANÁLISIS FUNDAMENTAL ──────────────────────────────────────────────
     st.markdown('---')
@@ -2677,6 +2779,14 @@ def modulo_comparador():
           {ganador[0]} lidera la comparación con un Global Score de {int(ganador[1]['global_score'])}/100 ({ganador[1]['sesgo']}).
         </div>
         """, unsafe_allow_html=True)
+
+    # ── Perfiles de cada empresa comparada ─────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🏢 Perfiles de las empresas')
+    tabs_perfil = st.tabs([f'🏢 {tk}' for tk in tickers_cmp])
+    for tab_p, tk_p in zip(tabs_perfil, tickers_cmp):
+        with tab_p:
+            render_perfil_empresa(tk_p, key_suffix=f'comp_{tk_p}')
     else:
         st.info('No hay suficiente historial (2 años) para calcular el análisis cuantitativo de estos activos. Aun así, podés ver el gráfico de rendimiento comparado arriba.')
 
@@ -5109,6 +5219,7 @@ def modulo_fundamental():
             if res_f is None:
                 st.error(f'No se pudieron obtener datos para {tk_fund}. Verificá el símbolo.')
             else:
+                render_perfil_empresa(tk_fund, key_suffix='fund_ticker')
                 sc_col_f, sc_bg_f = _senal_color(res_f['senal_final'])
                 fp_f = _fmt_pct
                 fn_f = _fmt_num
