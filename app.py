@@ -2365,10 +2365,18 @@ def obtener_perfil_empresa(ticker):
     """Datos de perfil: nombre, logo, capitalización, sector/industria, empleados,
     sede, descripción del negocio (traducida), exchange, rango 52 semanas,
     % institucional/insider y CEO (todo sale de yfinance.info, sin requests extra)."""
+    import time
     try:
         import yfinance as yf
         stock = yf.Ticker(ticker)
-        info = stock.info or {}
+        info = None
+        # Reintenta hasta 2 veces con pausa corta si Yahoo devuelve vacío por rate limit
+        for intento in range(2):
+            info = stock.info or {}
+            if info:
+                break
+            time.sleep(1.5)
+        info = info or {}
         website = info.get('website')
 
         ceo = None
