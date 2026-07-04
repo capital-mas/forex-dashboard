@@ -2450,7 +2450,22 @@ def render_perfil_empresa(ticker, key_suffix=''):
         perfil = obtener_perfil_empresa(ticker)
 
     if perfil is None:
-        st.warning(f'⚠️ No se pudo obtener el perfil de {ticker} (puede ser cripto, forex, commodity, o falló la descarga de Yahoo Finance).')
+        col_w1, col_w2 = st.columns([4, 1])
+        with col_w1:
+            st.warning(
+                f'⚠️ No se pudo cargar el perfil de {ticker}. '
+                'Es probable que sea un límite temporal de Yahoo Finance (demasiadas solicitudes seguidas). '
+                'Esperá 1-2 minutos y probá de nuevo.'
+            )
+        with col_w2:
+            if st.button('🔄 Reintentar', key=f'retry_perfil_{key_suffix}_{ticker}'):
+                obtener_perfil_empresa.clear()
+                st.rerun()
+        return
+
+    if not perfil.get('descripcion'):
+        st.info(f'ℹ️ {ticker} no tiene descripción de negocio disponible en Yahoo Finance. Mostrando el resto de los datos igual.')
+        perfil['descripcion'] = 'Descripción no disponible.'
         return
 
     if not perfil.get('descripcion'):
