@@ -6,3 +6,4 @@ plotly
 hurst
 supabase
 streamlit-cookies-controller
+deep-translator
