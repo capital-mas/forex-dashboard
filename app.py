@@ -4341,13 +4341,6 @@ elif HORIZONTE == 'largo':
         st.session_state['nav_sub_largo'] = _label_sub_actual_l
     st.selectbox('Módulo de Largo Plazo', list(_OPCIONES_SUB_LARGO.keys()),
                   key='nav_sub_largo', on_change=_cambiar_submodulo_largo)
-    _mod_nuevo_l = _opciones_sub_largo[_sel_sub_l]
-    if _mod_nuevo_l != MODULO:
-        st.session_state['nav_modulo'] = _mod_nuevo_l
-        st.session_state['_modulo_snapshot_largo'] = _mod_nuevo_l
-        st.rerun()
-    else:
-        st.session_state['_modulo_snapshot_largo'] = MODULO
 
 st.markdown("""
 <style>
