@@ -4317,13 +4317,20 @@ if HORIZONTE == 'corto':
          if v == MODULO or (MODULO == 'topdown' and v == 'resumen')),
         '🎯 Resumen Top-Down'
     )
-    if st.session_state.get('nav_sub_corto') != _label_sub_actual:
-        st.session_state['nav_sub_corto'] = _label_sub_actual
+    # Solo forzamos el valor del selectbox si MODULO cambió por una vía EXTERNA
+    # (botón superior, chip, onboarding). Si no, dejamos que el propio selectbox
+    # mande — si no, la selección del usuario se pisa antes de aplicarse.
+    if st.session_state.get('_modulo_snapshot_corto') != MODULO:
+        if st.session_state.get('nav_sub_corto') != _label_sub_actual:
+            st.session_state['nav_sub_corto'] = _label_sub_actual
     _sel_sub_c = st.selectbox('Módulo de Corto Plazo', list(_opciones_sub_corto.keys()), key='nav_sub_corto')
     _mod_nuevo_c = _opciones_sub_corto[_sel_sub_c]
     if _mod_nuevo_c != MODULO:
         st.session_state['nav_modulo'] = _mod_nuevo_c
+        st.session_state['_modulo_snapshot_corto'] = _mod_nuevo_c
         st.rerun()
+    else:
+        st.session_state['_modulo_snapshot_corto'] = MODULO
 
 elif HORIZONTE == 'largo':
     _opciones_sub_largo = {
@@ -4331,13 +4338,17 @@ elif HORIZONTE == 'largo':
         '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
     }
     _label_sub_actual_l = next((k for k, v in _opciones_sub_largo.items() if v == MODULO), '📋 Ranking')
-    if st.session_state.get('nav_sub_largo') != _label_sub_actual_l:
-        st.session_state['nav_sub_largo'] = _label_sub_actual_l
+    if st.session_state.get('_modulo_snapshot_largo') != MODULO:
+        if st.session_state.get('nav_sub_largo') != _label_sub_actual_l:
+            st.session_state['nav_sub_largo'] = _label_sub_actual_l
     _sel_sub_l = st.selectbox('Módulo de Largo Plazo', list(_opciones_sub_largo.keys()), key='nav_sub_largo')
     _mod_nuevo_l = _opciones_sub_largo[_sel_sub_l]
     if _mod_nuevo_l != MODULO:
         st.session_state['nav_modulo'] = _mod_nuevo_l
+        st.session_state['_modulo_snapshot_largo'] = _mod_nuevo_l
         st.rerun()
+    else:
+        st.session_state['_modulo_snapshot_largo'] = MODULO
 
 st.markdown("""
 <style>
@@ -4389,14 +4400,10 @@ with st.container(key='nav_mobile_wrap'):
                   '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental'},
     }
 
-    # IMPORTANTE: sincronizamos el session_state ANTES de crear los selectbox,
-    # porque Streamlit ignora 'index' una vez que el widget ya existe en la sesión.
-    # Sin esto, estos selectbox (ocultos por CSS en desktop, pero igual ejecutados
-    # en Python) quedan "pegados" en su valor inicial y al final del bloque
-    # fuerzan un st.rerun() de vuelta a Corto Plazo/Resumen.
     _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '🏠 Inicio')
-    if st.session_state.get('nav_mobile_h') != _label_h_actual:
-        st.session_state['nav_mobile_h'] = _label_h_actual
+    if st.session_state.get('_h_snapshot_mobile') != HORIZONTE:
+        if st.session_state.get('nav_mobile_h') != _label_h_actual:
+            st.session_state['nav_mobile_h'] = _label_h_actual
 
     _mc1, _mc2 = st.columns(2)
     with _mc1:
@@ -4408,14 +4415,18 @@ with st.container(key='nav_mobile_wrap'):
         if _h_nuevo in _OPCIONES_MODULO_MOBILE:
             _mods_disp = _OPCIONES_MODULO_MOBILE[_h_nuevo]
             _label_m_actual = next((k for k, v in _mods_disp.items() if v == MODULO), list(_mods_disp.keys())[0])
-            if st.session_state.get('nav_mobile_m') != _label_m_actual:
-                st.session_state['nav_mobile_m'] = _label_m_actual
+            if st.session_state.get('_m_snapshot_mobile') != MODULO:
+                if st.session_state.get('nav_mobile_m') != _label_m_actual:
+                    st.session_state['nav_mobile_m'] = _label_m_actual
             _sel_m = st.selectbox('Módulo', list(_mods_disp.keys()),
                                    key='nav_mobile_m', label_visibility='collapsed')
             _m_nuevo = _mods_disp[_sel_m]
         else:
             st.write('')
             _m_nuevo = _h_nuevo
+
+    st.session_state['_h_snapshot_mobile'] = _h_nuevo
+    st.session_state['_m_snapshot_mobile'] = _m_nuevo
 
     if _h_nuevo != HORIZONTE or _m_nuevo != MODULO:
         st.session_state['nav_horizonte'] = _h_nuevo
