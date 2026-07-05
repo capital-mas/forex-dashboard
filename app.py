@@ -22,7 +22,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
-
+from modulo_opciones import modulo_opciones
 
 try:
     from hurst import compute_Hc
@@ -4209,8 +4209,8 @@ for key, default in [
 
 
 _now_str = datetime.now().strftime('%H:%M')
-_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff'}
-_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Pares'}
+_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Pares', 'opciones': 'Opciones'}
 
 
 HORIZONTE = st.session_state['nav_horizonte']
@@ -4276,7 +4276,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
 
 
 with st.container(key='nav_pills_wrap'):
-    _c = st.columns([1.05, 1.25, 1.25, 1.15, 1.25, 1.2, 1.05, 0.3, 1.15, 0.15, 1.35])
+    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.15, 1.1, 0.95, 1.0, 0.25, 1.1, 0.15, 1.3])
 
     _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
              HORIZONTE=='inicio', None, 'inicio', 'inicio')
@@ -4292,13 +4292,15 @@ with st.container(key='nav_pills_wrap'):
              HORIZONTE=='optimizador', None, 'optimizador', 'optimizador')
     _nav_btn(_c[6], '🔗 Pares', 'nav_pares',
              HORIZONTE=='pares', None, 'pares', 'pares')
+    _nav_btn(_c[7], '🎲 Opciones', 'nav_opciones',
+             HORIZONTE=='opciones', None, 'opciones', 'opciones')
 
-    with _c[8]:
+    with _c[9]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 st.cache_data.clear(); st.rerun()
 
-    with _c[10]:
+    with _c[11]:
         with st.container(key='nav_logout_cont'):
             if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout'):
                 supabase.auth.sign_out()
@@ -4472,6 +4474,7 @@ titulos = {
     'ticker':      ('Análisis Individual', '🔍', 'Detalle cuantitativo completo para un ticker específico'),
     'resumen':     ('Resumen Top-Down', '🎯', 'Vista ejecutiva multi-nivel — macro a micro'),
     'fundamental': ('Análisis Fundamental', '📊', 'Ratios financieros · Benchmarks por sector · Señales de valuación'),
+    'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
 }
 titulo_h, icono_h, subtitulo_h = titulos.get(MODULO, ('Analizador', '📡', ''))
 st.caption(f'🔧 DEBUG — HORIZONTE={HORIZONTE} · MODULO={MODULO}')
@@ -4485,6 +4488,7 @@ badge_map = {
     'comparador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'COMPARADOR'),
     'optimizador':('#bc8cff', 'rgba(188,140,255,0.12)','OPTIMIZADOR'),
     'pares':      ('#79c0ff', 'rgba(121,192,255,0.12)','PARES'),
+    'opciones': ('#bc5cff', 'rgba(188,92,255,0.12)', 'OPCIONES'),
 }
 badge_color, badge_bg, badge_txt = badge_map.get(HORIZONTE, ('#3a7bd5','rgba(58,123,213,0.12)',''))
 
@@ -4533,6 +4537,8 @@ elif MODULO == 'optimizador':
 elif MODULO == 'pares':
     modulo_scanner_pares()
 
+elif MODULO == 'opciones':
+    modulo_opciones()
 
 elif HORIZONTE == 'corto':
 
