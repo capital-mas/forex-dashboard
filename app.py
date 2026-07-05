@@ -20,9 +20,16 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
 from modulo_opciones import modulo_opciones
+
+ZONA_AR = ZoneInfo("America/Argentina/Buenos_Aires")
+
+def ahora_ar():
+    """Devuelve la hora actual en horario de Argentina (evita el desfasaje UTC de Streamlit Cloud)."""
+    return datetime.now(ZONA_AR)
 
 try:
     from hurst import compute_Hc
