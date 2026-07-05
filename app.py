@@ -4215,7 +4215,7 @@ for key, default in [
 # ==============================================================
 
 
-_now_str = datetime.now().strftime('%H:%M')
+_now_str = ahora_ar().strftime('%H:%M')
 _h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff'}
 _h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Pares', 'opciones': 'Opciones'}
 
@@ -4512,7 +4512,7 @@ st.markdown(f"""
     </div>
     <div class="page-sub">{subtitulo_h}</div>
     <div style="font-size:12px;color:#f5f7fa;font-family:'JetBrains Mono',monospace;margin-top:4px">
-      {datetime.now().strftime('%d/%m/%Y · %H:%M')} &nbsp;·&nbsp; Yahoo Finance
+      {ahora_ar().strftime('%d/%m/%Y · %H:%M')} &nbsp;·&nbsp; Yahoo Finance
     </div>
   </div>
 </div>
@@ -5420,7 +5420,7 @@ st.markdown(f"""
 <div style='text-align:center;color:#3a4a5a;font-size:10px;padding:14px;
      border-top:1px solid #21262d;margin-top:12px'>
   📡 Analizador Cuantitativo Unificado &nbsp;·&nbsp; Datos: Yahoo Finance &nbsp;·&nbsp;
-  Caché: 30 min &nbsp;·&nbsp; {datetime.now().strftime('%d/%m/%Y')} &nbsp;·&nbsp;
+  Caché: 30 min &nbsp;·&nbsp; {ahora_ar().strftime('%d/%m/%Y')} &nbsp;·&nbsp;
   <b>Solo informativo. No constituye asesoramiento financiero.</b>
 </div>
 """, unsafe_allow_html=True)
