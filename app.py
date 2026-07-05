@@ -4344,6 +4344,7 @@ elif HORIZONTE == 'largo':
     _OPCIONES_SUB_LARGO = {
         '📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
         '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
+        '📐 Top-Down Cuantitativo': 'tdc',
     }
     _label_sub_actual_l = next((k for k, v in _OPCIONES_SUB_LARGO.items() if v == MODULO), '📋 Ranking')
     if st.session_state.get('nav_sub_largo') != _label_sub_actual_l:
