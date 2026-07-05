@@ -796,7 +796,7 @@ def modulo_opciones():
         capital = st.number_input('Capital destinado a esta operación', min_value=1.0,
                                    value=float(st.session_state['opc_capital']), step=100.0, key='opc_capital_input')
     with cr2:
-        pct_riesgo = st.slider('% máximo de riesgo sobre ese capital', 0.01, 0.20,
+        pct_riesgo = st.slider('% máximo de riesgo sobre ese capital', 0.01, 1.00,
                                 float(st.session_state['opc_pct_riesgo']), 0.01, key='opc_pct_riesgo_input')
     st.session_state['opc_capital'] = capital
     st.session_state['opc_pct_riesgo'] = pct_riesgo
