@@ -4412,7 +4412,8 @@ with st.container(key='nav_mobile_wrap'):
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
                   '📊 Sectores': 'sectores', '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones'},
         'largo': {'📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
-                  '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental'},
+                  '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
+                  '📐 Top-Down Cuantitativo': 'tdc'},
     }
 
     _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '🏠 Inicio')
@@ -4482,6 +4483,7 @@ titulos = {
     'ticker':      ('Análisis Individual', '🔍', 'Detalle cuantitativo completo para un ticker específico'),
     'resumen':     ('Resumen Top-Down', '🎯', 'Vista ejecutiva multi-nivel — macro a micro'),
     'fundamental': ('Análisis Fundamental', '📊', 'Ratios financieros · Benchmarks por sector · Señales de valuación'),
+    'tdc': ('Top-Down Cuantitativo (Mediano/Largo Plazo)', '📐', 'Percentil histórico MP/LP — modelo Top-Down original'),
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
 }
 titulo_h, icono_h, subtitulo_h = titulos.get(MODULO, ('Analizador', '📡', ''))
@@ -4809,8 +4811,8 @@ elif HORIZONTE == 'corto':
 
 
 elif HORIZONTE == 'largo':
-    if MODULO == 'fundamental':
-        pass  # handled by modulo_fundamental() below
+    if MODULO in ('fundamental', 'tdc'):
+        pass  # handled by modulo_fundamental() / modulo_topdown_cuantitativo() below
     else:
         ind_disp = list(ACCIONES_POR_INDUSTRIA.keys())
         ind_sel  = st.multiselect('Industrias a analizar (2 años de historia)', ind_disp,
@@ -5721,6 +5723,9 @@ if HORIZONTE == 'largo' and MODULO == 'fundamental':
     if 'fund_ind_sel' not in st.session_state:
         st.session_state['fund_ind_sel'] = list(ACCIONES_POR_INDUSTRIA.keys())[:1]
     modulo_fundamental()
+
+if HORIZONTE == 'largo' and MODULO == 'tdc':
+    modulo_topdown_cuantitativo()
 
 
 # ==============================================================
