@@ -79,7 +79,7 @@ st.markdown("""
 
   /* ── Top nav bar ── */
   .topbar-wrap {
-    position: sticky; top: 2.5rem; z-index: 998;
+    position: sticky; top: 5rem; z-index: 998;
     background: rgba(7,9,15,0.96);
     border-bottom: 1px solid #21262d;
     backdrop-filter: blur(16px);
