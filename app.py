@@ -79,13 +79,13 @@ st.markdown("""
 
   /* ── Top nav bar ── */
   .topbar-wrap {
-    position: sticky; top: 0; z-index: 999;
+    position: sticky; top: 2.5rem; z-index: 998;
     background: rgba(7,9,15,0.96);
     border-bottom: 1px solid #21262d;
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     padding: 0;
-  }
+}
   .topbar-inner {
     display: flex; align-items: center;
     padding: 0 24px; height: 58px; gap: 0;
