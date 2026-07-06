@@ -4269,6 +4269,319 @@ def modulo_inicio():
                 chips_navegacion(df_acc_f['Ticker'].tolist(), 'inicio_acc')
 
 # ==============================================================
+#  MÓDULO NUEVO — SCORE AAS (Acumulación / Anticipación / Sentimiento)
+#  Portado del script Top-Down MP/LP (Colab).
+# ==============================================================
+
+HORIZONTES_TDC = {
+    'MP': {
+        'nombre': 'MEDIANO PLAZO', 'subtitulo': 'Posiciones estimadas de 3 a 6 meses',
+        'periodo_valor': '2y', 'periodo_momento': '6mo', 'min_dias_valor': 100,
+        'ret_dias_1': 20, 'ret_label_1': '1m', 'ret_dias_2': 60, 'ret_label_2': '3m',
+        'rsi_periodo': 14, 'vol_corta': 20, 'bb_ventana': 20, 'atr_periodo': 14,
+        'mom_escala': 0.60,
+    },
+    'LP': {
+        'nombre': 'LARGO PLAZO', 'subtitulo': 'Posiciones estimadas de 1 a 2 años',
+        'periodo_valor': '10y', 'periodo_momento': '2y', 'min_dias_valor': 250,
+        'ret_dias_1': 60, 'ret_label_1': '3m', 'ret_dias_2': 252, 'ret_label_2': '12m',
+        'rsi_periodo': 21, 'vol_corta': 60, 'bb_ventana': 50, 'atr_periodo': 21,
+        'mom_escala': 0.35,
+    },
+}
+
+
+def _tdc_clasificar(s):
+    if   s <= 20: return 'Miedo Extremo',  '#f85149', '🔴'
+    elif s <= 40: return 'Miedo',           '#f0883e', '🟠'
+    elif s <= 60: return 'Neutral',         '#e3b341', '🟡'
+    elif s <= 80: return 'Codicia',         '#7ee787', '🟢'
+    else:         return 'Codicia Extrema', '#3fb950', '💚'
+
+
+def _tdc_scores(cv, cm, atr, cfg):
+    cv = pd.Series(cv).dropna(); cm = pd.Series(cm).dropna()
+    if len(cv) < 30 or len(cm) < 15:
+        return 50.0, 50.0, 50.0
+    precio_pct = pct_rank(cv)
+    rsi_pct = 100 - pct_rank(calcular_rsi(cv, p=cfg['rsi_periodo']))
+    vol_pct = 100 - pct_rank(vol_anual_rolling(cv, cfg['vol_corta']))
+    sc_acum = (100 - precio_pct) * 0.40 + rsi_pct * 0.35 + vol_pct * 0.25
+
+    d1 = cfg['ret_dias_1']
+    ret_m = float(cm.pct_change(d1).iloc[-1] * 100) if len(cm) >= d1 + 1 else 0
+    if np.isnan(ret_m): ret_m = 0
+    mom = min(100, max(0, 50 + ret_m * cfg['mom_escala']))
+
+    if atr is not None:
+        atr_s = pd.Series(atr).dropna()
+        comp_atr = max(0, min(100, 100 - (float(atr_s.iloc[-1]) / float(atr_s.mean()) * 50))) if len(atr_s) > 5 else 50
+    else:
+        comp_atr = 50
+
+    bbv = cfg['bb_ventana']
+    ma_bb = cm.rolling(bbv).mean(); sd_bb = cm.rolling(bbv).std()
+    bbw = (sd_bb / ma_bb.replace(0, np.nan) * 100).dropna()
+    bb_c = 100 - pct_rank(bbw) if len(bbw) > 5 else 50
+    sc_antic = mom * 0.40 + comp_atr * 0.30 + bb_c * 0.30
+
+    sc_sent = pct_rank(cv)
+    return round(sc_acum, 1), round(sc_antic, 1), round(sc_sent, 1)
+
+
+def _tdc_señal(sa, sn, ss):
+    if   sa >= 62 and sn >= 55:               return '🟢 ACUMULAR'
+    elif sa >= 62 and sn >= 40:               return '🟡 VIGILAR'
+    elif sa >= 58 and sn <  40:               return '🔵 ACUMULAR GRADUAL'
+    elif sa <  45 and sn >= 62 and ss >= 62:  return '🚀 TENDENCIA ALCISTA'
+    elif sn >= 65 and 40 <= sa < 62:          return '⚡ MOVIMIENTO INMINENTE'
+    elif sa <  38 and sn <  42 and ss >= 65:  return '⚠️ MÁXIMOS'
+    elif sa >= 55 and sn <  35 and ss <  35:  return '🔴 EVITAR'
+    elif sa <  38 and sn >= 55 and ss <  40:  return '🟠 REBOTE'
+    else:                                      return '⏸️ ESPERAR'
+
+
+def _tdc_fase(s):
+    if   s <= 20: return 'MUY BAJO'
+    elif s <= 40: return 'BAJO'
+    elif s <= 60: return 'NEUTRAL'
+    elif s <= 80: return 'ALTO'
+    else:         return 'MUY ALTO'
+
+
+def _tdc_interp_acum(s):
+    if   s <= 20: return 'caro'
+    elif s <= 40: return 'sobre la media'
+    elif s <= 60: return 'en zona neutra'
+    elif s <= 80: return 'barato'
+    else:         return 'muy barato'
+
+
+def _tdc_interp_antic(s):
+    if   s <= 20: return 'momentum bajista fuerte'
+    elif s <= 40: return 'momentum débil'
+    elif s <= 60: return 'momentum neutral'
+    elif s <= 80: return 'momentum alcista'
+    else:         return 'momentum muy fuerte'
+
+
+def _tdc_interp_sent(s):
+    if   s <= 20: return 'pesimismo extremo'
+    elif s <= 40: return 'pesimismo moderado'
+    elif s <= 60: return 'sentimiento neutral'
+    elif s <= 80: return 'sentimiento positivo'
+    else:         return 'euforia'
+
+
+def _tdc_interp_conjunto(sa, sn, ss):
+    barato, caro = sa > 60, sa < 40
+    alcista, bajista = sn > 60, sn < 40
+    eufor, pesim = ss > 80, ss < 20
+    if barato and alcista:      base = 'Continuidad alcista: precio barato + momentum confirmando la suba.'
+    elif barato and bajista:    base = 'Rebote técnico o lateralización: precio barato pero el momentum aún no confirma giro al alza.'
+    elif caro and bajista:      base = 'Continuidad bajista o corrección: precio caro + momentum débil/negativo.'
+    elif caro and alcista:      base = 'Suba con riesgo de agotamiento: precio caro pero el momentum sigue empujando.'
+    elif barato:                base = 'Acumulación: precio barato en zona de momentum neutral, posible piso formándose.'
+    elif caro:                  base = 'Distribución o pausa: precio caro con momentum neutral, sin impulso claro.'
+    else:                       base = 'Lateralización: sin sesgo claro entre precio y momentum.'
+    if eufor: base += ' Sentimiento en euforia: señal de alerta de posible sobrecompra/techo cercano.'
+    elif pesim: base += ' Sentimiento en pesimismo extremo: suele anticipar zonas de suelo o capitulación.'
+    return base
+
+
+def _tdc_texto_interpretacion(sa, sn, ss):
+    return (f"Acum ({sa:.0f}) {_tdc_fase(sa)} — {_tdc_interp_acum(sa)}. "
+            f"Antic ({sn:.0f}) {_tdc_fase(sn)} — {_tdc_interp_antic(sn)}. "
+            f"Sent ({ss:.0f}) {_tdc_fase(ss)} — {_tdc_interp_sent(ss)}. "
+            f"» {_tdc_interp_conjunto(sa, sn, ss)}")
+
+
+def _tdc_analizar_ticker(tk, cfg):
+    try:
+        df_v = descargar_datos(tk, cfg['periodo_valor'])
+        df_m = descargar_datos(tk, cfg['periodo_momento'])
+        if df_v is None or df_m is None: return None
+        cl_v = get_close_series(df_v); cl_m = get_close_series(df_m)
+        if cl_v is None or cl_m is None or len(cl_v.dropna()) < cfg['min_dias_valor']:
+            return None
+        atr = calcular_atr(df_m, p=cfg['atr_periodo'])
+        sa, sn, ss = _tdc_scores(cl_v, cl_m, atr, cfg)
+        sf = sa * 0.45 + sn * 0.35 + ss * 0.20
+        d1, d2 = cfg['ret_dias_1'], cfg['ret_dias_2']
+        ret_1 = float(cl_m.pct_change(d1).iloc[-1] * 100) if len(cl_m) >= d1 + 1 else 0
+        ret_2 = float(cl_m.pct_change(d2).iloc[-1] * 100) if len(cl_m) >= d2 + 1 else 0
+        if np.isnan(ret_1): ret_1 = 0
+        if np.isnan(ret_2): ret_2 = 0
+        rsi = float(calcular_rsi(cl_m, p=cfg['rsi_periodo']).iloc[-1])
+        if np.isnan(rsi): rsi = 50
+        precio = float(cl_m.iloc[-1])
+        return dict(tk=tk, sa=sa, sn=sn, ss=ss, sf=round(sf, 1),
+                    ret_1=ret_1, ret_2=ret_2, rsi=rsi, precio=precio,
+                    accion=_tdc_señal(sa, sn, ss))
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def cargar_topdown_cuantitativo(tickers_tuple, horizonte):
+    """tickers_tuple: tupla ordenada de (nombre, ticker). horizonte: 'MP' o 'LP'."""
+    cfg = HORIZONTES_TDC[horizonte]
+    resultados = {}
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futuros = {ex.submit(_tdc_analizar_ticker, tk, cfg): nombre for nombre, tk in tickers_tuple}
+        for fut in as_completed(futuros):
+            nombre = futuros[fut]
+            r = fut.result()
+            if r: resultados[nombre] = r
+    return resultados
+
+
+def _tdc_fig_momentum(datos_dict, cfg):
+    ns = list(datos_dict.keys())
+    r1 = [datos_dict[n]['ret_1'] for n in ns]
+    r2 = [datos_dict[n]['ret_2'] for n in ns]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=ns, y=r1, name=cfg['ret_label_1'],
+        marker_color=[C_GREEN if v >= 0 else C_RED for v in r1]))
+    fig.add_trace(go.Bar(x=ns, y=r2, name=cfg['ret_label_2'], opacity=0.6,
+        marker_color=[C_MONSTER if v >= 0 else '#bc8cff' for v in r2]))
+    fig.add_hline(y=0, line_color=C_MUTED, opacity=0.4)
+    fig.update_layout(**PLOTLY_LAYOUT_BASE, barmode='group',
+        yaxis=dict(title='Retorno %', gridcolor=C_GRID),
+        xaxis=dict(tickangle=-45, gridcolor=C_GRID),
+        height=440, margin=dict(l=10, r=10, t=30, b=90),
+        legend=dict(orientation='h', y=1.08))
+    return fig
+
+
+def modulo_topdown_cuantitativo():
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#150d20 0%,#1c1a0a 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #e3b341;
+         border-radius:14px; padding:28px 32px; margin-bottom:24px;">
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📐 Top-Down Cuantitativo — Mediano/Largo Plazo</div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+        Modelo Top-Down por percentil histórico, con dos horizontes: <b style="color:#f0883e">Mediano Plazo</b>
+        (3-6 meses) y <b style="color:#3fb950">Largo Plazo</b> (1-2 años). Se aplica sobre los mismos activos
+        que ya tiene la app (países, sectores, mercados reales y acciones por industria) — sin agregar tickers nuevos.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        hz_label = st.selectbox('Horizonte', ['Mediano Plazo (3-6 meses)', 'Largo Plazo (1-2 años)'], key='tdc_hz')
+        hz = 'MP' if 'Mediano' in hz_label else 'LP'
+    with c2:
+        universo_label = st.selectbox('Universo', [
+            '🌍 Países / Índices Globales', '📊 Sectores S&P500',
+            '🛢️ Mercados Reales', '📈 Acciones por Industria',
+        ], key='tdc_universo')
+
+    cfg = HORIZONTES_TDC[hz]
+    st.caption(f"Historial de referencia: {cfg['periodo_valor']} · Ventana reciente: {cfg['periodo_momento']} · "
+               f"Retornos mostrados: {cfg['ret_label_1']} / {cfg['ret_label_2']}")
+
+    extra_map, tickers_tuple = {}, ()
+
+    if universo_label.startswith('🌍'):
+        tickers_tuple = tuple((n, tk) for n, (tk, _r) in PAISES.items())
+        extra_map = {n: {'region': r} for n, (tk, r) in PAISES.items()}
+    elif universo_label.startswith('📊'):
+        tickers_tuple = tuple((n, tk) for n, (tk, _c) in SECTORES.items())
+        extra_map = {n: {'color': c} for n, (tk, c) in SECTORES.items()}
+    elif universo_label.startswith('🛢️'):
+        tickers_tuple = tuple((n, tk) for n, (tk, _cat, _c) in MERCADOS_REALES.items())
+        extra_map = {n: {'cat': cat, 'color': c} for n, (tk, cat, c) in MERCADOS_REALES.items()}
+    else:
+        ind_disp_tdc = list(ACCIONES_POR_INDUSTRIA.keys())
+        ind_sel_tdc = st.multiselect('Industrias', ind_disp_tdc,
+            default=st.session_state.get('tdc_ind_sel', ind_disp_tdc[:1]), key='tdc_ind_sel_widget')
+        st.session_state['tdc_ind_sel'] = ind_sel_tdc
+        if not ind_sel_tdc:
+            st.info('Seleccioná al menos una industria.'); return
+        pares = []
+        for ind in ind_sel_tdc:
+            for tk in ACCIONES_POR_INDUSTRIA.get(ind, []):
+                pares.append((tk, tk))
+                extra_map[tk] = {'industria': ind}
+        tickers_tuple = tuple(dict(pares).items())  # dedup por ticker
+
+    if not tickers_tuple:
+        st.info('No hay activos para este universo.'); return
+
+    if st.button('▶ Calcular Scores del Top-Down Cuantitativo', key='tdc_run'):
+        st.session_state['tdc_run_flag'] = True
+
+    if not st.session_state.get('tdc_run_flag'):
+        st.markdown("""
+        <div style='background:#0d1117;border:1px dashed #21262d;border-radius:10px;padding:36px;text-align:center'>
+          <div style='font-size:36px;margin-bottom:10px'>📐</div>
+          <div style='color:#6b7d9a;font-size:12px'>Elegí horizonte y universo, después presioná "Calcular Scores del Top-Down Cuantitativo".</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    with st.spinner(f'Calculando scores del Top-Down Cuantitativo ({len(tickers_tuple)} activos)...'):
+        datos = cargar_topdown_cuantitativo(tickers_tuple, hz)
+        for n, extra in extra_map.items():
+            if n in datos: datos[n].update(extra)
+
+    if not datos:
+        st.error('No se pudieron calcular scores (verificá el historial mínimo requerido).')
+        return
+
+    n_acum = sum(1 for d in datos.values() if d['sa'] >= 62)
+    n_evitar = sum(1 for d in datos.values() if d['sa'] <= 38)
+    mejor = max(datos.items(), key=lambda x: x[1]['sa'])
+    kpi_cards_4([
+        ('Activos analizados', str(len(datos)), f'{HORIZONTES_TDC[hz]["nombre"]}', '#e3b341'),
+        ('🟢 Zona Acumulación', str(n_acum), 'Score Acum ≥ 62', '#3fb950'),
+        ('🔴 Zona Evitar', str(n_evitar), 'Score Acum ≤ 38', '#f85149'),
+        ('Mejor oportunidad', mejor[0], f"Acum {mejor[1]['sa']:.0f}", score_color_hex(mejor[1]['sa'])),
+    ])
+
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(['📊 Scores', '📈 Momentum', '🗺️ Cuadrante', '🔥 Heatmap', '📋 Ranking'])
+    items_ord = sorted(datos.items(), key=lambda x: x[1]['sa'], reverse=True)
+
+    with tab1:
+        st.plotly_chart(fig_barras_h(items_ord, f'Score Acumulación — {HORIZONTES_TDC[hz]["nombre"]}'),
+                         use_container_width=True, key='tdc_barras')
+    with tab2:
+        st.plotly_chart(_tdc_fig_momentum(datos, cfg), use_container_width=True, key='tdc_momentum')
+    with tab3:
+        colores_grp = COLORES_REGION if universo_label.startswith('🌍') else None
+        st.plotly_chart(fig_cuadrante(datos, colores_grp, f'Mapa de Oportunidades — {HORIZONTES_TDC[hz]["nombre"]}'),
+                         use_container_width=True, key='tdc_cuadrante')
+    with tab4:
+        st.plotly_chart(fig_heatmap(datos, f'Heatmap Top-Down Cuantitativo — {HORIZONTES_TDC[hz]["nombre"]}'),
+                         use_container_width=True, key='tdc_heatmap')
+    with tab5:
+        filas = []
+        for n, d in items_ord:
+            filas.append({'Nombre': n, 'Acum': d['sa'], 'Antic': d['sn'], 'Sent': d['ss'],
+                          'RSI': round(d['rsi'], 1), f"Ret {cfg['ret_label_1']} %": round(d['ret_1'], 2),
+                          f"Ret {cfg['ret_label_2']} %": round(d['ret_2'], 2),
+                          'Precio': fmt_precio(d['precio']), 'Señal': d['accion']})
+        df_tdc = pd.DataFrame(filas)
+        ret_cols = [c for c in df_tdc.columns if c.startswith('Ret ')]
+        styled = _apply_score_style(df_tdc, ['Acum', 'Antic', 'Sent'], ret_cols)
+        st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_tdc) * 35 + 45)))
+        chips_navegacion([(n, datos[n].get('tk', n)) for n, _ in items_ord], 'tdc_tabla')
+
+        st.markdown('### 📝 Lectura por activo')
+        for n, d in items_ord[:15]:
+            _, col_lbl, emo_lbl = _tdc_clasificar(d['sa'])
+            st.markdown(f"""
+            <div class="interp-card">
+              <div class="interp-header">{emo_lbl} {n} · {col_lbl} · {d['accion']}</div>
+              {_tdc_texto_interpretacion(d['sa'], d['sn'], d['ss'])}
+            </div>
+            """, unsafe_allow_html=True)
+        if len(items_ord) > 15:
+            st.caption(f'Mostrando lectura de los primeros 15 de {len(items_ord)} activos (ordenados por Score Acumulación).')
+
+# ==============================================================
 #  ESTADO DE NAVEGACIÓN
 # ==============================================================
 
@@ -5481,318 +5794,6 @@ def modulo_fundamental():
                         ico_vs_f = '✔' if tipo=='POS' else '✘'
                         st.markdown(f'<div style="font-size:12px;color:{col_vs_f};padding:3px 0;border-bottom:1px solid #21262d">{ico_vs_f} {msg}</div>', unsafe_allow_html=True)
 
-# ==============================================================
-#  MÓDULO NUEVO — SCORE AAS (Acumulación / Anticipación / Sentimiento)
-#  Portado del script Top-Down MP/LP (Colab).
-# ==============================================================
-
-HORIZONTES_TDC = {
-    'MP': {
-        'nombre': 'MEDIANO PLAZO', 'subtitulo': 'Posiciones estimadas de 3 a 6 meses',
-        'periodo_valor': '2y', 'periodo_momento': '6mo', 'min_dias_valor': 100,
-        'ret_dias_1': 20, 'ret_label_1': '1m', 'ret_dias_2': 60, 'ret_label_2': '3m',
-        'rsi_periodo': 14, 'vol_corta': 20, 'bb_ventana': 20, 'atr_periodo': 14,
-        'mom_escala': 0.60,
-    },
-    'LP': {
-        'nombre': 'LARGO PLAZO', 'subtitulo': 'Posiciones estimadas de 1 a 2 años',
-        'periodo_valor': '10y', 'periodo_momento': '2y', 'min_dias_valor': 250,
-        'ret_dias_1': 60, 'ret_label_1': '3m', 'ret_dias_2': 252, 'ret_label_2': '12m',
-        'rsi_periodo': 21, 'vol_corta': 60, 'bb_ventana': 50, 'atr_periodo': 21,
-        'mom_escala': 0.35,
-    },
-}
-
-
-def _tdc_clasificar(s):
-    if   s <= 20: return 'Miedo Extremo',  '#f85149', '🔴'
-    elif s <= 40: return 'Miedo',           '#f0883e', '🟠'
-    elif s <= 60: return 'Neutral',         '#e3b341', '🟡'
-    elif s <= 80: return 'Codicia',         '#7ee787', '🟢'
-    else:         return 'Codicia Extrema', '#3fb950', '💚'
-
-
-def _tdc_scores(cv, cm, atr, cfg):
-    cv = pd.Series(cv).dropna(); cm = pd.Series(cm).dropna()
-    if len(cv) < 30 or len(cm) < 15:
-        return 50.0, 50.0, 50.0
-    precio_pct = pct_rank(cv)
-    rsi_pct = 100 - pct_rank(calcular_rsi(cv, p=cfg['rsi_periodo']))
-    vol_pct = 100 - pct_rank(vol_anual_rolling(cv, cfg['vol_corta']))
-    sc_acum = (100 - precio_pct) * 0.40 + rsi_pct * 0.35 + vol_pct * 0.25
-
-    d1 = cfg['ret_dias_1']
-    ret_m = float(cm.pct_change(d1).iloc[-1] * 100) if len(cm) >= d1 + 1 else 0
-    if np.isnan(ret_m): ret_m = 0
-    mom = min(100, max(0, 50 + ret_m * cfg['mom_escala']))
-
-    if atr is not None:
-        atr_s = pd.Series(atr).dropna()
-        comp_atr = max(0, min(100, 100 - (float(atr_s.iloc[-1]) / float(atr_s.mean()) * 50))) if len(atr_s) > 5 else 50
-    else:
-        comp_atr = 50
-
-    bbv = cfg['bb_ventana']
-    ma_bb = cm.rolling(bbv).mean(); sd_bb = cm.rolling(bbv).std()
-    bbw = (sd_bb / ma_bb.replace(0, np.nan) * 100).dropna()
-    bb_c = 100 - pct_rank(bbw) if len(bbw) > 5 else 50
-    sc_antic = mom * 0.40 + comp_atr * 0.30 + bb_c * 0.30
-
-    sc_sent = pct_rank(cv)
-    return round(sc_acum, 1), round(sc_antic, 1), round(sc_sent, 1)
-
-
-def _tdc_señal(sa, sn, ss):
-    if   sa >= 62 and sn >= 55:               return '🟢 ACUMULAR'
-    elif sa >= 62 and sn >= 40:               return '🟡 VIGILAR'
-    elif sa >= 58 and sn <  40:               return '🔵 ACUMULAR GRADUAL'
-    elif sa <  45 and sn >= 62 and ss >= 62:  return '🚀 TENDENCIA ALCISTA'
-    elif sn >= 65 and 40 <= sa < 62:          return '⚡ MOVIMIENTO INMINENTE'
-    elif sa <  38 and sn <  42 and ss >= 65:  return '⚠️ MÁXIMOS'
-    elif sa >= 55 and sn <  35 and ss <  35:  return '🔴 EVITAR'
-    elif sa <  38 and sn >= 55 and ss <  40:  return '🟠 REBOTE'
-    else:                                      return '⏸️ ESPERAR'
-
-
-def _tdc_fase(s):
-    if   s <= 20: return 'MUY BAJO'
-    elif s <= 40: return 'BAJO'
-    elif s <= 60: return 'NEUTRAL'
-    elif s <= 80: return 'ALTO'
-    else:         return 'MUY ALTO'
-
-
-def _tdc_interp_acum(s):
-    if   s <= 20: return 'caro'
-    elif s <= 40: return 'sobre la media'
-    elif s <= 60: return 'en zona neutra'
-    elif s <= 80: return 'barato'
-    else:         return 'muy barato'
-
-
-def _tdc_interp_antic(s):
-    if   s <= 20: return 'momentum bajista fuerte'
-    elif s <= 40: return 'momentum débil'
-    elif s <= 60: return 'momentum neutral'
-    elif s <= 80: return 'momentum alcista'
-    else:         return 'momentum muy fuerte'
-
-
-def _tdc_interp_sent(s):
-    if   s <= 20: return 'pesimismo extremo'
-    elif s <= 40: return 'pesimismo moderado'
-    elif s <= 60: return 'sentimiento neutral'
-    elif s <= 80: return 'sentimiento positivo'
-    else:         return 'euforia'
-
-
-def _tdc_interp_conjunto(sa, sn, ss):
-    barato, caro = sa > 60, sa < 40
-    alcista, bajista = sn > 60, sn < 40
-    eufor, pesim = ss > 80, ss < 20
-    if barato and alcista:      base = 'Continuidad alcista: precio barato + momentum confirmando la suba.'
-    elif barato and bajista:    base = 'Rebote técnico o lateralización: precio barato pero el momentum aún no confirma giro al alza.'
-    elif caro and bajista:      base = 'Continuidad bajista o corrección: precio caro + momentum débil/negativo.'
-    elif caro and alcista:      base = 'Suba con riesgo de agotamiento: precio caro pero el momentum sigue empujando.'
-    elif barato:                base = 'Acumulación: precio barato en zona de momentum neutral, posible piso formándose.'
-    elif caro:                  base = 'Distribución o pausa: precio caro con momentum neutral, sin impulso claro.'
-    else:                       base = 'Lateralización: sin sesgo claro entre precio y momentum.'
-    if eufor: base += ' Sentimiento en euforia: señal de alerta de posible sobrecompra/techo cercano.'
-    elif pesim: base += ' Sentimiento en pesimismo extremo: suele anticipar zonas de suelo o capitulación.'
-    return base
-
-
-def _tdc_texto_interpretacion(sa, sn, ss):
-    return (f"Acum ({sa:.0f}) {_tdc_fase(sa)} — {_tdc_interp_acum(sa)}. "
-            f"Antic ({sn:.0f}) {_tdc_fase(sn)} — {_tdc_interp_antic(sn)}. "
-            f"Sent ({ss:.0f}) {_tdc_fase(ss)} — {_tdc_interp_sent(ss)}. "
-            f"» {_tdc_interp_conjunto(sa, sn, ss)}")
-
-
-def _tdc_analizar_ticker(tk, cfg):
-    try:
-        df_v = descargar_datos(tk, cfg['periodo_valor'])
-        df_m = descargar_datos(tk, cfg['periodo_momento'])
-        if df_v is None or df_m is None: return None
-        cl_v = get_close_series(df_v); cl_m = get_close_series(df_m)
-        if cl_v is None or cl_m is None or len(cl_v.dropna()) < cfg['min_dias_valor']:
-            return None
-        atr = calcular_atr(df_m, p=cfg['atr_periodo'])
-        sa, sn, ss = _tdc_scores(cl_v, cl_m, atr, cfg)
-        sf = sa * 0.45 + sn * 0.35 + ss * 0.20
-        d1, d2 = cfg['ret_dias_1'], cfg['ret_dias_2']
-        ret_1 = float(cl_m.pct_change(d1).iloc[-1] * 100) if len(cl_m) >= d1 + 1 else 0
-        ret_2 = float(cl_m.pct_change(d2).iloc[-1] * 100) if len(cl_m) >= d2 + 1 else 0
-        if np.isnan(ret_1): ret_1 = 0
-        if np.isnan(ret_2): ret_2 = 0
-        rsi = float(calcular_rsi(cl_m, p=cfg['rsi_periodo']).iloc[-1])
-        if np.isnan(rsi): rsi = 50
-        precio = float(cl_m.iloc[-1])
-        return dict(tk=tk, sa=sa, sn=sn, ss=ss, sf=round(sf, 1),
-                    ret_1=ret_1, ret_2=ret_2, rsi=rsi, precio=precio,
-                    accion=_tdc_señal(sa, sn, ss))
-    except Exception:
-        return None
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def cargar_topdown_cuantitativo(tickers_tuple, horizonte):
-    """tickers_tuple: tupla ordenada de (nombre, ticker). horizonte: 'MP' o 'LP'."""
-    cfg = HORIZONTES_TDC[horizonte]
-    resultados = {}
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        futuros = {ex.submit(_tdc_analizar_ticker, tk, cfg): nombre for nombre, tk in tickers_tuple}
-        for fut in as_completed(futuros):
-            nombre = futuros[fut]
-            r = fut.result()
-            if r: resultados[nombre] = r
-    return resultados
-
-
-def _tdc_fig_momentum(datos_dict, cfg):
-    ns = list(datos_dict.keys())
-    r1 = [datos_dict[n]['ret_1'] for n in ns]
-    r2 = [datos_dict[n]['ret_2'] for n in ns]
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=ns, y=r1, name=cfg['ret_label_1'],
-        marker_color=[C_GREEN if v >= 0 else C_RED for v in r1]))
-    fig.add_trace(go.Bar(x=ns, y=r2, name=cfg['ret_label_2'], opacity=0.6,
-        marker_color=[C_MONSTER if v >= 0 else '#bc8cff' for v in r2]))
-    fig.add_hline(y=0, line_color=C_MUTED, opacity=0.4)
-    fig.update_layout(**PLOTLY_LAYOUT_BASE, barmode='group',
-        yaxis=dict(title='Retorno %', gridcolor=C_GRID),
-        xaxis=dict(tickangle=-45, gridcolor=C_GRID),
-        height=440, margin=dict(l=10, r=10, t=30, b=90),
-        legend=dict(orientation='h', y=1.08))
-    return fig
-
-
-def modulo_topdown_cuantitativo():
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#150d20 0%,#1c1a0a 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid #e3b341;
-         border-radius:14px; padding:28px 32px; margin-bottom:24px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📐 Top-Down Cuantitativo — Mediano/Largo Plazo</div>
-      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Modelo Top-Down por percentil histórico, con dos horizontes: <b style="color:#f0883e">Mediano Plazo</b>
-        (3-6 meses) y <b style="color:#3fb950">Largo Plazo</b> (1-2 años). Se aplica sobre los mismos activos
-        que ya tiene la app (países, sectores, mercados reales y acciones por industria) — sin agregar tickers nuevos.
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    c1, c2 = st.columns(2)
-    with c1:
-        hz_label = st.selectbox('Horizonte', ['Mediano Plazo (3-6 meses)', 'Largo Plazo (1-2 años)'], key='tdc_hz')
-        hz = 'MP' if 'Mediano' in hz_label else 'LP'
-    with c2:
-        universo_label = st.selectbox('Universo', [
-            '🌍 Países / Índices Globales', '📊 Sectores S&P500',
-            '🛢️ Mercados Reales', '📈 Acciones por Industria',
-        ], key='tdc_universo')
-
-    cfg = HORIZONTES_TDC[hz]
-    st.caption(f"Historial de referencia: {cfg['periodo_valor']} · Ventana reciente: {cfg['periodo_momento']} · "
-               f"Retornos mostrados: {cfg['ret_label_1']} / {cfg['ret_label_2']}")
-
-    extra_map, tickers_tuple = {}, ()
-
-    if universo_label.startswith('🌍'):
-        tickers_tuple = tuple((n, tk) for n, (tk, _r) in PAISES.items())
-        extra_map = {n: {'region': r} for n, (tk, r) in PAISES.items()}
-    elif universo_label.startswith('📊'):
-        tickers_tuple = tuple((n, tk) for n, (tk, _c) in SECTORES.items())
-        extra_map = {n: {'color': c} for n, (tk, c) in SECTORES.items()}
-    elif universo_label.startswith('🛢️'):
-        tickers_tuple = tuple((n, tk) for n, (tk, _cat, _c) in MERCADOS_REALES.items())
-        extra_map = {n: {'cat': cat, 'color': c} for n, (tk, cat, c) in MERCADOS_REALES.items()}
-    else:
-        ind_disp_tdc = list(ACCIONES_POR_INDUSTRIA.keys())
-        ind_sel_tdc = st.multiselect('Industrias', ind_disp_tdc,
-            default=st.session_state.get('tdc_ind_sel', ind_disp_tdc[:1]), key='tdc_ind_sel_widget')
-        st.session_state['tdc_ind_sel'] = ind_sel_tdc
-        if not ind_sel_tdc:
-            st.info('Seleccioná al menos una industria.'); return
-        pares = []
-        for ind in ind_sel_tdc:
-            for tk in ACCIONES_POR_INDUSTRIA.get(ind, []):
-                pares.append((tk, tk))
-                extra_map[tk] = {'industria': ind}
-        tickers_tuple = tuple(dict(pares).items())  # dedup por ticker
-
-    if not tickers_tuple:
-        st.info('No hay activos para este universo.'); return
-
-    if st.button('▶ Calcular Scores del Top-Down Cuantitativo', key='tdc_run'):
-        st.session_state['tdc_run_flag'] = True
-
-    if not st.session_state.get('tdc_run_flag'):
-        st.markdown("""
-        <div style='background:#0d1117;border:1px dashed #21262d;border-radius:10px;padding:36px;text-align:center'>
-          <div style='font-size:36px;margin-bottom:10px'>📐</div>
-          <div style='color:#6b7d9a;font-size:12px'>Elegí horizonte y universo, después presioná "Calcular Scores del Top-Down Cuantitativo".</div>
-        </div>
-        """, unsafe_allow_html=True)
-        return
-
-    with st.spinner(f'Calculando scores del Top-Down Cuantitativo ({len(tickers_tuple)} activos)...'):
-        datos = cargar_topdown_cuantitativo(tickers_tuple, hz)
-        for n, extra in extra_map.items():
-            if n in datos: datos[n].update(extra)
-
-    if not datos:
-        st.error('No se pudieron calcular scores (verificá el historial mínimo requerido).')
-        return
-
-    n_acum = sum(1 for d in datos.values() if d['sa'] >= 62)
-    n_evitar = sum(1 for d in datos.values() if d['sa'] <= 38)
-    mejor = max(datos.items(), key=lambda x: x[1]['sa'])
-    kpi_cards_4([
-        ('Activos analizados', str(len(datos)), f'{HORIZONTES_TDC[hz]["nombre"]}', '#e3b341'),
-        ('🟢 Zona Acumulación', str(n_acum), 'Score Acum ≥ 62', '#3fb950'),
-        ('🔴 Zona Evitar', str(n_evitar), 'Score Acum ≤ 38', '#f85149'),
-        ('Mejor oportunidad', mejor[0], f"Acum {mejor[1]['sa']:.0f}", score_color_hex(mejor[1]['sa'])),
-    ])
-
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(['📊 Scores', '📈 Momentum', '🗺️ Cuadrante', '🔥 Heatmap', '📋 Ranking'])
-    items_ord = sorted(datos.items(), key=lambda x: x[1]['sa'], reverse=True)
-
-    with tab1:
-        st.plotly_chart(fig_barras_h(items_ord, f'Score Acumulación — {HORIZONTES_TDC[hz]["nombre"]}'),
-                         use_container_width=True, key='tdc_barras')
-    with tab2:
-        st.plotly_chart(_tdc_fig_momentum(datos, cfg), use_container_width=True, key='tdc_momentum')
-    with tab3:
-        colores_grp = COLORES_REGION if universo_label.startswith('🌍') else None
-        st.plotly_chart(fig_cuadrante(datos, colores_grp, f'Mapa de Oportunidades — {HORIZONTES_TDC[hz]["nombre"]}'),
-                         use_container_width=True, key='tdc_cuadrante')
-    with tab4:
-        st.plotly_chart(fig_heatmap(datos, f'Heatmap Top-Down Cuantitativo — {HORIZONTES_TDC[hz]["nombre"]}'),
-                         use_container_width=True, key='tdc_heatmap')
-    with tab5:
-        filas = []
-        for n, d in items_ord:
-            filas.append({'Nombre': n, 'Acum': d['sa'], 'Antic': d['sn'], 'Sent': d['ss'],
-                          'RSI': round(d['rsi'], 1), f"Ret {cfg['ret_label_1']} %": round(d['ret_1'], 2),
-                          f"Ret {cfg['ret_label_2']} %": round(d['ret_2'], 2),
-                          'Precio': fmt_precio(d['precio']), 'Señal': d['accion']})
-        df_tdc = pd.DataFrame(filas)
-        ret_cols = [c for c in df_tdc.columns if c.startswith('Ret ')]
-        styled = _apply_score_style(df_tdc, ['Acum', 'Antic', 'Sent'], ret_cols)
-        st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_tdc) * 35 + 45)))
-        chips_navegacion([(n, datos[n].get('tk', n)) for n, _ in items_ord], 'tdc_tabla')
-
-        st.markdown('### 📝 Lectura por activo')
-        for n, d in items_ord[:15]:
-            _, col_lbl, emo_lbl = _tdc_clasificar(d['sa'])
-            st.markdown(f"""
-            <div class="interp-card">
-              <div class="interp-header">{emo_lbl} {n} · {col_lbl} · {d['accion']}</div>
-              {_tdc_texto_interpretacion(d['sa'], d['sn'], d['ss'])}
-            </div>
-            """, unsafe_allow_html=True)
-        if len(items_ord) > 15:
-            st.caption(f'Mostrando lectura de los primeros 15 de {len(items_ord)} activos (ordenados por Score Acumulación).')
 
 # ==============================================================
 #  MÓDULO FUNDAMENTAL — RENDERIZADO
