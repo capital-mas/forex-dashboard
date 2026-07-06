@@ -1493,8 +1493,8 @@ def fig_precio_bollinger(ticker, cl, df_ohlc=None, tipo='Línea'):
 
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text=f'{ticker}, font=dict(color=C_TEXT, size=14),
-                    y=1.05, x=0.01, xanchor='left'),
+        title=dict(text=f'{ticker} - PRECIO,  font=dict(color=C_TEXT, size=14),
+                    y=0.97, x=0.01, xanchor='left'),
         xaxis=dict(gridcolor=C_GRID, rangeslider=dict(visible=False)),
         yaxis=dict(gridcolor=C_GRID),
         height=500, hovermode='x unified',
