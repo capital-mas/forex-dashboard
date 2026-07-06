@@ -1482,11 +1482,28 @@ def fig_precio_bollinger(ticker, cl, df_ohlc=None, tipo='Línea'):
     fig.add_trace(go.Scatter(x=cl.index, y=ma50, line=dict(color=C_GREEN, width=1.3), name='MA50'))
     fig.add_trace(go.Scatter(x=cl.index, y=ma200, line=dict(color=C_RED, width=1.3), name='MA200'))
 
-    if tipo == 'Velas' and df_ohlc is not None and {'Open','High','Low'}.issubset(df_ohlc.columns):
+    usar_velas = (
+        tipo == 'Velas'
+        and df_ohlc is not None
+        and {'Open', 'High', 'Low'}.issubset(df_ohlc.columns)
+    )
+
+    if usar_velas:
+        # Alinear el OHLC exactamente al índice de cl (que ya viene sin NaN)
+        df_ohlc_alineado = df_ohlc.reindex(cl.index)
+        if df_ohlc_alineado[['Open', 'High', 'Low']].isna().any().any():
+            df_ohlc_alineado = df_ohlc_alineado.ffill().bfill()
         fig.add_trace(go.Candlestick(
-            x=df_ohlc.index, open=df_ohlc['Open'], high=df_ohlc['High'],
-            low=df_ohlc['Low'], close=cl, name='Precio',
-            increasing_line_color=C_GREEN, decreasing_line_color=C_RED,
+            x=df_ohlc_alineado.index,
+            open=df_ohlc_alineado['Open'],
+            high=df_ohlc_alineado['High'],
+            low=df_ohlc_alineado['Low'],
+            close=cl,
+            name='Precio',
+            increasing_line_color=C_GREEN,
+            decreasing_line_color=C_RED,
+            increasing_fillcolor=C_GREEN,
+            decreasing_fillcolor=C_RED,
         ))
     else:
         fig.add_trace(go.Scatter(x=cl.index, y=cl, line=dict(color=trend_c, width=2.2), name='Precio'))
