@@ -369,7 +369,7 @@ def pantalla_login():
         with tab_login:
             email = st.text_input("Email", key="login_email")
             password = st.text_input("Contraseña", type="password", key="login_pass")
-            if st.button("Entrar", use_container_width=True, key="btn_login"):
+            if st.button("Entrar", use_container_width=True, config=PLOTLY_CONFIG, key="btn_login"):
                 if not email or not password:
                     st.error("Completá email y contraseña.")
                 else:
@@ -385,7 +385,7 @@ def pantalla_login():
             email_r = st.text_input("Email", key="reg_email")
             password_r = st.text_input("Contraseña", type="password", key="reg_pass")
             password_r2 = st.text_input("Confirmar contraseña", type="password", key="reg_pass2")
-            if st.button("Crear cuenta", use_container_width=True, key="btn_registro"):
+            if st.button("Crear cuenta", use_container_width=True, config=PLOTLY_CONFIG, key="btn_registro"):
                 if not email_r or not password_r:
                     st.error("Completá email y contraseña.")
                 elif password_r != password_r2:
@@ -2590,7 +2590,7 @@ def modulo_buscador():
         ticker_final = selector_ticker_autocomplete('buscador_universal', prefill)
     with col_btn:
         st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-        analizar = st.button('▶ Analizar', use_container_width=True, key='btn_buscar')
+        analizar = st.button('▶ Analizar', use_container_width=True, config=PLOTLY_CONFIG, key='btn_buscar')
 
 
     st.markdown('<div style="font-size:10px;color:#3a4a5f;font-weight:600;margin-top:6px">¿No sabés por dónde arrancar? Probá con un clic →</div>', unsafe_allow_html=True)
@@ -2677,7 +2677,7 @@ def _renderizar_buscador(ticker):
 
             precios = cl_m.values
             if len(precios) > 2:
-                st.plotly_chart(fig_mini_precio(ticker, precios), use_container_width=True, key=f'mini_{ticker}')
+                st.plotly_chart(fig_mini_precio(ticker, precios), use_container_width=True, config=PLOTLY_CONFIG, key=f'mini_{ticker}')
         else:
             st.info('Datos insuficientes para el análisis de corto plazo.')
 
@@ -2864,7 +2864,7 @@ def modulo_comparador():
         nuevo = selector_ticker_autocomplete('comparador_add')
     with c_btn:
         st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-        if st.button('➕ Agregar', use_container_width=True, key='comp_add_btn'):
+        if st.button('➕ Agregar', use_container_width=True, config=PLOTLY_CONFIG, key='comp_add_btn'):
             lista = st.session_state['comparador_tickers']
             if nuevo and nuevo not in lista and len(lista) < 5:
                 lista.append(nuevo)
@@ -2929,7 +2929,7 @@ def modulo_comparador():
     if sin_precio:
         st.warning(f"⚠️ No se pudo descargar precio para: {', '.join(sin_precio)}. Probá tocar \"↺ Actualizar\" en unos minutos.")
 
-    st.plotly_chart(fig_comparador_precio(series), use_container_width=True, key='comp_precio_fig')
+    st.plotly_chart(fig_comparador_precio(series), use_container_width=True, config=PLOTLY_CONFIG, key='comp_precio_fig')
 
     if resultados_l:
         filas = []
@@ -2949,7 +2949,7 @@ def modulo_comparador():
 
         col_radar, col_vacio = st.columns([2, 1])
         with col_radar:
-            st.plotly_chart(fig_radar_comparador(resultados_l), use_container_width=True, key='comp_radar_fig')
+            st.plotly_chart(fig_radar_comparador(resultados_l), use_container_width=True, config=PLOTLY_CONFIG, key='comp_radar_fig')
 
         ganador = max(resultados_l.items(), key=lambda x: x[1]['global_score'])
         st.markdown(f"""
@@ -3336,7 +3336,7 @@ def modulo_optimizador():
         nuevo_opt = selector_ticker_autocomplete('opt_add')
     with c_btn:
         st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-        if st.button('➕ Agregar', use_container_width=True, key='opt_add_btn'):
+        if st.button('➕ Agregar', use_container_width=True, config=PLOTLY_CONFIG, key='opt_add_btn'):
             if nuevo_opt and nuevo_opt not in st.session_state['opt_tickers'] and len(st.session_state['opt_tickers']) < 15:
                 st.session_state['opt_tickers'].append(nuevo_opt)
                 st.rerun()
@@ -3491,17 +3491,17 @@ def modulo_optimizador():
     tabg1, tabg2, tabg3, tabg4 = st.tabs(['📈 Evolución capital', '📉 Drawdown', '🔥 Correlación', '🗺️ Frontera eficiente'])
     with tabg1:
         eq_dict = {n: metricas_cart[n]['Equity'] for n in nombres_col}
-        st.plotly_chart(_opt_fig_equity(eq_dict, capital_opt, benchmark_opt), use_container_width=True, key='opt_equity_fig')
+        st.plotly_chart(_opt_fig_equity(eq_dict, capital_opt, benchmark_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_equity_fig')
     with tabg2:
         dd_dict = {n: metricas_cart[n]['Drawdown'] for n in nombres_col}
-        st.plotly_chart(_opt_fig_drawdown(dd_dict, benchmark_opt), use_container_width=True, key='opt_dd_fig')
+        st.plotly_chart(_opt_fig_drawdown(dd_dict, benchmark_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_dd_fig')
     with tabg3:
         corr_opt = retornos_opt[tickers_opt].corr()
-        st.plotly_chart(_opt_fig_corr(corr_opt), use_container_width=True, key='opt_corr_fig')
+        st.plotly_chart(_opt_fig_corr(corr_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_corr_fig')
     with tabg4:
         vol_b = ret_bench_opt.std() * np.sqrt(252)
         cagr_b = _opt_cagr_serie(ret_bench_opt)
-        st.plotly_chart(_opt_fig_frontera(df_sim, carteras_candidatas, vol_b, cagr_b, benchmark_opt), use_container_width=True, key='opt_frontera_fig')
+        st.plotly_chart(_opt_fig_frontera(df_sim, carteras_candidatas, vol_b, cagr_b, benchmark_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_frontera_fig')
 
     st.markdown('---')
     mejor_nombre_opt = max((n for n in nombres_col if n != benchmark_opt), key=lambda n: metricas_cart[n]['Sharpe'])
@@ -4528,7 +4528,7 @@ def modulo_topdown_cuantitativo():
         st.plotly_chart(fig_barras_h(items_ord, f'Score Acumulación — {HORIZONTES_TDC[hz]["nombre"]}'),
                          use_container_width=True, key='tdc_barras')
     with tab2:
-        st.plotly_chart(_tdc_fig_momentum(datos, cfg), use_container_width=True, key='tdc_momentum')
+        st.plotly_chart(_tdc_fig_momentum(datos, cfg), use_container_width=True, config=PLOTLY_CONFIG, key='tdc_momentum')
     with tab3:
         colores_grp = COLORES_REGION if universo_label.startswith('🌍') else None
         st.plotly_chart(fig_cuadrante(datos, colores_grp, f'Mapa de Oportunidades — {HORIZONTES_TDC[hz]["nombre"]}'),
@@ -4629,7 +4629,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
     with col:
         cont_key = f'navcont_{key}'
         with st.container(key=cont_key):
-            clicked = st.button(label, use_container_width=True, key=key)
+            clicked = st.button(label, use_container_width=True, config=PLOTLY_CONFIG, key=key)
         if is_active:
             st.markdown(f"""
             <style>
@@ -4676,12 +4676,12 @@ with st.container(key='nav_pills_wrap'):
 
     with _c[9]:
         with st.container(key='nav_refresh_cont'):
-            if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
+            if st.button('↺ Actualizar', use_container_width=True, config=PLOTLY_CONFIG, key='nav_refresh'):
                 st.cache_data.clear(); st.rerun()
 
     with _c[11]:
         with st.container(key='nav_logout_cont'):
-            if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout'):
+            if st.button('🚪 Cerrar sesión', use_container_width=True, config=PLOTLY_CONFIG, key='btn_logout'):
                 supabase.auth.sign_out()
                 cookies.remove("sb_refresh_token")
                 del st.session_state["usuario"]
@@ -4945,26 +4945,26 @@ elif HORIZONTE == 'corto':
 
             cc1, cc2, cc3, cc4, cc5 = st.columns(5)
             with cc1:
-                if st.button('🔍 Analizar un ticker', use_container_width=True, key='onb_buscador'):
+                if st.button('🔍 Analizar un ticker', use_container_width=True, config=PLOTLY_CONFIG, key='onb_buscador'):
                     st.session_state['nav_horizonte'] = 'buscador'
                     st.session_state['nav_modulo'] = 'buscador'
                     st.rerun()
             with cc2:
-                if st.button('⚖️ Comparar activos', use_container_width=True, key='onb_comparador'):
+                if st.button('⚖️ Comparar activos', use_container_width=True, config=PLOTLY_CONFIG, key='onb_comparador'):
                     st.session_state['nav_horizonte'] = 'comparador'
                     st.session_state['nav_modulo'] = 'comparador'
                     st.rerun()
             with cc3:
-                if st.button('🎯 Ver oportunidades macro', use_container_width=True, key='onb_topdown'):
+                if st.button('🎯 Ver oportunidades macro', use_container_width=True, config=PLOTLY_CONFIG, key='onb_topdown'):
                     st.session_state['td_loaded'] = True
                     st.rerun()
             with cc4:
-                if st.button('📋 Ranking de largo plazo', use_container_width=True, key='onb_ranking'):
+                if st.button('📋 Ranking de largo plazo', use_container_width=True, config=PLOTLY_CONFIG, key='onb_ranking'):
                     st.session_state['nav_horizonte'] = 'largo'
                     st.session_state['nav_modulo'] = 'ranking'
                     st.rerun()
             with cc5:
-                if st.button('🧮 Optimizar cartera', use_container_width=True, key='onb_optimizador'):
+                if st.button('🧮 Optimizar cartera', use_container_width=True, config=PLOTLY_CONFIG, key='onb_optimizador'):
                     st.session_state['nav_horizonte'] = 'optimizador'
                     st.session_state['nav_modulo'] = 'optimizador'
                     st.rerun()
@@ -4981,7 +4981,7 @@ elif HORIZONTE == 'corto':
             d_m = cargar_mercados_corto(); prog.progress(100, '✅ Listo'); prog.empty()
             fuentes = [(l,d,c) for l,d,c in [('Países',d_p,'#3a7bd5'),('Sectores',d_s,'#3fb950'),('Mercados',d_m,'#f0883e')] if d]
             if fuentes:
-                st.plotly_chart(fig_topdown(fuentes), use_container_width=True, key='topdown_fig')
+                st.plotly_chart(fig_topdown(fuentes), use_container_width=True, config=PLOTLY_CONFIG, key='topdown_fig')
         else:
             st.markdown("""
             <div style='background:#0d1117;border:1px dashed #21262d;border-radius:10px;padding:40px;text-align:center'>
@@ -5009,15 +5009,15 @@ elif HORIZONTE == 'corto':
                     items = sorted([(n,d) for n,d in datos_f.items() if d['grupo']==grupo], key=lambda x: x[1]['sa'], reverse=True)
                     if not items: continue
                     fig = fig_barras_h(items, grupo, COLORES_GRUPO_FX.get(grupo, C_MONSTER))
-                    with cols[j]: st.plotly_chart(fig, use_container_width=True, key=f'fx_barras_{grupo}')
+                    with cols[j]: st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f'fx_barras_{grupo}')
         with tab2:
             fig2 = fig_momentum(sorted(datos_f.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
-            st.plotly_chart(fig2, use_container_width=True, key='fx_momentum')
+            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key='fx_momentum')
         with tab3:
             c_m, _ = st.columns([2,1])
             with c_m:
                 fig3 = fig_cuadrante(datos_f, COLORES_GRUPO_FX, 'Mapa Oportunidades Forex')
-                st.plotly_chart(fig3, use_container_width=True, key='fx_cuadrante')
+                st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key='fx_cuadrante')
         with tab4:
             tabla_corto(datos_f)
 
@@ -5037,15 +5037,15 @@ elif HORIZONTE == 'corto':
                     items = sorted([(n,d) for n,d in datos_p.items() if d['region']==region], key=lambda x: x[1]['sa'], reverse=True)
                     if not items: continue
                     fig = fig_barras_h(items, region, COLORES_REGION.get(region, C_MONSTER))
-                    with cols[j]: st.plotly_chart(fig, use_container_width=True, key=f'pa_barras_{region}')
+                    with cols[j]: st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f'pa_barras_{region}')
         with tab2:
             fig2 = fig_momentum(sorted(datos_p.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
-            st.plotly_chart(fig2, use_container_width=True, key='pa_momentum')
+            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key='pa_momentum')
         with tab3:
             c_m, _ = st.columns([2,1])
             with c_m:
                 fig3 = fig_cuadrante(datos_p, COLORES_REGION, 'Mapa Oportunidades Países')
-                st.plotly_chart(fig3, use_container_width=True, key='pa_cuadrante')
+                st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key='pa_cuadrante')
         with tab4:
             tabla_corto(datos_p)
 
@@ -5060,15 +5060,15 @@ elif HORIZONTE == 'corto':
         with tab1:
             items_ord = sorted(datos_s.items(), key=lambda x: x[1]['sa'], reverse=True)
             fig = fig_barras_h(items_ord, 'S&P500 — Sectores')
-            st.plotly_chart(fig, use_container_width=True, key='sec_barras')
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key='sec_barras')
         with tab2:
             fig2 = fig_momentum(sorted(datos_s.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
-            st.plotly_chart(fig2, use_container_width=True, key='sec_momentum')
+            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key='sec_momentum')
         with tab3:
             c_m, _ = st.columns([2,1])
             with c_m:
                 fig3 = fig_cuadrante(datos_s, None, 'Mapa Oportunidades Sectores')
-                st.plotly_chart(fig3, use_container_width=True, key='sec_cuadrante')
+                st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key='sec_cuadrante')
         with tab4:
             tabla_corto(datos_s)
 
@@ -5088,15 +5088,15 @@ elif HORIZONTE == 'corto':
                     items = sorted([(n,d) for n,d in datos_m.items() if d['cat']==cat], key=lambda x: x[1]['sa'], reverse=True)
                     if not items: continue
                     fig = fig_barras_h(items, cat)
-                    with cols[j]: st.plotly_chart(fig, use_container_width=True, key=f'merc_barras_{cat}')
+                    with cols[j]: st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f'merc_barras_{cat}')
         with tab2:
             fig2 = fig_momentum(sorted(datos_m.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
-            st.plotly_chart(fig2, use_container_width=True, key='merc_momentum')
+            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key='merc_momentum')
         with tab3:
             c_m, _ = st.columns([2,1])
             with c_m:
                 fig3 = fig_cuadrante(datos_m, None, 'Mapa Mercados Reales')
-                st.plotly_chart(fig3, use_container_width=True, key='merc_cuadrante')
+                st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key='merc_cuadrante')
         with tab4:
             tabla_corto(datos_m)
 
@@ -5122,12 +5122,12 @@ elif HORIZONTE == 'corto':
                 st.markdown(f'<div class="sec-title">📂 {industria}</div>', unsafe_allow_html=True)
                 items_ord = sorted(tickers.items(), key=lambda x: x[1]['sa'], reverse=True)
                 fig = fig_barras_h(items_ord, industria)
-                st.plotly_chart(fig, use_container_width=True, key=f'acc_barras_{industria}')
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f'acc_barras_{industria}')
         with tab2:
             c_m, _ = st.columns([2,1])
             with c_m:
                 fig3 = fig_cuadrante(todas_c, None, 'Mapa Oportunidades Acciones')
-                st.plotly_chart(fig3, use_container_width=True, key='acc_cuadrante')
+                st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key='acc_cuadrante')
         with tab3:
             filas = []
             for industria, tickers in datos_acc_c.items():
@@ -5216,13 +5216,13 @@ elif HORIZONTE == 'largo':
             with tab1:
                 tabla_largo(df_res_l, key_suffix='ranking')
             with tab2:
-                st.plotly_chart(fig_distribuciones(df_res_l), use_container_width=True, key='ranking_dist')
+                st.plotly_chart(fig_distribuciones(df_res_l), use_container_width=True, config=PLOTLY_CONFIG, key='ranking_dist')
             with tab3:
                 datos_cuad = {r['ticker']:{'sa':r['trend_score'],'sn':r['mr_score'],'ss':r['risk_score'],'grupo':r['industria']} for _,r in df_res_l.iterrows()}
                 c_m, _ = st.columns([2,1])
                 with c_m:
                     fig_c = fig_cuadrante(datos_cuad, None, 'Trend Score vs MR Score')
-                    st.plotly_chart(fig_c, use_container_width=True, key='ranking_cuadrante')
+                    st.plotly_chart(fig_c, use_container_width=True, config=PLOTLY_CONFIG, key='ranking_cuadrante')
 
 
         elif MODULO == 'reversion':
