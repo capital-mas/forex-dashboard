@@ -1734,7 +1734,7 @@ def fig_categoria_fundamental(datos_fund, metricas, titulo):
 # ==============================================================
 
 
-def render_largo_completo(ticker, cl, r, key_suffix=''):
+def render_largo_completo(ticker, cl, r, key_suffix='', df_ohlc=None):
     accent = score_color_hex(r['global_score'])
     kpi_cards_4([
         ('Global Score',  f"{int(r['global_score'])}/100",  r['sesgo'], accent),
@@ -1763,7 +1763,7 @@ def render_largo_completo(ticker, cl, r, key_suffix=''):
     </div>
     """, unsafe_allow_html=True)
 
-     tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger', '📊 RSI & MACD', '📉 Drawdown'])
+    tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger', '📊 RSI & MACD', '📉 Drawdown'])
     with tab_g1:
         tipo_graf = st.radio('Tipo de gráfico', ['Línea', 'Velas'],
                               horizontal=True, key=f'tipo_graf_{key_suffix}_{ticker}')
@@ -2707,7 +2707,7 @@ def _renderizar_buscador(ticker):
         return
 
 
-    render_largo_completo(ticker, cl, r, key_suffix='buscador')
+    render_largo_completo(ticker, cl, r, key_suffix='buscador', df_ohlc=df_tk)
 
 
     # ── ANÁLISIS FUNDAMENTAL ──────────────────────────────────────────────
@@ -5326,7 +5326,7 @@ elif HORIZONTE == 'largo':
                 r = analizar_largo(ticker_sel, cl)
                 if r is None:
                     st.error('No se pudo calcular el análisis.'); st.stop()
-                render_largo_completo(ticker_sel, cl, r, key_suffix='tickermod')
+                render_largo_completo(ticker_sel, cl, r, key_suffix='tickermod', df_ohlc=df_tk)
 
 
 
