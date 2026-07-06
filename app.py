@@ -369,7 +369,7 @@ def pantalla_login():
         with tab_login:
             email = st.text_input("Email", key="login_email")
             password = st.text_input("Contraseña", type="password", key="login_pass")
-            if st.button("Entrar", use_container_width=True, config=PLOTLY_CONFIG, key="btn_login"):
+            if st.button("Entrar", use_container_width=True, key="btn_login"):
                 if not email or not password:
                     st.error("Completá email y contraseña.")
                 else:
@@ -385,7 +385,7 @@ def pantalla_login():
             email_r = st.text_input("Email", key="reg_email")
             password_r = st.text_input("Contraseña", type="password", key="reg_pass")
             password_r2 = st.text_input("Confirmar contraseña", type="password", key="reg_pass2")
-            if st.button("Crear cuenta", use_container_width=True, config=PLOTLY_CONFIG, key="btn_registro"):
+            if st.button("Crear cuenta", use_container_width=True, key="btn_registro"):
                 if not email_r or not password_r:
                     st.error("Completá email y contraseña.")
                 elif password_r != password_r2:
@@ -2590,7 +2590,7 @@ def modulo_buscador():
         ticker_final = selector_ticker_autocomplete('buscador_universal', prefill)
     with col_btn:
         st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-        analizar = st.button('▶ Analizar', use_container_width=True, config=PLOTLY_CONFIG, key='btn_buscar')
+        analizar = st.button('▶ Analizar', use_container_width=True, key='btn_buscar')
 
 
     st.markdown('<div style="font-size:10px;color:#3a4a5f;font-weight:600;margin-top:6px">¿No sabés por dónde arrancar? Probá con un clic →</div>', unsafe_allow_html=True)
@@ -2864,7 +2864,7 @@ def modulo_comparador():
         nuevo = selector_ticker_autocomplete('comparador_add')
     with c_btn:
         st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-        if st.button('➕ Agregar', use_container_width=True, config=PLOTLY_CONFIG, key='comp_add_btn'):
+        if st.button('➕ Agregar', use_container_width=True, key='comp_add_btn'):
             lista = st.session_state['comparador_tickers']
             if nuevo and nuevo not in lista and len(lista) < 5:
                 lista.append(nuevo)
@@ -3336,7 +3336,7 @@ def modulo_optimizador():
         nuevo_opt = selector_ticker_autocomplete('opt_add')
     with c_btn:
         st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
-        if st.button('➕ Agregar', use_container_width=True, config=PLOTLY_CONFIG, key='opt_add_btn'):
+        if st.button('➕ Agregar', use_container_width=True, key='opt_add_btn'):
             if nuevo_opt and nuevo_opt not in st.session_state['opt_tickers'] and len(st.session_state['opt_tickers']) < 15:
                 st.session_state['opt_tickers'].append(nuevo_opt)
                 st.rerun()
@@ -4629,7 +4629,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
     with col:
         cont_key = f'navcont_{key}'
         with st.container(key=cont_key):
-            clicked = st.button(label, use_container_width=True, config=PLOTLY_CONFIG, key=key)
+            clicked = st.button(label, use_container_width=True, key=key)
         if is_active:
             st.markdown(f"""
             <style>
@@ -4676,12 +4676,12 @@ with st.container(key='nav_pills_wrap'):
 
     with _c[9]:
         with st.container(key='nav_refresh_cont'):
-            if st.button('↺ Actualizar', use_container_width=True, config=PLOTLY_CONFIG, key='nav_refresh'):
+            if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 st.cache_data.clear(); st.rerun()
 
     with _c[11]:
         with st.container(key='nav_logout_cont'):
-            if st.button('🚪 Cerrar sesión', use_container_width=True, config=PLOTLY_CONFIG, key='btn_logout'):
+            if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout'):
                 supabase.auth.sign_out()
                 cookies.remove("sb_refresh_token")
                 del st.session_state["usuario"]
@@ -4945,26 +4945,26 @@ elif HORIZONTE == 'corto':
 
             cc1, cc2, cc3, cc4, cc5 = st.columns(5)
             with cc1:
-                if st.button('🔍 Analizar un ticker', use_container_width=True, config=PLOTLY_CONFIG, key='onb_buscador'):
+                if st.button('🔍 Analizar un ticker', use_container_width=True, key='onb_buscador'):
                     st.session_state['nav_horizonte'] = 'buscador'
                     st.session_state['nav_modulo'] = 'buscador'
                     st.rerun()
             with cc2:
-                if st.button('⚖️ Comparar activos', use_container_width=True, config=PLOTLY_CONFIG, key='onb_comparador'):
+                if st.button('⚖️ Comparar activos', use_container_width=True, key='onb_comparador'):
                     st.session_state['nav_horizonte'] = 'comparador'
                     st.session_state['nav_modulo'] = 'comparador'
                     st.rerun()
             with cc3:
-                if st.button('🎯 Ver oportunidades macro', use_container_width=True, config=PLOTLY_CONFIG, key='onb_topdown'):
+                if st.button('🎯 Ver oportunidades macro', use_container_width=True, key='onb_topdown'):
                     st.session_state['td_loaded'] = True
                     st.rerun()
             with cc4:
-                if st.button('📋 Ranking de largo plazo', use_container_width=True, config=PLOTLY_CONFIG, key='onb_ranking'):
+                if st.button('📋 Ranking de largo plazo', use_container_width=True, key='onb_ranking'):
                     st.session_state['nav_horizonte'] = 'largo'
                     st.session_state['nav_modulo'] = 'ranking'
                     st.rerun()
             with cc5:
-                if st.button('🧮 Optimizar cartera', use_container_width=True, config=PLOTLY_CONFIG, key='onb_optimizador'):
+                if st.button('🧮 Optimizar cartera', use_container_width=True, key='onb_optimizador'):
                     st.session_state['nav_horizonte'] = 'optimizador'
                     st.session_state['nav_modulo'] = 'optimizador'
                     st.rerun()
