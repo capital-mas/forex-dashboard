@@ -2782,6 +2782,85 @@ def _renderizar_buscador(ticker):
                 ico_vs_b = '✔' if tipo == 'POS' else '✘'
                 st.markdown(f'<div style="font-size:11px;color:{col_vs_b};padding:3px 0;border-bottom:1px solid #21262d">{ico_vs_b} {msg}</div>', unsafe_allow_html=True)
 
+# ── TOP-DOWN CUANTITATIVO (Mediano/Largo Plazo) ────────────────────────
+    st.markdown('---')
+    st.markdown('### 📐 Top-Down Cuantitativo (Mediano/Largo Plazo)')
+
+    with st.spinner('Calculando scores Top-Down Cuantitativo...'):
+        tdc_mp = _tdc_analizar_ticker(ticker, HORIZONTES_TDC['MP'])
+        tdc_lp = _tdc_analizar_ticker(ticker, HORIZONTES_TDC['LP'])
+
+    if tdc_mp is None and tdc_lp is None:
+        st.info('No hay historial suficiente para calcular el Top-Down Cuantitativo de este activo '
+                '(se necesitan al menos ~100 sesiones para Mediano Plazo y ~250 para Largo Plazo).')
+    else:
+        tab_tdc_mp, tab_tdc_lp = st.tabs(['📆 Mediano Plazo (3-6 meses)', '📆 Largo Plazo (1-2 años)'])
+        for tab_obj, d_tdc, hz_key in [(tab_tdc_mp, tdc_mp, 'MP'), (tab_tdc_lp, tdc_lp, 'LP')]:
+            with tab_obj:
+                if d_tdc is None:
+                    st.info(f"Historial insuficiente para calcular {HORIZONTES_TDC[hz_key]['nombre'].lower()} "
+                            f"(mínimo {HORIZONTES_TDC[hz_key]['min_dias_valor']} sesiones).")
+                    continue
+                cfg_hz = HORIZONTES_TDC[hz_key]
+                lbl_sa_tdc, col_sa_tdc, _ = clasificar_score(d_tdc['sa'])
+                kpi_cards_4([
+                    ('Score Acumulación', f"{d_tdc['sa']:.0f}/100", lbl_sa_tdc, col_sa_tdc),
+                    ('Score Anticipación', f"{d_tdc['sn']:.0f}/100", 'Momentum', score_color_hex(d_tdc['sn'])),
+                    ('Score Sentimiento', f"{d_tdc['ss']:.0f}/100", 'Percentil precio', score_color_hex(d_tdc['ss'])),
+                    ('Score Final', f"{d_tdc['sf']:.0f}/100", 'Compuesto 45/35/20', score_color_hex(d_tdc['sf'])),
+                ])
+                c1t, c2t, c3t = st.columns(3)
+                with c1t: st.metric(f"Ret {cfg_hz['ret_label_1']}", f"{d_tdc['ret_1']:+.2f}%")
+                with c2t: st.metric(f"Ret {cfg_hz['ret_label_2']}", f"{d_tdc['ret_2']:+.2f}%")
+                with c3t: st.metric('RSI', f"{d_tdc['rsi']:.1f}")
+                st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{d_tdc["accion"]}</span></div>',
+                            unsafe_allow_html=True)
+                _, col_lbl_tdc, emo_lbl_tdc = _tdc_clasificar(d_tdc['sa'])
+                st.markdown(f"""
+                <div class="interp-card">
+                  <div class="interp-header">{emo_lbl_tdc} {ticker} · {cfg_hz['nombre']} · {col_lbl_tdc}</div>
+                  {_tdc_texto_interpretacion(d_tdc['sa'], d_tdc['sn'], d_tdc['ss'])}
+                </div>
+                """, unsafe_allow_html=True)# ── TOP-DOWN CUANTITATIVO (Mediano/Largo Plazo) ────────────────────────
+    st.markdown('---')
+    st.markdown('### 📐 Top-Down Cuantitativo (Mediano/Largo Plazo)')
+
+    with st.spinner('Calculando scores Top-Down Cuantitativo...'):
+        tdc_mp = _tdc_analizar_ticker(ticker, HORIZONTES_TDC['MP'])
+        tdc_lp = _tdc_analizar_ticker(ticker, HORIZONTES_TDC['LP'])
+
+    if tdc_mp is None and tdc_lp is None:
+        st.info('No hay historial suficiente para calcular el Top-Down Cuantitativo de este activo '
+                '(se necesitan al menos ~100 sesiones para Mediano Plazo y ~250 para Largo Plazo).')
+    else:
+        tab_tdc_mp, tab_tdc_lp = st.tabs(['📆 Mediano Plazo (3-6 meses)', '📆 Largo Plazo (1-2 años)'])
+        for tab_obj, d_tdc, hz_key in [(tab_tdc_mp, tdc_mp, 'MP'), (tab_tdc_lp, tdc_lp, 'LP')]:
+            with tab_obj:
+                if d_tdc is None:
+                    st.info(f"Historial insuficiente para calcular {HORIZONTES_TDC[hz_key]['nombre'].lower()} "
+                            f"(mínimo {HORIZONTES_TDC[hz_key]['min_dias_valor']} sesiones).")
+                    continue
+                cfg_hz = HORIZONTES_TDC[hz_key]
+                lbl_sa_tdc, col_sa_tdc, _ = clasificar_score(d_tdc['sa'])
+                kpi_cards_4([
+                    ('Score Acumulación', f"{d_tdc['sa']:.0f}/100", lbl_sa_tdc, col_sa_tdc),
+                    ('Score Anticipación', f"{d_tdc['sn']:.0f}/100", 'Momentum', score_color_hex(d_tdc['sn'])),
+                    ('Score Sentimiento', f"{d_tdc['ss']:.0f}/100", 'Percentil precio', score_color_hex(d_tdc['ss'])),
+                    ('Score Final', f"{d_tdc['sf']:.0f}/100", 'Compuesto 45/35/20', score_color_hex(d_tdc['sf'])),
+                ])
+                c1t, c2t, c3t = st.columns(3)
+                with c1t: st.metric(f"Ret {cfg_hz['ret_label_1']}", f"{d_tdc['ret_1']:+.2f}%")
+                with c2t: st.metric(f"Ret {cfg_hz['ret_label_2']}", f"{d_tdc['ret_2']:+.2f}%")
+                with c3t: st.metric('RSI', f"{d_tdc['rsi']:.1f}")
+                st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{d_tdc["accion"]}</span></div>',
+                            unsafe_allow_html=True)
+                _, col_lbl_tdc, emo_lbl_tdc = _tdc_clasificar(d_tdc['sa'])
+                st.markdown(f"""
+                <div class="interp-card">
+                  <div class="interp-header">{emo_lbl_tdc} {ticker} · {cfg_hz['nombre']} · {col_lbl_tdc}</div>
+                  {_tdc_texto_interpretacion(d_tdc['sa'], d_tdc['sn'], d_tdc['ss'])}
+                </div>
+                """, unsafe_allow_html=True)
 
 # ==============================================================
 #  MÓDULO COMPARADOR DE ACTIVOS
