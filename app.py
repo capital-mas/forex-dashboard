@@ -1498,7 +1498,7 @@ def fig_precio_bollinger(ticker, cl, df_ohlc=None, tipo='Línea'):
         xaxis=dict(gridcolor=C_GRID, rangeslider=dict(visible=False)),
         yaxis=dict(gridcolor=C_GRID),
         height=500, hovermode='x unified',
-        legend=dict(orientation='h', y=1.16, x=0, font=dict(size=9)),
+        legend=dict(orientation='h', y=1.40, x=0, font=dict(size=9)),
         margin=dict(l=10, r=10, t=75, b=10),
     )
     return fig
