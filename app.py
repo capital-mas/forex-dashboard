@@ -445,6 +445,12 @@ C_BG2     = '#07090f'
 PLOTLY_LAYOUT_BASE = dict(
     plot_bgcolor=C_BG1, paper_bgcolor=C_BG2,
     font=dict(color='#b0bcd0', family='Inter, sans-serif'),
+    dragmode=False,   # ← deshabilita el recuadro de zoom por arrastre
+)
+
+PLOTLY_CONFIG = dict(
+    displayModeBar=False,  # ← oculta cámara/lupa/pan de la esquina
+    scrollZoom=False,      # ← deshabilita zoom con la rueda del mouse
 )
 
 
@@ -1463,7 +1469,7 @@ def fig_heatmap(datos_dict, titulo='Heatmap'):
     return fig
 
 
-def fig_precio_bollinger(ticker, cl):
+def fig_precio_bollinger(ticker, cl, df_ohlc=None, tipo='Línea'):
     ma20 = cl.rolling(20).mean(); std20 = cl.rolling(20).std()
     upper = ma20 + 2*std20; lower = ma20 - 2*std20
     ma50 = cl.rolling(50).mean(); ma200 = cl.rolling(200).mean()
@@ -1475,15 +1481,25 @@ def fig_precio_bollinger(ticker, cl):
     fig.add_trace(go.Scatter(x=cl.index, y=ma20, line=dict(color=C_YELL, width=1.3, dash='dash'), name='MA20'))
     fig.add_trace(go.Scatter(x=cl.index, y=ma50, line=dict(color=C_GREEN, width=1.3), name='MA50'))
     fig.add_trace(go.Scatter(x=cl.index, y=ma200, line=dict(color=C_RED, width=1.3), name='MA200'))
-    fig.add_trace(go.Scatter(x=cl.index, y=cl, line=dict(color=trend_c, width=2.2), name='Precio'))
+
+    if tipo == 'Velas' and df_ohlc is not None and {'Open','High','Low'}.issubset(df_ohlc.columns):
+        fig.add_trace(go.Candlestick(
+            x=df_ohlc.index, open=df_ohlc['Open'], high=df_ohlc['High'],
+            low=df_ohlc['Low'], close=cl, name='Precio',
+            increasing_line_color=C_GREEN, decreasing_line_color=C_RED,
+        ))
+    else:
+        fig.add_trace(go.Scatter(x=cl.index, y=cl, line=dict(color=trend_c, width=2.2), name='Precio'))
+
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text=f'{ticker} — Precio + Indicadores (2 años)', font=dict(color=C_TEXT, size=14)),
+        title=dict(text=f'{ticker} — Precio + Indicadores (2 años)', font=dict(color=C_TEXT, size=14),
+                    y=0.97, x=0.01, xanchor='left'),
         xaxis=dict(gridcolor=C_GRID, rangeslider=dict(visible=False)),
         yaxis=dict(gridcolor=C_GRID),
-        height=480, hovermode='x unified',
-        legend=dict(orientation='h', y=1.1, font=dict(size=9)),
-        margin=dict(l=10, r=10, t=50, b=10),
+        height=500, hovermode='x unified',
+        legend=dict(orientation='h', y=1.16, x=0, font=dict(size=9)),
+        margin=dict(l=10, r=10, t=75, b=10),
     )
     return fig
 
@@ -1747,13 +1763,16 @@ def render_largo_completo(ticker, cl, r, key_suffix=''):
     </div>
     """, unsafe_allow_html=True)
 
-    tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger', '📊 RSI & MACD', '📉 Drawdown'])
+     tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger', '📊 RSI & MACD', '📉 Drawdown'])
     with tab_g1:
-        st.plotly_chart(fig_precio_bollinger(ticker, cl), use_container_width=True, key=f'fpb_{key_suffix}_{ticker}')
+        tipo_graf = st.radio('Tipo de gráfico', ['Línea', 'Velas'],
+                              horizontal=True, key=f'tipo_graf_{key_suffix}_{ticker}')
+        st.plotly_chart(fig_precio_bollinger(ticker, cl, df_ohlc=df_ohlc, tipo=tipo_graf),
+                         use_container_width=True, config=PLOTLY_CONFIG, key=f'fpb_{key_suffix}_{ticker}')
     with tab_g2:
-        st.plotly_chart(fig_rsi_macd(cl), use_container_width=True, key=f'frm_{key_suffix}_{ticker}')
+        st.plotly_chart(fig_rsi_macd(cl), use_container_width=True, config=PLOTLY_CONFIG, key=f'frm_{key_suffix}_{ticker}')
     with tab_g3:
-        st.plotly_chart(fig_drawdown(ticker, cl), use_container_width=True, key=f'fdd_{key_suffix}_{ticker}')
+        st.plotly_chart(fig_drawdown(ticker, cl), use_container_width=True, config=PLOTLY_CONFIG, key=f'fdd_{key_suffix}_{ticker}')
 
 
 def _tabla_fundamental_completa(df, columnas, fmt_overrides=None):
