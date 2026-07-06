@@ -2580,7 +2580,6 @@ def modulo_buscador():
     if prefill:
         st.session_state['ticker_from_table'] = ''
 
-
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d; border-top:2px solid #3a7bd5;
@@ -2601,14 +2600,12 @@ def modulo_buscador():
     </div>
     """, unsafe_allow_html=True)
 
-
     col_inp, col_btn = st.columns([4, 1])
     with col_inp:
         ticker_final = selector_ticker_autocomplete('buscador_universal', prefill)
     with col_btn:
         st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
         analizar = st.button('▶ Analizar', use_container_width=True, key='btn_buscar')
-
 
     st.markdown('<div style="font-size:10px;color:#3a4a5f;font-weight:600;margin-top:6px">¿No sabés por dónde arrancar? Probá con un clic →</div>', unsafe_allow_html=True)
     cq1, cq2, cq3, cq4 = st.columns(4)
@@ -2621,12 +2618,19 @@ def modulo_buscador():
                 st.session_state['nav_modulo'] = 'buscador'
                 st.rerun()
 
-
     auto_run = bool(prefill and ticker_final == prefill.strip().upper()
                     and st.session_state.get('nav_modulo') == 'buscador')
 
+    # ── NUEVO: bandera persistente ──────────────────────────────────────
+    # Sin esto, cualquier interacción posterior (radio Línea/Velas, tabs,
+    # expanders, etc.) provoca un rerun de Streamlit donde 'analizar' vuelve
+    # a False y 'prefill' ya está vacío -> se perdía el análisis renderizado.
+    if analizar or auto_run:
+        st.session_state['buscador_ticker_confirmado'] = ticker_final
 
-    if not ticker_final or not (analizar or auto_run):
+    ticker_confirmado = st.session_state.get('buscador_ticker_confirmado', '')
+
+    if not ticker_confirmado:
         st.markdown("""
         <div style="border:1px dashed #21262d;border-radius:12px;padding:48px;text-align:center;margin-top:20px">
           <div style="font-size:44px;margin-bottom:14px;opacity:.6">📊</div>
@@ -2638,8 +2642,7 @@ def modulo_buscador():
         """, unsafe_allow_html=True)
         return
 
-
-    _renderizar_buscador(ticker_final)
+    _renderizar_buscador(ticker_confirmado)
 
 
 def _renderizar_buscador(ticker):
