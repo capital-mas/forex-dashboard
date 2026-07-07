@@ -13,6 +13,7 @@
 
 from datetime import date
 
+import pandas as pd
 import streamlit as st
 
 import finanzas_data as fd
@@ -39,6 +40,97 @@ def _toast_ok(msg: str) -> None:
 
 def _toast_err(msg: str) -> None:
     st.error(msg)
+
+
+# ============================================================
+# TABLA EDITABLE — editar y eliminar registros existentes
+# Se reutiliza en las 8 secciones para no duplicar la lógica de
+# diff (qué cambió) y de borrado con confirmación.
+# ============================================================
+
+def _valores_distintos(a, b) -> bool:
+    """Compara dos valores de celda tolerando tipos que cambian al pasar
+    por el editor (NaN vs None, floats con distinta precisión, fechas
+    como str vs date)."""
+    a_vacio = a is None or (isinstance(a, float) and pd.isna(a))
+    b_vacio = b is None or (isinstance(b, float) and pd.isna(b))
+    if a_vacio and b_vacio:
+        return False
+    if a_vacio != b_vacio:
+        return True
+    if isinstance(a, float) or isinstance(b, float):
+        try:
+            return round(float(a), 6) != round(float(b), 6)
+        except (TypeError, ValueError):
+            pass
+    return str(a) != str(b)
+
+
+def _tabla_editable(
+    client, user_id: str, seccion_key: str, df: pd.DataFrame,
+    actualizar_fn, eliminar_fn, label_fn, columnas_ocultas: tuple = ("user_id", "created_at"),
+) -> None:
+    """Muestra la tabla con edición de celdas + un selector de borrado con
+    confirmación explícita. 'label_fn' arma la etiqueta legible de cada fila
+    para el selector de borrado (ej: '06/07/2026 · Supermercado · $12000')."""
+    if df.empty:
+        st.caption("Todavía no hay registros cargados.")
+        return
+
+    df_mostrado = df.drop(columns=[c for c in columnas_ocultas if c in df.columns])
+
+    editado = st.data_editor(
+        df_mostrado, key=f"editor_{seccion_key}", num_rows="fixed",
+        disabled=["id"], use_container_width=True, hide_index=True,
+    )
+
+    col_guardar, col_borrar = st.columns([1, 1.4])
+
+    with col_guardar:
+        if st.button("💾 Guardar cambios", key=f"guardar_{seccion_key}"):
+            filas_actualizadas = 0
+            errores = []
+            for _, fila_nueva in editado.iterrows():
+                fila_id = int(fila_nueva["id"])
+                fila_original = df_mostrado[df_mostrado["id"] == fila_id]
+                if fila_original.empty:
+                    continue
+                fila_original = fila_original.iloc[0]
+                cambios = {
+                    col: fila_nueva[col] for col in editado.columns
+                    if col != "id" and _valores_distintos(fila_nueva[col], fila_original[col])
+                }
+                if cambios:
+                    r = actualizar_fn(client, user_id, fila_id, cambios)
+                    if r["ok"]:
+                        filas_actualizadas += 1
+                    else:
+                        errores.append(f"Fila {fila_id}: {r['mensaje']}")
+            if errores:
+                st.error("⚠️ Algunos cambios no se pudieron guardar:\n" + "\n".join(errores))
+            if filas_actualizadas:
+                st.success(f"✅ {filas_actualizadas} registro(s) actualizado(s)")
+                st.rerun()
+            elif not errores:
+                st.info("No había cambios para guardar.")
+
+    with col_borrar:
+        opciones = {label_fn(row): int(row["id"]) for _, row in df.iterrows()}
+        seleccion = st.selectbox(
+            "Eliminar un registro", ["—"] + list(opciones.keys()), key=f"del_sel_{seccion_key}",
+        )
+        if seleccion != "—":
+            id_a_borrar = opciones[seleccion]
+            confirmado = st.checkbox(
+                f"Confirmo que quiero eliminar: {seleccion}", key=f"del_confirm_{seccion_key}_{id_a_borrar}",
+            )
+            if confirmado and st.button("🗑️ Eliminar definitivamente", key=f"del_btn_{seccion_key}"):
+                r = eliminar_fn(client, user_id, id_a_borrar)
+                if r["ok"]:
+                    st.success(r["mensaje"])
+                    st.rerun()
+                else:
+                    st.error(r["mensaje"])
 
 
 # ============================================================
@@ -114,15 +206,20 @@ def _render_ingresos(client, user_id: str) -> None:
         if not descripcion or not categoria or not monto:
             _toast_err("⚠️ Completá los campos obligatorios (*)")
             return
-        fd.insertar_ingreso(client, user_id, {
+        r = fd.insertar_ingreso(client, user_id, {
             "fecha": fecha.isoformat(), "descripcion": descripcion, "categoria": categoria,
             "monto": monto, "cuenta": cuenta, "notas": notas,
         })
-        _toast_ok("✅ Ingreso guardado")
+        _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
 
     df = fd.listar_ingresos(client, user_id)
     if not df.empty:
-        st.dataframe(df.sort_values("fecha", ascending=False), use_container_width=True, hide_index=True)
+        st.markdown("###### Tus ingresos (editar / eliminar)")
+        _tabla_editable(
+            client, user_id, "ingresos", df.sort_values("fecha", ascending=False),
+            fd.actualizar_ingreso, fd.eliminar_ingreso,
+            label_fn=lambda r: f"{r['fecha']} · {r['descripcion']} · {_money(r['monto'])}",
+        )
 
 
 # ============================================================
@@ -161,16 +258,21 @@ def _render_gastos(client, user_id: str) -> None:
         if not descripcion or not categoria or not monto:
             _toast_err("⚠️ Completá los campos obligatorios (*)")
             return
-        fd.insertar_gasto(client, user_id, {
+        r = fd.insertar_gasto(client, user_id, {
             "fecha": fecha.isoformat(), "descripcion": descripcion, "categoria": categoria,
             "subcategoria": subcategoria if subcategoria != "—" else "",
             "monto": monto, "cuenta": cuenta, "notas": notas,
         })
-        _toast_ok("✅ Gasto guardado")
+        _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
 
     df = fd.listar_gastos(client, user_id)
     if not df.empty:
-        st.dataframe(df.sort_values("fecha", ascending=False), use_container_width=True, hide_index=True)
+        st.markdown("###### Tus gastos (editar / eliminar)")
+        _tabla_editable(
+            client, user_id, "gastos", df.sort_values("fecha", ascending=False),
+            fd.actualizar_gasto, fd.eliminar_gasto,
+            label_fn=lambda r: f"{r['fecha']} · {r['descripcion']} · {_money(r['monto'])}",
+        )
 
 
 # ============================================================
@@ -205,7 +307,7 @@ def _render_deudas(client, user_id: str) -> None:
         if not acreedor or not tipo or not monto_original:
             _toast_err("⚠️ Completá los campos obligatorios (*)")
             return
-        fd.insertar_deuda(client, user_id, {
+        r = fd.insertar_deuda(client, user_id, {
             "acreedor": acreedor, "tipo": tipo, "estado": estado,
             "montoOriginal": monto_original, "montoPendiente": monto_pendiente,
             "cuotasTotales": cuotas_totales, "cuotasPagadas": cuotas_pagadas,
@@ -213,11 +315,16 @@ def _render_deudas(client, user_id: str) -> None:
             "fechaInicio": fecha_inicio.isoformat(), "fechaVencimiento": fecha_vencimiento.isoformat(),
             "notas": notas,
         })
-        _toast_ok("✅ Deuda guardada")
+        _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
 
     df = fd.listar_deudas(client, user_id)
     if not df.empty:
-        st.dataframe(df.sort_values("fecha_vencimiento"), use_container_width=True, hide_index=True)
+        st.markdown("###### Tus deudas (editar / eliminar)")
+        _tabla_editable(
+            client, user_id, "deudas", df.sort_values("fecha_vencimiento"),
+            fd.actualizar_deuda, fd.eliminar_deuda,
+            label_fn=lambda r: f"{r['acreedor']} · {r['tipo']} · {_money(r['monto_pendiente'])} pendiente",
+        )
 
 
 # ============================================================
@@ -246,18 +353,24 @@ def _render_inv_corto(client, user_id: str) -> None:
         if not nombre or not tipo or not monto:
             _toast_err("⚠️ Completá los campos obligatorios (*)")
             return
-        fd.insertar_inv_corto(client, user_id, {
+        r = fd.insertar_inv_corto(client, user_id, {
             "nombre": nombre, "tipo": tipo, "monto": monto, "tasa": tasa,
             "fechaInicio": fecha_inicio.isoformat(), "fechaVencimiento": fecha_vencimiento.isoformat(),
             "estado": estado, "notas": notas,
         })
-        _toast_ok("✅ Inversión corto plazo guardada")
+        _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
 
     df = fd.listar_inv_corto(client, user_id)
     if not df.empty:
-        df = df.copy()
-        df["monto_proyectado"] = df.apply(lambda r: fd.monto_proyectado_inv_corto(r), axis=1)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        df_info = df.copy()
+        df_info["monto_proyectado"] = df_info.apply(lambda r: fd.monto_proyectado_inv_corto(r), axis=1)
+        st.dataframe(df_info, use_container_width=True, hide_index=True)
+        st.markdown("###### Editar / eliminar")
+        _tabla_editable(
+            client, user_id, "inv_corto", df,
+            fd.actualizar_inv_corto, fd.eliminar_inv_corto,
+            label_fn=lambda r: f"{r['nombre']} · {r['tipo']} · {_money(r['monto'])}",
+        )
 
 
 # ============================================================
@@ -292,16 +405,23 @@ def _render_inv_largo(client, user_id: str) -> None:
         if not activo or not tipo or not simbolo or not cantidad or not precio_compra:
             _toast_err("⚠️ Completá los campos obligatorios (*)")
             return
-        fd.insertar_inv_largo(client, user_id, {
+        r = fd.insertar_inv_largo(client, user_id, {
             "activo": activo, "tipo": tipo, "simbolo": simbolo, "cantidad": cantidad,
             "precioCompra": precio_compra, "fechaCompra": fecha_compra.isoformat(),
             "estado": estado, "notas": notas,
         })
-        _toast_ok(f"✅ {activo} ({simbolo}) guardado")
+        _toast_ok(f"✅ {activo} ({simbolo}) guardado") if r["ok"] else _toast_err(r["mensaje"])
 
     df = fd.listar_inv_largo_con_precios(client, user_id)
     if not df.empty:
         st.dataframe(df, use_container_width=True, hide_index=True)
+        st.markdown("###### Editar / eliminar")
+        df_raw = fd.listar_inv_largo(client, user_id)
+        _tabla_editable(
+            client, user_id, "inv_largo", df_raw,
+            fd.actualizar_inv_largo, fd.eliminar_inv_largo,
+            label_fn=lambda r: f"{r['activo']} ({r['simbolo']}) · {r['cantidad']} u.",
+        )
 
 
 # ============================================================
@@ -344,7 +464,7 @@ def _render_trading(client, user_id: str) -> None:
         if not simbolo or not tipo or not direccion or not cantidad or not precio_entrada:
             _toast_err("⚠️ Completá los campos obligatorios (*)")
             return
-        fd.insertar_trading(client, user_id, {
+        r = fd.insertar_trading(client, user_id, {
             "simbolo": simbolo, "tipo": tipo, "direccion": direccion, "estado": estado_sel,
             "cantidad": cantidad, "precioEntrada": precio_entrada,
             "precioCierre": precio_cierre, "fechaEntrada": fecha_entrada.isoformat(),
@@ -352,7 +472,7 @@ def _render_trading(client, user_id: str) -> None:
             "stopLoss": stop_loss, "takeProfit": take_profit,
             "estrategia": estrategia, "notas": notas,
         })
-        _toast_ok(f"✅ Operación {simbolo} guardada")
+        _toast_ok(f"✅ Operación {simbolo} guardada") if r["ok"] else _toast_err(r["mensaje"])
 
     st.divider()
     st.markdown("##### 📋 Cerrar Operación Abierta")
@@ -388,7 +508,12 @@ def _render_trading(client, user_id: str) -> None:
 
     df = fd.listar_trading(client, user_id)
     if not df.empty:
-        st.dataframe(df.sort_values("fecha_entrada", ascending=False), use_container_width=True, hide_index=True)
+        st.markdown("###### Historial de operaciones (editar / eliminar)")
+        _tabla_editable(
+            client, user_id, "trading", df.sort_values("fecha_entrada", ascending=False),
+            fd.actualizar_trading, fd.eliminar_trading,
+            label_fn=lambda r: f"{r['simbolo']} · {r['direccion']} · {r['fecha_entrada']}",
+        )
 
 
 # ============================================================
@@ -424,12 +549,21 @@ def _render_objetivos(client, user_id: str) -> None:
             if not nombre or not categoria or not meta:
                 _toast_err("⚠️ Completá los campos obligatorios (*)")
                 return
-            fd.insertar_objetivo(client, user_id, {
+            r = fd.insertar_objetivo(client, user_id, {
                 "nombre": nombre, "categoria": categoria, "meta": meta,
                 "fechaInicio": fecha_inicio.isoformat(), "fechaMeta": fecha_meta.isoformat(),
                 "estado": estado, "notas": notas,
             })
-            _toast_ok(f"✅ Objetivo '{nombre}' guardado")
+            _toast_ok(f"✅ Objetivo '{nombre}' guardado") if r["ok"] else _toast_err(r["mensaje"])
+
+        df_obj = fd.listar_objetivos(client, user_id)
+        if not df_obj.empty:
+            st.markdown("###### Tus objetivos (editar / eliminar)")
+            _tabla_editable(
+                client, user_id, "objetivos", df_obj,
+                fd.actualizar_objetivo, fd.eliminar_objetivo,
+                label_fn=lambda r: f"{r['nombre']} · meta {_money(r['monto_meta'])}",
+            )
 
     else:
         progreso = fd.objetivos_con_progreso(client, user_id)
@@ -455,11 +589,26 @@ def _render_objetivos(client, user_id: str) -> None:
             if objetivo_nombre == "—" or not monto:
                 _toast_err("⚠️ Completá los campos obligatorios (*)")
                 return
-            fd.insertar_aporte(client, user_id, {
+            r = fd.insertar_aporte(client, user_id, {
                 "objetivoId": opciones[objetivo_nombre], "fecha": fecha.isoformat(),
                 "categoria": categoria, "monto": monto, "notas": notas,
             })
-            _toast_ok(f"✅ Aporte de {_money(monto)} guardado")
+            _toast_ok(f"✅ Aporte de {_money(monto)} guardado") if r["ok"] else _toast_err(r["mensaje"])
+
+        df_ap = fd.listar_aportes(client, user_id)
+        if not df_ap.empty:
+            st.markdown("###### Historial de aportes (editar / eliminar)")
+            nombres_obj = {o["id"]: o["nombre"] for o in progreso}
+
+            def _label_aporte(r):
+                nombre_obj = nombres_obj.get(r["objetivo_id"], f"objetivo #{r['objetivo_id']}")
+                return f"{r['fecha']} · {nombre_obj} · {_money(r['monto'])}"
+
+            _tabla_editable(
+                client, user_id, "aportes", df_ap.sort_values("fecha", ascending=False),
+                fd.actualizar_aporte, fd.eliminar_aporte,
+                label_fn=_label_aporte,
+            )
 
 
 # ============================================================
