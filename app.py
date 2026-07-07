@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
 from modulo_opciones import modulo_opciones
 from finanzas_ui import render_finanzas_personales
+import finanzas_data as fd
 
 ZONA_AR = ZoneInfo("America/Argentina/Buenos_Aires")
 
@@ -426,6 +427,16 @@ if "usuario" not in st.session_state:
     st.stop()
     
 USER_ID = st.session_state["usuario"].id
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _contar_alertas_finanzas(_client, user_id):
+    """Cuenta las alertas de Finanzas Personales. Cacheado 5 min para no
+    consultar Supabase/Yahoo Finance en cada rerun de TODA la app."""
+    try:
+        return len(fd.obtener_alertas(_client, user_id))
+    except Exception:
+        return 0
 
 # ==============================================================
 #  PALETA (para HTML / Plotly)
@@ -4848,6 +4859,9 @@ with st.container(key='nav_mobile_wrap'):
                 '💰 Finanzas Personales</div>',
                 unsafe_allow_html=True
             )
+
+    if n_alertas_fin > 0:
+        st.caption(f'🔔 {n_alertas_fin} alerta(s) en Finanzas Personales')
         else:
             st.write('')
 
