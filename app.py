@@ -424,7 +424,8 @@ restaurar_sesion()
 if "usuario" not in st.session_state:
     pantalla_login()
     st.stop()
-    USER_ID = st.session_state["usuario"].id
+    
+USER_ID = st.session_state["usuario"].id
 
 # ==============================================================
 #  PALETA (para HTML / Plotly)
