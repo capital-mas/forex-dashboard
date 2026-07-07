@@ -4866,11 +4866,11 @@ with st.container(key='nav_mobile_wrap'):
                 '💰 Finanzas Personales</div>',
                 unsafe_allow_html=True
             )
+        else:
+            st.write('')
 
     if n_alertas_fin > 0:
         st.caption(f'🔔 {n_alertas_fin} alerta(s) en Finanzas Personales')
-        else:
-            st.write('')
 
     _mc3, _mc4 = st.columns(2)
     with _mc3:
