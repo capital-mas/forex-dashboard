@@ -615,31 +615,54 @@ def _render_objetivos(client, user_id: str) -> None:
 # ENTRYPOINT — llamar desde la app principal
 # ============================================================
 
+SECCIONES_FINANZAS = {
+    "📊 Dashboard": "dashboard",
+    "📥 Ingresos": "ingresos",
+    "📤 Gastos": "gastos",
+    "💳 Deudas": "deudas",
+    "⚡ Corto Plazo": "inv_corto",
+    "📈 Largo Plazo": "inv_largo",
+    "🎯 Trading": "trading",
+    "🏆 Objetivos": "objetivos",
+}
+
+
 def render_finanzas_personales(client, user_id: str) -> None:
     """Punto de entrada único. Llamar desde analizador_cuantitativo_v3.py
-    dentro del tab/página correspondiente, con el client de Supabase
-    y el user_id ya autenticados."""
-    st.markdown(f"<h2 style='color:{ACCENT}'>💰 Finanzas Personales</h2>", unsafe_allow_html=True)
+    con el client de Supabase y el user_id ya autenticados.
 
-    tabs = st.tabs([
-        "📊 Dashboard", "📥 Ingresos", "📤 Gastos", "💳 Deudas",
-        "⚡ Corto Plazo", "📈 Largo Plazo", "🎯 Trading", "🏆 Objetivos",
-    ])
-    with tabs[0]:
+    No imprime título propio: el título/badge de la página ya los pone
+    app.py a través del diccionario `titulos`/`badge_map`.
+
+    Usa un selector explícito (no st.tabs) para que, al elegir una
+    sección, se ejecute ÚNICAMENTE la función de esa sección — nada
+    de otra sección corre ni se renderiza."""
+    if "fin_seccion" not in st.session_state:
+        st.session_state["fin_seccion"] = "📊 Dashboard"
+
+    st.radio(
+        "Sección", list(SECCIONES_FINANZAS.keys()),
+        key="fin_seccion", horizontal=True, label_visibility="collapsed",
+    )
+    st.divider()
+
+    seccion = SECCIONES_FINANZAS[st.session_state["fin_seccion"]]
+
+    if seccion == "dashboard":
         _render_dashboard(client, user_id)
-    with tabs[1]:
+    elif seccion == "ingresos":
         _render_ingresos(client, user_id)
-    with tabs[2]:
+    elif seccion == "gastos":
         _render_gastos(client, user_id)
-    with tabs[3]:
+    elif seccion == "deudas":
         _render_deudas(client, user_id)
-    with tabs[4]:
+    elif seccion == "inv_corto":
         _render_inv_corto(client, user_id)
-    with tabs[5]:
+    elif seccion == "inv_largo":
         _render_inv_largo(client, user_id)
-    with tabs[6]:
+    elif seccion == "trading":
         _render_trading(client, user_id)
-    with tabs[7]:
+    elif seccion == "objetivos":
         _render_objetivos(client, user_id)
 
 
