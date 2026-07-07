@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
 import pandas as pd
@@ -46,6 +47,62 @@ def _filtrar_mes(df: pd.DataFrame, col_fecha: str, mes: int, anio: int) -> pd.Da
     return df[(fechas.dt.month == mes) & (fechas.dt.year == anio)]
 
 
+def _mensaje_error_legible(e: Exception) -> str:
+    """Traduce errores típicos de Supabase/Postgrest/red a un mensaje que
+    tiene sentido para alguien que no sabe qué es un RLS o un JWT."""
+    texto = str(e)
+    bajo = texto.lower()
+    if "row-level security" in bajo or "permission denied" in bajo:
+        return "no tenés permiso para esta operación. Probá recargar la página e iniciar sesión de nuevo."
+    if "jwt" in bajo or "expired" in bajo or "invalid token" in bajo or "unauthorized" in bajo or "401" in bajo:
+        return "tu sesión expiró. Recargá la página e iniciá sesión de nuevo."
+    if "violates foreign key" in bajo:
+        return "el registro relacionado (por ejemplo, el objetivo) ya no existe."
+    if "duplicate key" in bajo or "unique constraint" in bajo:
+        return "ya existe un registro igual."
+    if "timeout" in bajo or "connection" in bajo or "network" in bajo or "getaddrinfo" in bajo:
+        return "problema de conexión con el servidor. Probá de nuevo en unos segundos."
+    return texto[:200] if texto else "error desconocido."
+
+
+def _insertar_fila(client, tabla: str, payload: dict, mensaje_ok: str) -> dict:
+    """Inserta una fila. Nunca lanza excepción: siempre devuelve
+    {'ok': bool, 'mensaje': str, 'id': int|None}."""
+    try:
+        resp = client.table(tabla).insert(payload).execute()
+        if not resp.data:
+            return {"ok": False, "mensaje": "⚠️ No se pudo guardar (el servidor no confirmó el registro).", "id": None}
+        return {"ok": True, "mensaje": mensaje_ok, "id": resp.data[0].get("id")}
+    except Exception as e:
+        return {"ok": False, "mensaje": f"❌ No se pudo guardar: {_mensaje_error_legible(e)}", "id": None}
+
+
+def _actualizar_fila(client, tabla: str, user_id: str, id_: int, cambios: dict) -> dict:
+    """Actualiza una fila por id, acotado al propio user_id (además de la RLS).
+    Nunca lanza excepción: siempre devuelve {'ok': bool, 'mensaje': str}."""
+    if not cambios:
+        return {"ok": False, "mensaje": "No había cambios para guardar."}
+    try:
+        resp = client.table(tabla).update(cambios).eq("id", id_).eq("user_id", user_id).execute()
+        if not resp.data:
+            return {"ok": False, "mensaje": "⚠️ No se pudo actualizar (¿el registro sigue existiendo?)."}
+        return {"ok": True, "mensaje": "✅ Actualizado"}
+    except Exception as e:
+        return {"ok": False, "mensaje": f"❌ No se pudo actualizar: {_mensaje_error_legible(e)}"}
+
+
+def _eliminar_fila(client, tabla: str, user_id: str, id_: int) -> dict:
+    """Elimina una fila por id. Nunca lanza excepción: siempre devuelve
+    {'ok': bool, 'mensaje': str}."""
+    try:
+        resp = client.table(tabla).delete().eq("id", id_).eq("user_id", user_id).execute()
+        if not resp.data:
+            return {"ok": False, "mensaje": "⚠️ No se pudo eliminar (¿el registro sigue existiendo?)."}
+        return {"ok": True, "mensaje": "🗑️ Eliminado"}
+    except Exception as e:
+        return {"ok": False, "mensaje": f"❌ No se pudo eliminar: {_mensaje_error_legible(e)}"}
+
+
 def precio_actual(simbolo: str) -> float | None:
     """Precio spot vía yfinance. Devuelve None si falla (símbolo inválido, sin conexión, etc.)."""
     if not simbolo or yf is None:
@@ -63,6 +120,22 @@ def precio_actual(simbolo: str) -> float | None:
         return None
 
 
+def precios_actuales(simbolos: list[str]) -> dict[str, float | None]:
+    """Versión en paralelo de precio_actual: pide todos los símbolos al
+    mismo tiempo en vez de uno por uno. Para una cartera con varias
+    posiciones, esto es la diferencia entre esperar 1 pedido o esperar N."""
+    simbolos_unicos = sorted(set(s for s in simbolos if s))
+    if not simbolos_unicos:
+        return {}
+    resultados: dict[str, float | None] = {}
+    with ThreadPoolExecutor(max_workers=min(10, len(simbolos_unicos))) as ex:
+        futuros = {ex.submit(precio_actual, s): s for s in simbolos_unicos}
+        for fut in as_completed(futuros):
+            simbolo = futuros[fut]
+            resultados[simbolo] = fut.result()
+    return resultados
+
+
 # ============================================================
 # INGRESOS
 # ============================================================
@@ -77,12 +150,19 @@ def insertar_ingreso(client, user_id: str, d: dict) -> dict:
         "cuenta": d.get("cuenta", ""),
         "notas": d.get("notas", ""),
     }
-    resp = client.table("ingresos").insert(payload).execute()
-    return resp.data[0] if resp.data else {}
+    return _insertar_fila(client, "ingresos", payload, "✅ Ingreso guardado")
 
 
 def listar_ingresos(client, user_id: str) -> pd.DataFrame:
     return _df(client, "ingresos", user_id)
+
+
+def actualizar_ingreso(client, user_id: str, id_: int, cambios: dict) -> dict:
+    return _actualizar_fila(client, "ingresos", user_id, id_, cambios)
+
+
+def eliminar_ingreso(client, user_id: str, id_: int) -> dict:
+    return _eliminar_fila(client, "ingresos", user_id, id_)
 
 
 def resumen_ingresos_mes(client, user_id: str, mes: int | None = None, anio: int | None = None) -> float:
@@ -108,12 +188,19 @@ def insertar_gasto(client, user_id: str, d: dict) -> dict:
         "cuenta": d.get("cuenta", ""),
         "notas": d.get("notas", ""),
     }
-    resp = client.table("gastos").insert(payload).execute()
-    return resp.data[0] if resp.data else {}
+    return _insertar_fila(client, "gastos", payload, "✅ Gasto guardado")
 
 
 def listar_gastos(client, user_id: str) -> pd.DataFrame:
     return _df(client, "gastos", user_id)
+
+
+def actualizar_gasto(client, user_id: str, id_: int, cambios: dict) -> dict:
+    return _actualizar_fila(client, "gastos", user_id, id_, cambios)
+
+
+def eliminar_gasto(client, user_id: str, id_: int) -> dict:
+    return _eliminar_fila(client, "gastos", user_id, id_)
 
 
 def resumen_gastos_mes(client, user_id: str, mes: int | None = None, anio: int | None = None) -> float:
@@ -156,12 +243,19 @@ def insertar_deuda(client, user_id: str, d: dict) -> dict:
         "estado": d.get("estado", "Activa"),
         "notas": d.get("notas", ""),
     }
-    resp = client.table("deudas").insert(payload).execute()
-    return resp.data[0] if resp.data else {}
+    return _insertar_fila(client, "deudas", payload, "✅ Deuda guardada")
 
 
 def listar_deudas(client, user_id: str) -> pd.DataFrame:
     return _df(client, "deudas", user_id)
+
+
+def actualizar_deuda(client, user_id: str, id_: int, cambios: dict) -> dict:
+    return _actualizar_fila(client, "deudas", user_id, id_, cambios)
+
+
+def eliminar_deuda(client, user_id: str, id_: int) -> dict:
+    return _eliminar_fila(client, "deudas", user_id, id_)
 
 
 def resumen_deudas(client, user_id: str) -> float:
@@ -214,12 +308,19 @@ def insertar_inv_corto(client, user_id: str, d: dict) -> dict:
         "estado": d.get("estado", "Activa"),
         "notas": d.get("notas", ""),
     }
-    resp = client.table("inversiones_corto").insert(payload).execute()
-    return resp.data[0] if resp.data else {}
+    return _insertar_fila(client, "inversiones_corto", payload, "✅ Inversión corto plazo guardada")
 
 
 def listar_inv_corto(client, user_id: str) -> pd.DataFrame:
     return _df(client, "inversiones_corto", user_id)
+
+
+def actualizar_inv_corto(client, user_id: str, id_: int, cambios: dict) -> dict:
+    return _actualizar_fila(client, "inversiones_corto", user_id, id_, cambios)
+
+
+def eliminar_inv_corto(client, user_id: str, id_: int) -> dict:
+    return _eliminar_fila(client, "inversiones_corto", user_id, id_)
 
 
 def resumen_inv_corto(client, user_id: str) -> float:
@@ -254,8 +355,13 @@ def insertar_inv_largo(client, user_id: str, d: dict) -> dict:
         "estado": d.get("estado", "Activo"),
         "notas": d.get("notas", ""),
     }
-    resp = client.table("inversiones_largo").insert(payload).execute()
-    return resp.data[0] if resp.data else {}
+    return _insertar_fila(client, "inversiones_largo", payload, "✅ Inversión guardada")
+
+
+def listar_inv_largo(client, user_id: str) -> pd.DataFrame:
+    """Versión cruda (solo columnas de la tabla), para editar/eliminar sin
+    arrastrar las columnas calculadas en vivo (precio_hoy, ganancia, etc.)."""
+    return _df(client, "inversiones_largo", user_id)
 
 
 def listar_inv_largo_con_precios(client, user_id: str) -> pd.DataFrame:
@@ -271,8 +377,9 @@ def listar_inv_largo_con_precios(client, user_id: str) -> pd.DataFrame:
             ]
         )
     filas = []
+    precios = precios_actuales([row["simbolo"] for row in data])
     for row in data:
-        precio_hoy = precio_actual(row["simbolo"])
+        precio_hoy = precios.get(row["simbolo"])
         inversion_total = row["cantidad"] * row["precio_compra"]
         valor_actual = row["cantidad"] * precio_hoy if precio_hoy is not None else None
         ganancia = (valor_actual - inversion_total) if valor_actual is not None else None
@@ -286,6 +393,14 @@ def listar_inv_largo_con_precios(client, user_id: str) -> pd.DataFrame:
             "ganancia_pct": ganancia_pct,
         })
     return pd.DataFrame(filas)
+
+
+def actualizar_inv_largo(client, user_id: str, id_: int, cambios: dict) -> dict:
+    return _actualizar_fila(client, "inversiones_largo", user_id, id_, cambios)
+
+
+def eliminar_inv_largo(client, user_id: str, id_: int) -> dict:
+    return _eliminar_fila(client, "inversiones_largo", user_id, id_)
 
 
 def resumen_inv_largo(client, user_id: str) -> float:
@@ -332,12 +447,19 @@ def insertar_trading(client, user_id: str, d: dict) -> dict:
         "estrategia": d.get("estrategia", ""),
         "notas": d.get("notas", ""),
     }
-    resp = client.table("trading").insert(payload).execute()
-    return resp.data[0] if resp.data else {}
+    return _insertar_fila(client, "trading", payload, "✅ Operación guardada")
 
 
 def listar_trading(client, user_id: str) -> pd.DataFrame:
     return _df(client, "trading", user_id)
+
+
+def actualizar_trading(client, user_id: str, id_: int, cambios: dict) -> dict:
+    return _actualizar_fila(client, "trading", user_id, id_, cambios)
+
+
+def eliminar_trading(client, user_id: str, id_: int) -> dict:
+    return _eliminar_fila(client, "trading", user_id, id_)
 
 
 def _pnl_operacion(direccion: str, precio_entrada: float, precio_ref: float, cantidad: float) -> float:
@@ -352,9 +474,10 @@ def operaciones_abiertas(client, user_id: str) -> list[dict]:
     if df.empty:
         return []
     abiertas = df[df["estado"] == "Abierta"]
+    precios = precios_actuales(abiertas["simbolo"].tolist())
     resultado = []
     for _, r in abiertas.iterrows():
-        precio_hoy = precio_actual(r["simbolo"])
+        precio_hoy = precios.get(r["simbolo"])
         pnl = _pnl_operacion(r["direccion"], r["precio_entrada"], precio_hoy, r["cantidad"]) if precio_hoy else None
         resultado.append({
             "id": r["id"],
@@ -370,19 +493,25 @@ def operaciones_abiertas(client, user_id: str) -> list[dict]:
 
 
 def cerrar_operacion(client, user_id: str, trade_id: int, precio_cierre: float, fecha_cierre: str) -> dict:
-    """Cierra una operación de trading y devuelve el P&L realizado."""
-    resp = client.table("trading").select("*").eq("id", trade_id).eq("user_id", user_id).execute()
-    if not resp.data:
-        return {"ok": False, "mensaje": f"❌ No se encontró la operación {trade_id}"}
-    op = resp.data[0]
-    pnl = _pnl_operacion(op["direccion"], op["precio_entrada"], precio_cierre, op["cantidad"])
-    client.table("trading").update({
-        "estado": "Cerrada",
-        "precio_cierre": precio_cierre,
-        "fecha_cierre": fecha_cierre,
-    }).eq("id", trade_id).eq("user_id", user_id).execute()
-    signo = "+" if pnl >= 0 else ""
-    return {"ok": True, "mensaje": f"✅ Operación cerrada | P&L: {signo}${pnl:.2f}", "pnl": pnl}
+    """Cierra una operación de trading y devuelve el P&L realizado. Nunca
+    lanza excepción: siempre devuelve {'ok': bool, 'mensaje': str}."""
+    try:
+        resp = client.table("trading").select("*").eq("id", trade_id).eq("user_id", user_id).execute()
+        if not resp.data:
+            return {"ok": False, "mensaje": f"❌ No se encontró la operación {trade_id}"}
+        op = resp.data[0]
+        pnl = _pnl_operacion(op["direccion"], op["precio_entrada"], precio_cierre, op["cantidad"])
+        resp_upd = client.table("trading").update({
+            "estado": "Cerrada",
+            "precio_cierre": precio_cierre,
+            "fecha_cierre": fecha_cierre,
+        }).eq("id", trade_id).eq("user_id", user_id).execute()
+        if not resp_upd.data:
+            return {"ok": False, "mensaje": "⚠️ No se pudo confirmar el cierre (¿la operación sigue existiendo?)."}
+        signo = "+" if pnl >= 0 else ""
+        return {"ok": True, "mensaje": f"✅ Operación cerrada | P&L: {signo}${pnl:.2f}", "pnl": pnl}
+    except Exception as e:
+        return {"ok": False, "mensaje": f"❌ No se pudo cerrar la operación: {_mensaje_error_legible(e)}"}
 
 
 def trading_pnl_realizado(client, user_id: str) -> float:
@@ -434,8 +563,7 @@ def insertar_objetivo(client, user_id: str, d: dict) -> dict:
         "estado": d.get("estado", "Activo"),
         "notas": d.get("notas", ""),
     }
-    resp = client.table("objetivos").insert(payload).execute()
-    return resp.data[0] if resp.data else {}
+    return _insertar_fila(client, "objetivos", payload, "✅ Objetivo guardado")
 
 
 def listar_objetivos(client, user_id: str) -> pd.DataFrame:
@@ -451,12 +579,28 @@ def insertar_aporte(client, user_id: str, d: dict) -> dict:
         "monto": float(d["monto"]),
         "notas": d.get("notas", ""),
     }
-    resp = client.table("aportes").insert(payload).execute()
-    return resp.data[0] if resp.data else {}
+    return _insertar_fila(client, "aportes", payload, "✅ Aporte guardado")
 
 
 def listar_aportes(client, user_id: str) -> pd.DataFrame:
     return _df(client, "aportes", user_id)
+
+
+def actualizar_objetivo(client, user_id: str, id_: int, cambios: dict) -> dict:
+    return _actualizar_fila(client, "objetivos", user_id, id_, cambios)
+
+
+def eliminar_objetivo(client, user_id: str, id_: int) -> dict:
+    """Al borrar un objetivo, sus aportes se eliminan en cascada (definido en el schema SQL)."""
+    return _eliminar_fila(client, "objetivos", user_id, id_)
+
+
+def actualizar_aporte(client, user_id: str, id_: int, cambios: dict) -> dict:
+    return _actualizar_fila(client, "aportes", user_id, id_, cambios)
+
+
+def eliminar_aporte(client, user_id: str, id_: int) -> dict:
+    return _eliminar_fila(client, "aportes", user_id, id_)
 
 
 def objetivos_con_progreso(client, user_id: str) -> list[dict]:
