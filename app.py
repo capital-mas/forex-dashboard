@@ -4815,7 +4815,8 @@ with st.container(key='nav_mobile_wrap'):
     _OPCIONES_HORIZONTE_MOBILE = {
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
-        '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares', '💰 Finanzas': 'finanzas',
+        '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares', '🎲 Opciones': 'opciones',
+        '👤 Mi Cuenta': 'finanzas',
     }
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
@@ -4824,17 +4825,14 @@ with st.container(key='nav_mobile_wrap'):
                   '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
                   '📐 Top-Down Cuantitativo': 'tdc'},
     }
-
     _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '🏠 Inicio')
     if st.session_state.get('nav_mobile_h') != _label_h_actual:
         st.session_state['nav_mobile_h'] = _label_h_actual
-
     _mc1, _mc2 = st.columns(2)
     with _mc1:
         st.selectbox('Sección', list(_OPCIONES_HORIZONTE_MOBILE.keys()),
                       key='nav_mobile_h', label_visibility='collapsed',
                       on_change=_mobile_cambiar_horizonte)
-
     with _mc2:
         if HORIZONTE in _OPCIONES_MODULO_MOBILE:
             _mods_disp = _OPCIONES_MODULO_MOBILE[HORIZONTE]
@@ -4844,9 +4842,25 @@ with st.container(key='nav_mobile_wrap'):
             st.selectbox('Módulo', list(_mods_disp.keys()),
                           key='nav_mobile_m', label_visibility='collapsed',
                           on_change=_mobile_cambiar_modulo)
+        elif HORIZONTE == 'finanzas':
+            st.markdown(
+                '<div style="font-size:11px;color:#6b7d9a;padding-top:8px;text-align:center">'
+                '💰 Finanzas Personales</div>',
+                unsafe_allow_html=True
+            )
         else:
             st.write('')
 
+    _mc3, _mc4 = st.columns(2)
+    with _mc3:
+        if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh_mobile'):
+            st.cache_data.clear(); st.rerun()
+    with _mc4:
+        if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout_mobile'):
+            supabase.auth.sign_out()
+            cookies.remove("sb_refresh_token")
+            del st.session_state["usuario"]
+            st.rerun()
 
 st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
 
