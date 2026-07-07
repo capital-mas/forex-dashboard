@@ -137,10 +137,35 @@ def _tabla_editable(
 # DASHBOARD
 # ============================================================
 
+def _render_alertas(client, user_id: str) -> None:
+    """Panel de alertas: deudas en mora/por vencer, inversiones por vencer,
+    trading que tocó SL/TP, y objetivos atrasados/vencidos/cumplidos."""
+    alertas = fd.obtener_alertas(client, user_id)
+    if not alertas:
+        return
+
+    hay_urgentes = any(a["nivel"] in ("error", "warning") for a in alertas)
+    with st.expander(f"🔔 {len(alertas)} alerta(s)", expanded=hay_urgentes):
+        por_nivel: dict[str, list[str]] = {}
+        for a in alertas:
+            por_nivel.setdefault(a["nivel"], []).append(f"{a['icono']} {a['mensaje']}")
+
+        renderers = {
+            "error": st.error, "warning": st.warning,
+            "success": st.success, "info": st.info,
+        }
+        for nivel in ("error", "warning", "success", "info"):
+            mensajes = por_nivel.get(nivel)
+            if mensajes:
+                renderers[nivel]("\n\n".join(mensajes))
+
+
 def _render_dashboard(client, user_id: str) -> None:
     st.subheader("📊 Dashboard Financiero")
     if st.button("🔄 Actualizar dashboard", key="fin_dash_refresh"):
         st.cache_data.clear()
+
+    _render_alertas(client, user_id)
 
     d = fd.obtener_dashboard_data(client, user_id)
 
