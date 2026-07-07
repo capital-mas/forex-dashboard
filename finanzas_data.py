@@ -667,6 +667,99 @@ def objetivo_mas_proximo(client, user_id: str) -> str:
 # DASHBOARD - RESUMEN GENERAL
 # ============================================================
 
+_ORDEN_NIVEL_ALERTA = {"error": 0, "warning": 1, "success": 2, "info": 3}
+
+
+def obtener_alertas(client, user_id: str) -> list[dict]:
+    """Junta alertas de deudas, inversiones, trading y objetivos en una sola
+    lista, ordenada por severidad (errores primero). Cada alerta es
+    {'nivel': 'error'|'warning'|'success'|'info', 'icono': str, 'mensaje': str}."""
+    alertas: list[dict] = []
+    hoy = pd.Timestamp.today().normalize()
+    en_7_dias = hoy + pd.Timedelta(days=7)
+
+    # ---- Deudas: en mora + vencimientos próximos ----
+    deudas = listar_deudas(client, user_id)
+    if not deudas.empty:
+        deudas = deudas.copy()
+        deudas["fecha_vencimiento"] = pd.to_datetime(deudas["fecha_vencimiento"])
+        for _, d in deudas[deudas["estado"] == "En mora"].iterrows():
+            alertas.append({
+                "nivel": "error", "icono": "🔴",
+                "mensaje": f"Deuda en mora: {d['acreedor']} — ${d['monto_pendiente']:,.2f} pendientes",
+            })
+        activas = deudas[deudas["estado"].isin(["Activa", "En mora"])]
+        proximas = activas[(activas["fecha_vencimiento"] >= hoy) & (activas["fecha_vencimiento"] <= en_7_dias)]
+        for _, d in proximas.iterrows():
+            dias = (d["fecha_vencimiento"] - hoy).days
+            cuando = "hoy" if dias == 0 else f"en {dias} día(s)"
+            alertas.append({
+                "nivel": "warning", "icono": "⏰",
+                "mensaje": f"Vence {cuando}: {d['acreedor']} — ${d['monto_pendiente']:,.2f}",
+            })
+
+    # ---- Inversiones corto plazo por vencer ----
+    inv_corto = listar_inv_corto(client, user_id)
+    if not inv_corto.empty:
+        inv_corto = inv_corto.copy()
+        inv_corto["fecha_vencimiento"] = pd.to_datetime(inv_corto["fecha_vencimiento"])
+        activas_ic = inv_corto[inv_corto["estado"] == "Activa"]
+        proximas_ic = activas_ic[(activas_ic["fecha_vencimiento"] >= hoy) & (activas_ic["fecha_vencimiento"] <= en_7_dias)]
+        for _, r in proximas_ic.iterrows():
+            dias = (r["fecha_vencimiento"] - hoy).days
+            cuando = "hoy" if dias == 0 else f"en {dias} día(s)"
+            alertas.append({
+                "nivel": "info", "icono": "💰",
+                "mensaje": f"Vence {cuando}: {r['nombre']} — ${r['monto']:,.2f}",
+            })
+
+    # ---- Trading: operaciones abiertas que tocaron SL/TP ----
+    trading = listar_trading(client, user_id)
+    if not trading.empty:
+        abiertas = trading[trading["estado"] == "Abierta"]
+        if not abiertas.empty:
+            precios = precios_actuales(abiertas["simbolo"].tolist())
+            for _, r in abiertas.iterrows():
+                precio = precios.get(r["simbolo"])
+                if precio is None:
+                    continue
+                sl, tp = r.get("stop_loss"), r.get("take_profit")
+                long = r["direccion"] == "Long (Compra)"
+                toco_sl = sl and ((long and precio <= sl) or (not long and precio >= sl))
+                toco_tp = tp and ((long and precio >= tp) or (not long and precio <= tp))
+                if toco_sl:
+                    alertas.append({
+                        "nivel": "error", "icono": "🛑",
+                        "mensaje": f"{r['simbolo']} tocó el Stop Loss (precio actual ${precio:.4f})",
+                    })
+                elif toco_tp:
+                    alertas.append({
+                        "nivel": "success", "icono": "🎯",
+                        "mensaje": f"{r['simbolo']} alcanzó el Take Profit (precio actual ${precio:.4f})",
+                    })
+
+    # ---- Objetivos: atrasados, vencidos sin cumplir, recién cumplidos ----
+    for o in objetivos_con_progreso(client, user_id):
+        if o["pct"] >= 1:
+            alertas.append({
+                "nivel": "success", "icono": "🏆",
+                "mensaje": f"¡Objetivo '{o['nombre']}' cumplido!",
+            })
+        elif o["dias_restantes"] <= 0:
+            alertas.append({
+                "nivel": "warning", "icono": "⌛",
+                "mensaje": f"Objetivo '{o['nombre']}' venció sin completarse ({o['pct'] * 100:.0f}%)",
+            })
+        elif o["dias_restantes"] <= 30 and o["pct"] < 0.8:
+            alertas.append({
+                "nivel": "warning", "icono": "📉",
+                "mensaje": f"Objetivo '{o['nombre']}' va atrasado: {o['pct'] * 100:.0f}% completado, quedan {o['dias_restantes']} días",
+            })
+
+    alertas.sort(key=lambda a: _ORDEN_NIVEL_ALERTA.get(a["nivel"], 9))
+    return alertas
+
+
 def obtener_dashboard_data(client, user_id: str) -> dict:
     ingresos = resumen_ingresos_mes(client, user_id)
     gastos = resumen_gastos_mes(client, user_id)
