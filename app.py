@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
 from modulo_opciones import modulo_opciones
+from finanzas_ui import render_finanzas_personales
 
 ZONA_AR = ZoneInfo("America/Argentina/Buenos_Aires")
 
@@ -423,6 +424,7 @@ restaurar_sesion()
 if "usuario" not in st.session_state:
     pantalla_login()
     st.stop()
+    USER_ID = st.session_state["usuario"].id
 
 # ==============================================================
 #  PALETA (para HTML / Plotly)
@@ -4608,8 +4610,8 @@ for key, default in [
 
 
 _now_str = ahora_ar().strftime('%H:%M')
-_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff'}
-_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Pares', 'opciones': 'Opciones'}
+_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'finanzas': '#6CC24A'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Pares', 'opciones': 'Opciones', 'finanzas': 'Finanzas'}
 
 
 HORIZONTE = st.session_state['nav_horizonte']
@@ -4675,7 +4677,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
 
 
 with st.container(key='nav_pills_wrap'):
-    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.15, 1.1, 0.95, 1.0, 0.25, 1.1, 0.15, 1.3])
+    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.15, 1.1, 0.95, 1.0, 1.0, 0.25, 1.1, 0.15, 1.3])
 
     _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
              HORIZONTE=='inicio', None, 'inicio', 'inicio')
@@ -4693,13 +4695,15 @@ with st.container(key='nav_pills_wrap'):
              HORIZONTE=='pares', None, 'pares', 'pares')
     _nav_btn(_c[7], '🎲 Opciones', 'nav_opciones',
              HORIZONTE=='opciones', None, 'opciones', 'opciones')
+    _nav_btn(_c[8], '💰 Finanzas', 'nav_finanzas',
+             HORIZONTE=='finanzas', None, 'finanzas', 'finanzas')
 
-    with _c[9]:
+    with _c[10]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 st.cache_data.clear(); st.rerun()
 
-    with _c[11]:
+    with _c[12]:
         with st.container(key='nav_logout_cont'):
             if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout'):
                 supabase.auth.sign_out()
@@ -4798,7 +4802,7 @@ with st.container(key='nav_mobile_wrap'):
     _OPCIONES_HORIZONTE_MOBILE = {
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
-        '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares',
+        '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares', '💰 Finanzas': 'finanzas',
     }
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
@@ -4877,6 +4881,7 @@ titulos = {
     'fundamental': ('Análisis Fundamental', '📊', 'Ratios financieros · Benchmarks por sector · Señales de valuación'),
     'tdc': ('Top-Down Cuantitativo (Mediano/Largo Plazo)', '📐', 'Percentil histórico MP/LP — modelo Top-Down original'),
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
+    'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
 }
 titulo_h, icono_h, subtitulo_h = titulos.get(MODULO, ('Analizador', '📡', ''))
 # st.caption(f'🔧 DEBUG — HORIZONTE={HORIZONTE} · MODULO={MODULO}')
@@ -4891,6 +4896,7 @@ badge_map = {
     'optimizador':('#bc8cff', 'rgba(188,140,255,0.12)','OPTIMIZADOR'),
     'pares':      ('#79c0ff', 'rgba(121,192,255,0.12)','PARES'),
     'opciones': ('#bc5cff', 'rgba(188,92,255,0.12)', 'OPCIONES'),
+    'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
 }
 badge_color, badge_bg, badge_txt = badge_map.get(HORIZONTE, ('#3a7bd5','rgba(58,123,213,0.12)',''))
 
@@ -4941,6 +4947,9 @@ elif MODULO == 'pares':
 
 elif MODULO == 'opciones':
     modulo_opciones()
+
+elif MODULO == 'finanzas':
+    render_finanzas_personales(supabase, USER_ID)
 
 elif HORIZONTE == 'corto':
 
