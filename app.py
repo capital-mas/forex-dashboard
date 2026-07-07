@@ -4678,7 +4678,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
 
 
 with st.container(key='nav_pills_wrap'):
-    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.15, 1.1, 0.95, 1.0, 1.0, 0.25, 1.1, 0.15, 1.3])
+    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.15, 1.1, 0.95, 1.0, 0.25, 1.1, 0.15, 1.3])
 
     _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
              HORIZONTE=='inicio', None, 'inicio', 'inicio')
@@ -4696,21 +4696,33 @@ with st.container(key='nav_pills_wrap'):
              HORIZONTE=='pares', None, 'pares', 'pares')
     _nav_btn(_c[7], '🎲 Opciones', 'nav_opciones',
              HORIZONTE=='opciones', None, 'opciones', 'opciones')
-    _nav_btn(_c[8], '💰 Finanzas', 'nav_finanzas',
-             HORIZONTE=='finanzas', None, 'finanzas', 'finanzas')
 
-    with _c[10]:
+    with _c[9]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 st.cache_data.clear(); st.rerun()
 
-    with _c[12]:
-        with st.container(key='nav_logout_cont'):
-            if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout'):
-                supabase.auth.sign_out()
-                cookies.remove("sb_refresh_token")
-                del st.session_state["usuario"]
-                st.rerun()
+    with _c[11]:
+        with st.container(key='nav_cuenta_cont'):
+            with st.popover('👤 Mi Cuenta', use_container_width=True):
+                st.markdown(
+                    '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
+                    'Gestioná tu cuenta</div>',
+                    unsafe_allow_html=True
+                )
+                if st.button('💰 Finanzas', use_container_width=True, key='menu_finanzas'):
+                    st.session_state['nav_horizonte'] = 'finanzas'
+                    st.session_state['nav_modulo'] = 'finanzas'
+                    st.rerun()
+                st.markdown(
+                    '<hr style="margin:6px 0;border-color:#21262d">',
+                    unsafe_allow_html=True
+                )
+                if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout'):
+                    supabase.auth.sign_out()
+                    cookies.remove("sb_refresh_token")
+                    del st.session_state["usuario"]
+                    st.rerun()
 
 # ── Submenú como lista desplegable (no empuja los botones principales) ──
 def _cambiar_submodulo_corto():
