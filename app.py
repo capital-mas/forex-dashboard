@@ -4708,6 +4708,13 @@ with st.container(key='nav_pills_wrap'):
     _nav_btn(_c[7], '🎲 Opciones', 'nav_opciones',
              HORIZONTE=='opciones', None, 'opciones', 'opciones')
 
+    n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
+    _label_cuenta = f'👤 Mi Cuenta 🔴{n_alertas_fin}' if n_alertas_fin > 0 else '👤 Mi Cuenta'
+    _label_finanzas = (
+        f'💰 Finanzas ({n_alertas_fin} alerta{"s" if n_alertas_fin != 1 else ""})'
+        if n_alertas_fin > 0 else '💰 Finanzas'
+    )
+
     with _c[9]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
@@ -4715,13 +4722,13 @@ with st.container(key='nav_pills_wrap'):
 
     with _c[11]:
         with st.container(key='nav_cuenta_cont'):
-            with st.popover('👤 Mi Cuenta', use_container_width=True):
+            with st.popover(_label_cuenta, use_container_width=True):
                 st.markdown(
                     '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
                     'Gestioná tu cuenta</div>',
                     unsafe_allow_html=True
                 )
-                if st.button('💰 Finanzas', use_container_width=True, key='menu_finanzas'):
+                if st.button(_label_finanzas, use_container_width=True, key='menu_finanzas'):
                     st.session_state['nav_horizonte'] = 'finanzas'
                     st.session_state['nav_modulo'] = 'finanzas'
                     st.rerun()
