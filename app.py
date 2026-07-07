@@ -4940,7 +4940,7 @@ st.markdown(f"""
     </div>
     <div class="page-sub">{subtitulo_h}</div>
     <div style="font-size:12px;color:#f5f7fa;font-family:'JetBrains Mono',monospace;margin-top:4px">
-      {ahora_ar().strftime('%d/%m/%Y · %H:%M')} &nbsp;·&nbsp; Yahoo Finance
+      {ahora_ar().strftime('%d/%m/%Y · %H:%M')} &nbsp;·&nbsp
     </div>
   </div>
 </div>
