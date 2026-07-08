@@ -4997,6 +4997,9 @@ elif MODULO == 'pares':
 elif MODULO == 'opciones':
     modulo_opciones()
 
+elif MODULO == 'calendario':
+       render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
+
 elif MODULO == 'finanzas':
     render_finanzas_personales(supabase, USER_ID)
 
