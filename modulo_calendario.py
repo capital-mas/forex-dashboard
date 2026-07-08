@@ -11,9 +11,10 @@ from datetime import date, datetime
 
 # ⚠️ Cambiá esto por tu email real (el mismo con el que iniciás sesión
 # en la app vía Supabase Auth). Solo esa cuenta ve el formulario de
-# publicar/borrar noticias. La protección real (a prueba de gente que
-# mire el código) está en las políticas RLS de Supabase — ver el
-# archivo calendario_schema.sql.
+# registrar eventos y de publicar/borrar noticias. La protección real
+# (a prueba de gente que mire el código) está en las políticas RLS de
+# Supabase — ver el archivo calendario_schema.sql. Tiene que coincidir
+# EXACTAMENTE con el email usado en las políticas de ese archivo.
 ADMIN_EMAIL = "brainferreyra@gmail.com"
 
 TABLA_REGISTRO = "calendario_registro"
@@ -291,9 +292,18 @@ def _borrar_noticia(supabase, noticia_id):
 
 # ==============================================================
 #  RENDER — TAB REGISTRAR
+#  Solo ADMIN_EMAIL ve y usa el formulario de carga. El resto de los
+#  usuarios ve un aviso y puede pasar a la pestaña Historial. Esta es
+#  solo la barrera de UI: la protección real está en las políticas
+#  RLS de Supabase (insert/update/delete solo para tu email).
 # ==============================================================
 
-def _tab_registrar(supabase, user_id):
+def _tab_registrar(supabase, user_id, es_admin):
+    if not es_admin:
+        st.info("🔒 Solo el administrador puede registrar eventos económicos. "
+                "Podés consultar todos los registros ya cargados en la pestaña **Historial**.")
+        return
+
     c1, c2 = st.columns(2)
     with c1:
         fecha = st.date_input("📅 Fecha", value=date.today(), key="cal_fecha")
@@ -541,7 +551,7 @@ def render_calendario_economico(supabase, user_id, user_email):
 
     tab_reg, tab_hist, tab_noti = st.tabs(["📝 Registrar", "📋 Historial", "📰 Noticias"])
     with tab_reg:
-        _tab_registrar(supabase, user_id)
+        _tab_registrar(supabase, user_id, es_admin)
     with tab_hist:
         _tab_historial(supabase)
     with tab_noti:
