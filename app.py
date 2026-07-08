@@ -4733,6 +4733,10 @@ with st.container(key='nav_pills_wrap'):
                     st.session_state['nav_horizonte'] = 'finanzas'
                     st.session_state['nav_modulo'] = 'finanzas'
                     st.rerun()
+                if st.button('📊 Calendario Económico', use_container_width=True, key='menu_calendario'):
+                    st.session_state['nav_horizonte'] = 'calendario'
+                    st.session_state['nav_modulo'] = 'calendario'
+                    st.rerun()
                 st.markdown(
                     '<hr style="margin:6px 0;border-color:#21262d">',
                     unsafe_allow_html=True
