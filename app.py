@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
 from modulo_opciones import modulo_opciones
+from modulo_calendario import render_calendario_economico
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
 
