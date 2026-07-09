@@ -236,6 +236,42 @@ def _es_admin(user_email):
     return bool(user_email) and user_email.strip().lower() == ADMIN_EMAIL.strip().lower()
 
 
+def _renglon_macro(label, texto):
+    return (f'<div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;'
+            f'padding:10px 12px;min-height:54px">'
+            f'<div style="font-size:10px;color:#6b7d9a;text-transform:uppercase;'
+            f'letter-spacing:.5px;margin-bottom:4px">{label}</div>'
+            f'<div style="font-size:13px;font-weight:700;color:#e6edf3">{texto or "⚪ Sin interpretación"}</div></div>')
+
+
+def _render_macro_grid(macro):
+    """Grilla completa de interpretación macro: divisas, bonos, acciones, oro,
+    cripto, política monetaria y régimen de mercado — siempre visible, no
+    escondida detrás de un badge genérico de 'bueno/malo para el mercado'."""
+    st.markdown("###### 🔎 Por qué es bueno o malo, y para qué activos")
+    g1, g2, g3, g4 = st.columns(4)
+    with g1:
+        st.markdown(_renglon_macro("Divisas", macro.get("divisas")), unsafe_allow_html=True)
+    with g2:
+        st.markdown(_renglon_macro("Bonos", macro.get("bonos")), unsafe_allow_html=True)
+    with g3:
+        st.markdown(_renglon_macro("Acciones / Índices", macro.get("acciones")), unsafe_allow_html=True)
+    with g4:
+        st.markdown(_renglon_macro("Oro", macro.get("oro")), unsafe_allow_html=True)
+
+    g5, g6, g7 = st.columns(3)
+    with g5:
+        st.markdown(_renglon_macro("Criptomonedas", macro.get("crypto") or macro.get("criptomonedas")), unsafe_allow_html=True)
+    with g6:
+        st.markdown(_renglon_macro("Política Monetaria", macro.get("politica") or macro.get("politica_monetaria")), unsafe_allow_html=True)
+    with g7:
+        st.markdown(_renglon_macro("Régimen de Mercado", macro.get("riesgo") or macro.get("regimen_mercado")), unsafe_allow_html=True)
+
+    lectura = macro.get("lectura") or macro.get("lectura_macro")
+    if lectura:
+        st.info(lectura)
+
+
 # ==============================================================
 #  ACCESO A SUPABASE
 # ==============================================================
@@ -366,21 +402,9 @@ def _tab_registrar(supabase, user_id, es_admin):
         unsafe_allow_html=True,
     )
 
-    if evento and real is not None and previsto is not None:
-        macro = interpretar_macro(evento, real, previsto)
-        with st.expander("🔎 Ver interpretación macro completa (divisas, bonos, acciones, oro, cripto...)"):
-            mc1, mc2, mc3 = st.columns(3)
-            with mc1:
-                st.markdown(f"**Divisas:** {macro['divisas']}")
-                st.markdown(f"**Bonos:** {macro['bonos']}")
-            with mc2:
-                st.markdown(f"**Acciones:** {macro['acciones']}")
-                st.markdown(f"**Oro:** {macro['oro']}")
-            with mc3:
-                st.markdown(f"**Cripto:** {macro['crypto']}")
-                st.markdown(f"**Política:** {macro['politica']}")
-            st.markdown(f"**Régimen de mercado:** {macro['riesgo']}")
-            st.info(macro["lectura"])
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    macro = interpretar_macro(evento, real, previsto) if evento else interpretar_macro(None, None, None)
+    _render_macro_grid(macro)
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
     b1, b2 = st.columns(2)
@@ -408,13 +432,16 @@ def _tab_registrar(supabase, user_id, es_admin):
 
 
 # ==============================================================
-#  RENDER — TAB HISTORIAL (solo lectura, para todos)
+#  RENDER — TAB CALENDARIO ECONÓMICO (solo lectura, para todos)
+#  Cada evento se muestra como tarjeta expandible con el análisis
+#  macro completo (no solo si fue "bueno" o "malo", sino para qué
+#  activo y por qué), tal como se ve en vivo al cargar un registro.
 # ==============================================================
 
 def _tab_historial(supabase):
     top1, top2 = st.columns([3, 1])
     with top1:
-        st.caption("Últimos registros cargados (solo lectura)")
+        st.caption("Todos los eventos económicos cargados (solo lectura)")
     with top2:
         if st.button("↺ Actualizar", use_container_width=True, key="cal_hist_refresh"):
             _obtener_registros.clear()
@@ -426,34 +453,66 @@ def _tab_historial(supabase):
         return
 
     df = pd.DataFrame(filas)
-    cols_mostrar = ["fecha", "pais", "evento", "previsto", "anterior", "real", "impacto_mercado"]
-    cols_mostrar = [c for c in cols_mostrar if c in df.columns]
-    df_show = df[cols_mostrar].rename(columns={
-        "fecha": "Fecha", "pais": "País", "evento": "Evento",
-        "previsto": "Previsto", "anterior": "Anterior", "real": "Real",
-        "impacto_mercado": "Impacto",
-    })
 
     fc1, fc2 = st.columns(2)
     with fc1:
-        paises_u = ["Todos"] + sorted(df_show["País"].dropna().unique().tolist())
+        paises_u = ["Todos"] + sorted(df["pais"].dropna().unique().tolist())
         f_pais = st.selectbox("Filtrar país", paises_u, key="cal_hist_f_pais")
     with fc2:
-        impactos_u = ["Todos"] + sorted(df_show["Impacto"].dropna().unique().tolist())
+        impactos_u = ["Todos"] + sorted(df["impacto_mercado"].dropna().unique().tolist()) if "impacto_mercado" in df.columns else ["Todos"]
         f_imp = st.selectbox("Filtrar impacto", impactos_u, key="cal_hist_f_imp")
 
-    df_f = df_show.copy()
+    df_f = df.copy()
     if f_pais != "Todos":
-        df_f = df_f[df_f["País"] == f_pais]
+        df_f = df_f[df_f["pais"] == f_pais]
     if f_imp != "Todos":
-        df_f = df_f[df_f["Impacto"] == f_imp]
+        df_f = df_f[df_f["impacto_mercado"] == f_imp]
 
-    st.dataframe(df_f, use_container_width=True, height=min(600, max(150, len(df_f) * 35 + 45)), hide_index=True)
-    st.caption(f"{len(df_f)} registros mostrados de {len(df_show)} totales")
+    st.caption(f"{len(df_f)} registros mostrados de {len(df)} totales")
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+    for _, row in df_f.iterrows():
+        impacto = row.get("impacto_mercado") or "⚪ NEUTRO PARA EL MERCADO"
+        bg, fg = _impacto_estilo(impacto)
+        real, previsto, anterior = row.get("real"), row.get("previsto"), row.get("anterior")
+        unidad = row.get("unidad") or ""
+
+        titulo = f"{row.get('fecha','')} · {row.get('pais','')} · {row.get('evento','')}"
+        with st.expander(titulo):
+            st.markdown(
+                f'<div style="border-radius:10px;padding:10px 14px;margin-bottom:10px;'
+                f'background:{bg};border:1px solid {fg}55">'
+                f'<div style="font-size:10px;color:{fg};opacity:.8">Impacto para el Mercado</div>'
+                f'<div style="font-size:14px;font-weight:800;color:{fg}">{impacto}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+            v1, v2, v3 = st.columns(3)
+            v1.metric("Previsto", f"{previsto} {unidad}" if previsto is not None else "—")
+            v2.metric("Anterior", f"{anterior} {unidad}" if anterior is not None else "—")
+            v3.metric("Real", f"{real} {unidad}" if real is not None else "—")
+
+            s1, s2 = st.columns(2)
+            s1.markdown(f"**Real vs Previsto:** {row.get('vs_previsto') or '—'}  \n**Señal:** {row.get('senal_previsto') or '—'}")
+            s2.markdown(f"**Real vs Anterior:** {row.get('vs_anterior') or '—'}  \n**Señal:** {row.get('senal_anterior') or '—'}")
+
+            st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+            macro = {
+                "divisas": row.get("divisas"), "bonos": row.get("bonos"),
+                "acciones": row.get("acciones"), "oro": row.get("oro"),
+                "crypto": row.get("criptomonedas"), "politica": row.get("politica_monetaria"),
+                "riesgo": row.get("regimen_mercado"), "lectura": row.get("lectura_macro"),
+            }
+            _render_macro_grid(macro)
+
+            if row.get("notas"):
+                st.markdown(f"**Notas:** {row['notas']}")
 
 
 # ==============================================================
-#  RENDER — TAB NOTICIAS (todos ven, solo admin publica/borra)
+#  RENDER — NOTICIAS (todos ven, solo admin publica/borra)
+#  Ahora vive en su propio entry point, separado del calendario
+#  (ver render_noticias más abajo).
 # ==============================================================
 
 def _tab_noticias(supabase, es_admin, user_id, user_email):
@@ -532,6 +591,10 @@ def render_calendario_economico(supabase, user_id, user_email):
     """Uso desde app.py:
         from modulo_calendario import render_calendario_economico
         render_calendario_economico(supabase, USER_ID, st.session_state['usuario'].email)
+
+    Muestra únicamente el calendario económico (carga de eventos + historial
+    con interpretación macro completa). Las noticias son un módulo aparte,
+    ver render_noticias() más abajo.
     """
     es_admin = _es_admin(user_email)
 
@@ -543,16 +606,40 @@ def render_calendario_economico(supabase, user_id, user_email):
         📊 Calendario Económico
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
-        Registro de eventos macro con interpretación automática (divisas, bonos, acciones,
-        oro y cripto), historial y noticias.
+        Registro de eventos macro con interpretación automática completa
+        (divisas, bonos, acciones, oro y cripto) y su historial.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    tab_reg, tab_hist, tab_noti = st.tabs(["📝 Registrar", "📋 Historial", "📰 Noticias"])
+    tab_reg, tab_cal = st.tabs(["📝 Registrar", "📅 Calendario Económico"])
     with tab_reg:
         _tab_registrar(supabase, user_id, es_admin)
-    with tab_hist:
+    with tab_cal:
         _tab_historial(supabase)
-    with tab_noti:
-        _tab_noticias(supabase, es_admin, user_id, user_email)
+
+
+def render_noticias(supabase, user_id, user_email):
+    """Uso desde app.py:
+        from modulo_calendario import render_noticias
+        render_noticias(supabase, USER_ID, st.session_state['usuario'].email)
+
+    Módulo independiente de Noticias — llamalo desde otra sección/página
+    de tu app, separado del Calendario Económico.
+    """
+    es_admin = _es_admin(user_email)
+
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #3a7bd5;
+         border-radius:14px; padding:22px 28px; margin-bottom:20px;">
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:4px">
+        📰 Noticias
+      </div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
+        Noticias y análisis de mercado.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    _tab_noticias(supabase, es_admin, user_id, user_email)
