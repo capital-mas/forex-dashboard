@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
 from modulo_opciones import modulo_opciones
-from modulo_calendario import render_calendario_economico
+from modulo_calendario import render_calendario_economico, render_noticias
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
 
@@ -4737,6 +4737,10 @@ with st.container(key='nav_pills_wrap'):
                     st.session_state['nav_horizonte'] = 'calendario'
                     st.session_state['nav_modulo'] = 'calendario'
                     st.rerun()
+                if st.button('📰 Noticias', use_container_width=True, key='menu_noticias'):
+                    st.session_state['nav_horizonte'] = 'noticias'
+                    st.session_state['nav_modulo'] = 'noticias'
+                    st.rerun()
                 st.markdown(
                     '<hr style="margin:6px 0;border-color:#21262d">',
                     unsafe_allow_html=True
@@ -4839,7 +4843,7 @@ with st.container(key='nav_mobile_wrap'):
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
         '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares', '🎲 Opciones': 'opciones',
-        '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario',
+        '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
     }
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
@@ -4936,6 +4940,7 @@ titulos = {
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
     'calendario': ('Calendario Económico', '📆', 'Eventos económicos relevantes y su impacto en mercados'),
+    'noticias': ('Noticias', '📰', 'Noticias y análisis de mercado'),
 }
 titulo_h, icono_h, subtitulo_h = titulos.get(MODULO, ('Analizador', '📡', ''))
 # st.caption(f'🔧 DEBUG — HORIZONTE={HORIZONTE} · MODULO={MODULO}')
@@ -4952,6 +4957,7 @@ badge_map = {
     'opciones': ('#bc5cff', 'rgba(188,92,255,0.12)', 'OPCIONES'),
     'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
     'calendario': ('#79c0ff', 'rgba(121,192,255,0.12)', 'CALENDARIO'),
+    'noticias': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'NOTICIAS'),
 }
 badge_color, badge_bg, badge_txt = badge_map.get(HORIZONTE, ('#3a7bd5','rgba(58,123,213,0.12)',''))
 
@@ -5005,6 +5011,9 @@ elif MODULO == 'opciones':
 
 elif MODULO == 'calendario':
        render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
+
+elif MODULO == 'noticias':
+       render_noticias(supabase, USER_ID, st.session_state["usuario"].email)
 
 elif MODULO == 'finanzas':
     render_finanzas_personales(supabase, USER_ID)
