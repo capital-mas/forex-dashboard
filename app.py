@@ -5620,10 +5620,14 @@ elif HORIZONTE == 'corto':
             st.session_state['td_loaded'] = True
         if st.session_state.get('td_loaded'):
             prog = st.progress(0, text='Cargando países...')
-            d_p = cargar_paises_corto(); prog.progress(33, 'Sectores...')
-            d_s = cargar_sectores_corto(); prog.progress(66, 'Mercados...')
+            d_p = cargar_paises_corto(); prog.progress(25, 'Sectores...')
+            d_s = cargar_sectores_corto(); prog.progress(50, 'Sub-sectores...')
+            d_ss = cargar_subsectores_corto(); prog.progress(75, 'Mercados...')
             d_m = cargar_mercados_corto(); prog.progress(100, '✅ Listo'); prog.empty()
-            fuentes = [(l,d,c) for l,d,c in [('Países',d_p,'#3a7bd5'),('Sectores',d_s,'#3fb950'),('Mercados',d_m,'#f0883e')] if d]
+            fuentes = [(l,d,c) for l,d,c in [
+                ('Países', d_p, '#3a7bd5'), ('Sectores', d_s, '#3fb950'),
+                ('Sub-sectores', d_ss, '#79c0ff'), ('Mercados', d_m, '#f0883e'),
+            ] if d]
             if fuentes:
                 st.plotly_chart(fig_topdown(fuentes), use_container_width=True, config=PLOTLY_CONFIG, key='topdown_fig')
         else:
