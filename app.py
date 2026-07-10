@@ -2408,7 +2408,18 @@ def _fmt_big(v):
     if av >= 1e3:  return f'{v/1e3:.2f}K'
     return str(round(v, 2))
 
+def _es_activo_sin_fundamentals(ticker):
+    """Forex, cripto y futuros/commodities no tienen estados financieros en Yahoo Finance."""
+    t = ticker.upper()
+    return t.endswith('=X') or t.endswith('-USD') or t.endswith('=F')
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _analizar_fundamental_cached(ticker, industria):
+    if _es_activo_sin_fundamentals(ticker):
+        return None
+    try:
+        import yfinance as yf
 @st.cache_data(ttl=3600, show_spinner=False)
 def _analizar_fundamental_cached(ticker, industria):
     try:
