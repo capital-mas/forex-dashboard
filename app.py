@@ -2893,6 +2893,8 @@ def logo_html(logo_url, size=28, dominio_fallback=None):
 def render_perfil_empresa(ticker, key_suffix=''):
     """Card con logo, capitalización y descripción del negocio. Usar en cualquier
     pantalla donde se analice un ticker individual (Buscador, Comparador, Fundamental)."""
+    if _es_activo_sin_fundamentals(ticker):
+        return
     with st.spinner('Cargando perfil de la empresa...'):
         perfil = obtener_perfil_empresa(ticker)
 
