@@ -5719,7 +5719,28 @@ elif HORIZONTE == 'corto':
                 st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key='sec_cuadrante')
         with tab4:
             tabla_corto(datos_s)
-
+            
+    elif MODULO == 'subsectores':
+        with st.spinner('Descargando sub-sectores...'):
+            datos_ss = cargar_subsectores_corto()
+        if not datos_ss: st.error('Sin datos.'); st.stop()
+        badge_actualizacion('subsectores')
+        aviso_fallidos('subsectores', etiqueta='sub-sectores')
+        tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
+        with tab1:
+            items_ord = sorted(datos_ss.items(), key=lambda x: x[1]['sa'], reverse=True)
+            fig = fig_barras_h(items_ord, 'Sub-sectores / Temáticos')
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key='subsec_barras')
+        with tab2:
+            fig2 = fig_momentum(sorted(datos_ss.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
+            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key='subsec_momentum')
+        with tab3:
+            c_m, _ = st.columns([2,1])
+            with c_m:
+                fig3 = fig_cuadrante(datos_ss, None, 'Mapa Oportunidades Sub-sectores')
+                st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key='subsec_cuadrante')
+        with tab4:
+            tabla_corto(datos_ss, key_suffix='subsec')
 
     elif MODULO == 'mercados':
         with st.spinner('Descargando commodities...'):
