@@ -4931,7 +4931,7 @@ with st.container(key='nav_mobile_wrap'):
     _mc3, _mc4 = st.columns(2)
     with _mc3:
         if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh_mobile'):
-            st.cache_data.clear(); st.rerun()
+            _refrescar_cotizaciones()
     with _mc4:
         if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout_mobile'):
             supabase.auth.sign_out()
