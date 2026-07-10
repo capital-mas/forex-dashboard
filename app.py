@@ -5086,14 +5086,32 @@ def modulo_topdown_cuantitativo():
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(['📊 Scores', '📈 Momentum', '🗺️ Cuadrante', '🔥 Heatmap', '📋 Ranking'])
     items_ord = sorted(datos.items(), key=lambda x: x[1]['sa'], reverse=True)
+    es_subsectores = universo_label.startswith('🧩')
 
     with tab1:
-        st.plotly_chart(fig_barras_h(items_ord, f'Score Acumulación — {HORIZONTES_TDC[hz]["nombre"]}'),
-                         use_container_width=True, key='tdc_barras')
+        if es_subsectores:
+            grupos_en = sorted(set(d.get('grupo', 'Otros') for d in datos.values()))
+            for i in range(0, len(grupos_en), 2):
+                cols = st.columns(2)
+                for j, grupo in enumerate(grupos_en[i:i+2]):
+                    items_g = sorted([(n, d) for n, d in datos.items() if d.get('grupo') == grupo],
+                                      key=lambda x: x[1]['sa'], reverse=True)
+                    if not items_g: continue
+                    fig_g = fig_barras_h(items_g, grupo, COLORES_SECTOR_PADRE.get(grupo, C_MONSTER))
+                    with cols[j]:
+                        st.plotly_chart(fig_g, use_container_width=True, key=f'tdc_barras_{grupo}')
+        else:
+            st.plotly_chart(fig_barras_h(items_ord, f'Score Acumulación — {HORIZONTES_TDC[hz]["nombre"]}'),
+                             use_container_width=True, key='tdc_barras')
     with tab2:
         st.plotly_chart(_tdc_fig_momentum(datos, cfg), use_container_width=True, config=PLOTLY_CONFIG, key='tdc_momentum')
     with tab3:
-        colores_grp = COLORES_REGION if universo_label.startswith('🌍') else None
+        if es_subsectores:
+            colores_grp = COLORES_SECTOR_PADRE
+        elif universo_label.startswith('🌍'):
+            colores_grp = COLORES_REGION
+        else:
+            colores_grp = None
         st.plotly_chart(fig_cuadrante(datos, colores_grp, f'Mapa de Oportunidades — {HORIZONTES_TDC[hz]["nombre"]}'),
                          use_container_width=True, key='tdc_cuadrante')
     with tab4:
