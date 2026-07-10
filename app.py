@@ -5757,16 +5757,23 @@ elif HORIZONTE == 'corto':
         aviso_fallidos('subsectores', etiqueta='sub-sectores')
         tab1, tab2, tab3, tab4 = st.tabs(['📊 Scores','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
         with tab1:
-            items_ord = sorted(datos_ss.items(), key=lambda x: x[1]['sa'], reverse=True)
-            fig = fig_barras_h(items_ord, 'Sub-sectores / Temáticos')
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key='subsec_barras')
+            grupos_en = sorted(set(d.get('grupo', 'Otros') for d in datos_ss.values()))
+            for i in range(0, len(grupos_en), 2):
+                cols = st.columns(2)
+                for j, grupo in enumerate(grupos_en[i:i+2]):
+                    items = sorted([(n, d) for n, d in datos_ss.items() if d.get('grupo') == grupo],
+                                    key=lambda x: x[1]['sa'], reverse=True)
+                    if not items: continue
+                    fig = fig_barras_h(items, grupo, COLORES_SECTOR_PADRE.get(grupo, C_MONSTER))
+                    with cols[j]:
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f'subsec_barras_{grupo}')
         with tab2:
             fig2 = fig_momentum(sorted(datos_ss.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
             st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key='subsec_momentum')
         with tab3:
             c_m, _ = st.columns([2,1])
             with c_m:
-                fig3 = fig_cuadrante(datos_ss, None, 'Mapa Oportunidades Sub-sectores')
+                fig3 = fig_cuadrante(datos_ss, COLORES_SECTOR_PADRE, 'Mapa Oportunidades Sub-sectores')
                 st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key='subsec_cuadrante')
         with tab4:
             tabla_corto(datos_ss, key_suffix='subsec')
