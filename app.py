@@ -1689,14 +1689,14 @@ def chips_navegacion(items, key_prefix, max_chips=18):
     for i in range(0, len(normal), n_cols):
         cols = st.columns(n_cols)
         fila = normal[i:i+n_cols]
-        for col, (label, tk) in zip(cols, fila):
+        for j, (col, (label, tk)) in enumerate(zip(cols, fila)):
+            idx_global = i + j
             with col:
-                if st.button(str(label), key=f'{key_prefix}_chip_{tk}_{i}', use_container_width=True):
+                if st.button(str(label), key=f'{key_prefix}_chip_{idx_global}_{tk}', use_container_width=True):
                     st.session_state['ticker_from_table'] = tk
                     st.session_state['nav_horizonte'] = 'buscador'
                     st.session_state['nav_modulo']    = 'buscador'
                     st.rerun()
-
 
 # ==============================================================
 #  TICKER TAPE — barra deslizante de cotizaciones (estilo Bloomberg)
