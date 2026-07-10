@@ -4642,43 +4642,16 @@ def modulo_inicio():
             )
             st.markdown(_cards_html(items, datos_base), unsafe_allow_html=True)
 
-    # ── TAB: Sectores ─────────────────────────────────────────────────────
+# ── TAB: Sectores ─────────────────────────────────────────────────────
     with tab_sectores:
         _kpi_resumen_seccion(datos_sectores_kpi, 'sectores')
 
-        items_sec = [(nombre, tk) for nombre, (tk, _) in SECTORES.items()]
-        _sec_inicio('Sectores S&P500', '📊', items_sec, datos_base)
+        items_gics = [(nombre, tk) for nombre, (tk, cat, _c) in SECTORES_TOTAL.items() if cat == 'Sectores']
+        items_sub  = [(nombre, tk) for nombre, (tk, cat, _c) in SECTORES_TOTAL.items() if cat == 'Sub-sectores']
 
-        # mini-ranking subida/baja
-        filas_sec = []
-        for nombre, (tk, _) in SECTORES.items():
-            d = datos_base.get(tk)
-            if d:
-                filas_sec.append({
-                    'Sector': nombre, 'ETF': tk,
-                    'Precio': fmt_precio(d['precio']),
-                    'Cambio %': round(d['cambio_pct'], 2),
-                    'Cambio $': round(d['cambio_abs'], 3),
-                })
-        if filas_sec:
-            df_sec = pd.DataFrame(filas_sec).sort_values('Cambio %', ascending=False)
-            def _color_pct(v):
-                try:
-                    return f'color:{"#3fb950" if float(v) >= 0 else "#f85149"};font-weight:700'
-                except:
-                    return ''
-            _m = 'map' if hasattr(df_sec.style, 'map') else 'applymap'
-            styled_sec = (df_sec.style
-                .pipe(lambda s: getattr(s, _m)(_color_pct, subset=['Cambio %', 'Cambio $']))
-                .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
-                .set_table_styles([
-                    {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
-                     ('font-weight', '700'), ('text-align', 'center'),
-                     ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
-                    {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
-                ])
-            )
-            st.dataframe(styled_sec, use_container_width=True, height=min(440, len(df_sec) * 35 + 45), hide_index=True)
+        _sec_inicio('Sectores GICS (11 sectores)', '📊', items_gics, datos_base)
+        st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
+        _sec_inicio('Sub-sectores / Temáticos', '🧩', items_sub, datos_base)
 
     # ── TAB: Mercados ─────────────────────────────────────────────────────
     with tab_mercados:
