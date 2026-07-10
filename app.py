@@ -5280,7 +5280,8 @@ def _cambiar_submodulo_largo():
 if HORIZONTE == 'corto':
     _OPCIONES_SUB_CORTO = {
         '🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
-        '📊 Sectores': 'sectores', '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones',
+        '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
+        '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones',
     }
     _label_sub_actual = next(
         (k for k, v in _OPCIONES_SUB_CORTO.items()
