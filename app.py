@@ -5287,17 +5287,43 @@ st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
 
 
 with st.expander('❓ Glosario de términos cuantitativos y fundamentales', expanded=False):
-    _terms = list(GLOSARIO.items())
-    _mitad = len(_terms)//2 + (len(_terms) % 2)
-    _col_g1, _col_g2 = st.columns(2)
-    for _col, _chunk in zip([_col_g1, _col_g2], [_terms[:_mitad], _terms[_mitad:]]):
-        with _col:
-            for _term, _desc in _chunk:
-                st.markdown(
-                    f"<div style='margin-bottom:10px'><b style='color:#6CC24A;font-size:13px'>{_term}</b><br>"
-                    f"<span style='color:#f5f7fa;font-size:12.5px;line-height:1.5'>{_desc}</span></div>",
-                    unsafe_allow_html=True
-                )
+    st.markdown(
+        '<div style="font-size:11px;color:#6b7d9a;margin-bottom:8px">'
+        'Elegí un término para ver su definición y la tabla de niveles/rangos que usa la app.</div>',
+        unsafe_allow_html=True
+    )
+    _termino_sel = st.selectbox(
+        'Término', sorted(GLOSARIO.keys()), key='glosario_termino_sel', label_visibility='collapsed'
+    )
+    st.markdown(
+        f"<div style='margin:6px 0 14px 0'><b style='color:#6CC24A;font-size:14px'>{_termino_sel}</b><br>"
+        f"<span style='color:#f5f7fa;font-size:13px;line-height:1.6'>{GLOSARIO.get(_termino_sel,'')}</span></div>",
+        unsafe_allow_html=True
+    )
+
+    _niveles = GLOSARIO_NIVELES.get(_termino_sel)
+    if _niveles:
+        df_gloss = pd.DataFrame(_niveles, columns=['Rango / Condición', 'Nivel', 'Interpretación'])
+
+        def _color_nivel_gloss(val):
+            c = _COLOR_NIVEL_MAP.get(val, '#e6edf3')
+            return f'color:{c};font-weight:700'
+
+        _map_g = 'map' if hasattr(df_gloss.style, 'map') else 'applymap'
+        styled_gloss = (df_gloss.style
+            .pipe(lambda s: getattr(s, _map_g)(_color_nivel_gloss, subset=['Nivel']))
+            .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+            .set_table_styles([
+                {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                    ('font-weight', '700'), ('text-align', 'center'),
+                    ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11.5px')]},
+            ])
+        )
+        st.dataframe(styled_gloss, use_container_width=True, hide_index=True,
+                     height=min(320, len(df_gloss) * 40 + 45))
+    else:
+        st.info('Este término es informativo y no tiene niveles cuantitativos fijos (se interpreta en contexto).')
 
 
 HORIZONTE = st.session_state['nav_horizonte']
