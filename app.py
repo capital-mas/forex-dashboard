@@ -2420,10 +2420,6 @@ def _analizar_fundamental_cached(ticker, industria):
         return None
     try:
         import yfinance as yf
-@st.cache_data(ttl=3600, show_spinner=False)
-def _analizar_fundamental_cached(ticker, industria):
-    try:
-        import yfinance as yf
         sector = SECTOR_MAP_FUND.get(industria, 'Sin Clasificar')
         bench  = INDUSTRY_BENCHMARKS_FUND.get(sector, DEFAULT_BENCHMARK_FUND)
         stock  = yf.Ticker(ticker)
