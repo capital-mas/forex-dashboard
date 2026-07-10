@@ -4623,10 +4623,30 @@ def modulo_topdown_cuantitativo():
         if len(items_ord) > 15:
             st.caption(f'Mostrando lectura de los primeros 15 de {len(items_ord)} activos (ordenados por Score Acumulación).')
 
+def _refrescar_cotizaciones():
+    """Fuerza nueva descarga de precios y scores (corto/largo plazo, forex, países,
+    sectores, mercados, acciones, ticker tape, Top-Down Cuantitativo). A propósito
+    NO toca el caché de fundamental ni de perfil de empresa: esos ya tienen su TTL
+    propio (1h / 24h), y si también se vacían acá, '↺ Actualizar' obliga a pedirle
+    todo a Yahoo de golpe y aparece N/D por rate limit."""
+    funciones_a_limpiar = [
+        descargar_datos, descargar_bulk,
+        cargar_forex_corto, cargar_paises_corto, cargar_sectores_corto,
+        cargar_mercados_corto, cargar_acciones_corto, cargar_resultados_largo,
+        cargar_precios_inicio_base, cargar_precios_acciones_inicio,
+        cargar_ticker_tape, cargar_topdown_cuantitativo,
+    ]
+    for fn in funciones_a_limpiar:
+        try:
+            fn.clear()
+        except Exception:
+            pass
+    st.rerun()
+
+
 # ==============================================================
 #  ESTADO DE NAVEGACIÓN
 # ==============================================================
-
 
 for key, default in [
     ('nav_horizonte', 'inicio'),
