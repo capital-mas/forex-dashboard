@@ -2365,18 +2365,72 @@ def _analizar_fundamental_cached(ticker, industria):
         return None
 
 
+def _sanitizar_json(obj):
+    """Convierte tipos numpy/pandas a tipos nativos de Python para que
+    Supabase pueda serializar el dict como jsonb sin explotar."""
+    if isinstance(obj, dict):
+        return {k: _sanitizar_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitizar_json(v) for v in obj]
+    if isinstance(obj, np.floating):
+        return None if np.isnan(obj) else float(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, float) and np.isnan(obj):
+        return None
+    return obj
+
+
+def _fund_supabase_guardar(ticker, industria, datos):
+    try:
+        payload = _sanitizar_json({k: v for k, v in datos.items() if not k.startswith('_')})
+        supabase.table('fundamental_cache').upsert({
+            'ticker': ticker, 'industria': industria, 'datos': payload,
+            'actualizado_en': ahora_ar().isoformat(),
+        }).execute()
+    except Exception:
+        pass  # si falla el guardado en Supabase, no rompemos el análisis en pantalla
+
+
+def _fund_supabase_leer(ticker):
+    try:
+        res = supabase.table('fundamental_cache').select('datos, actualizado_en').eq('ticker', ticker).limit(1).execute()
+        if res.data:
+            return res.data[0]['datos'], res.data[0]['actualizado_en']
+    except Exception:
+        pass
+    return None, None
+
+
 def analizar_fundamental(ticker, industria):
-    """Envoltorio persistente: si la descarga en vivo falla (rate limit de Yahoo,
-    sobre todo justo después de tocar '↺ Actualizar'), devuelve el último resultado
-    bueno guardado en session_state en vez de mostrar N/D. Solo se pisa el dato
-    guardado cuando la descarga sale bien."""
+    """Envoltorio persistente en 3 capas: 1) descarga en vivo (Yahoo), 2) si falla,
+    lo último bueno de esta sesión, 3) si tampoco hay, lo último bueno guardado en
+    Supabase (compartido entre todos los usuarios). Solo se pisa Supabase cuando
+    la descarga en vivo sale bien."""
     if '_fund_cache_ok' not in st.session_state:
         st.session_state['_fund_cache_ok'] = {}
+
     resultado = _analizar_fundamental_cached(ticker, industria)
     if resultado is not None:
         st.session_state['_fund_cache_ok'][ticker] = resultado
+        _fund_supabase_guardar(ticker, industria, resultado)
         return resultado
-    return st.session_state['_fund_cache_ok'].get(ticker)
+
+    en_sesion = st.session_state['_fund_cache_ok'].get(ticker)
+    if en_sesion is not None:
+        return en_sesion
+
+    datos_db, ts_db = _fund_supabase_leer(ticker)
+    if datos_db is not None:
+        datos_db = dict(datos_db)
+        datos_db['_desde_respaldo'] = True
+        datos_db['_respaldo_fecha'] = ts_db
+        st.session_state['_fund_cache_ok'][ticker] = datos_db
+        return datos_db
+
+    return None
 
 
 def _senal_color(s):
@@ -2497,17 +2551,51 @@ def _obtener_perfil_empresa_cached(ticker):
         return None
 
 
+def _perfil_supabase_guardar(ticker, datos):
+    try:
+        payload = _sanitizar_json({k: v for k, v in datos.items() if not k.startswith('_')})
+        supabase.table('perfil_cache').upsert({
+            'ticker': ticker, 'datos': payload, 'actualizado_en': ahora_ar().isoformat(),
+        }).execute()
+    except Exception:
+        pass
+
+
+def _perfil_supabase_leer(ticker):
+    try:
+        res = supabase.table('perfil_cache').select('datos, actualizado_en').eq('ticker', ticker).limit(1).execute()
+        if res.data:
+            return res.data[0]['datos'], res.data[0]['actualizado_en']
+    except Exception:
+        pass
+    return None, None
+
+
 def obtener_perfil_empresa(ticker):
-    """Envoltorio persistente: si Yahoo Finance falla (rate limit, sobre todo justo
-    después de tocar '↺ Actualizar'), devuelve el último perfil bueno guardado en
-    session_state en vez de dejar la sección vacía o con el aviso de error."""
+    """Envoltorio persistente en 3 capas: descarga en vivo → último bueno de esta
+    sesión → último bueno guardado en Supabase (compartido entre usuarios)."""
     if '_perfil_cache_ok' not in st.session_state:
         st.session_state['_perfil_cache_ok'] = {}
+
     resultado = _obtener_perfil_empresa_cached(ticker)
     if resultado is not None:
         st.session_state['_perfil_cache_ok'][ticker] = resultado
+        _perfil_supabase_guardar(ticker, resultado)
         return resultado
-    return st.session_state['_perfil_cache_ok'].get(ticker)
+
+    en_sesion = st.session_state['_perfil_cache_ok'].get(ticker)
+    if en_sesion is not None:
+        return en_sesion
+
+    datos_db, ts_db = _perfil_supabase_leer(ticker)
+    if datos_db is not None:
+        datos_db = dict(datos_db)
+        datos_db['_desde_respaldo'] = True
+        datos_db['_respaldo_fecha'] = ts_db
+        st.session_state['_perfil_cache_ok'][ticker] = datos_db
+        return datos_db
+
+    return None
 
 
 def logo_html(logo_url, size=28, dominio_fallback=None):
