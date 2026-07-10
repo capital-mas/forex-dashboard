@@ -2497,6 +2497,19 @@ def _obtener_perfil_empresa_cached(ticker):
         return None
 
 
+def obtener_perfil_empresa(ticker):
+    """Envoltorio persistente: si Yahoo Finance falla (rate limit, sobre todo justo
+    después de tocar '↺ Actualizar'), devuelve el último perfil bueno guardado en
+    session_state en vez de dejar la sección vacía o con el aviso de error."""
+    if '_perfil_cache_ok' not in st.session_state:
+        st.session_state['_perfil_cache_ok'] = {}
+    resultado = _obtener_perfil_empresa_cached(ticker)
+    if resultado is not None:
+        st.session_state['_perfil_cache_ok'][ticker] = resultado
+        return resultado
+    return st.session_state['_perfil_cache_ok'].get(ticker)
+
+
 def logo_html(logo_url, size=28, dominio_fallback=None):
     """Devuelve el <img> del logo. Si Clearbit falla, cae al ícono de Google Favicons;
     si eso también falla, oculta la imagen en vez de mostrar un cuadro roto."""
