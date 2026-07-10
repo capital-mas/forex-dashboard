@@ -4988,8 +4988,9 @@ def modulo_topdown_cuantitativo():
         hz = 'MP' if 'Mediano' in hz_label else 'LP'
     with c2:
         universo_label = st.selectbox('Universo', [
-            '🌍 Países / Índices Globales', '📊 Sectores S&P500',
-            '🛢️ Mercados Reales', '📈 Acciones por Industria',
+            '🌍 Países / Índices Globales', '📊 Sectores GICS',
+            '🧩 Sub-sectores / Temáticos', '🛢️ Mercados Reales',
+            '📈 Acciones por Industria',
         ], key='tdc_universo')
 
     cfg = HORIZONTES_TDC[hz]
