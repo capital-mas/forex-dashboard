@@ -2521,6 +2521,11 @@ def _analizar_fundamental_cached(ticker, industria):
 
         ev_ebitda = enterprise_value / ebitda if enterprise_value and ebitda else None
 
+        campos_clave = [per, pb, roe, roa, gross_margin, op_margin, profit_margin,
+                         revenue_growth, debt_equity, market_cap]
+        if all(v is None for v in campos_clave):
+            return None
+
         senales = []
         if revenue_growth:
             if revenue_growth > 0.20:   senales.append(('OK','Crecimiento de ingresos explosivo'))
