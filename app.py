@@ -943,6 +943,7 @@ ETFS = {
     'Alemania':         ('EWG',  'Índices', '#d2a8ff'),
     'Europa general':   ('VGK',  'Índices', '#3a7bd5'),
     'Mercados Emerg.':  ('EEM',  'Índices', '#8b949e'),
+}
 
 SECTORES_TOTAL = {
     # --- Sectores (SPDR, vista macro - 11 sectores GICS) ---
