@@ -2365,6 +2365,20 @@ def _analizar_fundamental_cached(ticker, industria):
         return None
 
 
+def analizar_fundamental(ticker, industria):
+    """Envoltorio persistente: si la descarga en vivo falla (rate limit de Yahoo,
+    sobre todo justo después de tocar '↺ Actualizar'), devuelve el último resultado
+    bueno guardado en session_state en vez de mostrar N/D. Solo se pisa el dato
+    guardado cuando la descarga sale bien."""
+    if '_fund_cache_ok' not in st.session_state:
+        st.session_state['_fund_cache_ok'] = {}
+    resultado = _analizar_fundamental_cached(ticker, industria)
+    if resultado is not None:
+        st.session_state['_fund_cache_ok'][ticker] = resultado
+        return resultado
+    return st.session_state['_fund_cache_ok'].get(ticker)
+
+
 def _senal_color(s):
     if 'COMPRA' in s: return '#3fb950', 'rgba(63,185,80,0.12)'
     if 'MANTENER' in s: return '#e3b341', 'rgba(227,179,65,0.12)'
