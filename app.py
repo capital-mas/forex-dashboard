@@ -999,6 +999,8 @@ SECTORES_TOTAL = {
 
 # ← AGREGAR ESTA LÍNEA:
 SECTORES = {nombre: (tk, color) for nombre, (tk, cat, color) in SECTORES_TOTAL.items()}
+SECTORES_GICS = {nombre: (tk, color) for nombre, (tk, cat, color) in SECTORES_TOTAL.items() if cat == 'Sectores'}
+SUBSECTORES   = {nombre: (tk, color) for nombre, (tk, cat, color) in SECTORES_TOTAL.items() if cat == 'Sub-sectores'}
 
 MERCADOS_REALES = {
     # --- Energía ---
