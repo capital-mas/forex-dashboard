@@ -997,6 +997,9 @@ SECTORES_TOTAL = {
     'Internet':           ('FDN',  'Sub-sectores', '#3a7bd5'),
 }
 
+# ← AGREGAR ESTA LÍNEA:
+SECTORES = {nombre: (tk, color) for nombre, (tk, cat, color) in SECTORES_TOTAL.items()}
+
 MERCADOS_REALES = {
     # --- Energía ---
     'Petróleo WTI':   ('CL=F',    'Energía',      '#f0883e'),
