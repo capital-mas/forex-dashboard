@@ -951,7 +951,6 @@ MERCADOS_REALES = {
     'Gas Natural':    ('NG=F',    'Energía',      '#79c0ff'),
     'Gasolina RBOB':  ('RB=F',    'Energía',      '#ff9e64'),
     'Heating Oil':    ('HO=F',    'Energía',      '#ff7b72'),
-    'Carbón (ETF)':   ('KOL',     'Energía',      '#8b949e'),
     'Uranio (ETF)':   ('URA',     'Energía',      '#56d364'),
 
     # --- Metales Preciosos ---
@@ -993,7 +992,6 @@ MERCADOS_REALES = {
     'Dogecoin':   ('DOGE-USD', 'Cripto', '#e8b923'),
     'Avalanche':  ('AVAX-USD', 'Cripto', '#e84142'),
     'Polkadot':   ('DOT-USD',  'Cripto', '#e6007a'),
-    'Polygon':    ('MATIC-USD','Cripto', '#8247e5'),
     'Chainlink':  ('LINK-USD', 'Cripto', '#2a5ada'),
     'Litecoin':   ('LTC-USD',  'Cripto', '#bebebe'),
     'Cosmos':     ('ATOM-USD', 'Cripto', '#2e3148'),
@@ -1011,7 +1009,6 @@ MERCADOS_REALES = {
     'Riot Platforms':  ('RIOT', 'Cripto ETF', '#e8412f'),
     'CleanSpark':      ('CLSK', 'Cripto ETF', '#00b894'),
     'Hut 8':           ('HUT',  'Cripto ETF', '#6c5ce7'),
-    'Bitfarms':        ('BITF', 'Cripto ETF', '#00cec9'),
     'Bitdeer':         ('BTDR', 'Cripto ETF', '#fdcb6e'),
     'Iris Energy':     ('IREN', 'Cripto ETF', '#74b9ff'),
     'Canaan':          ('CAN',  'Cripto ETF', '#a29bfe'),
