@@ -543,6 +543,262 @@ GLOSARIO = {
 def G(term):
     return GLOSARIO.get(term)
 
+# ==============================================================
+#  NIVELES POR TÉRMINO — tabla de rangos/interpretación para el glosario
+# ==============================================================
+
+_NIV_SCORE = lambda txt_bajo, txt_neutral, txt_alto: [
+    ('0 – 20',   'Muy bajo', f'{txt_bajo} (extremo).'),
+    ('21 – 40',  'Bajo',      txt_bajo),
+    ('41 – 60',  'Neutral',   txt_neutral),
+    ('61 – 80',  'Alto',      txt_alto),
+    ('81 – 100', 'Muy alto', f'{txt_alto} (extremo).'),
+]
+
+GLOSARIO_NIVELES = {
+    'Score Acumulación': _NIV_SCORE(
+        'Precio caro respecto a su propio historial reciente (zona de distribución)',
+        'Precio dentro de su rango normal de los últimos 3 meses',
+        'Precio relativamente barato dentro de su historial reciente (zona de acumulación)'),
+    'Score Anticipación': _NIV_SCORE(
+        'Momentum débil, sin compresión de volatilidad',
+        'Momentum y volatilidad en rango normal',
+        'Momentum en aumento con compresión de volatilidad (movimiento cercano)'),
+    'Score Sentimiento': _NIV_SCORE(
+        'Precio cerca de mínimos de 3 meses (pesimismo)',
+        'Precio en la mitad de su rango reciente',
+        'Precio cerca de máximos de 3 meses (optimismo/euforia)'),
+    'Score Final': _NIV_SCORE(
+        'Combinación de corto plazo débil (caro / sin momentum / pesimismo)',
+        'Combinación de corto plazo neutral',
+        'Combinación de corto plazo favorable (barato / con momentum / optimismo)'),
+    'Trend Score': _NIV_SCORE(
+        'Tendencia débil o inexistente (sin Golden Cross, MACD bajista)',
+        'Tendencia mixta, sin confirmación clara',
+        'Tendencia fuerte y sostenida (Golden Cross, MACD alcista, Hurst persistente)'),
+    'MR Score': _NIV_SCORE(
+        'Baja probabilidad de reversión a la media',
+        'Probabilidad de reversión moderada',
+        'Alta probabilidad estadística de reversión a la media (sobreventa)'),
+    'Risk Score': _NIV_SCORE(
+        'Mala relación retorno/riesgo (Sharpe bajo, drawdown severo)',
+        'Relación retorno/riesgo aceptable',
+        'Excelente relación retorno/riesgo (Sharpe alto, drawdown controlado)'),
+    'Global Score': _NIV_SCORE(
+        'Perfil cuantitativo de largo plazo débil (MUY BAJISTA/BAJISTA)',
+        'Perfil cuantitativo neutral',
+        'Perfil cuantitativo de largo plazo sólido (ALCISTA/MUY ALCISTA)'),
+
+    'Hurst': [
+        ('< 0.45',     'Reversivo',   'Tiende a revertir tras un movimiento (anti-persistente).'),
+        ('0.45 – 0.55','Aleatorio',   'Comportamiento cercano a un paseo aleatorio, sin persistencia clara.'),
+        ('> 0.55',     'Persistente', 'La tendencia actual tiende a continuar.'),
+    ],
+    'Z-Score': [
+        ('< -2',    'Sobreventa extrema',    'Precio muy por debajo de su media de 20 días.'),
+        ('-2 a -1', 'Sobreventa moderada',   'Precio por debajo de su media; posible soporte.'),
+        ('-1 a 1',  'Neutral',               'Precio cerca de su media móvil.'),
+        ('1 a 2',   'Sobrecompra moderada',  'Precio por encima de su media; presión compradora.'),
+        ('> 2',     'Sobrecompra extrema',   'Precio muy por encima de su media; posible resistencia.'),
+    ],
+    'RSI': [
+        ('0 – 30',   'Sobreventa', 'Momentum vendedor dominante, posible rebote.'),
+        ('30 – 45',  'Débil',      'Momentum bajista moderado.'),
+        ('45 – 55',  'Neutral',    'Sin sesgo claro de momentum.'),
+        ('55 – 70',  'Fuerte',     'Momentum comprador moderado.'),
+        ('70 – 100', 'Sobrecompra','Momentum comprador extremo, posible corrección.'),
+    ],
+    'MACD': [
+        ('MACD > Señal', 'Alcista', 'Cruce alcista: posible continuación/inicio de suba.'),
+        ('MACD < Señal', 'Bajista', 'Cruce bajista: posible continuación/inicio de baja.'),
+    ],
+    'Sharpe': [
+        ('< 0',    'Negativo',  'El retorno no compensa el riesgo asumido.'),
+        ('0 – 1',  'Moderado',  'Retorno ajustado por riesgo aceptable.'),
+        ('1 – 2',  'Bueno',     'Buena relación retorno/riesgo.'),
+        ('> 2',    'Excelente', 'Relación retorno/riesgo sobresaliente.'),
+    ],
+    'Sortino': [
+        ('< 0',    'Negativo',  'El retorno no compensa la volatilidad negativa.'),
+        ('0 – 1',  'Moderado',  'Retorno aceptable ajustado por caídas.'),
+        ('1 – 2',  'Bueno',     'Buena relación retorno/volatilidad negativa.'),
+        ('> 2',    'Excelente', 'Relación sobresaliente frente a las caídas.'),
+    ],
+    'Max Drawdown': [
+        ('> -10%',        'Contenido',    'Caídas históricas leves.'),
+        ('-10% a -20%',   'Aceptable',    'Caídas moderadas, dentro de lo normal.'),
+        ('-20% a -35%',   'Significativo','Caídas relevantes, requiere gestión de riesgo.'),
+        ('< -35%',        'Severo',       'Caídas muy profundas, alto riesgo histórico.'),
+    ],
+    'Golden Cross': [
+        ('MA50 > MA200', 'Golden Cross', 'Señal alcista de largo plazo.'),
+        ('MA50 < MA200', 'Death Cross',  'Señal bajista de largo plazo.'),
+    ],
+    'Bandas de Bollinger': [
+        ('Precio > Banda superior', 'Sobrecompra', 'Condición estadísticamente extrema al alza.'),
+        ('Dentro de las bandas',    'Normal',      'Precio dentro del rango estadístico esperado.'),
+        ('Precio < Banda inferior', 'Sobreventa',  'Condición estadísticamente extrema a la baja.'),
+    ],
+    'ATR': [
+        ('Alto vs. su propio promedio', 'Volatilidad elevada',    'Movimientos de precio más amplios de lo habitual.'),
+        ('Bajo vs. su propio promedio', 'Volatilidad comprimida', 'Movimientos contenidos; posible antesala de un impulso.'),
+    ],
+    'PER': [
+        ('< 10x',    'Muy barato',    'Valuación baja; puede reflejar riesgo o infravaloración.'),
+        ('10x – 15x','Barato',        'Valuación atractiva en términos relativos.'),
+        ('15x – 25x','Normal',        'Valuación en línea con el promedio de mercado.'),
+        ('25x – 40x','Exigente',      'Valuación alta; el mercado espera fuerte crecimiento.'),
+        ('> 40x',    'Muy exigente',  'Riesgo de corrección si no se cumplen expectativas.'),
+    ],
+    'P/B': [
+        ('< 1x',     'Bajo valor libro', 'Cotiza por debajo de su patrimonio contable.'),
+        ('1x – 2.5x','Razonable',        'Valuación típica para la mayoría de sectores.'),
+        ('2.5x – 6x','Elevado',          'Valuación exigente respecto al valor contable.'),
+        ('> 6x',     'Muy elevado',      'Valuación muy por encima del valor contable.'),
+    ],
+    'EV/EBITDA': [
+        ('< 10x',    'Atractivo',   'Múltiplo bajo respecto al EBITDA generado.'),
+        ('10x – 15x','Normal',      'Múltiplo típico de mercado.'),
+        ('15x – 20x','Elevado',     'Valuación exigente.'),
+        ('> 20x',    'Muy elevado', 'Valuación muy exigente respecto a la caja operativa.'),
+    ],
+    'PEG': [
+        ('< 1',   'Barato',    'El crecimiento esperado está "barato" respecto al precio pagado.'),
+        ('1 – 2', 'Razonable', 'Relación precio/crecimiento equilibrada.'),
+        ('> 2',   'Caro',      'El crecimiento esperado está "caro" respecto al precio pagado.'),
+    ],
+    'ROE': [
+        ('< 8%',    'Débil',       'Rentabilidad sobre el capital baja.'),
+        ('8% – 15%','Aceptable',   'Rentabilidad dentro de rangos normales.'),
+        ('15% – 25%','Buena',      'Rentabilidad sólida sobre el patrimonio.'),
+        ('> 25%',   'Excepcional', 'Rentabilidad muy alta sobre el capital propio.'),
+    ],
+    'ROA': [
+        ('< 3%',    'Bajo',      'Baja eficiencia en el uso de activos.'),
+        ('3% – 10%','Aceptable', 'Eficiencia normal en el uso de activos.'),
+        ('> 10%',   'Sólido',    'Alta eficiencia en la generación de ganancias con los activos.'),
+    ],
+    'Beta': [
+        ('< 0.8',    'Defensivo',            'Menor volatilidad que el mercado.'),
+        ('0.8 – 1.2','En línea con mercado', 'Volatilidad similar al mercado general.'),
+        ('1.2 – 1.5','Más volátil',          'Mayor sensibilidad que el mercado.'),
+        ('> 1.5',    'Muy volátil',          'Sensibilidad muy alta; mayor riesgo.'),
+    ],
+    'FCF': [
+        ('Positivo y creciente', 'Saludable', 'Genera caja real de forma sostenida.'),
+        ('Positivo estable',     'Aceptable', 'Genera caja, sin gran crecimiento.'),
+        ('Negativo',             'Alerta',    'Puede ser ciclo inversor o problema estructural — revisar.'),
+    ],
+    'Dividend Yield': [
+        ('0%',      'Sin dividendo', 'La empresa no distribuye dividendos.'),
+        ('0% – 2%', 'Bajo',          'Rendimiento por dividendo modesto.'),
+        ('2% – 4%', 'Moderado',      'Rendimiento por dividendo saludable.'),
+        ('4% – 6%', 'Atractivo',     'Rendimiento por dividendo alto.'),
+        ('> 6%',    'Muy alto',      'Verificar sostenibilidad del pago.'),
+    ],
+    'P/S': [
+        ('< 2x',   'Barato', 'Valuación baja respecto a las ventas.'),
+        ('2x – 5x','Normal', 'Valuación típica de mercado.'),
+        ('> 5x',   'Caro',   'Valuación alta respecto a las ventas generadas.'),
+    ],
+    'Margen Bruto': [
+        ('< 20%',    'Bajo',      'Estructura de costos poco eficiente o sector de bajo margen.'),
+        ('20% – 40%','Moderado',  'Margen bruto típico de sectores industriales/comerciales.'),
+        ('40% – 60%','Bueno',     'Buen poder de fijación de precios.'),
+        ('> 60%',    'Excelente', 'Márgenes propios de software/tecnología o alto valor agregado.'),
+    ],
+    'Margen Operativo': [
+        ('< 10%',    'Bajo',      'Eficiencia operativa limitada.'),
+        ('10% – 20%','Moderado',  'Eficiencia operativa normal.'),
+        ('20% – 30%','Bueno',     'Buena eficiencia operativa.'),
+        ('> 30%',    'Excelente', 'Eficiencia operativa sobresaliente.'),
+    ],
+    'Margen Neto': [
+        ('< 5%',     'Bajo',      'Poca rentabilidad final sobre ventas.'),
+        ('5% – 10%', 'Moderado',  'Rentabilidad neta típica.'),
+        ('10% – 20%','Bueno',     'Buena rentabilidad final.'),
+        ('> 20%',    'Excelente', 'Muy alta rentabilidad final sobre ventas.'),
+    ],
+    'Revenue Growth': [
+        ('< 0%',     'Contracción', 'Caída interanual de ingresos.'),
+        ('0% – 10%', 'Moderado',    'Crecimiento bajo/estable.'),
+        ('10% – 20%','Bueno',       'Buen ritmo de crecimiento.'),
+        ('> 20%',    'Excelente',   'Crecimiento fuerte/acelerado.'),
+    ],
+    'EPS Growth': [
+        ('< 0%',     'Contracción', 'Caída interanual de EPS.'),
+        ('0% – 10%', 'Moderado',    'Crecimiento bajo/estable.'),
+        ('10% – 20%','Bueno',       'Buen ritmo de crecimiento.'),
+        ('> 20%',    'Excelente',   'Crecimiento fuerte/acelerado.'),
+    ],
+    'Earnings Growth': [
+        ('< 0%',     'Contracción', 'Caída interanual de ganancias.'),
+        ('0% – 10%', 'Moderado',    'Crecimiento bajo/estable.'),
+        ('10% – 20%','Bueno',       'Buen ritmo de crecimiento.'),
+        ('> 20%',    'Excelente',   'Crecimiento fuerte/acelerado.'),
+    ],
+    'D/E': [
+        ('< 0.5x',   'Conservador', 'Bajo apalancamiento financiero.'),
+        ('0.5x – 1x','Moderado',    'Apalancamiento razonable.'),
+        ('1x – 2x',  'Elevado',     'Apalancamiento alto, mayor riesgo financiero.'),
+        ('> 2x',     'Muy elevado', 'Riesgo financiero significativo.'),
+    ],
+    'Current Ratio': [
+        ('< 1x',     'Riesgo de liquidez', 'Pasivos corrientes superan a los activos corrientes.'),
+        ('1x – 1.5x','Ajustado',           'Liquidez justa, poco margen.'),
+        ('1.5x – 2x','Saludable',          'Buena capacidad de pago de corto plazo.'),
+        ('> 2x',     'Muy líquido',        'Amplia holgura de liquidez de corto plazo.'),
+    ],
+    'Market Cap': [
+        ('< USD 2.000M',              'Small Cap', 'Baja capitalización; mayor riesgo/volatilidad.'),
+        ('USD 2.000M – 10.000M',      'Mid Cap',   'Capitalización media.'),
+        ('USD 10.000M – 200.000M',    'Large Cap', 'Capitalización grande, empresa consolidada.'),
+        ('> USD 200.000M',            'Mega Cap',  'Capitalización gigante, líder de mercado.'),
+    ],
+    'Enterprise Value': [
+        ('Informativo', '—', 'Se usa junto a EBITDA/ventas para calcular múltiplos; no tiene rango propio.'),
+    ],
+    'Cash': [
+        ('Informativo', '—', 'Se interpreta junto a la deuda total: caja > deuda es señal positiva de solvencia.'),
+    ],
+    'Operating Cash Flow': [
+        ('Positivo', 'Saludable', 'La operación genera caja real.'),
+        ('Negativo', 'Alerta',    'La operación no genera caja; requiere revisión.'),
+    ],
+    'YTD': [
+        ('< -15%',     'Tendencia bajista fuerte',   'Caída relevante en lo que va del año.'),
+        ('-15% – 0%',  'Bajista / lateral',          'Rendimiento negativo o plano en el año.'),
+        ('0% – 15%',   'Alcista moderado',           'Suba saludable en el año.'),
+        ('15% – 30%',  'Alcista fuerte',             'Momentum alcista fuerte en el año.'),
+        ('> 30%',      'Extremadamente alcista',     'Suba muy fuerte; verificar sostenibilidad.'),
+    ],
+    'Precio Objetivo': [
+        ('Objetivo > Precio actual', 'Upside potencial',   'Los analistas ven recorrido alcista.'),
+        ('Objetivo < Precio actual', 'Downside potencial',  'Los analistas ven recorrido bajista.'),
+    ],
+}
+
+_COLOR_NIVEL_MAP = {
+    'Muy bajo': '#f85149', 'Bajo': '#f0883e', 'Neutral': '#e3b341', 'Alto': '#7ee787', 'Muy alto': '#3fb950',
+    'Sobreventa extrema': '#f85149', 'Sobreventa moderada': '#f0883e', 'Sobrecompra moderada': '#7ee787', 'Sobrecompra extrema': '#3fb950',
+    'Sobreventa': '#f85149', 'Débil': '#f0883e', 'Fuerte': '#7ee787', 'Sobrecompra': '#3fb950',
+    'Negativo': '#f85149', 'Moderado': '#e3b341', 'Bueno': '#7ee787', 'Excelente': '#3fb950',
+    'Contenido': '#3fb950', 'Aceptable': '#e3b341', 'Significativo': '#f0883e', 'Severo': '#f85149',
+    'Reversivo': '#e3b341', 'Aleatorio': '#8b949e', 'Persistente': '#3fb950',
+    'Alcista': '#3fb950', 'Bajista': '#f85149', 'Golden Cross': '#3fb950', 'Death Cross': '#f85149',
+    'Sobrecompra ': '#f85149', 'Normal': '#e3b341',
+    'Muy barato': '#3fb950', 'Barato': '#7ee787', 'Exigente': '#f0883e', 'Muy exigente': '#f85149',
+    'Bajo valor libro': '#e3b341', 'Razonable': '#7ee787', 'Elevado': '#f0883e', 'Muy elevado': '#f85149',
+    'Atractivo': '#3fb950', 'Caro': '#f85149',
+    'Excepcional': '#3fb950', 'Sólido': '#3fb950', 'Defensivo': '#7ee787', 'En línea con mercado': '#e3b341',
+    'Más volátil': '#f0883e', 'Muy volátil': '#f85149', 'Saludable': '#3fb950', 'Alerta': '#f85149',
+    'Sin dividendo': '#8b949e', 'Muy alto': '#f0883e', 'Contracción': '#f85149', 'Conservador': '#3fb950',
+    'Riesgo de liquidez': '#f85149', 'Ajustado': '#e3b341', 'Muy líquido': '#3fb950',
+    'Small Cap': '#f0883e', 'Mid Cap': '#e3b341', 'Large Cap': '#7ee787', 'Mega Cap': '#3fb950',
+    'Tendencia bajista fuerte': '#f85149', 'Bajista / lateral': '#f0883e', 'Alcista moderado': '#7ee787',
+    'Alcista fuerte': '#3fb950', 'Extremadamente alcista': '#e3b341',
+    'Upside potencial': '#3fb950', 'Downside potencial': '#f85149', '—': '#8b949e',
+}
 
 # ==============================================================
 #  UNIVERSO DE ACTIVOS
