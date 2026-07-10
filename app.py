@@ -1002,6 +1002,28 @@ SECTORES = {nombre: (tk, color) for nombre, (tk, cat, color) in SECTORES_TOTAL.i
 SECTORES_GICS = {nombre: (tk, color) for nombre, (tk, cat, color) in SECTORES_TOTAL.items() if cat == 'Sectores'}
 SUBSECTORES   = {nombre: (tk, color) for nombre, (tk, cat, color) in SECTORES_TOTAL.items() if cat == 'Sub-sectores'}
 
+SUBSECTOR_A_SECTOR = {
+    'Semiconductores': 'Tecnología', 'Software': 'Tecnología',
+    'Ciberseguridad': 'Tecnología', 'Cloud/AI': 'Tecnología',
+    'Fintech': 'Finanzas', 'Bancos': 'Finanzas', 'Seguros': 'Finanzas',
+    'Mercados Capitales': 'Finanzas', 'Bancos Regionales': 'Finanzas',
+    'Finanzas Diversif.': 'Finanzas',
+    'Biotecnología': 'Salud', 'Farmacéuticas': 'Salud',
+    'Equipos Médicos': 'Salud', 'Servicios de Salud': 'Salud',
+    'Petróleo Integrado': 'Energía', 'Energía Renovable': 'Energía',
+    'Gas Natural': 'Energía', 'Energía Solar': 'Energía',
+    'Aeroespacial': 'Industriales', 'Transporte': 'Industriales', 'Defensa': 'Industriales',
+    'Retail': 'Consumo Discr.', 'Autos': 'Consumo Discr.',
+    'Hotelería/Viajes': 'Consumo Discr.', 'E-commerce': 'Consumo Discr.',
+    'Alimentos': 'Consumo Básico',
+    'Minería Oro': 'Materiales', 'Cobre/Metales': 'Materiales', 'Acero': 'Materiales',
+    'Eléctricas': 'Utilities', 'Agua': 'Utilities',
+    'REIT Industrial': 'Real Estate', 'REIT Residencial': 'Real Estate',
+    'Telecomunicaciones': 'Comunicaciones', 'Internet': 'Comunicaciones',
+}
+
+COLORES_SECTOR_PADRE = {nombre: color for nombre, (tk, color) in SECTORES_GICS.items()}
+
 MERCADOS_REALES = {
     # --- Energía ---
     'Petróleo WTI':   ('CL=F',    'Energía',      '#f0883e'),
