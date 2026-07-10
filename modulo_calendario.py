@@ -314,11 +314,12 @@ def _obtener_noticias(_supabase, limite=100):
     return res.data or []
 
 
-def _guardar_noticia(supabase, titulo, contenido, categoria, user_id, user_email):
+def _guardar_noticia(supabase, titulo, contenido, categoria, fecha_noticia, user_id, user_email):
     supabase.table(TABLA_NOTICIAS).insert({
         "autor_id": user_id, "autor_email": user_email,
         "titulo": titulo.strip(), "contenido": (contenido or "").strip(),
         "categoria": (categoria or "").strip(),
+        "fecha_noticia": str(fecha_noticia) if fecha_noticia else None,
     }).execute()
 
 
@@ -510,6 +511,123 @@ def _tab_historial(supabase):
 
 
 # ==============================================================
+#  RENDER — TAB COMPARAR (nuevo)
+#  Permite elegir dos registros ya cargados y compararlos lado a
+#  lado: puede ser el mismo país en dos fechas distintas (comparar
+#  contra el mes anterior) o dos países distintos para el mismo tipo
+#  de evento. El selector es genérico (País → Evento → Fecha) para
+#  cubrir ambos casos sin duplicar UI.
+# ==============================================================
+
+def _selector_registro(df, key_prefix, label):
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        paises = sorted(df["pais"].dropna().unique().tolist())
+        if not paises:
+            st.selectbox(f"País ({label})", ["—"], key=f"{key_prefix}_pais", disabled=True)
+            return None
+        pais = st.selectbox(f"País ({label})", paises, key=f"{key_prefix}_pais")
+
+    df_pais = df[df["pais"] == pais]
+    with col2:
+        eventos = sorted(df_pais["evento"].dropna().unique().tolist())
+        if not eventos:
+            st.selectbox(f"Evento ({label})", ["—"], key=f"{key_prefix}_evento", disabled=True)
+            return None
+        evento = st.selectbox(f"Evento ({label})", eventos, key=f"{key_prefix}_evento")
+
+    df_ev = df_pais[df_pais["evento"] == evento].sort_values("fecha", ascending=False)
+    with col3:
+        opciones_fecha = df_ev["fecha"].tolist()
+        if not opciones_fecha:
+            st.selectbox(f"Fecha ({label})", ["—"], key=f"{key_prefix}_fecha", disabled=True)
+            return None
+        fecha_sel = st.selectbox(f"Fecha ({label})", opciones_fecha, key=f"{key_prefix}_fecha")
+
+    return df_ev[df_ev["fecha"] == fecha_sel].iloc[0]
+
+
+def _tab_comparar(supabase):
+    st.caption(
+        "Elegí dos registros para comparar: el mismo país en dos meses distintos, "
+        "o dos países distintos para el mismo evento — lo que necesites."
+    )
+
+    filas = _obtener_registros(supabase, 200)
+    if not filas:
+        st.info("Todavía no hay registros cargados para comparar.")
+        return
+
+    df = pd.DataFrame(filas)
+
+    colA, colB = st.columns(2)
+    with colA:
+        st.markdown("#### 🅰️ Registro A")
+        fila_a = _selector_registro(df, "cmp_a", "A")
+    with colB:
+        st.markdown("#### 🅱️ Registro B")
+        fila_b = _selector_registro(df, "cmp_b", "B")
+
+    if fila_a is None or fila_b is None:
+        st.info("Cargá al menos dos registros (pueden ser del mismo país o de países distintos) para poder comparar.")
+        return
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    ca, cb = st.columns(2)
+    for col, fila, etiqueta in [(ca, fila_a, "A"), (cb, fila_b, "B")]:
+        with col:
+            unidad = fila.get("unidad") or ""
+            impacto = fila.get("impacto_mercado") or "⚪ NEUTRO PARA EL MERCADO"
+            bg, fg = _impacto_estilo(impacto)
+            st.markdown(f"**{etiqueta} · {fila.get('pais','')} · {fila.get('fecha','')}**")
+            st.caption(fila.get("evento", ""))
+            st.markdown(
+                f'<div style="border-radius:10px;padding:10px 14px;margin-bottom:8px;'
+                f'background:{bg};border:1px solid {fg}55">'
+                f'<div style="font-size:10px;color:{fg};opacity:.8">Impacto para el Mercado</div>'
+                f'<div style="font-size:13px;font-weight:800;color:{fg}">{impacto}</div></div>',
+                unsafe_allow_html=True,
+            )
+            v1, v2, v3 = st.columns(3)
+            v1.metric("Previsto", f"{fila.get('previsto')} {unidad}" if fila.get("previsto") is not None else "—")
+            v2.metric("Anterior", f"{fila.get('anterior')} {unidad}" if fila.get("anterior") is not None else "—")
+            v3.metric("Real", f"{fila.get('real')} {unidad}" if fila.get("real") is not None else "—")
+
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    st.markdown("#### 🔁 Diferencia (B respecto de A)")
+    real_a, real_b = fila_a.get("real"), fila_b.get("real")
+    if real_a is not None and real_b is not None:
+        delta = real_b - real_a
+        pct = (delta / abs(real_a) * 100) if real_a not in (0, None) else None
+        color = "#3fb950" if delta > 0 else ("#f85149" if delta < 0 else "#8b949e")
+        texto_pct = f" ({pct:+.2f}%)" if pct is not None else ""
+        st.markdown(
+            f'<div style="text-align:center;border-radius:10px;padding:14px;'
+            f'background:#0d1117;border:1px solid #21262d">'
+            f'<div style="font-size:22px;font-weight:800;color:{color}">{delta:+.4f}{texto_pct}</div>'
+            f'<div style="font-size:11px;color:#6b7d9a;margin-top:4px">Valor REAL de B menos valor REAL de A</div></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("Alguno de los dos registros no tiene valor REAL cargado; no se puede calcular la diferencia numérica.")
+
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    cma, cmb = st.columns(2)
+    for col, fila, etiqueta in [(cma, fila_a, "A"), (cmb, fila_b, "B")]:
+        with col:
+            st.markdown(f"**Interpretación macro — Registro {etiqueta}**")
+            macro = {
+                "divisas": fila.get("divisas"), "bonos": fila.get("bonos"),
+                "acciones": fila.get("acciones"), "oro": fila.get("oro"),
+                "crypto": fila.get("criptomonedas"), "politica": fila.get("politica_monetaria"),
+                "riesgo": fila.get("regimen_mercado"), "lectura": fila.get("lectura_macro"),
+            }
+            _render_macro_grid(macro)
+
+
+# ==============================================================
 #  RENDER — NOTICIAS (todos ven, solo admin publica/borra)
 #  Ahora vive en su propio entry point, separado del calendario
 #  (ver render_noticias más abajo).
@@ -518,7 +636,11 @@ def _tab_historial(supabase):
 def _tab_noticias(supabase, es_admin, user_id, user_email):
     if es_admin:
         with st.expander("✏️ Publicar noticia", expanded=True):
-            titulo = st.text_input("Título", key="cal_noti_titulo")
+            f1, f2 = st.columns([1, 2])
+            with f1:
+                fecha_noticia = st.date_input("📅 Fecha de la noticia", value=date.today(), key="cal_noti_fecha")
+            with f2:
+                titulo = st.text_input("Título", key="cal_noti_titulo")
             categoria = st.text_input("Categoría (opcional)", key="cal_noti_categoria",
                                        placeholder="Ej: Fed, Inflación, Mercados...")
             contenido = st.text_area("Contenido", key="cal_noti_contenido", height=120)
@@ -527,7 +649,7 @@ def _tab_noticias(supabase, es_admin, user_id, user_email):
                     st.warning("⚠️ El título es obligatorio.")
                 else:
                     try:
-                        _guardar_noticia(supabase, titulo, contenido, categoria, user_id, user_email)
+                        _guardar_noticia(supabase, titulo, contenido, categoria, fecha_noticia, user_id, user_email)
                         _obtener_noticias.clear()
                         st.success("✅ Noticia publicada.")
                         for k in ["cal_noti_titulo", "cal_noti_categoria", "cal_noti_contenido"]:
@@ -549,12 +671,25 @@ def _tab_noticias(supabase, es_admin, user_id, user_email):
         st.info("Todavía no hay noticias publicadas.")
         return
 
+    # Ordenar por fecha_noticia (si existe) y si no por created_at, ambas desc.
+    def _clave_orden(n):
+        return n.get("fecha_noticia") or (n.get("created_at") or "")
+
+    noticias = sorted(noticias, key=_clave_orden, reverse=True)
+
     for n in noticias:
-        fecha_txt = n.get("created_at", "")
-        try:
-            fecha_txt = datetime.fromisoformat(fecha_txt.replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
-        except Exception:
-            pass
+        fecha_noticia = n.get("fecha_noticia")
+        if fecha_noticia:
+            try:
+                fecha_txt = datetime.fromisoformat(fecha_noticia).strftime("%d/%m/%Y")
+            except Exception:
+                fecha_txt = fecha_noticia
+        else:
+            fecha_txt = n.get("created_at", "")
+            try:
+                fecha_txt = datetime.fromisoformat(fecha_txt.replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                pass
 
         col_txt, col_del = st.columns([6, 1]) if es_admin else (st.container(), None)
         with (col_txt if es_admin else st.container()):
@@ -592,9 +727,10 @@ def render_calendario_economico(supabase, user_id, user_email):
         from modulo_calendario import render_calendario_economico
         render_calendario_economico(supabase, USER_ID, st.session_state['usuario'].email)
 
-    Muestra únicamente el calendario económico (carga de eventos + historial
-    con interpretación macro completa). Las noticias son un módulo aparte,
-    ver render_noticias() más abajo.
+    Muestra el calendario económico (carga de eventos + historial con
+    interpretación macro completa) y una pestaña de comparación entre
+    dos registros cualquiera (mismo país en otro mes, u otro país).
+    Las noticias son un módulo aparte, ver render_noticias() más abajo.
     """
     es_admin = _es_admin(user_email)
 
@@ -607,16 +743,19 @@ def render_calendario_economico(supabase, user_id, user_email):
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
         Registro de eventos macro con interpretación automática completa
-        (divisas, bonos, acciones, oro y cripto) y su historial.
+        (divisas, bonos, acciones, oro y cripto), su historial y comparación
+        entre países o entre períodos.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    tab_reg, tab_cal = st.tabs(["📝 Registrar", "📅 Calendario Económico"])
+    tab_reg, tab_cal, tab_cmp = st.tabs(["📝 Registrar", "📅 Calendario Económico", "🔀 Comparar"])
     with tab_reg:
         _tab_registrar(supabase, user_id, es_admin)
     with tab_cal:
         _tab_historial(supabase)
+    with tab_cmp:
+        _tab_comparar(supabase)
 
 
 def render_noticias(supabase, user_id, user_email):
