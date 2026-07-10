@@ -2544,7 +2544,7 @@ def render_perfil_empresa(ticker, key_suffix=''):
             )
         with col_w2:
             if st.button('🔄 Reintentar', key=f'retry_perfil_{key_suffix}_{ticker}'):
-                obtener_perfil_empresa.clear()
+                _obtener_perfil_empresa_cached.clear()
                 st.rerun()
         return
 
