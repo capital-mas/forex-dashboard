@@ -2917,10 +2917,6 @@ def render_perfil_empresa(ticker, key_suffix=''):
         perfil['descripcion'] = 'Descripción no disponible.'
         return
 
-    if not perfil.get('descripcion'):
-        st.info(f'ℹ️ {ticker} no tiene descripción de negocio disponible en Yahoo Finance. Mostrando el resto de los datos igual.')
-        perfil['descripcion'] = 'Descripción no disponible.'
-
     logo = logo_html(perfil['logo_url'], size=48, dominio_fallback=perfil.get('dominio'))
     mc = _fmt_big(perfil.get('market_cap'))
     ev = _fmt_big(perfil.get('enterprise_value'))
