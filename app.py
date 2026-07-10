@@ -5003,8 +5003,11 @@ def modulo_topdown_cuantitativo():
         tickers_tuple = tuple((n, tk) for n, (tk, _r) in PAISES.items())
         extra_map = {n: {'region': r} for n, (tk, r) in PAISES.items()}
     elif universo_label.startswith('📊'):
-        tickers_tuple = tuple((n, tk) for n, (tk, _c) in SECTORES.items())
-        extra_map = {n: {'color': c} for n, (tk, c) in SECTORES.items()}
+        tickers_tuple = tuple((n, tk) for n, (tk, _c) in SECTORES_GICS.items())
+        extra_map = {n: {'color': c} for n, (tk, c) in SECTORES_GICS.items()}
+    elif universo_label.startswith('🧩'):
+        tickers_tuple = tuple((n, tk) for n, (tk, _c) in SUBSECTORES.items())
+        extra_map = {n: {'color': c} for n, (tk, c) in SUBSECTORES.items()}
     elif universo_label.startswith('🛢️'):
         tickers_tuple = tuple((n, tk) for n, (tk, _cat, _c) in MERCADOS_REALES.items())
         extra_map = {n: {'cat': cat, 'color': c} for n, (tk, cat, c) in MERCADOS_REALES.items()}
