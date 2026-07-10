@@ -4766,7 +4766,7 @@ with st.container(key='nav_pills_wrap'):
     with _c[9]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
-                st.cache_data.clear(); st.rerun()
+                _refrescar_cotizaciones()
 
     with _c[11]:
         with st.container(key='nav_cuenta_cont'):
