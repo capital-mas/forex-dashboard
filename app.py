@@ -2154,7 +2154,7 @@ def _fmt_big(v):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def analizar_fundamental(ticker, industria):
+def _analizar_fundamental_cached(ticker, industria):
     try:
         import yfinance as yf
         sector = SECTOR_MAP_FUND.get(industria, 'Sin Clasificar')
