@@ -5367,7 +5367,8 @@ with st.container(key='nav_mobile_wrap'):
     }
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
-                  '📊 Sectores': 'sectores', '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones'},
+                  '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
+                  '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones'},
         'largo': {'📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
                   '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
                   '📐 Top-Down Cuantitativo': 'tdc'},
