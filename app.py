@@ -1501,8 +1501,14 @@ def cargar_paises_corto():
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_sectores_corto():
-    tareas = {nombre: (tk, dict(tk=tk, color=color)) for nombre, (tk, color) in SECTORES.items()}
+    tareas = {nombre: (tk, dict(tk=tk, color=color)) for nombre, (tk, color) in SECTORES_GICS.items()}
     return _fetch_paralelo(tareas, max_workers=10, grupo='sectores')
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def cargar_subsectores_corto():
+    tareas = {nombre: (tk, dict(tk=tk, color=color)) for nombre, (tk, color) in SUBSECTORES.items()}
+    return _fetch_paralelo(tareas, max_workers=10, grupo='subsectores')
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
