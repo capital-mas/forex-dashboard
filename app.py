@@ -2433,7 +2433,7 @@ def _traducir_es(texto):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def obtener_perfil_empresa(ticker):
+def _obtener_perfil_empresa_cached(ticker):
     """Datos de perfil: nombre, logo, capitalización, sector/industria, empleados,
     sede, descripción del negocio (traducida), exchange, rango 52 semanas,
     % institucional/insider y CEO (todo sale de yfinance.info, sin requests extra)."""
