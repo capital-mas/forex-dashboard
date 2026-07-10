@@ -2763,6 +2763,8 @@ def _obtener_perfil_empresa_cached(ticker):
     """Datos de perfil: nombre, logo, capitalización, sector/industria, empleados,
     sede, descripción del negocio (traducida), exchange, rango 52 semanas,
     % institucional/insider y CEO (todo sale de yfinance.info, sin requests extra)."""
+    if _es_activo_sin_fundamentals(ticker):
+        return None
     import time
     try:
         import yfinance as yf
