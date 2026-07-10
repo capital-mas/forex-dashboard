@@ -5474,6 +5474,7 @@ titulos = {
     'forex':     ('Análisis Forex', '💱', 'Pares de divisas — ranking y oportunidades de acumulación'),
     'paises':    ('Países / Índices Globales', '🌍', 'Índices nacionales y regionales — flujo de capital macro'),
     'sectores':  ('Sectores S&P500', '📊', '11 sectores GICS — rotación y momentum'),
+    'subsectores': ('Sub-sectores / Temáticos', '🧩', 'ETFs temáticos y sub-industrias — rotación granular'),
     'mercados':  ('Commodities · Metales · Cripto', '🛢️', 'Mercados reales globales — energía, metales, agro, digital'),
     'acciones':  ('Acciones por Industria', '📈', 'Ranking por sector — oportunidades de corto plazo'),
     'topdown':   ('Resumen Top-Down', '🎯', 'Vista ejecutiva macro → sector → acción'),
