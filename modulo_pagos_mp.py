@@ -59,7 +59,9 @@ def crear_suscripcion(user_id: str, email: str):
         "notification_url": st.secrets["mercadopago"]["webhook_url"],
     }
     r = requests.post(f"{MP_API}/preapproval", json=payload, headers=_headers())
-    r.raise_for_status()
+    if not r.ok:
+        st.error(f"Mercado Pago rechazó la suscripción: {r.status_code} — {r.text}")
+        r.raise_for_status()
     data = r.json()
     return data["init_point"], data["id"]
 
