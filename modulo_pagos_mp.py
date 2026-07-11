@@ -54,27 +54,6 @@ def crear_suscripcion(user_id: str, email: str, monto: float = 1000, moneda: str
     return data["init_point"], data["id"]
 
 
-def crear_suscripcion(user_id: str, email: str):
-    """
-    Crea la suscripción para un usuario puntual, asociada al plan ya dado de alta.
-    Devuelve (init_point, preapproval_id).
-    """
-    payload = {
-        "preapproval_plan_id": st.secrets["mercadopago"]["preapproval_plan_id"],
-        "reason": "Suscripción Capital+",
-        "external_reference": user_id,  # clave para que el webhook sepa quién pagó
-        "payer_email": email,
-        "back_url": st.secrets["mercadopago"]["back_url"],
-        "notification_url": st.secrets["mercadopago"]["webhook_url"],
-    }
-    r = requests.post(f"{MP_API}/preapproval", json=payload, headers=_headers())
-    if not r.ok:
-        st.error(f"Mercado Pago rechazó la suscripción: {r.status_code} — {r.text}")
-        r.raise_for_status()
-    data = r.json()
-    return data["init_point"], data["id"]
-
-
 def obtener_estado_perfil(supabase_client, user_id: str):
     res = (
         supabase_client.table("perfiles")
