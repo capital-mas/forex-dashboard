@@ -23,14 +23,21 @@ def _headers():
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-def crear_plan_suscripcion(nombre_plan: str, monto: float, moneda: str = "ARS", dias_trial: int = 3):
+def crear_suscripcion(user_id: str, email: str, monto: float = 1000, moneda: str = "ARS", dias_trial: int = 3):
     """
-    Se corre UNA SOLA VEZ (a mano, en una consola de Python aparte, no en la app)
-    para dar de alta el plan en Mercado Pago. El 'id' que devuelve se pega en
-    secrets.toml como preapproval_plan_id. No se vuelve a llamar después.
+    Crea la suscripción para un usuario puntual, en modo "sin plan asociado,
+    pago pendiente" — este modo SÍ devuelve un init_point para mandar al
+    usuario al checkout y que complete el pago ahí (a diferencia del modo
+    "con plan asociado", que exige tener ya el card_token_id).
+    Devuelve (init_point, preapproval_id).
     """
     payload = {
-        "reason": nombre_plan,
+        "reason": "Suscripción Capital+",
+        "external_reference": user_id,
+        "payer_email": email,
+        "back_url": st.secrets["mercadopago"]["back_url"],
+        "notification_url": st.secrets["mercadopago"]["webhook_url"],
+        "status": "pending",
         "auto_recurring": {
             "frequency": 1,
             "frequency_type": "months",
@@ -38,11 +45,13 @@ def crear_plan_suscripcion(nombre_plan: str, monto: float, moneda: str = "ARS", 
             "currency_id": moneda,
             "free_trial": {"frequency": dias_trial, "frequency_type": "days"},
         },
-        "back_url": st.secrets["mercadopago"]["back_url"],
     }
-    r = requests.post(f"{MP_API}/preapproval_plan", json=payload, headers=_headers())
-    r.raise_for_status()
-    return r.json()
+    r = requests.post(f"{MP_API}/preapproval", json=payload, headers=_headers())
+    if not r.ok:
+        st.error(f"Mercado Pago rechazó la suscripción: {r.status_code} — {r.text}")
+        r.raise_for_status()
+    data = r.json()
+    return data["init_point"], data["id"]
 
 
 def crear_suscripcion(user_id: str, email: str):
