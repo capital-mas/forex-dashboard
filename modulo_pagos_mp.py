@@ -99,7 +99,6 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
             init_point, preapproval_id = crear_suscripcion(user_id, email)
             st.session_state["mp_preapproval_id"] = preapproval_id
             st.session_state["mp_init_point"] = init_point
-        st.info(f"🔧 DEBUG — preapproval_id generado: `{preapproval_id}`")
 
     if "mp_init_point" in st.session_state:
         st.link_button("Ir a pagar en Mercado Pago", st.session_state["mp_init_point"], use_container_width=True)
