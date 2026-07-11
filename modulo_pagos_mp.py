@@ -23,12 +23,11 @@ def _headers():
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-def crear_suscripcion(user_id: str, email: str, monto: float = 1000, moneda: str = "ARS", dias_trial: int = 3):
+def crear_suscripcion(user_id: str, email: str, monto: float = 1000, moneda: str = "ARS"):
     """
     Crea la suscripción para un usuario puntual, en modo "sin plan asociado,
-    pago pendiente" — este modo SÍ devuelve un init_point para mandar al
-    usuario al checkout y que complete el pago ahí (a diferencia del modo
-    "con plan asociado", que exige tener ya el card_token_id).
+    pago pendiente". El trial NO se maneja acá (MP no lo soporta en este modo) —
+    ya lo manejamos nosotros con trial_termina_en en Supabase.
     Devuelve (init_point, preapproval_id).
     """
     payload = {
@@ -43,7 +42,6 @@ def crear_suscripcion(user_id: str, email: str, monto: float = 1000, moneda: str
             "frequency_type": "months",
             "transaction_amount": monto,
             "currency_id": moneda,
-            "free_trial": {"frequency": dias_trial, "frequency_type": "days"},
         },
     }
     r = requests.post(f"{MP_API}/preapproval", json=payload, headers=_headers())
