@@ -1,12 +1,16 @@
 """
 modulo_pagos_mp.py
-Suscripciones mensuales de Capital+ vía Mercado Pago.
+Pagos de Capital+ vía Mercado Pago — Checkout Pro (pago único, renovación manual).
+
+En vez de una suscripción que MP cobra sola cada mes, el usuario paga 30 días
+de acceso por vez. Cuando se vence (plan_vence_en), la app le vuelve a pedir
+el pago. Esto evita las restricciones de tarjetas que tiene el modo
+"suscripción recurrente" y usa el checkout más simple y estable de MP.
 
 secrets.toml necesario:
 
 [mercadopago]
-access_token = "APP_USR-..."       # o TEST-... mientras probás
-preapproval_plan_id = ""           # se completa después de correr crear_plan_suscripcion() UNA vez
+access_token = "APP_USR-..."
 webhook_url = "https://<tu-proyecto>.functions.supabase.co/mp-webhook"
 back_url = "https://tu-app.streamlit.app"
 """
@@ -23,30 +27,28 @@ def _headers():
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-def crear_suscripcion(user_id: str, email: str, monto: float = 15, moneda: str = "ARS"):
+def crear_pago(user_id: str, email: str, monto: float = 15, moneda: str = "ARS"):
     """
-    Crea la suscripción para un usuario puntual, en modo "sin plan asociado,
-    pago pendiente". El trial NO se maneja acá (MP no lo soporta en este modo) —
-    ya lo manejamos nosotros con trial_termina_en en Supabase.
-    Devuelve (init_point, preapproval_id).
+    Crea una preferencia de pago único (Checkout Pro) por 30 días de acceso.
+    Devuelve (init_point, preference_id).
     """
+    back = st.secrets["mercadopago"]["back_url"]
     payload = {
-        "reason": "Suscripción Capital+",
-        "external_reference": user_id,
-        "payer_email": email,
-        "back_url": st.secrets["mercadopago"]["back_url"],
-        "notification_url": st.secrets["mercadopago"]["webhook_url"],
-        "status": "pending",
-        "auto_recurring": {
-            "frequency": 1,
-            "frequency_type": "months",
-            "transaction_amount": monto,
+        "items": [{
+            "title": "Suscripción Capital+ (30 días)",
+            "quantity": 1,
+            "unit_price": float(monto),
             "currency_id": moneda,
-        },
+        }],
+        "external_reference": user_id,  # clave para que el webhook sepa quién pagó
+        "payer": {"email": email},
+        "back_urls": {"success": back, "failure": back, "pending": back},
+        "auto_return": "approved",
+        "notification_url": st.secrets["mercadopago"]["webhook_url"],
     }
-    r = requests.post(f"{MP_API}/preapproval", json=payload, headers=_headers())
+    r = requests.post(f"{MP_API}/checkout/preferences", json=payload, headers=_headers())
     if not r.ok:
-        st.error(f"Mercado Pago rechazó la suscripción: {r.status_code} — {r.text}")
+        st.error(f"Mercado Pago rechazó el pago: {r.status_code} — {r.text}")
         r.raise_for_status()
     data = r.json()
     return data["init_point"], data["id"]
@@ -55,7 +57,7 @@ def crear_suscripcion(user_id: str, email: str, monto: float = 15, moneda: str =
 def obtener_estado_perfil(supabase_client, user_id: str):
     res = (
         supabase_client.table("perfiles")
-        .select("plan, trial_termina_en")
+        .select("plan, trial_termina_en, plan_vence_en")
         .eq("id", user_id)
         .single()
         .execute()
@@ -71,20 +73,33 @@ def _dias_trial_restantes(trial_termina_en: str) -> int:
     return max(0, restante.days)
 
 
+def _dias_plan_restantes(plan_vence_en: str) -> int:
+    if not plan_vence_en:
+        return None  # sin fecha de vencimiento = acceso indefinido (ej. cuentas activadas a mano)
+    venc = datetime.fromisoformat(plan_vence_en.replace("Z", "+00:00"))
+    restante = venc - datetime.now(timezone.utc)
+    return max(0, restante.days)
+
+
 def pantalla_suscripcion(supabase_client, user_id: str, email: str):
     """
-    Bloque de UI: muestra el estado del trial, y si venció, el botón
-    para suscribirse con Mercado Pago. Llamalo donde quieras mostrar
-    esto (ej. arriba de todo, o como pantalla bloqueante si plan != pro).
+    Bloque de UI: chequea trial / plan pago vigente, y si no hay acceso,
+    muestra el botón de pago. Devuelve True si el usuario tiene acceso.
     """
     perfil = obtener_estado_perfil(supabase_client, user_id)
     plan = perfil["plan"]
 
     if plan == "pro":
-        st.success("✅ Tu suscripción a Capital+ está activa.")
-        return True
+        dias_restantes = _dias_plan_restantes(perfil.get("plan_vence_en"))
+        if dias_restantes is None:
+            st.success("✅ Tu acceso a Capital+ está activo.")
+            return True
+        if dias_restantes > 0:
+            st.success(f"✅ Tu acceso a Capital+ está activo — vence en {dias_restantes} día(s).")
+            return True
+        st.warning("Tu acceso pago venció.")
 
-    if plan == "trial":
+    elif plan == "trial":
         restantes = _dias_trial_restantes(perfil["trial_termina_en"])
         if restantes > 0:
             st.info(f"🎁 Estás en período de prueba — te quedan {restantes} día(s).")
@@ -94,19 +109,20 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
 
     st.markdown("### Suscribite a Capital+")
 
-    if st.button("💳 Suscribirme ahora", type="primary"):
+    if st.button("💳 Pagar 30 días de acceso", type="primary"):
         with st.spinner("Generando link de pago..."):
-            init_point, preapproval_id = crear_suscripcion(user_id, email)
-            st.session_state["mp_preapproval_id"] = preapproval_id
+            init_point, preference_id = crear_pago(user_id, email)
+            st.session_state["mp_preference_id"] = preference_id
             st.session_state["mp_init_point"] = init_point
 
     if "mp_init_point" in st.session_state:
         st.link_button("Ir a pagar en Mercado Pago", st.session_state["mp_init_point"], use_container_width=True)
-        st.caption("Después de autorizar el pago, volvé acá y tocá el botón de abajo.")
+        st.caption("Después de pagar, volvé acá y tocá el botón de abajo.")
         if st.button("🔄 Ya pagué, verificar"):
             perfil_actualizado = obtener_estado_perfil(supabase_client, user_id)
-            if perfil_actualizado["plan"] == "pro":
-                st.success("¡Listo! Tu plan ya está activo.")
+            dias = _dias_plan_restantes(perfil_actualizado.get("plan_vence_en"))
+            if perfil_actualizado["plan"] == "pro" and (dias is None or dias > 0):
+                st.success("¡Listo! Tu acceso ya está activo.")
                 st.rerun()
             else:
                 st.info("Todavía no se acreditó. Puede tardar unos segundos, probá de nuevo en un momento.")
