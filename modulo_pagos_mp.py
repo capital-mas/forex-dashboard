@@ -23,7 +23,7 @@ def _headers():
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-def crear_suscripcion(user_id: str, email: str, monto: float = 10, moneda: str = "ARS"):
+def crear_suscripcion(user_id: str, email: str, monto: float = 15, moneda: str = "ARS"):
     """
     Crea la suscripción para un usuario puntual, en modo "sin plan asociado,
     pago pendiente". El trial NO se maneja acá (MP no lo soporta en este modo) —
