@@ -4290,6 +4290,9 @@ def modulo_optimizador():
 # ==============================================================
 
 PARES_SECTORES = {
+    # ============================================================
+    #  GRUPOS ORIGINALES (sin cambios)
+    # ============================================================
     "Metales Preciosos": {
         "benchmark": "GLD",
         "empresas": ["B", "AEM", "KGC", "CDE", "NG", "HL", "HMY", "PAAS"],
@@ -4417,11 +4420,361 @@ PARES_SECTORES = {
     },
     "Criptomonedas": {
         "benchmark": "BTC",
-        "empresas": ["ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "DOT", "LINK", "LTC"],
+        "empresas": ["ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "DOT", "LINK", "LTC",
+                     "ATOM", "ETC", "XLM", "FIL", "ICP", "HBAR", "NEAR", "ARB"],
         "tickers": {
             "BTC": "BTC-USD", "ETH": "ETH-USD", "SOL": "SOL-USD", "BNB": "BNB-USD",
             "XRP": "XRP-USD", "ADA": "ADA-USD", "DOGE": "DOGE-USD", "AVAX": "AVAX-USD",
             "DOT": "DOT-USD", "LINK": "LINK-USD", "LTC": "LTC-USD",
+            "ATOM": "ATOM-USD", "ETC": "ETC-USD", "XLM": "XLM-USD", "FIL": "FIL-USD",
+            "ICP": "ICP-USD", "HBAR": "HBAR-USD", "NEAR": "NEAR-USD", "ARB": "ARB-USD",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — sub-sectores tecnológicos
+    # ============================================================
+    "Cloud/AI": {
+        "benchmark": "SKYY",
+        "empresas": ["PLTR", "SNOW", "DDOG", "NET", "MDB", "ESTC", "CFLT", "DOCN", "APP"],
+        "tickers": {
+            "SKYY": "SKYY", "PLTR": "PLTR", "SNOW": "SNOW", "DDOG": "DDOG", "NET": "NET",
+            "MDB": "MDB", "ESTC": "ESTC", "CFLT": "CFLT", "DOCN": "DOCN", "APP": "APP",
+        },
+    },
+    "Software": {
+        "benchmark": "IGV",
+        "empresas": ["ORCL", "CRM", "ADBE", "NOW", "INTU", "WDAY", "SNOW", "PLTR", "TEAM"],
+        "tickers": {
+            "IGV": "IGV", "ORCL": "ORCL", "CRM": "CRM", "ADBE": "ADBE", "NOW": "NOW",
+            "INTU": "INTU", "WDAY": "WDAY", "SNOW": "SNOW", "PLTR": "PLTR", "TEAM": "TEAM",
+        },
+    },
+    "Ciberseguridad": {
+        "benchmark": "CIBR",
+        "empresas": ["CRWD", "PANW", "ZS", "FTNT", "OKTA", "QLYS", "TENB", "RPD", "VRNS"],
+        "tickers": {
+            "CIBR": "CIBR", "CRWD": "CRWD", "PANW": "PANW", "ZS": "ZS", "FTNT": "FTNT",
+            "OKTA": "OKTA", "QLYS": "QLYS", "TENB": "TENB", "RPD": "RPD", "VRNS": "VRNS",
+        },
+    },
+    "Fintech": {
+        "benchmark": "FINX",
+        "empresas": ["PYPL", "AFRM", "SOFI", "UPST", "LC", "NU", "COIN", "HOOD", "BILL"],
+        "tickers": {
+            "FINX": "FINX", "PYPL": "PYPL", "AFRM": "AFRM", "SOFI": "SOFI", "UPST": "UPST",
+            "LC": "LC", "NU": "NU", "COIN": "COIN", "HOOD": "HOOD", "BILL": "BILL",
+        },
+    },
+    "Internet": {
+        "benchmark": "FDN",
+        "empresas": ["GOOGL", "META", "NFLX", "SNAP", "PINS", "RDDT", "SPOT", "ROKU", "DASH"],
+        "tickers": {
+            "FDN": "FDN", "GOOGL": "GOOGL", "META": "META", "NFLX": "NFLX", "SNAP": "SNAP",
+            "PINS": "PINS", "RDDT": "RDDT", "SPOT": "SPOT", "ROKU": "ROKU", "DASH": "DASH",
+        },
+    },
+    "E-commerce": {
+        "benchmark": "IBUY",
+        "empresas": ["AMZN", "SHOP", "ETSY", "EBAY", "MELI", "SE", "PDD", "BABA", "JD"],
+        "tickers": {
+            "IBUY": "IBUY", "AMZN": "AMZN", "SHOP": "SHOP", "ETSY": "ETSY", "EBAY": "EBAY",
+            "MELI": "MELI", "SE": "SE", "PDD": "PDD", "BABA": "BABA", "JD": "JD",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — salud
+    # ============================================================
+    "Biotecnología": {
+        "benchmark": "XBI",
+        "empresas": ["AMGN", "REGN", "VRTX", "GILD", "BIIB", "MRNA", "ALNY", "CRSP", "BEAM"],
+        "tickers": {
+            "XBI": "XBI", "AMGN": "AMGN", "REGN": "REGN", "VRTX": "VRTX", "GILD": "GILD",
+            "BIIB": "BIIB", "MRNA": "MRNA", "ALNY": "ALNY", "CRSP": "CRSP", "BEAM": "BEAM",
+        },
+    },
+    "Farmacéuticas": {
+        "benchmark": "PPH",
+        "empresas": ["LLY", "JNJ", "PFE", "MRK", "ABBV", "BMY", "AZN", "NVO", "SNY"],
+        "tickers": {
+            "PPH": "PPH", "LLY": "LLY", "JNJ": "JNJ", "PFE": "PFE", "MRK": "MRK",
+            "ABBV": "ABBV", "BMY": "BMY", "AZN": "AZN", "NVO": "NVO", "SNY": "SNY",
+        },
+    },
+    "Equipos Médicos": {
+        "benchmark": "IHI",
+        "empresas": ["ISRG", "ABT", "SYK", "BSX", "MDT", "EW", "ZBH", "BDX", "DXCM"],
+        "tickers": {
+            "IHI": "IHI", "ISRG": "ISRG", "ABT": "ABT", "SYK": "SYK", "BSX": "BSX",
+            "MDT": "MDT", "EW": "EW", "ZBH": "ZBH", "BDX": "BDX", "DXCM": "DXCM",
+        },
+    },
+    "Servicios de Salud": {
+        "benchmark": "IHF",
+        "empresas": ["UNH", "ELV", "CI", "HUM", "CVS", "CNC", "MOH", "DVA", "HCA"],
+        "tickers": {
+            "IHF": "IHF", "UNH": "UNH", "ELV": "ELV", "CI": "CI", "HUM": "HUM",
+            "CVS": "CVS", "CNC": "CNC", "MOH": "MOH", "DVA": "DVA", "HCA": "HCA",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — financieras granulares
+    # ============================================================
+    "Seguros": {
+        "benchmark": "KIE",
+        "empresas": ["PGR", "CB", "TRV", "ALL", "AFL", "MET", "PRU", "AIG", "HIG"],
+        "tickers": {
+            "KIE": "KIE", "PGR": "PGR", "CB": "CB", "TRV": "TRV", "ALL": "ALL",
+            "AFL": "AFL", "MET": "MET", "PRU": "PRU", "AIG": "AIG", "HIG": "HIG",
+        },
+    },
+    "Mercados Capitales": {
+        "benchmark": "KCE",
+        "empresas": ["SCHW", "CME", "ICE", "NDAQ", "MS", "GS", "IBKR", "HOOD", "COIN"],
+        "tickers": {
+            "KCE": "KCE", "SCHW": "SCHW", "CME": "CME", "ICE": "ICE", "NDAQ": "NDAQ",
+            "MS": "MS", "GS": "GS", "IBKR": "IBKR", "HOOD": "HOOD", "COIN": "COIN",
+        },
+    },
+    "Bancos Regionales": {
+        "benchmark": "KRE",
+        "empresas": ["FITB", "HBAN", "RF", "CFG", "ZION", "KEY", "CMA", "MTB", "WAL"],
+        "tickers": {
+            "KRE": "KRE", "FITB": "FITB", "HBAN": "HBAN", "RF": "RF", "CFG": "CFG",
+            "ZION": "ZION", "KEY": "KEY", "CMA": "CMA", "MTB": "MTB", "WAL": "WAL",
+        },
+    },
+    "Finanzas Diversif.": {
+        "benchmark": "IYG",
+        "empresas": ["V", "MA", "AXP", "DFS", "SYF", "ALLY", "COF", "FI", "PYPL"],
+        "tickers": {
+            "IYG": "IYG", "V": "V", "MA": "MA", "AXP": "AXP", "DFS": "DFS",
+            "SYF": "SYF", "ALLY": "ALLY", "COF": "COF", "FI": "FI", "PYPL": "PYPL",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — energía granular
+    # ============================================================
+    "Petróleo Integrado": {
+        "benchmark": "XOP",
+        "empresas": ["XOM", "CVX", "COP", "EOG", "OXY", "DVN", "MRO", "APA", "PXD"],
+        "tickers": {
+            "XOP": "XOP", "XOM": "XOM", "CVX": "CVX", "COP": "COP", "EOG": "EOG",
+            "OXY": "OXY", "DVN": "DVN", "MRO": "MRO", "APA": "APA", "PXD": "PXD",
+        },
+    },
+    "Gas Natural": {
+        "benchmark": "FCG",
+        "empresas": ["LNG", "EQT", "AR", "RRC", "CNX", "KMI", "WMB", "OKE", "TRGP"],
+        "tickers": {
+            "FCG": "FCG", "LNG": "LNG", "EQT": "EQT", "AR": "AR", "RRC": "RRC",
+            "CNX": "CNX", "KMI": "KMI", "WMB": "WMB", "OKE": "OKE", "TRGP": "TRGP",
+        },
+    },
+    "Energía Renovable": {
+        "benchmark": "ICLN",
+        "empresas": ["NEE", "BEP", "BEPC", "AES", "ORA", "PLUG", "BE", "GEV", "RUN"],
+        "tickers": {
+            "ICLN": "ICLN", "NEE": "NEE", "BEP": "BEP", "BEPC": "BEPC", "AES": "AES",
+            "ORA": "ORA", "PLUG": "PLUG", "BE": "BE", "GEV": "GEV", "RUN": "RUN",
+        },
+    },
+    "Energía Solar": {
+        "benchmark": "TAN",
+        "empresas": ["FSLR", "ENPH", "SEDG", "RUN", "ARRY", "SHLS", "CSIQ", "JKS", "NOVA"],
+        "tickers": {
+            "TAN": "TAN", "FSLR": "FSLR", "ENPH": "ENPH", "SEDG": "SEDG", "RUN": "RUN",
+            "ARRY": "ARRY", "SHLS": "SHLS", "CSIQ": "CSIQ", "JKS": "JKS", "NOVA": "NOVA",
+        },
+    },
+    "Litio/Baterías": {
+        "benchmark": "LIT",
+        "empresas": ["ALB", "LAC", "PLL", "SES", "QS", "MVST", "LICY", "ALTM", "ENVX"],
+        "tickers": {
+            "LIT": "LIT", "ALB": "ALB", "LAC": "LAC", "PLL": "PLL", "SES": "SES",
+            "QS": "QS", "MVST": "MVST", "LICY": "LICY", "ALTM": "ALTM", "ENVX": "ENVX",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — industriales / defensa / transporte
+    # ============================================================
+    "Aeroespacial": {
+        "benchmark": "ITA",
+        "empresas": ["BA", "RTX", "LMT", "NOC", "GD", "HII", "TDG", "HEI", "LHX"],
+        "tickers": {
+            "ITA": "ITA", "BA": "BA", "RTX": "RTX", "LMT": "LMT", "NOC": "NOC",
+            "GD": "GD", "HII": "HII", "TDG": "TDG", "HEI": "HEI", "LHX": "LHX",
+        },
+    },
+    "Defensa": {
+        "benchmark": "XAR",
+        "empresas": ["LMT", "RTX", "NOC", "GD", "HII", "TDG", "KTOS", "AVAV", "LDOS"],
+        "tickers": {
+            "XAR": "XAR", "LMT": "LMT", "RTX": "RTX", "NOC": "NOC", "GD": "GD",
+            "HII": "HII", "TDG": "TDG", "KTOS": "KTOS", "AVAV": "AVAV", "LDOS": "LDOS",
+        },
+    },
+    "Transporte": {
+        "benchmark": "IYT",
+        "empresas": ["UPS", "FDX", "UNP", "CSX", "NSC", "JBHT", "ODFL", "XPO", "CHRW"],
+        "tickers": {
+            "IYT": "IYT", "UPS": "UPS", "FDX": "FDX", "UNP": "UNP", "CSX": "CSX",
+            "NSC": "NSC", "JBHT": "JBHT", "ODFL": "ODFL", "XPO": "XPO", "CHRW": "CHRW",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — consumo
+    # ============================================================
+    "Retail": {
+        "benchmark": "XRT",
+        "empresas": ["AMZN", "WMT", "TGT", "COST", "HD", "LOW", "TJX", "ROST", "DG"],
+        "tickers": {
+            "XRT": "XRT", "AMZN": "AMZN", "WMT": "WMT", "TGT": "TGT", "COST": "COST",
+            "HD": "HD", "LOW": "LOW", "TJX": "TJX", "ROST": "ROST", "DG": "DG",
+        },
+    },
+    "Autos": {
+        "benchmark": "CARZ",
+        "empresas": ["TSLA", "GM", "F", "TM", "HMC", "STLA", "RIVN", "LCID", "NIO"],
+        "tickers": {
+            "CARZ": "CARZ", "TSLA": "TSLA", "GM": "GM", "F": "F", "TM": "TM",
+            "HMC": "HMC", "STLA": "STLA", "RIVN": "RIVN", "LCID": "LCID", "NIO": "NIO",
+        },
+    },
+    "Hotelería/Viajes": {
+        "benchmark": "PEJ",
+        "empresas": ["MAR", "HLT", "ABNB", "BKNG", "EXPE", "RCL", "CCL", "NCLH", "MGM"],
+        "tickers": {
+            "PEJ": "PEJ", "MAR": "MAR", "HLT": "HLT", "ABNB": "ABNB", "BKNG": "BKNG",
+            "EXPE": "EXPE", "RCL": "RCL", "CCL": "CCL", "NCLH": "NCLH", "MGM": "MGM",
+        },
+    },
+    "Alimentos": {
+        "benchmark": "PBJ",
+        "empresas": ["KO", "PEP", "MDLZ", "KHC", "GIS", "CPB", "SJM", "K", "HSY"],
+        "tickers": {
+            "PBJ": "PBJ", "KO": "KO", "PEP": "PEP", "MDLZ": "MDLZ", "KHC": "KHC",
+            "GIS": "GIS", "CPB": "CPB", "SJM": "SJM", "K": "K", "HSY": "HSY",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — materiales / commodities
+    # ============================================================
+    "Cobre/Metales": {
+        "benchmark": "COPX",
+        "empresas": ["FCX", "SCCO", "TECK", "HBM", "NUE", "STLD", "CLF", "AA", "ERO"],
+        "tickers": {
+            "COPX": "COPX", "FCX": "FCX", "SCCO": "SCCO", "TECK": "TECK", "HBM": "HBM",
+            "NUE": "NUE", "STLD": "STLD", "CLF": "CLF", "AA": "AA", "ERO": "ERO",
+        },
+    },
+    "Acero": {
+        "benchmark": "SLX",
+        "empresas": ["NUE", "STLD", "CLF", "X", "MT", "RS", "CMC", "PKX", "ATI"],
+        "tickers": {
+            "SLX": "SLX", "NUE": "NUE", "STLD": "STLD", "CLF": "CLF", "X": "X",
+            "MT": "MT", "RS": "RS", "CMC": "CMC", "PKX": "PKX", "ATI": "ATI",
+        },
+    },
+    "Agua": {
+        "benchmark": "PHO",
+        "empresas": ["AWK", "WTRG", "AWR", "YORW", "MSEX", "SJW", "CWCO", "GWRS", "ARTNA"],
+        "tickers": {
+            "PHO": "PHO", "AWK": "AWK", "WTRG": "WTRG", "AWR": "AWR", "YORW": "YORW",
+            "MSEX": "MSEX", "SJW": "SJW", "CWCO": "CWCO", "GWRS": "GWRS", "ARTNA": "ARTNA",
+        },
+    },
+    "Agro/Fertilizantes": {
+        "benchmark": "MOS",
+        "empresas": ["NTR", "CF", "ADM", "BG", "FMC", "CTVA"],
+        "tickers": {
+            "MOS": "MOS", "NTR": "NTR", "CF": "CF", "ADM": "ADM",
+            "BG": "BG", "FMC": "FMC", "CTVA": "CTVA",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — REITs granulares
+    # ============================================================
+    "REIT Industrial": {
+        "benchmark": "INDS",
+        "empresas": ["PLD", "AMT", "CCI", "DLR", "EQIX", "STAG", "EGP", "FR", "REXR"],
+        "tickers": {
+            "INDS": "INDS", "PLD": "PLD", "AMT": "AMT", "CCI": "CCI", "DLR": "DLR",
+            "EQIX": "EQIX", "STAG": "STAG", "EGP": "EGP", "FR": "FR", "REXR": "REXR",
+        },
+    },
+    "REIT Residencial": {
+        "benchmark": "REZ",
+        "empresas": ["EQR", "AVB", "ESS", "MAA", "UDR", "CPT", "ELS", "INVH", "AMH"],
+        "tickers": {
+            "REZ": "REZ", "EQR": "EQR", "AVB": "AVB", "ESS": "ESS", "MAA": "MAA",
+            "UDR": "UDR", "CPT": "CPT", "ELS": "ELS", "INVH": "INVH", "AMH": "AMH",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — telecom
+    # ============================================================
+    "Telecomunicaciones": {
+        "benchmark": "IYZ",
+        "empresas": ["T", "VZ", "TMUS", "S", "CHTR", "CMCSA", "LUMN", "VOD", "BT"],
+        "tickers": {
+            "IYZ": "IYZ", "T": "T", "VZ": "VZ", "TMUS": "TMUS", "S": "S",
+            "CHTR": "CHTR", "CMCSA": "CMCSA", "LUMN": "LUMN", "VOD": "VOD", "BT": "BT",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — países / regiones
+    # ============================================================
+    "China": {
+        "benchmark": "FXI",
+        "empresas": ["BABA", "TCEHY", "BIDU", "JD", "NIO", "LI", "XPEV", "PDD", "NTES"],
+        "tickers": {
+            "FXI": "FXI", "BABA": "BABA", "TCEHY": "TCEHY", "BIDU": "BIDU", "JD": "JD",
+            "NIO": "NIO", "LI": "LI", "XPEV": "XPEV", "PDD": "PDD", "NTES": "NTES",
+        },
+    },
+    "India": {
+        "benchmark": "INDA",
+        "empresas": ["INFY", "WIT", "HDB", "IBN", "VEDL", "RDY", "TTM"],
+        "tickers": {
+            "INDA": "INDA", "INFY": "INFY", "WIT": "WIT", "HDB": "HDB", "IBN": "IBN",
+            "VEDL": "VEDL", "RDY": "RDY", "TTM": "TTM",
+        },
+    },
+    "Europa Tecnología": {
+        "benchmark": "VGK",
+        "empresas": ["SAP", "ASML", "NXPI"],
+        "tickers": {
+            "VGK": "VGK", "SAP": "SAP", "ASML": "ASML", "NXPI": "NXPI",
+        },
+    },
+    "Europa Finanzas": {
+        "benchmark": "VGK",
+        "empresas": ["HSBC", "BBVA", "SAN", "UBS", "ING"],
+        "tickers": {
+            "VGK": "VGK", "HSBC": "HSBC", "BBVA": "BBVA", "SAN": "SAN",
+            "UBS": "UBS", "ING": "ING",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — cripto mineras
+    # ============================================================
+    "Cripto Mineras": {
+        "benchmark": "COIN",
+        "empresas": ["MARA", "RIOT", "CLSK", "HUT", "BTDR", "IREN", "CAN", "WULF"],
+        "tickers": {
+            "COIN": "COIN", "MARA": "MARA", "RIOT": "RIOT", "CLSK": "CLSK", "HUT": "HUT",
+            "BTDR": "BTDR", "IREN": "IREN", "CAN": "CAN", "WULF": "WULF",
         },
     },
 }
