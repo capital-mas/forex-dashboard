@@ -355,25 +355,96 @@ def init_supabase():
 supabase = init_supabase()
 
 
-def pantalla_login():
+def pantalla_landing():
     st.markdown("""
-    <div style="max-width:420px;margin:60px auto 0 auto;">
-      <div style="text-align:center;margin-bottom:24px">
-        <div style="font-size:32px;margin-bottom:6px">📡</div>
-        <div style="font-size:18px;font-weight:700;color:#e6edf3">Analizador Cuantitativo</div>
-        <div style="font-size:12px;color:#6b7d9a;margin-top:4px">Iniciá sesión para acceder</div>
-      </div>
-    </div>
+    <style>
+    .landing-hero-wrap { max-width:1100px; margin:40px auto 0 auto; padding:0 20px; }
+    .landing-badge {
+        display:inline-block; padding:5px 14px; border-radius:20px; font-size:11px;
+        font-weight:700; letter-spacing:.8px; text-transform:uppercase;
+        background:rgba(108,194,74,0.12); border:1px solid #6CC24A; color:#6CC24A;
+        margin-bottom:18px;
+    }
+    .landing-title {
+        font-size:34px; font-weight:800; color:#e6edf3; letter-spacing:-1px;
+        line-height:1.18; margin-bottom:14px;
+    }
+    .landing-title span { color:#6CC24A; }
+    .landing-sub { font-size:14.5px; color:#8b949e; line-height:1.7; margin-bottom:6px; }
+    .landing-auth-card {
+        background:#0d1117; border:1px solid #21262d; border-top:2px solid #6CC24A;
+        border-radius:14px; padding:26px 26px 18px 26px;
+    }
+    .landing-auth-title { font-size:16px; font-weight:700; color:#e6edf3; margin-bottom:2px; }
+    .landing-auth-sub { font-size:12px; color:#6CC24A; margin-bottom:16px; }
+    .landing-section-title {
+        text-align:center; font-size:24px; font-weight:800; color:#e6edf3;
+        margin:70px 0 8px 0; letter-spacing:-0.5px;
+    }
+    .landing-section-sub { text-align:center; font-size:13.5px; color:#8b949e; margin-bottom:36px; }
+    .landing-features {
+        display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+        gap:16px; max-width:1080px; margin:0 auto; padding:0 20px;
+    }
+    .landing-card {
+        background:#0d1117; border:1px solid #21262d; border-radius:12px;
+        padding:22px 20px; transition:border-color .2s;
+    }
+    .landing-card:hover { border-color:#3a7bd5; }
+    .landing-card-icon { font-size:26px; margin-bottom:10px; }
+    .landing-card-title { font-size:14px; font-weight:700; color:#e6edf3; margin-bottom:6px; }
+    .landing-card-desc { font-size:12.5px; color:#8b949e; line-height:1.6; }
+    .landing-steps {
+        display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+        gap:20px; max-width:900px; margin:0 auto; padding:0 20px;
+    }
+    .landing-step { text-align:center; padding:10px; }
+    .landing-step-num {
+        width:36px; height:36px; border-radius:50%; background:rgba(108,194,74,0.12);
+        border:1px solid #6CC24A; color:#6CC24A; font-weight:800; font-size:15px;
+        display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;
+    }
+    .landing-step-title { font-size:13.5px; font-weight:700; color:#e6edf3; margin-bottom:6px; }
+    .landing-step-desc { font-size:12px; color:#8b949e; line-height:1.6; }
+    .landing-pricing {
+        max-width:380px; margin:0 auto; background:#0d1117; border:1px solid #21262d;
+        border-top:2px solid #6CC24A; border-radius:16px; padding:32px 28px; text-align:center;
+    }
+    .landing-price { font-size:42px; font-weight:800; color:#e6edf3; margin:10px 0 2px 0; }
+    .landing-price-sub { font-size:12px; color:#8b949e; margin-bottom:20px; }
+    .landing-trial { font-size:12px; color:#6CC24A; font-weight:700; margin-bottom:4px; }
+    .landing-cancel { font-size:11px; color:#6b7d9a; margin-bottom:4px; }
+    .landing-footer { text-align:center; color:#3a4a5a; font-size:11px; padding:50px 20px 30px 20px; }
+    </style>
     """, unsafe_allow_html=True)
 
-    _, col_centro, _ = st.columns([1, 2, 1])
-    with col_centro:
-        tab_login, tab_registro = st.tabs(["Iniciar sesión", "Registrarme"])
+    # ── HERO + LOGIN/REGISTRO lado a lado ──────────────────────────────
+    st.markdown('<div class="landing-hero-wrap">', unsafe_allow_html=True)
+    col_hero, col_auth = st.columns([1.15, 1], gap="large")
+
+    with col_hero:
+        st.markdown("""
+        <div class="landing-badge">📡 Análisis Cuantitativo de Mercados</div>
+        <div class="landing-title">Invertí con datos,<br>no con <span>corazonadas</span></div>
+        <div class="landing-sub">
+          Capital+ combina scores cuantitativos, análisis fundamental, optimización de
+          cartera y valuación de opciones en una sola herramienta — para acciones, ETFs,
+          forex, commodities y cripto.
+        </div>
+        <div class="landing-sub" style="margin-top:18px">
+          🎁 <b style="color:#e6edf3">3 días de prueba gratis</b>, sin tarjeta. Cancelás cuando quieras.
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_auth:
+        st.markdown('<div class="landing-auth-card">', unsafe_allow_html=True)
+        tab_login, tab_registro = st.tabs(["Iniciar sesión", "Crear cuenta gratis"])
 
         with tab_login:
-            email = st.text_input("Email", key="login_email")
-            password = st.text_input("Contraseña", type="password", key="login_pass")
-            if st.button("Entrar", use_container_width=True, key="btn_login"):
+            st.markdown('<div class="landing-auth-sub">Bienvenido de nuevo</div>', unsafe_allow_html=True)
+            email = st.text_input("Email", key="landing_login_email")
+            password = st.text_input("Contraseña", type="password", key="landing_login_pass")
+            if st.button("Entrar", use_container_width=True, key="landing_btn_login", type="primary"):
                 if not email or not password:
                     st.error("Completá email y contraseña.")
                 else:
@@ -386,10 +457,11 @@ def pantalla_login():
                         st.error("Email o contraseña incorrectos.")
 
         with tab_registro:
-            email_r = st.text_input("Email", key="reg_email")
-            password_r = st.text_input("Contraseña", type="password", key="reg_pass")
-            password_r2 = st.text_input("Confirmar contraseña", type="password", key="reg_pass2")
-            if st.button("Crear cuenta", use_container_width=True, key="btn_registro"):
+            st.markdown('<div class="landing-auth-sub">Empezá gratis en 30 segundos</div>', unsafe_allow_html=True)
+            email_r = st.text_input("Email", key="landing_reg_email")
+            password_r = st.text_input("Contraseña", type="password", key="landing_reg_pass")
+            password_r2 = st.text_input("Confirmar contraseña", type="password", key="landing_reg_pass2")
+            if st.button("Crear cuenta gratis", use_container_width=True, key="landing_btn_registro", type="primary"):
                 if not email_r or not password_r:
                     st.error("Completá email y contraseña.")
                 elif password_r != password_r2:
@@ -402,6 +474,103 @@ def pantalla_login():
                         st.success("¡Cuenta creada! Revisá tu email para confirmarla y después iniciá sesión.")
                     except Exception as e:
                         st.error(f"Error al registrarse: {e}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── FEATURES ─────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="landing-section-title">Todo lo que necesitás para decidir</div>
+    <div class="landing-section-sub">Seis módulos integrados, sin saltar entre herramientas distintas</div>
+    <div class="landing-features">
+      <div class="landing-card">
+        <div class="landing-card-icon">⚡</div>
+        <div class="landing-card-title">Scoring cuantitativo</div>
+        <div class="landing-card-desc">Percentiles históricos, tendencia, reversión a la media y riesgo — corto y largo plazo, en un ranking claro.</div>
+      </div>
+      <div class="landing-card">
+        <div class="landing-card-icon">📊</div>
+        <div class="landing-card-title">Análisis fundamental</div>
+        <div class="landing-card-desc">Ratios financieros comparados contra benchmarks por sector, con señales automáticas de valuación.</div>
+      </div>
+      <div class="landing-card">
+        <div class="landing-card-icon">🧮</div>
+        <div class="landing-card-title">Optimizador de cartera</div>
+        <div class="landing-card-desc">Simulación Monte Carlo: encontrá la combinación de activos con mejor relación riesgo-retorno.</div>
+      </div>
+      <div class="landing-card">
+        <div class="landing-card-icon">🎲</div>
+        <div class="landing-card-title">Valuación de opciones</div>
+        <div class="landing-card-desc">Black-Scholes, binomial, griegas y catálogo de estrategias, con payoff visual.</div>
+      </div>
+      <div class="landing-card">
+        <div class="landing-card-icon">🔗</div>
+        <div class="landing-card-title">Scanner de pares</div>
+        <div class="landing-card-desc">Detectá oportunidades de reversión a la media entre activos del mismo sector.</div>
+      </div>
+      <div class="landing-card">
+        <div class="landing-card-icon">📆</div>
+        <div class="landing-card-title">Calendario económico</div>
+        <div class="landing-card-desc">Eventos macro relevantes y su impacto esperado en los mercados, todo en un solo lugar.</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── CÓMO FUNCIONA ────────────────────────────────────────────────
+    st.markdown("""
+    <div class="landing-section-title">Empezá en 3 pasos</div>
+    <div class="landing-section-sub">Sin instalar nada, todo desde el navegador</div>
+    <div class="landing-steps">
+      <div class="landing-step">
+        <div class="landing-step-num">1</div>
+        <div class="landing-step-title">Creá tu cuenta</div>
+        <div class="landing-step-desc">Registrate gratis con tu email arriba. Sin tarjeta, sin compromiso.</div>
+      </div>
+      <div class="landing-step">
+        <div class="landing-step-num">2</div>
+        <div class="landing-step-title">Probá 3 días gratis</div>
+        <div class="landing-step-desc">Acceso completo a todos los módulos, sin restricciones.</div>
+      </div>
+      <div class="landing-step">
+        <div class="landing-step-num">3</div>
+        <div class="landing-step-title">Suscribite si te sirve</div>
+        <div class="landing-step-desc">Mercado Pago o cripto. Cancelás cuando quieras, sin ataduras.</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── PRICING ──────────────────────────────────────────────────────
+    st.markdown('<div class="landing-section-title">Un plan simple</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="landing-pricing">
+      <div style="font-size:13px;color:#8b949e;font-weight:700;text-transform:uppercase;letter-spacing:1px">Plan Capital+</div>
+      <div class="landing-price">$1.000<span style="font-size:16px;color:#8b949e">/mes</span></div>
+      <div class="landing-price-sub">Acceso completo a todos los módulos</div>
+      <div class="landing-trial">🎁 3 días de prueba gratis</div>
+      <div class="landing-cancel">Cancelás cuando quieras</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── FAQ ──────────────────────────────────────────────────────────
+    st.markdown('<div class="landing-section-title">Preguntas frecuentes</div>', unsafe_allow_html=True)
+    _, col_faq, _ = st.columns([1, 3, 1])
+    with col_faq:
+        with st.expander("¿Necesito tarjeta para probarlo?"):
+            st.write("No. Te registrás con tu email y arrancás el trial de 3 días sin cargar ningún método de pago.")
+        with st.expander("¿Qué pasa cuando termina el trial?"):
+            st.write("Te pedimos que te suscribas para seguir con acceso completo. Podés pagar con Mercado Pago o, próximamente, con criptomonedas.")
+        with st.expander("¿Puedo cancelar cuando quiera?"):
+            st.write("Sí, la suscripción se puede cancelar en cualquier momento, sin permanencia mínima.")
+        with st.expander("¿Los datos son en tiempo real?"):
+            st.write("Los precios se actualizan con caché de hasta 30 minutos según el módulo, usando datos de Yahoo Finance.")
+        with st.expander("¿Esto es asesoramiento financiero?"):
+            st.write("No. Capital+ es una herramienta de análisis cuantitativo con fines informativos, no constituye recomendación de inversión.")
+
+    st.markdown("""
+    <div class="landing-footer">
+      📡 Capital+ · Análisis cuantitativo de mercados · Solo informativo, no constituye asesoramiento financiero.
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ── GATE: si no hay sesión, mostrar login y frenar acá ──
