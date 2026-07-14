@@ -118,13 +118,14 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
     if "mp_init_point" in st.session_state:
         st.link_button("Ir a pagar en Mercado Pago", st.session_state["mp_init_point"], use_container_width=True)
         st.caption("Después de pagar, volvé acá y tocá el botón de abajo.")
-        if st.button("🔄 Ya pagué, verificar"):
-            perfil_actualizado = obtener_estado_perfil(supabase_client, user_id)
-            dias = _dias_plan_restantes(perfil_actualizado.get("plan_vence_en"))
-            if perfil_actualizado["plan"] == "pro" and (dias is None or dias > 0):
-                st.success("¡Listo! Tu acceso ya está activo.")
-                st.rerun()
-            else:
-                st.info("Todavía no se acreditó. Puede tardar unos segundos, probá de nuevo en un momento.")
+
+    if st.button("🔄 Ya pagué, verificar"):
+        perfil_actualizado = obtener_estado_perfil(supabase_client, user_id)
+        dias = _dias_plan_restantes(perfil_actualizado.get("plan_vence_en"))
+        if perfil_actualizado["plan"] == "pro" and (dias is None or dias > 0):
+            st.success("¡Listo! Tu acceso ya está activo.")
+            st.rerun()
+        else:
+            st.info("Todavía no se acreditó. Puede tardar unos segundos, probá de nuevo en un momento.")
 
     return False
