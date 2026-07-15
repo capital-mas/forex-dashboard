@@ -605,6 +605,8 @@ tiene_acceso = pantalla_suscripcion(supabase, USER_ID, st.session_state["usuario
 if not tiene_acceso:
     st.stop()
 
+panel_admin_pagos(supabase, USER_ID)
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _contar_alertas_finanzas(_client, user_id):
