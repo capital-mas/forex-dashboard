@@ -27,7 +27,14 @@ from modulo_opciones import modulo_opciones
 from modulo_calendario import render_calendario_economico, render_noticias
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
-from modulo_pago_manual import pantalla_suscripcion
+from modulo_pago_manual import pantalla_suscripcion, panel_admin_pagos
+...
+tiene_acceso = pantalla_suscripcion(supabase, USER_ID, st.session_state["usuario"].email)
+if not tiene_acceso:
+    st.stop()
+
+panel_admin_pagos(supabase, USER_ID)
+
 
 ZONA_AR = ZoneInfo("America/Argentina/Buenos_Aires")
 
