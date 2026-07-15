@@ -1,7 +1,7 @@
 """
 modulo_pago_manual.py
-Pago manual de Capital+ — el usuario transfiere por alias/CBU de MP y vos
-aprobás el acceso a mano en Supabase. Sin webhooks, sin API de pagos.
+Pago manual de Capital+ — el usuario elige plan y método (Mercado Pago o
+cripto), transfiere, y vos aprobás el acceso a mano (o desde el panel admin).
 
 secrets.toml necesario:
 
@@ -9,11 +9,22 @@ secrets.toml necesario:
 alias = "tu.alias.mp"
 cbu = "0000003100000000000000"
 titular = "Tu Nombre"
-monto = "1000"
+
+[pago_manual.cripto]
+red = "USDT (TRC-20)"
+wallet = "T-tu-direccion-de-wallet-aca"
 """
 
 import streamlit as st
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+# ── Planes disponibles: ajustá nombres, días y precios a gusto ──
+PLANES = {
+    "Mensual":    {"dias": 30,  "precio_ars": 1000, "precio_usd": 3},
+    "Trimestral": {"dias": 90,  "precio_ars": 2700, "precio_usd": 8},
+    "Semestral":  {"dias": 180, "precio_ars": 4800, "precio_usd": 14},
+    "Anual":      {"dias": 365, "precio_ars": 8400, "precio_usd": 25},
+}
 
 
 def obtener_estado_perfil(supabase_client, user_id: str):
@@ -58,7 +69,7 @@ def _ya_tiene_solicitud_pendiente(supabase_client, user_id: str) -> bool:
 def pantalla_suscripcion(supabase_client, user_id: str, email: str):
     """
     Bloque de UI: chequea trial / plan pago vigente. Si no hay acceso,
-    muestra los datos para transferir y el botón "Ya transferí".
+    deja elegir plan y método de pago, y notificar cuando ya transfirió.
     Devuelve True si el usuario tiene acceso.
     """
     perfil = obtener_estado_perfil(supabase_client, user_id)
@@ -84,42 +95,161 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
 
     st.markdown("### Suscribite a Capital+")
 
-    cfg = st.secrets["pago_manual"]
-
     if _ya_tiene_solicitud_pendiente(supabase_client, user_id):
         st.info("🕐 Tu pago está en revisión. Se activa en poco tiempo una vez confirmado.")
         if st.button("🔄 Verificar de nuevo"):
             st.rerun()
         return False
 
-    st.markdown(f"""
-    <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #6CC24A;
-         border-radius:12px;padding:20px 24px;margin-bottom:16px">
-      <div style="font-size:14px;color:#8b949e;margin-bottom:10px">Transferí por Mercado Pago a:</div>
-      <div style="font-size:13px;color:#e6edf3;line-height:2">
-        <b>Alias:</b> {cfg['alias']}<br>
-        <b>CBU/CVU:</b> {cfg['cbu']}<br>
-        <b>Titular:</b> {cfg['titular']}<br>
-        <b>Monto:</b> ${cfg['monto']}
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    nota = st.text_input(
-        "Número de operación o comentario (opcional)",
-        key="pago_manual_nota",
-        placeholder="Ej: comprobante #123456",
+    # ── 1. Elegir plan ──────────────────────────────────────────
+    nombre_plan = st.radio(
+        "Elegí tu plan",
+        list(PLANES.keys()),
+        horizontal=True,
+        key="pago_manual_plan_sel",
     )
+    datos_plan = PLANES[nombre_plan]
+    st.markdown(f"**{nombre_plan}** — {datos_plan['dias']} días de acceso")
 
-    if st.button("✅ Ya transferí, notificar", type="primary", use_container_width=True):
-        supabase_client.table("solicitudes_pago").insert({
-            "user_id": user_id,
-            "email": email,
-            "monto": cfg["monto"],
-            "nota": nota,
-            "estado": "pendiente",
-        }).execute()
-        st.success("¡Recibido! Tu pago va a ser revisado y tu acceso se activa a la brevedad.")
-        st.rerun()
+    # ── 2. Elegir método de pago ─────────────────────────────────
+    tab_mp, tab_cripto = st.tabs(["💳 Mercado Pago", "₿ Cripto"])
+    cfg = st.secrets["pago_manual"]
+
+    with tab_mp:
+        st.markdown(f"""
+        <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #6CC24A;
+             border-radius:12px;padding:20px 24px;margin:12px 0">
+          <div style="font-size:14px;color:#8b949e;margin-bottom:10px">Transferí por Mercado Pago a:</div>
+          <div style="font-size:13px;color:#e6edf3;line-height:2">
+            <b>Alias:</b> {cfg['alias']}<br>
+            <b>CBU/CVU:</b> {cfg['cbu']}<br>
+            <b>Titular:</b> {cfg['titular']}<br>
+            <b>Monto:</b> ${datos_plan['precio_ars']:,} ARS
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        nota_mp = st.text_input(
+            "Número de operación o comentario (opcional)",
+            key="pago_manual_nota_mp",
+            placeholder="Ej: comprobante #123456",
+        )
+        if st.button("✅ Ya transferí por Mercado Pago", type="primary", use_container_width=True, key="btn_notif_mp"):
+            supabase_client.table("solicitudes_pago").insert({
+                "user_id": user_id,
+                "email": email,
+                "monto": datos_plan["precio_ars"],
+                "moneda": "ARS",
+                "nota": nota_mp,
+                "estado": "pendiente",
+                "plan_nombre": nombre_plan,
+                "dias": datos_plan["dias"],
+                "metodo": "mercadopago",
+            }).execute()
+            st.success("¡Recibido! Tu pago va a ser revisado y tu acceso se activa a la brevedad.")
+            st.rerun()
+
+    with tab_cripto:
+        cripto_cfg = cfg.get("cripto", {})
+        red = cripto_cfg.get("red", "USDT (TRC-20)")
+        wallet = cripto_cfg.get("wallet", "")
+        st.markdown(f"""
+        <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #e3b341;
+             border-radius:12px;padding:20px 24px;margin:12px 0">
+          <div style="font-size:14px;color:#8b949e;margin-bottom:10px">Transferí en cripto a:</div>
+          <div style="font-size:13px;color:#e6edf3;line-height:2">
+            <b>Red:</b> {red}<br>
+            <b>Wallet:</b> <code style="font-size:11px">{wallet}</code><br>
+            <b>Monto:</b> USD ${datos_plan['precio_usd']}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        nota_cripto = st.text_input(
+            "Hash de la transacción o comentario (opcional)",
+            key="pago_manual_nota_cripto",
+            placeholder="Ej: hash 0xabc123...",
+        )
+        if st.button("✅ Ya transferí en cripto", type="primary", use_container_width=True, key="btn_notif_cripto"):
+            supabase_client.table("solicitudes_pago").insert({
+                "user_id": user_id,
+                "email": email,
+                "monto": datos_plan["precio_usd"],
+                "moneda": "USD",
+                "nota": nota_cripto,
+                "estado": "pendiente",
+                "plan_nombre": nombre_plan,
+                "dias": datos_plan["dias"],
+                "metodo": "cripto",
+            }).execute()
+            st.success("¡Recibido! Tu pago va a ser revisado y tu acceso se activa a la brevedad.")
+            st.rerun()
 
     return False
+
+
+def _es_admin(supabase_client, user_id: str) -> bool:
+    res = (
+        supabase_client.table("perfiles")
+        .select("es_admin")
+        .eq("id", user_id)
+        .single()
+        .execute()
+    )
+    return bool(res.data.get("es_admin"))
+
+
+def panel_admin_pagos(supabase_client, user_id: str):
+    """
+    Panel visible SOLO para cuentas marcadas como es_admin = true.
+    Muestra las solicitudes de pago pendientes (con plan, días y método)
+    con botones para aprobar o rechazar, sin tocar SQL.
+    """
+    if not _es_admin(supabase_client, user_id):
+        return
+
+    with st.expander("🛠️ Panel de aprobación de pagos", expanded=False):
+        res = (
+            supabase_client.table("solicitudes_pago")
+            .select("id, user_id, email, monto, moneda, nota, creado_en, plan_nombre, dias, metodo")
+            .eq("estado", "pendiente")
+            .order("creado_en", desc=True)
+            .execute()
+        )
+        pendientes = res.data
+
+        if not pendientes:
+            st.caption("No hay solicitudes pendientes.")
+            return
+
+        for sol in pendientes:
+            with st.container(border=True):
+                metodo_icono = "₿" if sol.get("metodo") == "cripto" else "💳"
+                moneda = sol.get("moneda", "ARS")
+                st.markdown(
+                    f"**{sol['email']}** — {sol.get('plan_nombre', 'Mensual')} "
+                    f"({sol.get('dias', 30)} días) — {moneda} ${sol['monto']} {metodo_icono}"
+                )
+                if sol.get("nota"):
+                    st.caption(f"Nota: {sol['nota']}")
+                st.caption(sol["creado_en"])
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("✅ Aprobar", key=f"aprobar_{sol['id']}", use_container_width=True):
+                        dias = sol.get("dias", 30)
+                        vence = datetime.now(timezone.utc) + timedelta(days=dias)
+                        supabase_client.table("perfiles").update({
+                            "plan": "pro",
+                            "plan_vence_en": vence.isoformat(),
+                        }).eq("id", sol["user_id"]).execute()
+                        supabase_client.table("solicitudes_pago").update({
+                            "estado": "aprobado",
+                            "revisado_en": datetime.now(timezone.utc).isoformat(),
+                        }).eq("id", sol["id"]).execute()
+                        st.success(f"Activado: {sol['email']} ({dias} días)")
+                        st.rerun()
+                with c2:
+                    if st.button("❌ Rechazar", key=f"rechazar_{sol['id']}", use_container_width=True):
+                        supabase_client.table("solicitudes_pago").update({
+                            "estado": "rechazado",
+                            "revisado_en": datetime.now(timezone.utc).isoformat(),
+                        }).eq("id", sol["id"]).execute()
+                        st.rerun()
