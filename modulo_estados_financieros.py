@@ -606,7 +606,7 @@ def interpretar_estados_detallado(df_res, df_bal, df_cf, es_trimestral=False):
                     'texto': f'FCF/Ganancia Neta de {ratio_calidad:.2f}x: la ganancia contable no se está '
                               'traduciendo en caja en la misma proporción — revisar capital de trabajo o CAPEX elevado.'})
 
-    if capex is not None and ventas:
+    if capex is not None and ventas is not None:
         v_capex = _serie_valores(capex)
         if v_capex and v_ventas and v_ventas[-1] not in (0, None):
             intensidad = abs(v_capex[-1]) / v_ventas[-1] * 100
