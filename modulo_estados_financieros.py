@@ -269,7 +269,10 @@ def _tabla_estado(df, max_periodos=6):
     d = df.copy()
     d = d[d.columns[:max_periodos]]
     d.columns = [c.strftime('%Y-%m-%d') if hasattr(c, 'strftime') else str(c) for c in d.columns]
-    return d.applymap(lambda v: _fmt_big(v) if pd.notna(v) else '-')
+    _fmt_fn = lambda v: _fmt_big(v) if pd.notna(v) else '-'
+    if hasattr(d, 'map'):
+        return d.map(_fmt_fn)
+    return d.applymap(_fmt_fn)
 
 
 def fig_resultados(df_res):
