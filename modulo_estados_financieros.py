@@ -673,10 +673,14 @@ def render_estados_financieros(ticker, key_suffix=''):
             f'<div class="kpi-sub">✅ {n_ok} positivas · ⚠️ {n_alt} alertas</div></div>',
             unsafe_allow_html=True)
     with c2:
+        _fila_ref = _buscar_fila(df_res, ["Total Revenue", "Revenue"])
+        if _fila_ref is None:
+            _fila_ref = _buscar_fila(df_bal, ["Total Assets"])
+        _n_periodos = len(_cols_cronologico(_fila_ref)) if _fila_ref is not None else 0
         st.markdown(
             f'<div class="kpi-card"><div class="kpi-accent" style="background:#3a7bd5"></div>'
             f'<div class="kpi-label">Períodos analizados</div>'
-            f'<div class="kpi-value" style="font-size:16px">{len(_cols_cronologico(_buscar_fila(df_res, ["Total Revenue","Revenue"]) or _buscar_fila(df_bal, ["Total Assets"])))}</div>'
+            f'<div class="kpi-value" style="font-size:16px">{_n_periodos}</div>'
             f'<div class="kpi-sub">{periodo.lower()}es disponibles</div></div>',
             unsafe_allow_html=True)
     with c3:
