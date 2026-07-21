@@ -6993,6 +6993,7 @@ def modulo_fundamental():
                 st.error(f'No se pudieron obtener datos para {tk_fund}. Verificá el símbolo.')
             else:
                 render_perfil_empresa(tk_fund, key_suffix='fund_ticker')
+                render_analisis_profundo(tk_fund, key_suffix='fund_ticker_ef')
                 sc_col_f, sc_bg_f = _senal_color(res_f['senal_final'])
                 fp_f = _fmt_pct
                 fn_f = _fmt_num
