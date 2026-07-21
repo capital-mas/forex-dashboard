@@ -3607,6 +3607,12 @@ def _renderizar_buscador(ticker):
                 </div>
                 """, unsafe_allow_html=True)
 
+    # ── ACCIONISTAS Y ESTADOS FINANCIEROS ─────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 👥📑 Accionistas y Estados Financieros')
+    render_analisis_profundo(ticker, key_suffix='buscador')
+
+
 # ==============================================================
 #  MÓDULO COMPARADOR DE ACTIVOS
 # ==============================================================
