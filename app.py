@@ -3849,6 +3849,11 @@ def modulo_comparador():
     else:
         st.info('No hay datos fundamentales disponibles para estos activos (puede tratarse de cripto, forex o commodities sin estados financieros).')
 
+    # ── ESTADOS FINANCIEROS COMPARADOS ─────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 📑 Comparación de Estados Financieros')
+    render_comparativo_estados(tickers_cmp, key_suffix='comparador')
+
 
 # ==============================================================
 #  MÓDULO OPTIMIZADOR DE CARTERA — Monte Carlo + informe comparativo
