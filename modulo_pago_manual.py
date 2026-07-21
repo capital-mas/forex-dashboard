@@ -20,10 +20,10 @@ from datetime import datetime, timezone, timedelta
 
 # ── Planes disponibles: ajustá nombres, días y precios a gusto ──
 PLANES = {
-    "Mensual":    {"dias": 30,  "precio_ars": 1000, "precio_usd": 3},
-    "Trimestral": {"dias": 90,  "precio_ars": 2700, "precio_usd": 8},
-    "Semestral":  {"dias": 180, "precio_ars": 4800, "precio_usd": 14},
-    "Anual":      {"dias": 365, "precio_ars": 8400, "precio_usd": 25},
+    "Mensual":    {"dias": 30,  "precio_ars": 15000, "precio_usd": 10},
+    "Trimestral": {"dias": 90,  "precio_ars": 40000, "precio_usd": 27},
+    "Semestral":  {"dias": 180, "precio_ars": 75000, "precio_usd": 50},
+    "Anual":      {"dias": 365, "precio_ars": 135000, "precio_usd": 90},
 }
 
 
