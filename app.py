@@ -698,6 +698,14 @@ def _contar_alertas_finanzas(_client, user_id):
     except Exception:
         return 0
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _es_admin_cache(_client, user_id):
+    try:
+        return es_admin_usuario(_client, user_id)
+    except Exception:
+        return False
+
+ES_ADMIN = _es_admin_cache(supabase, USER_ID)
 # ==============================================================
 #  PALETA (para HTML / Plotly)
 # ==============================================================
@@ -5931,6 +5939,14 @@ with st.container(key='nav_pills_wrap'):
                     st.session_state['nav_horizonte'] = 'noticias'
                     st.session_state['nav_modulo'] = 'noticias'
                     st.rerun()
+
+                if ES_ADMIN:
+                    st.markdown('<hr style="margin:6px 0;border-color:#21262d">', unsafe_allow_html=True)
+                    if st.button('🛠️ Panel de Pagos', use_container_width=True, key='menu_admin_pagos'):
+                        st.session_state['nav_horizonte'] = 'admin_pagos'
+                        st.session_state['nav_modulo'] = 'admin_pagos'
+                        st.rerun()
+
                 st.markdown(
                     '<hr style="margin:6px 0;border-color:#21262d">',
                     unsafe_allow_html=True
@@ -6160,6 +6176,7 @@ titulos = {
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
     'calendario': ('Calendario Económico', '📆', 'Eventos económicos relevantes y su impacto en mercados'),
     'noticias': ('Noticias', '📰', 'Noticias y análisis de mercado'),
+    'admin_pagos': ('Panel de Aprobación de Pagos', '🛠️', 'Revisión y aprobación de solicitudes de pago manual'),
 }
 titulo_h, icono_h, subtitulo_h = titulos.get(MODULO, ('Analizador', '📡', ''))
 # st.caption(f'🔧 DEBUG — HORIZONTE={HORIZONTE} · MODULO={MODULO}')
@@ -6177,6 +6194,7 @@ badge_map = {
     'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
     'calendario': ('#79c0ff', 'rgba(121,192,255,0.12)', 'CALENDARIO'),
     'noticias': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'NOTICIAS'),
+    'admin_pagos': ('#f0883e', 'rgba(240,136,62,0.12)', 'ADMIN'),
 }
 badge_color, badge_bg, badge_txt = badge_map.get(HORIZONTE, ('#3a7bd5','rgba(58,123,213,0.12)',''))
 
@@ -6236,6 +6254,12 @@ elif MODULO == 'noticias':
 
 elif MODULO == 'finanzas':
     render_finanzas_personales(supabase, USER_ID)
+
+elif MODULO == 'admin_pagos':
+    if ES_ADMIN:
+        panel_admin_pagos(supabase, USER_ID)
+    else:
+        st.warning('No tenés permisos de administrador.')
 
 elif HORIZONTE == 'corto':
 
