@@ -507,29 +507,29 @@ def _render_trading(client, user_id: str) -> None:
 
     if abiertas:
         opciones = {
-        f"{o['simbolo']} | {o['direccion']} | {o['cantidad']} u. @ ${o['precio_entrada']:.4f} | {o['fecha_entrada']}": o
-        for o in abiertas
-    }
-    seleccion = st.selectbox("Operación a cerrar", ["—"] + list(opciones.keys()))
+            f"{o['simbolo']} | {o['direccion']} | {o['cantidad']} u. @ ${o['precio_entrada']:.4f} | {o['fecha_entrada']}": o
+            for o in abiertas
+        }
+        seleccion = st.selectbox("Operación a cerrar", ["—"] + list(opciones.keys()))
 
-    if seleccion != "—":
-        op = opciones[seleccion]
-        if op["pnl_no_realizado"] is not None:
-            color = POS if op["pnl_no_realizado"] >= 0 else NEG
-            st.markdown(
-                f"P&L no realizado (a precio actual): "
-                f"<span style='color:{color};font-weight:700'>{_money(op['pnl_no_realizado'])}</span>",
-                unsafe_allow_html=True,
-            )
-        col1, col2 = st.columns(2)
-        precio_cierre_final = col1.number_input("Precio Cierre *", min_value=0.0, step=0.0001, format="%.4f", key="cierre_precio")
-        fecha_cierre_final = col2.date_input("Fecha Cierre *", value=date.today(), key="cierre_fecha")
-        if st.button("✅ Confirmar Cierre"):
-            if not precio_cierre_final:
-                _toast_err("⚠️ Ingresá el precio de cierre")
-            else:
-                r = fd.cerrar_operacion(client, user_id, op["id"], precio_cierre_final, fecha_cierre_final.isoformat())
-                _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
+        if seleccion != "—":
+            op = opciones[seleccion]
+            if op["pnl_no_realizado"] is not None:
+                color = POS if op["pnl_no_realizado"] >= 0 else NEG
+                st.markdown(
+                    f"P&L no realizado (a precio actual): "
+                    f"<span style='color:{color};font-weight:700'>{_money(op['pnl_no_realizado'])}</span>",
+                    unsafe_allow_html=True,
+                )
+            col1, col2 = st.columns(2)
+            precio_cierre_final = col1.number_input("Precio Cierre *", min_value=0.0, step=0.0001, format="%.4f", key="cierre_precio")
+            fecha_cierre_final = col2.date_input("Fecha Cierre *", value=date.today(), key="cierre_fecha")
+            if st.button("✅ Confirmar Cierre"):
+                if not precio_cierre_final:
+                    _toast_err("⚠️ Ingresá el precio de cierre")
+                else:
+                    r = fd.cerrar_operacion(client, user_id, op["id"], precio_cierre_final, fecha_cierre_final.isoformat())
+                    _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
 
     df = fd.listar_trading(client, user_id)
     if not df.empty:
@@ -539,8 +539,7 @@ def _render_trading(client, user_id: str) -> None:
             fd.actualizar_trading, fd.eliminar_trading,
             label_fn=lambda r: f"{r['simbolo']} · {r['direccion']} · {r['fecha_entrada']}",
         )
-
-
+        
 # ============================================================
 # OBJETIVOS DE AHORRO
 # ============================================================
