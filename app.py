@@ -6052,6 +6052,8 @@ with st.container(key='nav_mobile_wrap'):
         '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares', '🎲 Opciones': 'opciones',
         '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
     }
+    if ES_ADMIN:
+        _OPCIONES_HORIZONTE_MOBILE['🛠️ Panel de Pagos'] = 'admin_pagos'
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
                   '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
