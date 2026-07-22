@@ -610,7 +610,7 @@ def pantalla_landing():
       <div class="pricing-card">
         <div class="pricing-badge">Más elegido</div>
         <div class="pricing-name">Trimestral</div>
-        <div class="pricing-price">$30.000<br><small>o U$S27</small></div>
+        <div class="pricing-price">$40.000<br><small>o U$S27</small></div>
         <div class="pricing-permes">U$S9 / mes</div>
         <div class="pricing-sub">Acceso completo a todos los módulos</div>
         <div class="pricing-trial">🎁 3 días gratis</div>
@@ -618,7 +618,7 @@ def pantalla_landing():
       </div>
       <div class="pricing-card">
         <div class="pricing-name">Semestral</div>
-        <div class="pricing-price">$70.000<br><small>o U$S50</small></div>
+        <div class="pricing-price">$75.000<br><small>o U$S50</small></div>
         <div class="pricing-permes">U$S8,33 / mes</div>
         <div class="pricing-sub">Acceso completo a todos los módulos</div>
         <div class="pricing-trial">🎁 3 días gratis</div>
@@ -627,7 +627,7 @@ def pantalla_landing():
       <div class="pricing-card featured">
         <div class="pricing-badge">Mejor precio</div>
         <div class="pricing-name">Anual</div>
-        <div class="pricing-price">$90.000<br><small>o U$S90</small></div>
+        <div class="pricing-price">$135.000<br><small>o U$S90</small></div>
         <div class="pricing-permes">U$S7,50 / mes</div>
         <div class="pricing-sub">Acceso completo a todos los módulos</div>
         <div class="pricing-trial">🎁 3 días gratis</div>
