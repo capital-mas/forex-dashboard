@@ -2948,7 +2948,8 @@ def _analizar_fundamental_cached(ticker, industria):
 
         campos_clave = [per, pb, roe, roa, gross_margin, op_margin, profit_margin,
                          revenue_growth, debt_equity, market_cap]
-        if all(v is None for v in campos_clave):
+        n_datos_disponibles = sum(1 for v in campos_clave if v is not None)
+        if n_datos_disponibles < 5:
             return None
 
         senales = []
