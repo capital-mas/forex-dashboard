@@ -82,7 +82,87 @@ def _opc_datos_activo(ticker):
     except Exception:
         return None
 
+# ==============================================================
+#  CADENA DE OPCIONES REAL (Yahoo Finance)
+# ==============================================================
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _opc_vencimientos_disponibles(ticker):
+    """Fechas de vencimiento reales que Yahoo Finance tiene publicadas para el ticker."""
+    try:
+        import yfinance as yf
+        vtos = yf.Ticker(ticker).options
+        return list(vtos) if vtos else []
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _opc_cadena_opciones(ticker, vencimiento):
+    """Descarga la cadena de opciones (calls y puts) de Yahoo Finance para un ticker
+    y una fecha de vencimiento puntual (formato 'YYYY-MM-DD', tal cual la devuelve
+    yfinance en .options). Devuelve dict {'calls': df, 'puts': df} o None si falla."""
+    try:
+        import yfinance as yf
+        cadena = yf.Ticker(ticker).option_chain(vencimiento)
+        calls, puts = cadena.calls.copy(), cadena.puts.copy()
+
+        cols_utiles = ['contractSymbol', 'strike', 'lastPrice', 'bid', 'ask', 'volume',
+                       'openInterest', 'impliedVolatility', 'inTheMoney']
+        for df in (calls, puts):
+            for c in cols_utiles:
+                if c not in df.columns:
+                    df[c] = np.nan
+
+        calls = calls[cols_utiles].sort_values('strike').reset_index(drop=True)
+        puts = puts[cols_utiles].sort_values('strike').reset_index(drop=True)
+        if calls.empty and puts.empty:
+            return None
+        return {'calls': calls, 'puts': puts}
+    except Exception:
+        return None
+
+
+def _opc_fila_strike_mas_cercano(df_lado, strike_objetivo):
+    """Dado un DataFrame de calls o puts y un strike de referencia (ej. el spot),
+    devuelve la fila cuyo strike está más cerca — útil para pre-seleccionar ATM."""
+    if df_lado is None or df_lado.empty:
+        return None
+    idx = (df_lado['strike'] - strike_objetivo).abs().idxmin()
+    return df_lado.loc[idx]
+
+
+def render_tabla_cadena_opciones(cadena, S, tipo=None):
+    """Muestra calls y/o puts de la cadena real, resaltando el strike más cercano
+    al spot y formateando bid/ask/IV/volumen para lectura rápida."""
+    if cadena is None:
+        st.warning('No se pudo descargar la cadena de opciones para este vencimiento.')
+        return
+
+    def _fmt_df(df):
+        d = df.copy()
+        d['ITM'] = d['inTheMoney'].map({True: '🟢 ITM', False: '⚪ OTM'})
+        d['IV'] = d['impliedVolatility'].apply(lambda v: f'{v:.1%}' if pd.notna(v) else 'N/D')
+        d['Bid'] = d['bid'].apply(lambda v: f'{v:.2f}' if pd.notna(v) else 'N/D')
+        d['Ask'] = d['ask'].apply(lambda v: f'{v:.2f}' if pd.notna(v) else 'N/D')
+        d['Último'] = d['lastPrice'].apply(lambda v: f'{v:.2f}' if pd.notna(v) else 'N/D')
+        d['Vol.'] = d['volume'].fillna(0).astype(int)
+        d['OI'] = d['openInterest'].fillna(0).astype(int)
+        return d[['strike', 'Último', 'Bid', 'Ask', 'Vol.', 'OI', 'IV', 'ITM']].rename(columns={'strike': 'Strike'})
+
+    tabs_lado = []
+    if tipo in (None, 'C'): tabs_lado.append(('📈 Calls', cadena['calls']))
+    if tipo in (None, 'P'): tabs_lado.append(('📉 Puts', cadena['puts']))
+
+    if len(tabs_lado) == 1:
+        _, df_lado = tabs_lado[0]
+        st.dataframe(_fmt_df(df_lado), use_container_width=True, hide_index=True, height=320)
+    else:
+        tabs = st.tabs([n for n, _ in tabs_lado])
+        for tab, (_, df_lado) in zip(tabs, tabs_lado):
+            with tab:
+                st.dataframe(_fmt_df(df_lado), use_container_width=True, hide_index=True, height=320)
+              
 # ==============================================================
 #  MODELO EUROPEO — Black-Scholes-Merton
 # ==============================================================
