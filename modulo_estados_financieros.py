@@ -263,6 +263,26 @@ def _cols_cronologico(fila):
     return list(fila.index)[::-1]
 
 
+def _serie_valores(fila):
+    """Lista cronológica (más antiguo → más reciente) de valores no nulos."""
+    if fila is None:
+        return []
+    cols = _cols_cronologico(fila)
+    return [fila.get(c) for c in cols if pd.notna(fila.get(c))]
+
+
+def _serie_por_columna(fila):
+    """Devuelve (labels, valores) en orden cronológico, incluyendo columnas
+    con valor nulo como None (mantiene la alineación con el eje temporal,
+    a diferencia de _serie_valores que descarta los nulos)."""
+    if fila is None:
+        return [], []
+    cols = _cols_cronologico(fila)
+    labels = [str(c)[:10] for c in cols]
+    valores = [fila.get(c) if pd.notna(fila.get(c)) else None for c in cols]
+    return labels, valores
+
+
 def _tabla_estado(df, max_periodos=6):
     if df is None or df.empty:
         return None
@@ -378,23 +398,223 @@ def fig_flujo(df_cf):
     return fig
 
 
-def _variacion_pct(fila):
-    """% de variación entre el primer y el último valor no nulo de una fila cronológica."""
-    if fila is None:
+# ── NUEVOS GRÁFICOS — específicos por pestaña ──────────────────────────
+
+def fig_variacion_interanual(df_res):
+    """Variación % de ingresos período contra período (barra por período)."""
+    ventas = _buscar_fila(df_res, ['Total Revenue', 'Revenue'])
+    if ventas is None:
         return None
-    cols = _cols_cronologico(fila)
-    vals = [fila.get(c) for c in cols if pd.notna(fila.get(c))]
-    if len(vals) < 2 or vals[0] == 0:
+    labels, valores = _serie_por_columna(ventas)
+    if len(valores) < 2:
         return None
-    return (vals[-1] - vals[0]) / abs(vals[0]) * 100
+    var_labels, var_vals = [], []
+    for i in range(1, len(valores)):
+        prev, curr = valores[i - 1], valores[i]
+        if prev not in (None, 0) and curr is not None:
+            var_vals.append((curr - prev) / abs(prev) * 100)
+        else:
+            var_vals.append(None)
+        var_labels.append(labels[i])
+    if all(v is None for v in var_vals):
+        return None
+    colores = [C_GREEN if (v is not None and v >= 0) else C_RED for v in var_vals]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=var_labels, y=var_vals, marker_color=colores, name='Variación Ingresos %'))
+    fig.add_hline(y=0, line_color=C_MUTED, opacity=0.4)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, height=320,
+        title=dict(text='Variación interanual de ingresos por período', font=dict(color=C_TEXT, size=13)),
+        xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='%'),
+        margin=dict(l=10, r=10, t=45, b=10), showlegend=False,
+    )
+    return fig
 
 
-def _serie_valores(fila):
-    """Lista cronológica (más antiguo → más reciente) de valores no nulos."""
-    if fila is None:
-        return []
-    cols = _cols_cronologico(fila)
-    return [fila.get(c) for c in cols if pd.notna(fila.get(c))]
+def fig_apalancamiento(df_bal):
+    """Evolución histórica del ratio Deuda/Patrimonio (D/E)."""
+    deuda  = _buscar_fila(df_bal, ['Total Debt'])
+    equity = _buscar_fila(df_bal, ['Stockholders Equity', 'Total Stockholders Equity', 'Common Stock Equity'])
+    if deuda is None or equity is None:
+        return None
+    labels_d, vals_d = _serie_por_columna(deuda)
+    _, vals_e = _serie_por_columna(equity)
+    n = min(len(vals_d), len(vals_e))
+    if n == 0:
+        return None
+    labels = labels_d[-n:]
+    de_vals = []
+    for d, e in zip(vals_d[-n:], vals_e[-n:]):
+        de_vals.append(d / e if (d is not None and e not in (None, 0)) else None)
+    if all(v is None for v in de_vals):
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=labels, y=de_vals, name='D/E', mode='lines+markers',
+                              line=dict(color=C_YELL, width=2.4)))
+    fig.add_hline(y=1, line_color=C_MUTED, opacity=0.4, line_dash='dot')
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, height=320,
+        title=dict(text='Evolución del apalancamiento (Deuda / Patrimonio)', font=dict(color=C_TEXT, size=13)),
+        xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='x'),
+        margin=dict(l=10, r=10, t=45, b=10), showlegend=False,
+    )
+    return fig
+
+
+def fig_capital_trabajo(df_bal):
+    """Evolución histórica del capital de trabajo (Activo Cte. - Pasivo Cte.)."""
+    ac = _buscar_fila(df_bal, ['Current Assets', 'Total Current Assets'])
+    pc = _buscar_fila(df_bal, ['Current Liabilities', 'Total Current Liabilities'])
+    if ac is None or pc is None:
+        return None
+    labels_a, vals_a = _serie_por_columna(ac)
+    _, vals_p = _serie_por_columna(pc)
+    n = min(len(vals_a), len(vals_p))
+    if n == 0:
+        return None
+    labels = labels_a[-n:]
+    kw_vals = []
+    for a, p in zip(vals_a[-n:], vals_p[-n:]):
+        kw_vals.append(a - p if (a is not None and p is not None) else None)
+    if all(v is None for v in kw_vals):
+        return None
+    colores = [C_GREEN if (v is not None and v >= 0) else C_RED for v in kw_vals]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=labels, y=kw_vals, marker_color=colores, name='Capital de Trabajo'))
+    fig.add_hline(y=0, line_color=C_MUTED, opacity=0.4)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, height=320,
+        title=dict(text='Evolución del capital de trabajo', font=dict(color=C_TEXT, size=13)),
+        xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID),
+        margin=dict(l=10, r=10, t=45, b=10), showlegend=False,
+    )
+    return fig
+
+
+def fig_fcf_vs_neto(df_cf, df_res):
+    """Comparación período a período entre Free Cash Flow y Ganancia Neta."""
+    fcf  = _buscar_fila(df_cf, ['Free Cash Flow'])
+    neto = _buscar_fila(df_res, ['Net Income', 'Net Income Common Stockholders']) if df_res is not None else None
+    if fcf is None or neto is None:
+        return None
+    labels_f, vals_f = _serie_por_columna(fcf)
+    _, vals_n = _serie_por_columna(neto)
+    n = min(len(vals_f), len(vals_n))
+    if n == 0:
+        return None
+    labels = labels_f[-n:]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=labels, y=vals_f[-n:], name='Free Cash Flow', marker_color=C_MONSTER))
+    fig.add_trace(go.Bar(x=labels, y=vals_n[-n:], name='Ganancia Neta', marker_color=C_ACENT))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, barmode='group', height=320,
+        title=dict(text='Free Cash Flow vs. Ganancia Neta', font=dict(color=C_TEXT, size=13)),
+        xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID),
+        margin=dict(l=10, r=10, t=45, b=10), legend=dict(orientation='h', y=1.12),
+    )
+    return fig
+
+
+def fig_intensidad_capex(df_cf, df_res):
+    """Evolución histórica de CAPEX como % de las ventas."""
+    capex  = _buscar_fila(df_cf, ['Capital Expenditure', 'Capital Expenditures'])
+    ventas = _buscar_fila(df_res, ['Total Revenue', 'Revenue']) if df_res is not None else None
+    if capex is None or ventas is None:
+        return None
+    labels_c, vals_c = _serie_por_columna(capex)
+    _, vals_v = _serie_por_columna(ventas)
+    n = min(len(vals_c), len(vals_v))
+    if n == 0:
+        return None
+    labels = labels_c[-n:]
+    intensidad = []
+    for c, v in zip(vals_c[-n:], vals_v[-n:]):
+        intensidad.append(abs(c) / v * 100 if (c is not None and v not in (None, 0)) else None)
+    if all(v is None for v in intensidad):
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=labels, y=intensidad, name='CAPEX/Ventas %', mode='lines+markers',
+                              line=dict(color=C_RED, width=2.4),
+                              fill='tozeroy', fillcolor='rgba(248,81,73,0.12)'))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, height=320,
+        title=dict(text='Intensidad de CAPEX en el tiempo (CAPEX / Ventas)', font=dict(color=C_TEXT, size=13)),
+        xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='%'),
+        margin=dict(l=10, r=10, t=45, b=10), showlegend=False,
+    )
+    return fig
+
+
+# ── Métricas puntuales (st.metric) por pestaña ─────────────────────────
+
+def _render_metricas_resultados(df_res, es_trimestral=False):
+    ventas = _buscar_fila(df_res, ['Total Revenue', 'Revenue'])
+    neto   = _buscar_fila(df_res, ['Net Income', 'Net Income Common Stockholders'])
+    v_ventas = _serie_valores(ventas)
+    v_neto   = _serie_valores(neto)
+    periodos_año = 4.0 if es_trimestral else 1.0
+
+    ingreso_ult = v_ventas[-1] if v_ventas else None
+    var_interanual = None
+    if len(v_ventas) >= 2 and v_ventas[-2] not in (0, None):
+        var_interanual = (v_ventas[-1] - v_ventas[-2]) / abs(v_ventas[-2]) * 100
+    margen_neto = None
+    if v_neto and v_ventas and v_ventas[-1] not in (0, None):
+        margen_neto = v_neto[-1] / v_ventas[-1] * 100
+    cagr_v = _cagr(v_ventas, periodos_año) if v_ventas else None
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric('Ingresos (últ. período)', _fmt_big(ingreso_ult))
+    with c2: st.metric('Variación interanual', f'{var_interanual:+.1f}%' if var_interanual is not None else 'N/D')
+    with c3: st.metric('Margen Neto (últ.)', f'{margen_neto:.1f}%' if margen_neto is not None else 'N/D')
+    with c4: st.metric('CAGR Ingresos', f'{cagr_v:+.1f}%' if cagr_v is not None else 'N/D')
+
+
+def _render_metricas_balance(df_bal):
+    deuda   = _buscar_fila(df_bal, ['Total Debt'])
+    equity  = _buscar_fila(df_bal, ['Stockholders Equity', 'Total Stockholders Equity', 'Common Stock Equity'])
+    ac      = _buscar_fila(df_bal, ['Current Assets', 'Total Current Assets'])
+    pc      = _buscar_fila(df_bal, ['Current Liabilities', 'Total Current Liabilities'])
+    activos = _buscar_fila(df_bal, ['Total Assets'])
+
+    v_deuda, v_equity = _serie_valores(deuda), _serie_valores(equity)
+    v_ac, v_pc = _serie_valores(ac), _serie_valores(pc)
+    v_activos = _serie_valores(activos)
+
+    de = v_deuda[-1] / v_equity[-1] if (v_deuda and v_equity and v_equity[-1] not in (0, None)) else None
+    cr = v_ac[-1] / v_pc[-1] if (v_ac and v_pc and v_pc[-1] not in (0, None)) else None
+    kw = (v_ac[-1] - v_pc[-1]) if (v_ac and v_pc) else None
+    act_tot = v_activos[-1] if v_activos else None
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric('Deuda / Patrimonio', f'{de:.2f}x' if de is not None else 'N/D')
+    with c2: st.metric('Current Ratio', f'{cr:.2f}x' if cr is not None else 'N/D')
+    with c3: st.metric('Capital de Trabajo', _fmt_big(kw) if kw is not None else 'N/D')
+    with c4: st.metric('Activos Totales', _fmt_big(act_tot) if act_tot is not None else 'N/D')
+
+
+def _render_metricas_flujo(df_cf, df_res):
+    fcf    = _buscar_fila(df_cf, ['Free Cash Flow'])
+    cfo    = _buscar_fila(df_cf, ['Operating Cash Flow', 'Total Cash From Operating Activities'])
+    capex  = _buscar_fila(df_cf, ['Capital Expenditure', 'Capital Expenditures'])
+    neto   = _buscar_fila(df_res, ['Net Income', 'Net Income Common Stockholders']) if df_res is not None else None
+    ventas = _buscar_fila(df_res, ['Total Revenue', 'Revenue']) if df_res is not None else None
+
+    v_fcf, v_cfo = _serie_valores(fcf), _serie_valores(cfo)
+    v_capex = _serie_valores(capex)
+    v_neto  = _serie_valores(neto)
+    v_ventas = _serie_valores(ventas)
+
+    fcf_ult = v_fcf[-1] if v_fcf else None
+    cfo_ult = v_cfo[-1] if v_cfo else None
+    fcf_neto = (v_fcf[-1] / v_neto[-1]) if (v_fcf and v_neto and v_neto[-1] not in (0, None) and v_neto[-1] > 0) else None
+    capex_ventas = (abs(v_capex[-1]) / v_ventas[-1] * 100) if (v_capex and v_ventas and v_ventas[-1] not in (0, None)) else None
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric('Free Cash Flow (últ.)', _fmt_big(fcf_ult) if fcf_ult is not None else 'N/D')
+    with c2: st.metric('Flujo Operativo (últ.)', _fmt_big(cfo_ult) if cfo_ult is not None else 'N/D')
+    with c3: st.metric('FCF / Ganancia Neta', f'{fcf_neto:.2f}x' if fcf_neto is not None else 'N/D')
+    with c4: st.metric('CAPEX / Ventas', f'{capex_ventas:.1f}%' if capex_ventas is not None else 'N/D')
 
 
 def _cagr(vals, periodos_por_año=1.0):
@@ -634,7 +854,7 @@ def interpretar_estados(df_res, df_bal, df_cf):
 
 
 # ==============================================================
-#  NUEVO — Render de señales filtradas por categoría, para usar
+#  Render de señales filtradas por categoría, para usar
 #  dentro de cada pestaña (Resultados / Balance / Flujo de Fondos)
 # ==============================================================
 
@@ -684,10 +904,44 @@ def _render_señales_categoria(señales, categorias, titulo_seccion, key_suffix=
                 st.markdown(f'<div style="font-size:11.5px;color:#8b949e;padding:2px 0">{s["texto"]}</div>', unsafe_allow_html=True)
 
 
+def _resumen_compacto_categorias(señales):
+    """Vista rápida arriba de las pestañas: solo conteos ✅/⚠️ por categoría,
+    sin repetir el texto de las señales (eso vive en cada pestaña)."""
+    if not señales:
+        return
+    orden_categorias = ['📈 Crecimiento', '💰 Rentabilidad', '🔒 Solvencia', '💧 Liquidez', '💵 Calidad de Caja']
+    resumen = []
+    for cat in orden_categorias:
+        ok  = sum(1 for s in señales if s['categoria'] == cat and s['tipo'] == 'OK')
+        alt = sum(1 for s in señales if s['categoria'] == cat and s['tipo'] == 'ALERTA')
+        if ok or alt:
+            resumen.append((cat, ok, alt))
+    if not resumen:
+        return
+
+    st.markdown(
+        '<div style="font-size:12px;font-weight:700;color:#e6edf3;margin:6px 0 8px 0">'
+        '📋 Resumen por categoría — el detalle está en cada pestaña abajo</div>',
+        unsafe_allow_html=True,
+    )
+    cols = st.columns(len(resumen))
+    for col, (cat, ok, alt) in zip(cols, resumen):
+        with col:
+            st.markdown(f"""
+            <div style="background:#161b22;border:1px solid #21262d;border-radius:8px;
+                        padding:10px 6px;text-align:center">
+              <div style="font-size:10.5px;color:#8b949e;margin-bottom:6px;white-space:nowrap">{cat}</div>
+              <div style="font-size:13px;font-weight:700">
+                <span style="color:#3fb950">✅ {ok}</span>&nbsp;&nbsp;<span style="color:#f85149">⚠️ {alt}</span>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+
 def render_estados_financieros(ticker, key_suffix=''):
-    """Bloque completo: selector Anual/Trimestral + interpretación +
-    3 tabs (Resultados, Balance, Flujo de Fondos) con gráfico, señales propias
-    de esa categoría y tabla detallada."""
+    """Bloque completo: selector Anual/Trimestral + veredicto + resumen
+    compacto por categoría + 3 tabs (Resultados, Balance, Flujo de Fondos),
+    cada una con sus propias métricas puntuales, gráficos y señales."""
     if _es_activo_sin_estados(ticker):
         return
     with st.spinner(f'Descargando estados financieros de {ticker}...'):
@@ -755,48 +1009,35 @@ def render_estados_financieros(ticker, key_suffix=''):
 
     st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
 
+    # Resumen compacto (reemplaza las dos listas completas que antes se
+    # repetían acá arriba Y dentro de cada pestaña — ahora el detalle vive
+    # solo en la pestaña correspondiente).
     if señales:
-        col_ok, col_alt = st.columns(2)
-        with col_ok:
-            st.markdown('<div style="font-size:11px;font-weight:700;color:#3fb950;margin-bottom:4px">✅ SEÑALES POSITIVAS (todas las categorías)</div>', unsafe_allow_html=True)
-            ok_list = [s for s in señales if s['tipo'] == 'OK']
-            if ok_list:
-                for s in ok_list:
-                    st.markdown(f'<div style="font-size:11.5px;color:#3fb950;padding:4px 0;border-bottom:1px solid #21262d">'
-                                f'<b>{s["categoria"]}</b> — {s["texto"]}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div style="font-size:11px;color:#6b7d9a">Sin señales positivas detectadas.</div>', unsafe_allow_html=True)
-        with col_alt:
-            st.markdown('<div style="font-size:11px;font-weight:700;color:#f85149;margin-bottom:4px">⚠️ PUNTOS DE ATENCIÓN (todas las categorías)</div>', unsafe_allow_html=True)
-            alt_list = [s for s in señales if s['tipo'] == 'ALERTA']
-            if alt_list:
-                for s in alt_list:
-                    st.markdown(f'<div style="font-size:11.5px;color:#f85149;padding:4px 0;border-bottom:1px solid #21262d">'
-                                f'<b>{s["categoria"]}</b> — {s["texto"]}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div style="font-size:11px;color:#6b7d9a">Sin alertas detectadas.</div>', unsafe_allow_html=True)
-
-        info_list = [s for s in señales if s['tipo'] == 'INFO']
-        if info_list:
-            with st.expander('ℹ️ Datos adicionales de contexto'):
-                for s in info_list:
-                    st.markdown(f'<div style="font-size:11.5px;color:#8b949e;padding:3px 0">'
-                                f'<b>{s["categoria"]}</b> — {s["texto"]}</div>', unsafe_allow_html=True)
+        _resumen_compacto_categorias(señales)
     else:
         st.info('Historial insuficiente para generar señales detalladas (se necesitan al menos 2-3 períodos).')
 
     tab_res, tab_bal, tab_cf = st.tabs(['📄 Estado de Resultados', '🏦 Balance', '💵 Flujo de Fondos'])
 
+    # ── RESULTADOS ──────────────────────────────────────────────────
     with tab_res:
         if df_res is not None and not df_res.empty:
+            _render_metricas_resultados(df_res, es_trimestral=es_trim)
+            st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
+
             fig_r = fig_resultados(df_res)
             if fig_r:
                 st.plotly_chart(fig_r, use_container_width=True, config=PLOTLY_CONFIG,
                                  key=f'ef_res_{ticker}_{suf}_{key_suffix}')
+            fig_var = fig_variacion_interanual(df_res)
+            if fig_var:
+                st.plotly_chart(fig_var, use_container_width=True, config=PLOTLY_CONFIG,
+                                 key=f'ef_var_{ticker}_{suf}_{key_suffix}')
             fig_m = fig_margenes(df_res)
             if fig_m:
                 st.plotly_chart(fig_m, use_container_width=True, config=PLOTLY_CONFIG,
                                  key=f'ef_mg_{ticker}_{suf}_{key_suffix}')
+
             _render_señales_categoria(señales, CATEGORIAS_POR_TAB['resultados'],
                                        'Estado de Resultados', key_suffix=f'{ticker}_{suf}_{key_suffix}')
             with st.expander('📋 Ver tabla completa de resultados'):
@@ -806,12 +1047,25 @@ def render_estados_financieros(ticker, key_suffix=''):
         else:
             st.info('Sin datos de resultados para este período.')
 
+    # ── BALANCE ─────────────────────────────────────────────────────
     with tab_bal:
         if df_bal is not None and not df_bal.empty:
+            _render_metricas_balance(df_bal)
+            st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
+
             fig_b = fig_balance(df_bal)
             if fig_b:
                 st.plotly_chart(fig_b, use_container_width=True, config=PLOTLY_CONFIG,
                                  key=f'ef_bal_{ticker}_{suf}_{key_suffix}')
+            fig_ap = fig_apalancamiento(df_bal)
+            if fig_ap:
+                st.plotly_chart(fig_ap, use_container_width=True, config=PLOTLY_CONFIG,
+                                 key=f'ef_apalanc_{ticker}_{suf}_{key_suffix}')
+            fig_kw = fig_capital_trabajo(df_bal)
+            if fig_kw:
+                st.plotly_chart(fig_kw, use_container_width=True, config=PLOTLY_CONFIG,
+                                 key=f'ef_kw_{ticker}_{suf}_{key_suffix}')
+
             _render_señales_categoria(señales, CATEGORIAS_POR_TAB['balance'],
                                        'Balance', key_suffix=f'{ticker}_{suf}_{key_suffix}')
             with st.expander('📋 Ver tabla completa de balance'):
@@ -821,12 +1075,25 @@ def render_estados_financieros(ticker, key_suffix=''):
         else:
             st.info('Sin datos de balance para este período.')
 
+    # ── FLUJO DE FONDOS ─────────────────────────────────────────────
     with tab_cf:
         if df_cf is not None and not df_cf.empty:
+            _render_metricas_flujo(df_cf, df_res)
+            st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
+
             fig_c = fig_flujo(df_cf)
             if fig_c:
                 st.plotly_chart(fig_c, use_container_width=True, config=PLOTLY_CONFIG,
                                  key=f'ef_cf_{ticker}_{suf}_{key_suffix}')
+            fig_fn = fig_fcf_vs_neto(df_cf, df_res)
+            if fig_fn:
+                st.plotly_chart(fig_fn, use_container_width=True, config=PLOTLY_CONFIG,
+                                 key=f'ef_fcf_neto_{ticker}_{suf}_{key_suffix}')
+            fig_ci = fig_intensidad_capex(df_cf, df_res)
+            if fig_ci:
+                st.plotly_chart(fig_ci, use_container_width=True, config=PLOTLY_CONFIG,
+                                 key=f'ef_capex_{ticker}_{suf}_{key_suffix}')
+
             _render_señales_categoria(señales, CATEGORIAS_POR_TAB['flujo'],
                                        'Flujo de Fondos', key_suffix=f'{ticker}_{suf}_{key_suffix}')
             with st.expander('📋 Ver tabla completa de flujo de fondos'):
@@ -913,7 +1180,7 @@ def tabla_comparativa_estados(tickers_tuple, periodo='Anual'):
 
 
 # ==============================================================
-#  NUEVO — comparación explícita empresa vs empresa por métrica,
+#  Comparación explícita empresa vs empresa por métrica,
 #  con ranking y conclusión propia para cada punto.
 # ==============================================================
 
