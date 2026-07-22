@@ -191,7 +191,11 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
 
     return False
 
-
+def es_admin_usuario(supabase_client, user_id: str) -> bool:
+    """Versión pública de _es_admin, para poder chequear el rol desde app.py
+    antes de decidir si mostrar el ítem de menú del panel de pagos."""
+    return _es_admin(supabase_client, user_id)
+    
 def _es_admin(supabase_client, user_id: str) -> bool:
     res = (
         supabase_client.table("perfiles")
