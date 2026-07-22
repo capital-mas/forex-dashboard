@@ -541,54 +541,100 @@ def pantalla_landing():
     </div>
     """, unsafe_allow_html=True)
 
-    # ── PRICING ──────────────────────────────────────────────────────
-    st.markdown('<div class="landing-section-title">Un Plan Mensual</div>', unsafe_allow_html=True)
+    # ── PRICING — grilla de 4 planes lado a lado ──────────────────────
     st.markdown("""
-    <div class="landing-pricing">
-      <div style="font-size:13px;color:#8b949e;font-weight:700;text-transform:uppercase;letter-spacing:1px">Plan Mensual+</div>
-      <div class="landing-price">$15.000 o U$S10<span style="font-size:16px;color:#8b949e">/mes</span></div>
-      <div class="landing-price-sub">Acceso completo a todos los módulos</div>
-      <div class="landing-trial">🎁 3 días de prueba gratis</div>
-      <div class="landing-cancel">Cancelás cuando quieras</div>
-    </div>
+    <style>
+    .pricing-grid {
+        display:grid;
+        grid-template-columns:repeat(4,1fr);
+        gap:16px;
+        max-width:1080px;
+        margin:0 auto;
+        padding:0 20px;
+        align-items:stretch;
+    }
+    .pricing-card {
+        position:relative;
+        background:#0d1117; border:1px solid #21262d; border-top:2px solid #21262d;
+        border-radius:14px; padding:26px 20px 22px 20px;
+        text-align:center; display:flex; flex-direction:column;
+        transition:border-color .2s, transform .2s;
+    }
+    .pricing-card:hover { border-color:#3a7bd5; transform:translateY(-2px); }
+    .pricing-card.featured {
+        border-color:#6CC24A; border-top:2px solid #6CC24A;
+        box-shadow:0 0 0 1px rgba(108,194,74,0.25);
+    }
+    .pricing-badge {
+        position:absolute; top:-11px; left:50%; transform:translateX(-50%);
+        background:#6CC24A; color:#07090f; font-size:10px; font-weight:800;
+        letter-spacing:.6px; text-transform:uppercase;
+        padding:4px 14px; border-radius:20px; white-space:nowrap;
+    }
+    .pricing-name {
+        font-size:12px; color:#8b949e; font-weight:700;
+        text-transform:uppercase; letter-spacing:1px; margin-bottom:14px;
+    }
+    .pricing-price {
+        font-size:26px; font-weight:800; color:#e6edf3; line-height:1.15;
+    }
+    .pricing-price small { font-size:13px; color:#8b949e; font-weight:500; }
+    .pricing-permes {
+        font-size:12px; color:#6CC24A; font-weight:700; margin-top:6px;
+    }
+    .pricing-sub { font-size:11.5px; color:#8b949e; margin:10px 0 16px 0; flex-grow:1; }
+    .pricing-trial { font-size:11.5px; color:#6CC24A; font-weight:700; margin-bottom:3px; }
+    .pricing-cancel { font-size:10.5px; color:#6b7d9a; }
+    @media (max-width:900px) {
+        .pricing-grid { grid-template-columns:repeat(2,1fr); }
+    }
+    @media (max-width:560px) {
+        .pricing-grid { grid-template-columns:1fr; }
+    }
+    </style>
     """, unsafe_allow_html=True)
 
-    # ── PRICING ──────────────────────────────────────────────────────
-    st.markdown('<div class="landing-section-title">Un Plan Trimestral</div>', unsafe_allow_html=True)
+    st.markdown('<div class="landing-section-title">Elegí tu plan</div>', unsafe_allow_html=True)
+    st.markdown('<div class="landing-section-sub">Mientras más largo el plan, menor el costo mensual equivalente</div>', unsafe_allow_html=True)
+
     st.markdown("""
-    <div class="landing-pricing">
-      <div style="font-size:13px;color:#8b949e;font-weight:700;text-transform:uppercase;letter-spacing:1px">Plan Trimestral+</div>
-      <div class="landing-price">$30.000 o U$S27<span style="font-size:16px;color:#8b949e">/mes</span></div>
-      <div class="landing-price-sub">Acceso completo a todos los módulos</div>
-      <div class="landing-trial">🎁 3 días de prueba gratis</div>
-      <div class="landing-cancel">Cancelás cuando quieras</div>
+    <div class="pricing-grid">
+      <div class="pricing-card">
+        <div class="pricing-name">Mensual</div>
+        <div class="pricing-price">$15.000<br><small>o U$S10</small></div>
+        <div class="pricing-permes">U$S10 / mes</div>
+        <div class="pricing-sub">Acceso completo a todos los módulos</div>
+        <div class="pricing-trial">🎁 3 días gratis</div>
+        <div class="pricing-cancel">Cancelás cuando quieras</div>
+      </div>
+      <div class="pricing-card">
+        <div class="pricing-badge">Más elegido</div>
+        <div class="pricing-name">Trimestral</div>
+        <div class="pricing-price">$30.000<br><small>o U$S27</small></div>
+        <div class="pricing-permes">U$S9 / mes</div>
+        <div class="pricing-sub">Acceso completo a todos los módulos</div>
+        <div class="pricing-trial">🎁 3 días gratis</div>
+        <div class="pricing-cancel">Cancelás cuando quieras</div>
+      </div>
+      <div class="pricing-card">
+        <div class="pricing-name">Semestral</div>
+        <div class="pricing-price">$70.000<br><small>o U$S50</small></div>
+        <div class="pricing-permes">U$S8,33 / mes</div>
+        <div class="pricing-sub">Acceso completo a todos los módulos</div>
+        <div class="pricing-trial">🎁 3 días gratis</div>
+        <div class="pricing-cancel">Cancelás cuando quieras</div>
+      </div>
+      <div class="pricing-card featured">
+        <div class="pricing-badge">Mejor precio</div>
+        <div class="pricing-name">Anual</div>
+        <div class="pricing-price">$90.000<br><small>o U$S90</small></div>
+        <div class="pricing-permes">U$S7,50 / mes</div>
+        <div class="pricing-sub">Acceso completo a todos los módulos</div>
+        <div class="pricing-trial">🎁 3 días gratis</div>
+        <div class="pricing-cancel">Cancelás cuando quieras</div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
-
-    # ── PRICING ──────────────────────────────────────────────────────
-    st.markdown('<div class="landing-section-title">Un Plan Semestral</div>', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="landing-pricing">
-      <div style="font-size:13px;color:#8b949e;font-weight:700;text-transform:uppercase;letter-spacing:1px">Plan Semestral+</div>
-      <div class="landing-price">$70.000 o U$S50<span style="font-size:16px;color:#8b949e">/mes</span></div>
-      <div class="landing-price-sub">Acceso completo a todos los módulos</div>
-      <div class="landing-trial">🎁 3 días de prueba gratis</div>
-      <div class="landing-cancel">Cancelás cuando quieras</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── PRICING ──────────────────────────────────────────────────────
-    st.markdown('<div class="landing-section-title">Un Plan Anual</div>', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="landing-pricing">
-      <div style="font-size:13px;color:#8b949e;font-weight:700;text-transform:uppercase;letter-spacing:1px">Plan Anual+</div>
-      <div class="landing-price">$90.000 o U$S90<span style="font-size:16px;color:#8b949e">/mes</span></div>
-      <div class="landing-price-sub">Acceso completo a todos los módulos</div>
-      <div class="landing-trial">🎁 3 días de prueba gratis</div>
-      <div class="landing-cancel">Cancelás cuando quieras</div>
-    </div>
-    """, unsafe_allow_html=True)
-
     # ── FAQ ──────────────────────────────────────────────────────────
     st.markdown('<div class="landing-section-title">Preguntas frecuentes</div>', unsafe_allow_html=True)
     _, col_faq, _ = st.columns([1, 3, 1])
