@@ -672,10 +672,31 @@ def modulo_opciones():
                                         'Europea: típico de índices (SPX), solo se ejerce al vencimiento.',
                                    key='opc_estilo_input')
 
+        vtos_reales = _opc_vencimientos_disponibles(ticker.strip().upper()) if ticker else []
+
         c3, c4, c5 = st.columns(3)
         with c3:
-            vto = st.date_input('Vencimiento', value=st.session_state['opc_vto'] or date.today(),
-                                 min_value=date.today(), key='opc_vto_input')
+            if vtos_reales:
+                usar_manual = st.toggle('Vencimiento manual (fuera de la cadena)', value=False,
+                                         key='opc_vto_manual_toggle')
+                if usar_manual:
+                    vto = st.date_input('Vencimiento', value=st.session_state['opc_vto'] or date.today(),
+                                         min_value=date.today(), key='opc_vto_input')
+                else:
+                    vtos_fmt = [datetime.strptime(v, '%Y-%m-%d').date() for v in vtos_reales]
+                    idx_def = 0
+                    if st.session_state['opc_vto'] in vtos_fmt:
+                        idx_def = vtos_fmt.index(st.session_state['opc_vto'])
+                    vto_str = st.selectbox('Vencimiento (cadena real de Yahoo Finance)', vtos_reales,
+                                            index=idx_def, key='opc_vto_select')
+                    vto = datetime.strptime(vto_str, '%Y-%m-%d').date()
+                    st.caption(f'📡 {len(vtos_reales)} vencimientos disponibles para {ticker.strip().upper()}.')
+            else:
+                vto = st.date_input('Vencimiento', value=st.session_state['opc_vto'] or date.today(),
+                                     min_value=date.today(), key='opc_vto_input')
+                if ticker:
+                    st.caption('⚠️ Yahoo Finance no tiene cadena de opciones publicada para este ticker '
+                               '(común en algunos ADRs/CEDEARs). Carga manual de precios.')
         with c4:
             r = st.number_input('Tasa de interés anual (decimal)', min_value=0.0, max_value=3.0,
                                  value=float(st.session_state['opc_r']), step=0.01, format='%.4f', key='opc_r_input')
