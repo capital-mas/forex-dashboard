@@ -504,9 +504,9 @@ def _render_trading(client, user_id: str) -> None:
     abiertas = fd.operaciones_abiertas(client, user_id)
     if not abiertas:
         st.caption("No hay operaciones abiertas.")
-        return
 
-    opciones = {
+    if abiertas:
+        opciones = {
         f"{o['simbolo']} | {o['direccion']} | {o['cantidad']} u. @ ${o['precio_entrada']:.4f} | {o['fecha_entrada']}": o
         for o in abiertas
     }
