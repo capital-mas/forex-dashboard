@@ -28,7 +28,7 @@ from modulo_estados_financieros import render_analisis_profundo, render_comparat
 from modulo_calendario import render_calendario_economico, render_noticias
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
-from modulo_pago_manual import pantalla_suscripcion, panel_admin_pagos
+from modulo_pago_manual import pantalla_suscripcion, panel_admin_pagos, es_admin_usuario
 
 
 ZONA_AR = ZoneInfo("America/Argentina/Buenos_Aires")
