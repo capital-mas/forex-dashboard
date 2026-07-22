@@ -785,6 +785,17 @@ def modulo_opciones():
     st.markdown('---')
     st.markdown('### 3️⃣ Cargá Strike, Bid y Ask de cada pata')
 
+    vencimiento_str = st.session_state['opc_vto'].strftime('%Y-%m-%d')
+    cadena_disponible = vencimiento_str in vtos_reales if vtos_reales else False
+    cadena = _opc_cadena_opciones(st.session_state['opc_ticker'].strip().upper(), vencimiento_str) \
+        if cadena_disponible else None
+
+    if cadena_disponible and cadena:
+        with st.expander('📡 Ver cadena completa de opciones (Yahoo Finance)', expanded=False):
+            render_tabla_cadena_opciones(cadena, S)
+    elif vtos_reales and not cadena_disponible:
+        st.caption('⚠️ El vencimiento elegido no está en la cadena real — carga manual para todas las patas.')
+
     patas_input = []
     cols_patas = st.columns(len(estrategia['patas']))
     strikes_previos = {}
@@ -793,15 +804,43 @@ def modulo_opciones():
             tipo_txt = 'Call' if spec['tipo'] == 'C' else 'Put'
             accion_txt = 'COMPRÁS' if spec['accion'] == 'comprar' else 'VENDÉS'
             st.markdown(f"**Pata {i+1}: {tipo_txt} — {accion_txt}**")
+
+            lado_df = None
+            if cadena and spec.get('mismo_strike_que') is None:
+                lado_df = cadena['calls'] if spec['tipo'] == 'C' else cadena['puts']
+
+            usar_cadena_pata = False
+            if lado_df is not None and not lado_df.empty:
+                usar_cadena_pata = st.checkbox(f'Usar cadena real', value=True, key=f'opc_usar_cadena_{i}')
+
             if spec.get('mismo_strike_que') is not None:
                 strike = strikes_previos[spec['mismo_strike_que']]
                 st.caption(f'Mismo strike que pata {spec["mismo_strike_que"]+1}: {strike:.2f}')
+                bid = st.number_input(f'Bid pata {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
+                ask = st.number_input(f'Ask pata {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
+
+            elif usar_cadena_pata:
+                strikes_disp = lado_df['strike'].tolist()
+                fila_atm = _opc_fila_strike_mas_cercano(lado_df, S)
+                idx_def = strikes_disp.index(float(fila_atm['strike'])) if fila_atm is not None else 0
+                strike = st.selectbox(f'Strike pata {i+1} (cadena real)', strikes_disp,
+                                       index=idx_def, key=f'opc_strike_cadena_{i}')
+                fila_sel = lado_df[lado_df['strike'] == strike].iloc[0]
+                bid_def = float(fila_sel['bid']) if pd.notna(fila_sel['bid']) else 0.0
+                ask_def = float(fila_sel['ask']) if pd.notna(fila_sel['ask']) else 0.0
+                iv_txt = f"{fila_sel['impliedVolatility']:.1%}" if pd.notna(fila_sel['impliedVolatility']) else 'N/D'
+                oi_txt = int(fila_sel['openInterest']) if pd.notna(fila_sel['openInterest']) else 0
+                st.caption(f"IV mercado: {iv_txt} · OI: {oi_txt} · {'🟢 ITM' if fila_sel['inTheMoney'] else '⚪ OTM'}")
+                bid = st.number_input(f'Bid pata {i+1}', min_value=0.0, value=bid_def, step=0.01, key=f'opc_bid_{i}')
+                ask = st.number_input(f'Ask pata {i+1}', min_value=0.0, value=ask_def, step=0.01, key=f'opc_ask_{i}')
+
             else:
                 strike = st.number_input(f'Strike pata {i+1}', min_value=0.01,
                                           value=round(S, 2), step=0.5, key=f'opc_strike_{i}')
+                bid = st.number_input(f'Bid pata {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
+                ask = st.number_input(f'Ask pata {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
+
             strikes_previos[i] = strike
-            bid = st.number_input(f'Bid pata {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
-            ask = st.number_input(f'Ask pata {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
             patas_input.append({'tipo': spec['tipo'], 'accion': spec['accion'], 'strike': strike,
                                  'bid': bid, 'ask': ask, 'precio_mercado': (bid + ask) / 2.0})
 
