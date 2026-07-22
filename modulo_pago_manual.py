@@ -30,7 +30,7 @@ PLANES = {
 def obtener_estado_perfil(supabase_client, user_id: str):
     res = (
         supabase_client.table("perfiles")
-        .select("plan, trial_termina_en, plan_vence_en")
+        .select("plan, trial_termina_en, plan_vence_en, es_admin")
         .eq("id", user_id)
         .single()
         .execute()
@@ -67,6 +67,12 @@ def _ya_tiene_solicitud_pendiente(supabase_client, user_id: str) -> bool:
 
 
 def pantalla_suscripcion(supabase_client, user_id: str, email: str):
+    perfil = obtener_estado_perfil(supabase_client, user_id)
+    plan = perfil["plan"]
+
+    # Los admins tienen acceso completo sin pasar por el chequeo de pago
+    if perfil.get("es_admin"):
+        return True
     """
     Bloque de UI: chequea trial / plan pago vigente. Si no hay acceso,
     deja elegir plan y método de pago, y notificar cuando ya transfirió.
