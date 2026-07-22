@@ -270,6 +270,7 @@ def _tabla_estado(df, max_periodos=6):
     d = d[d.columns[:max_periodos]]
     d.columns = [c.strftime('%Y-%m-%d') if hasattr(c, 'strftime') else str(c) for c in d.columns]
     _fmt_fn = lambda v: _fmt_big(v) if pd.notna(v) else '-'
+    # pandas >= 3.0 eliminó DataFrame.applymap en favor de DataFrame.map
     if hasattr(d, 'map'):
         return d.map(_fmt_fn)
     return d.applymap(_fmt_fn)
@@ -443,6 +444,7 @@ def interpretar_estados_detallado(df_res, df_bal, df_cf, es_trimestral=False):
     ebitda = _buscar_fila(df_res, ['EBITDA', 'Normalized EBITDA'])
 
     v_ventas = _serie_valores(ventas)
+    cagr_v = None
     if len(v_ventas) >= 2:
         cagr_v = _cagr(v_ventas, periodos_año)
         ult_var = (v_ventas[-1] - v_ventas[-2]) / abs(v_ventas[-2]) * 100 if len(v_ventas) >= 2 and v_ventas[-2] != 0 else None
@@ -609,6 +611,8 @@ def interpretar_estados_detallado(df_res, df_bal, df_cf, es_trimestral=False):
                     'texto': f'FCF/Ganancia Neta de {ratio_calidad:.2f}x: la ganancia contable no se está '
                               'traduciendo en caja en la misma proporción — revisar capital de trabajo o CAPEX elevado.'})
 
+    # NOTA: 'ventas' es una fila de pandas (Serie) o None -- nunca evaluar
+    # su "verdad" (and/or) directamente, siempre comparar con 'is not None'.
     if capex is not None and ventas is not None:
         v_capex = _serie_valores(capex)
         if v_capex and v_ventas and v_ventas[-1] not in (0, None):
@@ -629,9 +633,61 @@ def interpretar_estados(df_res, df_bal, df_cf):
     return ' '.join(s['texto'] for s in detalle[:6])
 
 
+# ==============================================================
+#  NUEVO — Render de señales filtradas por categoría, para usar
+#  dentro de cada pestaña (Resultados / Balance / Flujo de Fondos)
+# ==============================================================
+
+CATEGORIAS_POR_TAB = {
+    'resultados': ['📈 Crecimiento', '💰 Rentabilidad'],
+    'balance':    ['🔒 Solvencia', '💧 Liquidez'],
+    'flujo':      ['💵 Calidad de Caja'],
+}
+
+
+def _render_señales_categoria(señales, categorias, titulo_seccion, key_suffix=''):
+    """Muestra positivas / puntos de atención / info, filtrados a las categorías
+    que le correspondan a la pestaña actual (Resultados, Balance o Flujo)."""
+    filtradas = [s for s in (señales or []) if s['categoria'] in categorias]
+    if not filtradas:
+        st.caption(f'ℹ️ No hay suficiente historial para generar señales de {titulo_seccion.lower()}.')
+        return
+
+    ok_list   = [s for s in filtradas if s['tipo'] == 'OK']
+    alt_list  = [s for s in filtradas if s['tipo'] == 'ALERTA']
+    info_list = [s for s in filtradas if s['tipo'] == 'INFO']
+
+    st.markdown(
+        f'<div style="font-size:12px;font-weight:700;color:#e6edf3;margin:16px 0 8px 0">'
+        f'📋 Señales — {titulo_seccion}</div>',
+        unsafe_allow_html=True,
+    )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown('<div style="font-size:11px;font-weight:700;color:#3fb950;margin-bottom:4px">✅ POSITIVAS</div>', unsafe_allow_html=True)
+        if ok_list:
+            for s in ok_list:
+                st.markdown(f'<div style="font-size:11.5px;color:#3fb950;padding:4px 0;border-bottom:1px solid #21262d">{s["texto"]}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="font-size:11px;color:#6b7d9a">Sin señales positivas en esta sección.</div>', unsafe_allow_html=True)
+    with col_b:
+        st.markdown('<div style="font-size:11px;font-weight:700;color:#f85149;margin-bottom:4px">⚠️ PUNTOS DE ATENCIÓN</div>', unsafe_allow_html=True)
+        if alt_list:
+            for s in alt_list:
+                st.markdown(f'<div style="font-size:11.5px;color:#f85149;padding:4px 0;border-bottom:1px solid #21262d">{s["texto"]}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="font-size:11px;color:#6b7d9a">Sin alertas en esta sección.</div>', unsafe_allow_html=True)
+
+    if info_list:
+        with st.expander(f'ℹ️ Contexto adicional — {titulo_seccion}', expanded=False):
+            for s in info_list:
+                st.markdown(f'<div style="font-size:11.5px;color:#8b949e;padding:2px 0">{s["texto"]}</div>', unsafe_allow_html=True)
+
+
 def render_estados_financieros(ticker, key_suffix=''):
     """Bloque completo: selector Anual/Trimestral + interpretación +
-    3 tabs (Resultados, Balance, Flujo de Fondos) con gráfico y tabla detallada."""
+    3 tabs (Resultados, Balance, Flujo de Fondos) con gráfico, señales propias
+    de esa categoría y tabla detallada."""
     if _es_activo_sin_estados(ticker):
         return
     with st.spinner(f'Descargando estados financieros de {ticker}...'):
@@ -667,6 +723,13 @@ def render_estados_financieros(ticker, key_suffix=''):
     else:
         veredicto, v_color = 'PERFIL MIXTO', '#e3b341'
 
+    # Fila de referencia para contar cuántos períodos hay disponibles
+    # (evitar 'A or B' entre Series de pandas: se resuelve con un if explícito)
+    _fila_ref = _buscar_fila(df_res, ['Total Revenue', 'Revenue'])
+    if _fila_ref is None:
+        _fila_ref = _buscar_fila(df_bal, ['Total Assets'])
+    _n_periodos = len(_cols_cronologico(_fila_ref)) if _fila_ref is not None else 0
+
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown(
@@ -676,10 +739,6 @@ def render_estados_financieros(ticker, key_suffix=''):
             f'<div class="kpi-sub">✅ {n_ok} positivas · ⚠️ {n_alt} alertas</div></div>',
             unsafe_allow_html=True)
     with c2:
-        _fila_ref = _buscar_fila(df_res, ["Total Revenue", "Revenue"])
-        if _fila_ref is None:
-            _fila_ref = _buscar_fila(df_bal, ["Total Assets"])
-        _n_periodos = len(_cols_cronologico(_fila_ref)) if _fila_ref is not None else 0
         st.markdown(
             f'<div class="kpi-card"><div class="kpi-accent" style="background:#3a7bd5"></div>'
             f'<div class="kpi-label">Períodos analizados</div>'
@@ -699,7 +758,7 @@ def render_estados_financieros(ticker, key_suffix=''):
     if señales:
         col_ok, col_alt = st.columns(2)
         with col_ok:
-            st.markdown('<div style="font-size:11px;font-weight:700;color:#3fb950;margin-bottom:4px">✅ SEÑALES POSITIVAS</div>', unsafe_allow_html=True)
+            st.markdown('<div style="font-size:11px;font-weight:700;color:#3fb950;margin-bottom:4px">✅ SEÑALES POSITIVAS (todas las categorías)</div>', unsafe_allow_html=True)
             ok_list = [s for s in señales if s['tipo'] == 'OK']
             if ok_list:
                 for s in ok_list:
@@ -708,7 +767,7 @@ def render_estados_financieros(ticker, key_suffix=''):
             else:
                 st.markdown('<div style="font-size:11px;color:#6b7d9a">Sin señales positivas detectadas.</div>', unsafe_allow_html=True)
         with col_alt:
-            st.markdown('<div style="font-size:11px;font-weight:700;color:#f85149;margin-bottom:4px">⚠️ PUNTOS DE ATENCIÓN</div>', unsafe_allow_html=True)
+            st.markdown('<div style="font-size:11px;font-weight:700;color:#f85149;margin-bottom:4px">⚠️ PUNTOS DE ATENCIÓN (todas las categorías)</div>', unsafe_allow_html=True)
             alt_list = [s for s in señales if s['tipo'] == 'ALERTA']
             if alt_list:
                 for s in alt_list:
@@ -738,6 +797,8 @@ def render_estados_financieros(ticker, key_suffix=''):
             if fig_m:
                 st.plotly_chart(fig_m, use_container_width=True, config=PLOTLY_CONFIG,
                                  key=f'ef_mg_{ticker}_{suf}_{key_suffix}')
+            _render_señales_categoria(señales, CATEGORIAS_POR_TAB['resultados'],
+                                       'Estado de Resultados', key_suffix=f'{ticker}_{suf}_{key_suffix}')
             with st.expander('📋 Ver tabla completa de resultados'):
                 tabla = _tabla_estado(df_res)
                 if tabla is not None:
@@ -751,6 +812,8 @@ def render_estados_financieros(ticker, key_suffix=''):
             if fig_b:
                 st.plotly_chart(fig_b, use_container_width=True, config=PLOTLY_CONFIG,
                                  key=f'ef_bal_{ticker}_{suf}_{key_suffix}')
+            _render_señales_categoria(señales, CATEGORIAS_POR_TAB['balance'],
+                                       'Balance', key_suffix=f'{ticker}_{suf}_{key_suffix}')
             with st.expander('📋 Ver tabla completa de balance'):
                 tabla = _tabla_estado(df_bal)
                 if tabla is not None:
@@ -764,6 +827,8 @@ def render_estados_financieros(ticker, key_suffix=''):
             if fig_c:
                 st.plotly_chart(fig_c, use_container_width=True, config=PLOTLY_CONFIG,
                                  key=f'ef_cf_{ticker}_{suf}_{key_suffix}')
+            _render_señales_categoria(señales, CATEGORIAS_POR_TAB['flujo'],
+                                       'Flujo de Fondos', key_suffix=f'{ticker}_{suf}_{key_suffix}')
             with st.expander('📋 Ver tabla completa de flujo de fondos'):
                 tabla = _tabla_estado(df_cf)
                 if tabla is not None:
@@ -845,6 +910,55 @@ def tabla_comparativa_estados(tickers_tuple, periodo='Anual'):
     if not filas:
         return pd.DataFrame()
     return pd.DataFrame(filas)
+
+
+# ==============================================================
+#  NUEVO — comparación explícita empresa vs empresa por métrica,
+#  con ranking y conclusión propia para cada punto.
+# ==============================================================
+
+def _analizar_metrica_comparativa(df_cmp, col, direccion, etiqueta, es_pct=True):
+    """Genera un ranking y una conclusión de comparación directa entre TODAS
+    las empresas para una métrica puntual. direccion: 'mayor' o 'menor' indica
+    qué valor se considera mejor. Devuelve None si no hay al menos 2 empresas
+    con datos válidos para esa métrica (no se puede comparar)."""
+    if col not in df_cmp.columns:
+        return None
+    vals = pd.to_numeric(df_cmp[col], errors='coerce')
+    validos_idx = vals.dropna().index
+    if len(validos_idx) < 2:
+        return None
+
+    ascending = (direccion == 'menor')
+    orden = vals.loc[validos_idx].sort_values(ascending=ascending)
+    tickers_orden = df_cmp.loc[orden.index, 'Ticker'].tolist()
+    valores_orden = orden.tolist()
+
+    sufijo = '%' if es_pct else 'x'
+    fmt_val = (lambda v: f'{v:+.2f}{sufijo}') if es_pct else (lambda v: f'{v:.2f}{sufijo}')
+    ranking_txt = ' > '.join(f'{tk} ({fmt_val(v)})' for tk, v in zip(tickers_orden, valores_orden))
+
+    mejor_tk, mejor_val = tickers_orden[0], valores_orden[0]
+    peor_tk, peor_val = tickers_orden[-1], valores_orden[-1]
+    dif_extremos = abs(mejor_val - peor_val)
+
+    if len(tickers_orden) == 2:
+        conclusion = (
+            f'<b>{mejor_tk}</b> supera a <b>{peor_tk}</b> en {etiqueta}, '
+            f'con una diferencia de {dif_extremos:.2f}{sufijo} '
+            f'({fmt_val(mejor_val)} vs. {fmt_val(peor_val)}).'
+        )
+    else:
+        segundo_tk, segundo_val = tickers_orden[1], valores_orden[1]
+        dif_segundo = abs(mejor_val - segundo_val)
+        conclusion = (
+            f'<b>{mejor_tk}</b> lidera en {etiqueta} ({fmt_val(mejor_val)}), superando a '
+            f'<b>{segundo_tk}</b> (segundo mejor, {fmt_val(segundo_val)}) por {dif_segundo:.2f}{sufijo}, '
+            f'y a <b>{peor_tk}</b> (el más rezagado del grupo, {fmt_val(peor_val)}) '
+            f'por {dif_extremos:.2f}{sufijo}.'
+        )
+
+    return {'titulo': etiqueta.capitalize(), 'ranking': ranking_txt, 'conclusion': conclusion}
 
 
 def render_comparativo_estados(tickers, key_suffix=''):
@@ -933,30 +1047,37 @@ def render_comparativo_estados(tickers, key_suffix=''):
     )
     st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key=f'cmp_ef_cagr_margen_{key_suffix}')
 
-    # ── Lectura automática: líder por métrica ────────────────────────
-    lecturas = []
-    for col, direccion, etiqueta in [
-        ('CAGR Ingresos %', 'mayor', 'mejor crecimiento de ingresos'),
-        ('Margen Neto %', 'mayor', 'mejor margen neto'),
-        ('D/E', 'menor', 'balance más conservador (menor D/E)'),
-        ('FCF/Neto', 'mayor', 'mejor calidad de conversión de ganancias en caja'),
-    ]:
-        vals = pd.to_numeric(df_cmp[col], errors='coerce')
-        if vals.notna().sum() == 0:
-            continue
-        idx = vals.idxmin() if direccion == 'menor' else vals.idxmax()
-        tk_lider = df_cmp.loc[idx, 'Ticker']
-        val_lider = vals.loc[idx]
-        sufijo = '%' if '%' in col else 'x'
-        lecturas.append(f'<b>{tk_lider}</b> lidera en {etiqueta} ({val_lider:.2f}{sufijo}).')
+    # ── Liderazgo por métrica: comparación directa empresa vs empresa ─
+    metricas_comparar = [
+        ('CAGR Ingresos %',       'mayor', 'crecimiento de ingresos',                       True),
+        ('CAGR Ganancia Neta %',  'mayor', 'crecimiento de ganancia neta',                  True),
+        ('Margen EBITDA %',       'mayor', 'margen EBITDA',                                 True),
+        ('Margen Bruto %',        'mayor', 'margen bruto',                                  True),
+        ('Margen Neto %',         'mayor', 'margen neto',                                   True),
+        ('D/E',                   'menor', 'balance más conservador (menor apalancamiento)', False),
+        ('Current Ratio',         'mayor', 'liquidez de corto plazo',                       False),
+        ('FCF/Neto',              'mayor', 'calidad de conversión de ganancias en caja',    False),
+    ]
 
-    if lecturas:
-        st.markdown(f"""
-        <div class="interp-card">
-          <div class="interp-header">🏆 Liderazgo por métrica ({periodo})</div>
-          {'<br>'.join(lecturas)}
-        </div>
-        """, unsafe_allow_html=True)
+    bloques_comparacion = []
+    for col, direccion, etiqueta, es_pct in metricas_comparar:
+        resultado = _analizar_metrica_comparativa(df_cmp, col, direccion, etiqueta, es_pct)
+        if resultado:
+            bloques_comparacion.append(resultado)
+
+    st.markdown('### 🏆 Liderazgo por métrica — comparación directa')
+    if bloques_comparacion:
+        for b in bloques_comparacion:
+            st.markdown(f"""
+            <div class="interp-card">
+              <div class="interp-header">📊 {b['titulo']}</div>
+              <div style="font-size:11.5px;color:#8b949e;margin-bottom:6px">{b['ranking']}</div>
+              <div style="font-size:13px;color:#f5f7fa;line-height:1.6">{b['conclusion']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info('No hay suficientes datos comparables entre estos activos (se necesitan al menos 2 empresas '
+                'con la métrica calculada) para esta sección.')
 
 
 def render_analisis_profundo(ticker, key_suffix=''):
