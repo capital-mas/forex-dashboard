@@ -4306,7 +4306,12 @@ def modulo_optimizador():
             f"{nombre} — CAGR {_opt_pct(m['CAGR'])} · Sharpe {m['Sharpe']:.2f} {_opt_estrellas(m['Sharpe'])}",
             expanded=(nombre == 'Recomendada (Score Global)')
         ):
-            kpi_cards_4([...])
+            kpi_cards_4([
+                ('CAGR', _opt_pct(m['CAGR']), 'Retorno anualizado', C_MONSTER),
+                ('Sharpe', f"{m['Sharpe']:.2f}", _opt_estrellas(m['Sharpe']), score_color_hex(min(100, max(0, m['Sharpe']*33)))),
+                ('Volatilidad', _opt_pct(m['Volatilidad']), 'Anualizada', C_YELL),
+                ('Max Drawdown', _opt_pct(m['Max Drawdown']), f"Sortino {m['Sortino']:.2f}", C_RED),
+            ])
             pesos_orden = cart[tickers_opt].sort_values(ascending=False)
             txt_pesos = ' · '.join(f"{tk}: {p*100:.1f}%" for tk, p in pesos_orden.items() if p > 0.005)
             st.markdown(f"<div style='font-size:12px;color:#b0bcd0'>{txt_pesos}</div>", unsafe_allow_html=True)
