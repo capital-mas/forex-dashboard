@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from calendar import monthrange
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
@@ -17,6 +18,32 @@ try:
     import yfinance as yf
 except ImportError:  # yfinance es opcional si solo se usan módulos sin precios en vivo
     yf = None
+
+
+# ============================================================
+# CATEGORÍAS — fuente única de verdad, compartida por la capa
+# de datos (para agrupar/desglosar) y la UI (para los selects).
+# ============================================================
+
+CATEGORIAS_INGRESOS = [
+    "Salario", "Freelance", "Negocio", "Inversiones", "Alquiler", "Trading", "Regalo", "Otros",
+]
+
+SUBCATEGORIAS_GASTOS = {
+    "Vivienda": ["Alquiler", "Expensas", "Gas", "Luz", "Agua", "Internet", "Mantenimiento", "Otros"],
+    "Alimentación": ["Supermercado", "Verdulería", "Carnicería", "Delivery", "Restaurante", "Café", "Otros"],
+    "Transporte": ["Nafta", "SUBE/Colectivo", "Taxi/Uber", "Seguro Auto", "Peajes", "Otros"],
+    "Salud": ["Medicamentos", "Consulta médica", "Análisis", "Odontología", "Psicología", "Otros"],
+    "Educación": ["Colegio/Uni", "Cursos", "Libros", "Material", "Otros"],
+    "Entretenimiento": ["Streaming", "Cine/Teatro", "Salidas", "Viajes", "Deporte", "Otros"],
+    "Ropa": ["Ropa", "Calzado", "Accesorios", "Otros"],
+    "Tecnología": ["Celular", "Computadora", "Software", "Periféricos", "Otros"],
+    "Servicios": ["Teléfono", "Seguro", "Banco (comisiones)", "Otros"],
+    "Deudas": ["Cuota préstamo", "Tarjeta de crédito", "Hipoteca", "Otros"],
+    "Otros": ["Regalos", "Donaciones", "Sin categoría"],
+}
+
+CATEGORIAS_GASTOS = list(SUBCATEGORIAS_GASTOS.keys())
 
 
 # ============================================================
@@ -45,6 +72,26 @@ def _filtrar_mes(df: pd.DataFrame, col_fecha: str, mes: int, anio: int) -> pd.Da
         return df
     fechas = pd.to_datetime(df[col_fecha])
     return df[(fechas.dt.month == mes) & (fechas.dt.year == anio)]
+
+
+def _filtrar_rango(df: pd.DataFrame, col_fecha: str, inicio: date, fin: date) -> pd.DataFrame:
+    """Filtra un DataFrame a un rango de fechas [inicio, fin] inclusive."""
+    if df.empty:
+        return df
+    fechas = pd.to_datetime(df[col_fecha])
+    return df[(fechas >= pd.Timestamp(inicio)) & (fechas <= pd.Timestamp(fin))]
+
+
+def rango_dia(dia: date) -> tuple[date, date]:
+    return dia, dia
+
+
+def rango_mes(anio: int, mes: int) -> tuple[date, date]:
+    return date(anio, mes, 1), date(anio, mes, monthrange(anio, mes)[1])
+
+
+def rango_anio(anio: int) -> tuple[date, date]:
+    return date(anio, 1, 1), date(anio, 12, 31)
 
 
 def _mensaje_error_legible(e: Exception) -> str:
@@ -165,12 +212,31 @@ def eliminar_ingreso(client, user_id: str, id_: int) -> dict:
     return _eliminar_fila(client, "ingresos", user_id, id_)
 
 
+def resumen_ingresos_periodo(client, user_id: str, inicio: date, fin: date) -> float:
+    df = listar_ingresos(client, user_id)
+    df = _filtrar_rango(df, "fecha", inicio, fin)
+    return float(df["monto"].sum()) if not df.empty else 0.0
+
+
 def resumen_ingresos_mes(client, user_id: str, mes: int | None = None, anio: int | None = None) -> float:
     mes = mes or _mes_actual()[0]
     anio = anio or _mes_actual()[1]
+    inicio, fin = rango_mes(anio, mes)
+    return resumen_ingresos_periodo(client, user_id, inicio, fin)
+
+
+def ingresos_por_categoria(client, user_id: str, inicio: date, fin: date) -> pd.DataFrame:
+    """Desglose por TODAS las categorías de ingreso (incluye las que
+    tuvieron $0 en el período, para que el listado quede completo)."""
     df = listar_ingresos(client, user_id)
-    df = _filtrar_mes(df, "fecha", mes, anio)
-    return float(df["monto"].sum()) if not df.empty else 0.0
+    df = _filtrar_rango(df, "fecha", inicio, fin)
+    if df.empty:
+        montos = pd.Series(0.0, index=CATEGORIAS_INGRESOS, name="monto")
+    else:
+        montos = df.groupby("categoria")["monto"].sum()
+        montos = montos.reindex(CATEGORIAS_INGRESOS, fill_value=0.0)
+    montos.index.name = "categoria"
+    return montos.reset_index().sort_values("monto", ascending=False)
 
 
 # ============================================================
@@ -203,12 +269,43 @@ def eliminar_gasto(client, user_id: str, id_: int) -> dict:
     return _eliminar_fila(client, "gastos", user_id, id_)
 
 
+def resumen_gastos_periodo(client, user_id: str, inicio: date, fin: date) -> float:
+    df = listar_gastos(client, user_id)
+    df = _filtrar_rango(df, "fecha", inicio, fin)
+    return float(df["monto"].sum()) if not df.empty else 0.0
+
+
 def resumen_gastos_mes(client, user_id: str, mes: int | None = None, anio: int | None = None) -> float:
     mes = mes or _mes_actual()[0]
     anio = anio or _mes_actual()[1]
+    inicio, fin = rango_mes(anio, mes)
+    return resumen_gastos_periodo(client, user_id, inicio, fin)
+
+
+def gastos_por_categoria(client, user_id: str, inicio: date, fin: date) -> pd.DataFrame:
+    """Desglose por TODAS las categorías de gasto (incluye las que
+    tuvieron $0 en el período, para que el listado quede completo)."""
     df = listar_gastos(client, user_id)
-    df = _filtrar_mes(df, "fecha", mes, anio)
-    return float(df["monto"].sum()) if not df.empty else 0.0
+    df = _filtrar_rango(df, "fecha", inicio, fin)
+    if df.empty:
+        montos = pd.Series(0.0, index=CATEGORIAS_GASTOS, name="monto")
+    else:
+        montos = df.groupby("categoria")["monto"].sum()
+        montos = montos.reindex(CATEGORIAS_GASTOS, fill_value=0.0)
+    montos.index.name = "categoria"
+    return montos.reset_index().sort_values("monto", ascending=False)
+
+
+def balance_periodo(client, user_id: str, inicio: date, fin: date) -> float:
+    return resumen_ingresos_periodo(client, user_id, inicio, fin) - resumen_gastos_periodo(client, user_id, inicio, fin)
+
+
+def tasa_ahorro_periodo(client, user_id: str, inicio: date, fin: date) -> str:
+    ing = resumen_ingresos_periodo(client, user_id, inicio, fin)
+    if ing <= 0:
+        return "0%"
+    bal = balance_periodo(client, user_id, inicio, fin)
+    return f"{(bal / ing) * 100:.1f}%"
 
 
 def balance_mes(client, user_id: str) -> float:
@@ -760,14 +857,25 @@ def obtener_alertas(client, user_id: str) -> list[dict]:
     return alertas
 
 
-def obtener_dashboard_data(client, user_id: str) -> dict:
-    ingresos = resumen_ingresos_mes(client, user_id)
-    gastos = resumen_gastos_mes(client, user_id)
+def obtener_dashboard_data(client, user_id: str, inicio: date | None = None, fin: date | None = None) -> dict:
+    """Datos del dashboard para el período [inicio, fin]. Si no se pasa
+    período, usa el mes actual (comportamiento previo por defecto)."""
+    if inicio is None or fin is None:
+        mes, anio = _mes_actual()
+        inicio, fin = rango_mes(anio, mes)
+
+    ingresos = resumen_ingresos_periodo(client, user_id, inicio, fin)
+    gastos = resumen_gastos_periodo(client, user_id, inicio, fin)
+    balance = ingresos - gastos
+    tasa = f"{(balance / ingresos) * 100:.1f}%" if ingresos > 0 else "0%"
+
     return {
         "ingresos": ingresos,
         "gastos": gastos,
-        "balance": ingresos - gastos,
-        "tasa_ahorro": tasa_ahorro(client, user_id),
+        "balance": balance,
+        "tasa_ahorro": tasa,
+        "gastos_por_categoria": gastos_por_categoria(client, user_id, inicio, fin),
+        "ingresos_por_categoria": ingresos_por_categoria(client, user_id, inicio, fin),
         "deudas": resumen_deudas(client, user_id),
         "deuda_max": deuda_max(client, user_id),
         "proximo_vencimiento": proximo_vencimiento_deuda(client, user_id),
