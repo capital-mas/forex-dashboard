@@ -22,6 +22,18 @@ ACCENT = "#6CC24A"
 POS = "#00e676"
 NEG = "#ff5252"
 
+# Categorías: fuente única en finanzas_data.py, se reusan acá para
+# que los selects de carga y los desgloses del dashboard coincidan
+# siempre con la misma lista completa.
+CATEGORIAS_INGRESOS = fd.CATEGORIAS_INGRESOS
+SUBCATEGORIAS = fd.SUBCATEGORIAS_GASTOS
+CATEGORIAS_GASTOS = fd.CATEGORIAS_GASTOS
+
+MESES_NOMBRES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+]
+
 
 # ============================================================
 # HELPERS DE FORMATO
@@ -137,6 +149,42 @@ def _tabla_editable(
 # DASHBOARD
 # ============================================================
 
+def _selector_periodo() -> tuple[date, date, str]:
+    """Selector de período para el dashboard: Día, Mes o Año.
+    Devuelve (fecha_inicio, fecha_fin, etiqueta_legible)."""
+    hoy = date.today()
+
+    col_tipo, col_valor = st.columns([1, 2])
+    tipo = col_tipo.selectbox(
+        "Filtrar por", ["Mes", "Año", "Día"], key="fin_dash_periodo_tipo",
+    )
+
+    if tipo == "Día":
+        dia = col_valor.date_input("Día", value=hoy, key="fin_dash_periodo_dia")
+        inicio, fin = fd.rango_dia(dia)
+        return inicio, fin, dia.strftime("%d/%m/%Y")
+
+    if tipo == "Año":
+        anio = col_valor.number_input(
+            "Año", min_value=2000, max_value=2100, value=hoy.year, step=1, key="fin_dash_periodo_anio",
+        )
+        inicio, fin = fd.rango_anio(int(anio))
+        return inicio, fin, str(int(anio))
+
+    # Mes (default)
+    with col_valor:
+        c1, c2 = st.columns(2)
+        mes_nombre = c1.selectbox(
+            "Mes", MESES_NOMBRES, index=hoy.month - 1, key="fin_dash_periodo_mes",
+        )
+        anio = c2.number_input(
+            "Año", min_value=2000, max_value=2100, value=hoy.year, step=1, key="fin_dash_periodo_mes_anio",
+        )
+    mes_num = MESES_NOMBRES.index(mes_nombre) + 1
+    inicio, fin = fd.rango_mes(int(anio), mes_num)
+    return inicio, fin, f"{mes_nombre} {int(anio)}"
+
+
 def _render_alertas(client, user_id: str) -> None:
     """Panel de alertas: deudas en mora/por vencer, inversiones por vencer,
     trading que tocó SL/TP, y objetivos atrasados/vencidos/cumplidos."""
@@ -160,21 +208,48 @@ def _render_alertas(client, user_id: str) -> None:
                 renderers[nivel]("\n\n".join(mensajes))
 
 
+def _render_categoria_breakdown(titulo: str, df: pd.DataFrame) -> None:
+    """Muestra el desglose por categoría (todas las categorías, incluso
+    en $0) como gráfico de barras + tabla."""
+    st.markdown(f"##### {titulo}")
+    if df.empty or df["monto"].sum() == 0:
+        st.caption("Sin movimientos en el período seleccionado.")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        return
+    st.bar_chart(df.set_index("categoria")["monto"])
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 def _render_dashboard(client, user_id: str) -> None:
     st.subheader("📊 Dashboard Financiero")
-    if st.button("🔄 Actualizar dashboard", key="fin_dash_refresh"):
-        st.cache_data.clear()
+
+    col_periodo, col_refresh = st.columns([4, 1])
+    with col_periodo:
+        inicio, fin, etiqueta = _selector_periodo()
+    with col_refresh:
+        st.write("")
+        st.write("")
+        if st.button("🔄 Actualizar", key="fin_dash_refresh"):
+            st.cache_data.clear()
+
+    st.caption(f"Mostrando datos de: **{etiqueta}**")
 
     _render_alertas(client, user_id)
 
-    d = fd.obtener_dashboard_data(client, user_id)
+    d = fd.obtener_dashboard_data(client, user_id, inicio, fin)
 
-    st.markdown("##### 💵 Finanzas del mes")
+    st.markdown("##### 💵 Finanzas del período")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Ingresos", _money(d["ingresos"]))
     c2.metric("Gastos", _money(d["gastos"]))
     c3.metric("Balance", _money(d["balance"]), delta=_money(d["balance"]))
     c4.metric("Tasa de ahorro", d["tasa_ahorro"])
+
+    col1, col2 = st.columns(2)
+    with col1:
+        _render_categoria_breakdown("📤 Gastos por categoría", d["gastos_por_categoria"])
+    with col2:
+        _render_categoria_breakdown("📥 Ingresos por categoría", d["ingresos_por_categoria"])
 
     st.markdown("##### 💳 Deudas")
     c1, c2, c3 = st.columns(3)
@@ -218,10 +293,7 @@ def _render_ingresos(client, user_id: str) -> None:
         fecha = st.date_input("Fecha *", value=date.today())
         descripcion = st.text_input("Descripción *", placeholder="Ej: Salario mayo…")
         col1, col2 = st.columns(2)
-        categoria = col1.selectbox(
-            "Categoría *",
-            ["", "Salario", "Freelance", "Negocio", "Inversiones", "Alquiler", "Trading", "Regalo", "Otros"],
-        )
+        categoria = col1.selectbox("Categoría *", [""] + CATEGORIAS_INGRESOS)
         cuenta = col2.selectbox("Cuenta", ["Efectivo", "Banco", "Mercado Pago", "Crypto", "Otro"])
         monto = st.number_input("Monto *", min_value=0.0, step=0.01)
         notas = st.text_area("Notas")
@@ -251,24 +323,9 @@ def _render_ingresos(client, user_id: str) -> None:
 # GASTOS
 # ============================================================
 
-SUBCATEGORIAS = {
-    "Vivienda": ["Alquiler", "Expensas", "Gas", "Luz", "Agua", "Internet", "Mantenimiento", "Otros"],
-    "Alimentación": ["Supermercado", "Verdulería", "Carnicería", "Delivery", "Restaurante", "Café", "Otros"],
-    "Transporte": ["Nafta", "SUBE/Colectivo", "Taxi/Uber", "Seguro Auto", "Peajes", "Otros"],
-    "Salud": ["Medicamentos", "Consulta médica", "Análisis", "Odontología", "Psicología", "Otros"],
-    "Educación": ["Colegio/Uni", "Cursos", "Libros", "Material", "Otros"],
-    "Entretenimiento": ["Streaming", "Cine/Teatro", "Salidas", "Viajes", "Deporte", "Otros"],
-    "Ropa": ["Ropa", "Calzado", "Accesorios", "Otros"],
-    "Tecnología": ["Celular", "Computadora", "Software", "Periféricos", "Otros"],
-    "Servicios": ["Teléfono", "Seguro", "Banco (comisiones)", "Otros"],
-    "Deudas": ["Cuota préstamo", "Tarjeta de crédito", "Hipoteca", "Otros"],
-    "Otros": ["Regalos", "Donaciones", "Sin categoría"],
-}
-
-
 def _render_gastos(client, user_id: str) -> None:
     st.subheader("📤 Registrar Gasto")
-    categoria = st.selectbox("Categoría *", [""] + list(SUBCATEGORIAS.keys()), key="gas_cat")
+    categoria = st.selectbox("Categoría *", [""] + CATEGORIAS_GASTOS, key="gas_cat")
     with st.form("form_gasto", clear_on_submit=True):
         fecha = st.date_input("Fecha *", value=date.today())
         descripcion = st.text_input("Descripción *", placeholder="Ej: Supermercado…")
