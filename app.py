@@ -4245,59 +4245,91 @@ def modulo_optimizador():
     if correr:
         st.session_state['opt_resultado_ok'] = True
 
-    tickers_opt = sorted(set(st.session_state['opt_tickers']))
-    if benchmark_opt in tickers_opt:
-        st.warning(f"'{benchmark_opt}' está tanto entre los activos como en el benchmark elegido. Se lo deja en ambos lados, tenelo en cuenta al leer los resultados.")
+    tickers_opt_base = sorted(set(st.session_state['opt_tickers']))
+    firma_opt = (tuple(tickers_opt_base), benchmark_opt, sim_opt, fecha_inicio_opt)
 
-    with st.spinner('Descargando precios históricos...'):
-        universo_opt = tuple(sorted(set(tickers_opt) | {benchmark_opt}))
-        precios_opt = _opt_descargar_precios(universo_opt, fecha_inicio_opt)
+    necesita_recalcular = (
+        correr
+        or st.session_state.get('opt_firma') != firma_opt
+        or 'opt_cache' not in st.session_state
+    )
 
-    if precios_opt is None or precios_opt.empty:
-        st.error('No se pudieron descargar precios. Revisá que los tickers y el benchmark sean válidos en Yahoo Finance.')
-        return
+    if necesita_recalcular:
+        tickers_opt = tickers_opt_base
+        if benchmark_opt in tickers_opt:
+            st.warning(f"'{benchmark_opt}' está tanto entre los activos como en el benchmark elegido. Se lo deja en ambos lados, tenelo en cuenta al leer los resultados.")
 
-    faltantes = [t for t in universo_opt if t not in precios_opt.columns]
-    if faltantes:
-        st.warning(f"No se encontraron datos para: {', '.join(faltantes)}. Se excluyen del análisis.")
-        tickers_opt = [t for t in tickers_opt if t not in faltantes]
-        if benchmark_opt in faltantes or len(tickers_opt) < 2:
-            st.error('No hay suficientes activos válidos para continuar.')
+        with st.spinner('Descargando precios históricos...'):
+            universo_opt = tuple(sorted(set(tickers_opt) | {benchmark_opt}))
+            precios_opt = _opt_descargar_precios(universo_opt, fecha_inicio_opt)
+
+        if precios_opt is None or precios_opt.empty:
+            st.error('No se pudieron descargar precios. Revisá que los tickers y el benchmark sean válidos en Yahoo Finance.')
             return
 
-    retornos_opt = precios_opt[tickers_opt].pct_change().dropna()
-    ret_bench_opt = precios_opt[benchmark_opt].pct_change().dropna()
-    fechas_comunes = retornos_opt.index.intersection(ret_bench_opt.index)
-    retornos_opt = retornos_opt.loc[fechas_comunes]
-    ret_bench_opt = ret_bench_opt.loc[fechas_comunes]
+        faltantes = [t for t in universo_opt if t not in precios_opt.columns]
+        if faltantes:
+            st.warning(f"No se encontraron datos para: {', '.join(faltantes)}. Se excluyen del análisis.")
+            tickers_opt = [t for t in tickers_opt if t not in faltantes]
+            if benchmark_opt in faltantes or len(tickers_opt) < 2:
+                st.error('No hay suficientes activos válidos para continuar.')
+                return
 
-    if len(retornos_opt) < 100:
-        st.error('Muy pocas ruedas de historial común entre los activos y el benchmark. Probá una fecha de inicio más reciente o cambiá algún ticker.')
-        return
+        retornos_opt = precios_opt[tickers_opt].pct_change().dropna()
+        ret_bench_opt = precios_opt[benchmark_opt].pct_change().dropna()
+        fechas_comunes = retornos_opt.index.intersection(ret_bench_opt.index)
+        retornos_opt = retornos_opt.loc[fechas_comunes]
+        ret_bench_opt = ret_bench_opt.loc[fechas_comunes]
+
+        if len(retornos_opt) < 100:
+            st.error('Muy pocas ruedas de historial común entre los activos y el benchmark. Probá una fecha de inicio más reciente o cambiá algún ticker.')
+            return
+
+        with st.spinner(f'Simulando {sim_opt:,} carteras...'):
+            df_sim = _opt_simular_carteras(retornos_opt, tickers_opt, sim_opt)
+
+        candidatas_idx = {
+            'Más Rentable': df_sim['CAGR'].idxmax(),
+            'Mejor Sharpe': df_sim['Sharpe'].idxmax(),
+            'Mejor Sortino': df_sim['Sortino'].idxmax(),
+            'Menor Drawdown': df_sim['Max Drawdown'].idxmax(),  # el menos negativo
+            'Recomendada (Score Global)': df_sim['Score Global'].idxmax(),
+        }
+        carteras_candidatas = {nombre: df_sim.loc[idx] for nombre, idx in candidatas_idx.items()}
+
+        series_ret, metricas_cart = {}, {}
+        for nombre, cart in carteras_candidatas.items():
+            pesos_arr = cart[tickers_opt].values.astype(float)
+            ret_serie = retornos_opt[tickers_opt] @ pesos_arr
+            series_ret[nombre] = ret_serie
+            metricas_cart[nombre] = _opt_metricas_completas(ret_serie, ret_bench_opt)
+        series_ret[benchmark_opt] = ret_bench_opt
+        metricas_cart[benchmark_opt] = _opt_metricas_completas(ret_bench_opt, None)
+        nombres_col = list(carteras_candidatas.keys()) + [benchmark_opt]
+
+        # Guardamos todo lo pesado en session_state para no recalcular
+        # en cada rerun que dispara la tabla de "Mi Cartera Actual"
+        # (por ejemplo, al escribir un monto en una celda).
+        st.session_state['opt_firma'] = firma_opt
+        st.session_state['opt_cache'] = dict(
+            tickers_opt=tickers_opt, benchmark_opt=benchmark_opt,
+            retornos_opt=retornos_opt, ret_bench_opt=ret_bench_opt,
+            df_sim=df_sim, carteras_candidatas=carteras_candidatas,
+            series_ret=series_ret, metricas_cart=metricas_cart,
+            nombres_col=nombres_col,
+        )
+    else:
+        cache = st.session_state['opt_cache']
+        tickers_opt = cache['tickers_opt']
+        retornos_opt = cache['retornos_opt']
+        ret_bench_opt = cache['ret_bench_opt']
+        df_sim = cache['df_sim']
+        carteras_candidatas = cache['carteras_candidatas']
+        series_ret = cache['series_ret']
+        metricas_cart = cache['metricas_cart']
+        nombres_col = cache['nombres_col']
 
     st.caption(f"📅 Período: {retornos_opt.index[0].date()} → {retornos_opt.index[-1].date()} · {len(retornos_opt)} ruedas")
-
-    with st.spinner(f'Simulando {sim_opt:,} carteras...'):
-        df_sim = _opt_simular_carteras(retornos_opt, tickers_opt, sim_opt)
-
-    candidatas_idx = {
-        'Más Rentable': df_sim['CAGR'].idxmax(),
-        'Mejor Sharpe': df_sim['Sharpe'].idxmax(),
-        'Mejor Sortino': df_sim['Sortino'].idxmax(),
-        'Menor Drawdown': df_sim['Max Drawdown'].idxmax(),  # el menos negativo
-        'Recomendada (Score Global)': df_sim['Score Global'].idxmax(),
-    }
-    carteras_candidatas = {nombre: df_sim.loc[idx] for nombre, idx in candidatas_idx.items()}
-
-    series_ret, metricas_cart = {}, {}
-    for nombre, cart in carteras_candidatas.items():
-        pesos_arr = cart[tickers_opt].values.astype(float)
-        ret_serie = retornos_opt[tickers_opt] @ pesos_arr
-        series_ret[nombre] = ret_serie
-        metricas_cart[nombre] = _opt_metricas_completas(ret_serie, ret_bench_opt)
-    series_ret[benchmark_opt] = ret_bench_opt
-    metricas_cart[benchmark_opt] = _opt_metricas_completas(ret_bench_opt, None)
-    nombres_col = list(carteras_candidatas.keys()) + [benchmark_opt]
 
     st.markdown('### 🏆 Carteras candidatas')
     for nombre, cart in carteras_candidatas.items():
