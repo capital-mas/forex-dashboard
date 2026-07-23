@@ -28,14 +28,37 @@ PLANES = {
 
 
 def obtener_estado_perfil(supabase_client, user_id: str):
+    """
+    Devuelve el perfil del usuario, o None si todavía no tiene fila en
+    'perfiles' (cuenta nueva sin inicializar, o cuenta deshabilitada a
+    la que le borraste la fila). Usa maybe_single() en vez de single()
+    para NO explotar con APIError cuando hay 0 filas.
+    """
     res = (
         supabase_client.table("perfiles")
         .select("plan, trial_termina_en, plan_vence_en, es_admin")
         .eq("id", user_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    return res.data
+    return res.data  # puede ser None
+
+
+def _crear_perfil_default(supabase_client, user_id: str, email: str):
+    """
+    Crea una fila default (en trial) para un usuario que todavía no
+    tiene perfil. Ajustá los días de trial a gusto.
+    """
+    trial_termina = datetime.now(timezone.utc) + timedelta(days=3)
+    nuevo = {
+        "id": user_id,
+        "email": email,
+        "plan": "trial",
+        "trial_termina_en": trial_termina.isoformat(),
+        "es_admin": False,
+    }
+    supabase_client.table("perfiles").upsert(nuevo).execute()
+    return nuevo
 
 
 def _dias_trial_restantes(trial_termina_en: str) -> int:
@@ -67,19 +90,27 @@ def _ya_tiene_solicitud_pendiente(supabase_client, user_id: str) -> bool:
 
 
 def pantalla_suscripcion(supabase_client, user_id: str, email: str):
-    perfil = obtener_estado_perfil(supabase_client, user_id)
-    plan = perfil["plan"]
-
-    # Los admins tienen acceso completo sin pasar por el chequeo de pago
-    if perfil.get("es_admin"):
-        return True
     """
     Bloque de UI: chequea trial / plan pago vigente. Si no hay acceso,
     deja elegir plan y método de pago, y notificar cuando ya transfirió.
     Devuelve True si el usuario tiene acceso.
     """
     perfil = obtener_estado_perfil(supabase_client, user_id)
+
+    # Cuenta sin fila en 'perfiles' todavía (nueva, o le borraste la fila
+    # para "deshabilitarla"). Antes esto rompía la app con APIError.
+    if perfil is None:
+        st.warning("⛔ Tu cuenta no tiene un perfil activo. Contactá al administrador para habilitar el acceso.")
+        # Si preferís que se autogenere un perfil en trial en vez de bloquear,
+        # descomentá estas dos líneas y borrá el st.warning + return False de arriba:
+        # perfil = _crear_perfil_default(supabase_client, user_id, email)
+        return False
+
     plan = perfil["plan"]
+
+    # Los admins tienen acceso completo sin pasar por el chequeo de pago
+    if perfil.get("es_admin"):
+        return True
 
     if plan == "pro":
         dias_restantes = _dias_plan_restantes(perfil.get("plan_vence_en"))
@@ -191,19 +222,23 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
 
     return False
 
+
 def es_admin_usuario(supabase_client, user_id: str) -> bool:
     """Versión pública de _es_admin, para poder chequear el rol desde app.py
     antes de decidir si mostrar el ítem de menú del panel de pagos."""
     return _es_admin(supabase_client, user_id)
-    
+
+
 def _es_admin(supabase_client, user_id: str) -> bool:
     res = (
         supabase_client.table("perfiles")
         .select("es_admin")
         .eq("id", user_id)
-        .single()
+        .maybe_single()
         .execute()
     )
+    if not res.data:
+        return False
     return bool(res.data.get("es_admin"))
 
 
