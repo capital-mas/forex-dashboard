@@ -36,7 +36,7 @@ def obtener_estado_perfil(supabase_client, user_id: str):
     """
     res = (
         supabase_client.table("perfiles")
-        .select("plan, trial_termina_en, plan_vence_en, es_admin")
+        .select("plan, trial_termina_en, plan_vence_en, es_admin, habilitado")
         .eq("id", user_id)
         .maybe_single()
         .execute()
@@ -111,6 +111,11 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
     # Los admins tienen acceso completo sin pasar por el chequeo de pago
     if perfil.get("es_admin"):
         return True
+
+    # Cuenta deshabilitada a mano desde el panel de admin
+    if not perfil.get("habilitado", True):
+        st.error("⛔ Tu cuenta fue deshabilitada. Contactá al administrador si creés que es un error.")
+        return False
 
     if plan == "pro":
         dias_restantes = _dias_plan_restantes(perfil.get("plan_vence_en"))
@@ -240,6 +245,60 @@ def _es_admin(supabase_client, user_id: str) -> bool:
     if not res.data:
         return False
     return bool(res.data.get("es_admin"))
+
+
+def _listar_cuentas(supabase_client):
+    res = (
+        supabase_client.table("perfiles")
+        .select("id, email, plan, es_admin, habilitado")
+        .order("email")
+        .execute()
+    )
+    return res.data
+
+
+def _toggle_habilitado(supabase_client, cuenta_id: str, nuevo_estado: bool):
+    supabase_client.table("perfiles").update(
+        {"habilitado": nuevo_estado}
+    ).eq("id", cuenta_id).execute()
+
+
+def panel_gestion_cuentas(supabase_client, user_id: str):
+    """
+    Panel visible SOLO para admins. Lista todas las cuentas y permite
+    habilitar/deshabilitar el acceso de cualquiera con un click, sin
+    entrar a Supabase.
+    """
+    if not _es_admin(supabase_client, user_id):
+        return
+
+    with st.expander("👥 Gestión de cuentas", expanded=False):
+        cuentas = _listar_cuentas(supabase_client)
+
+        if not cuentas:
+            st.caption("No hay cuentas cargadas.")
+            return
+
+        filtro = st.text_input("Buscar por email", key="filtro_cuentas", placeholder="Ej: juan@")
+        if filtro:
+            cuentas = [c for c in cuentas if filtro.lower() in (c.get("email") or "").lower()]
+
+        for cuenta in cuentas:
+            with st.container(border=True):
+                c1, c2, c3 = st.columns([3, 1, 1])
+                with c1:
+                    estado = "🟢 Habilitada" if cuenta.get("habilitado", True) else "🔴 Deshabilitada"
+                    admin_tag = " · 🛠️ admin" if cuenta.get("es_admin") else ""
+                    st.markdown(f"**{cuenta['email']}** — plan: {cuenta.get('plan', '-')} — {estado}{admin_tag}")
+                with c2:
+                    if cuenta.get("habilitado", True):
+                        if st.button("🚫 Deshabilitar", key=f"deshab_{cuenta['id']}", use_container_width=True):
+                            _toggle_habilitado(supabase_client, cuenta["id"], False)
+                            st.rerun()
+                    else:
+                        if st.button("✅ Habilitar", key=f"habil_{cuenta['id']}", use_container_width=True):
+                            _toggle_habilitado(supabase_client, cuenta["id"], True)
+                            st.rerun()
 
 
 def panel_admin_pagos(supabase_client, user_id: str):
