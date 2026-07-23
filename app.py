@@ -4306,15 +4306,161 @@ def modulo_optimizador():
             f"{nombre} — CAGR {_opt_pct(m['CAGR'])} · Sharpe {m['Sharpe']:.2f} {_opt_estrellas(m['Sharpe'])}",
             expanded=(nombre == 'Recomendada (Score Global)')
         ):
-            kpi_cards_4([
-                ('CAGR', _opt_pct(m['CAGR']), 'Anualizado', '#3fb950'),
-                ('Volatilidad', _opt_pct(m['Volatilidad']), 'Anual', '#e3b341'),
-                ('Sharpe', f"{m['Sharpe']:.2f}", _opt_estrellas(m['Sharpe']), '#3a7bd5'),
-                ('Max Drawdown', _opt_pct(m['Max Drawdown']), f"Recup: {m['Tiempo Recuperacion']} ruedas", '#f85149'),
-            ])
+            kpi_cards_4([...])
             pesos_orden = cart[tickers_opt].sort_values(ascending=False)
             txt_pesos = ' · '.join(f"{tk}: {p*100:.1f}%" for tk, p in pesos_orden.items() if p > 0.005)
             st.markdown(f"<div style='font-size:12px;color:#b0bcd0'>{txt_pesos}</div>", unsafe_allow_html=True)
+
+    # ── MI CARTERA ACTUAL: comparar y rebalancear ──────────────────────
+    st.markdown('---')
+    st.markdown('### 💼 Mi Cartera Actual — Comparar y Rebalancear')
+    st.caption('Cargá cuánto tenés invertido hoy en cada activo (de los que están en "Activos en la cartera" arriba) y compará contra las carteras candidatas para ver qué comprar o vender.')
+
+    if 'reb_montos' not in st.session_state or set(st.session_state['reb_montos'].get('Ticker', [])) != set(tickers_opt):
+        st.session_state['reb_montos'] = pd.DataFrame({
+            'Ticker': tickers_opt,
+            'Monto actual (USD)': [0.0] * len(tickers_opt),
+        })
+
+    df_reb_input = st.data_editor(
+        st.session_state['reb_montos'],
+        key='reb_editor',
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            'Ticker': st.column_config.TextColumn(disabled=True),
+            'Monto actual (USD)': st.column_config.NumberColumn(min_value=0.0, step=50.0, format='%.2f'),
+        },
+    )
+    st.session_state['reb_montos'] = df_reb_input
+
+    cash_actual = st.number_input(
+        'Efectivo sin invertir (USD, opcional)', min_value=0.0, value=0.0, step=50.0, key='reb_cash'
+    )
+
+    cartera_comparar = st.selectbox(
+        'Comparar contra', list(carteras_candidatas.keys()),
+        index=list(carteras_candidatas.keys()).index('Recomendada (Score Global)'),
+        key='reb_cartera_sel',
+    )
+
+    total_actual = float(df_reb_input['Monto actual (USD)'].sum()) + cash_actual
+
+    if st.button('▶ Comparar y calcular rebalanceo', key='reb_run'):
+        st.session_state['reb_run_flag'] = True
+
+    if st.session_state.get('reb_run_flag'):
+        if total_actual <= 0:
+            st.warning('Cargá al menos un monto mayor a 0 en algún activo para poder comparar.')
+        else:
+            pesos_actuales = {}
+            for _, fila in df_reb_input.iterrows():
+                pesos_actuales[fila['Ticker']] = float(fila['Monto actual (USD)']) / total_actual
+
+            pesos_objetivo = carteras_candidatas[cartera_comparar][tickers_opt].to_dict()
+
+            filas_reb = []
+            for tk in tickers_opt:
+                p_act = pesos_actuales.get(tk, 0.0)
+                p_obj = pesos_objetivo.get(tk, 0.0)
+                diff = p_obj - p_act
+                monto_operar = diff * total_actual
+                if abs(diff) < 0.005:
+                    accion = '⏸️ Mantener'
+                elif diff > 0:
+                    accion = '🟢 Comprar'
+                else:
+                    accion = '🔴 Vender'
+                filas_reb.append({
+                    'Ticker': tk,
+                    'Peso Actual %': round(p_act * 100, 2),
+                    'Peso Objetivo %': round(p_obj * 100, 2),
+                    'Diferencia %': round(diff * 100, 2),
+                    'Acción': accion,
+                    'Monto a operar (USD)': round(monto_operar, 2),
+                })
+            if cash_actual > 0:
+                filas_reb.append({
+                    'Ticker': 'CASH',
+                    'Peso Actual %': round(cash_actual / total_actual * 100, 2),
+                    'Peso Objetivo %': 0.0,
+                    'Diferencia %': round(-cash_actual / total_actual * 100, 2),
+                    'Acción': '🔴 Invertir',
+                    'Monto a operar (USD)': round(-cash_actual, 2),
+                })
+
+            df_reb = pd.DataFrame(filas_reb).sort_values(
+                'Monto a operar (USD)', key=lambda s: s.abs(), ascending=False
+            )
+
+            def _color_accion_reb(val):
+                if 'Comprar' in val or 'Invertir' in val: return 'color:#3fb950;font-weight:700'
+                if 'Vender' in val: return 'color:#f85149;font-weight:700'
+                return 'color:#8b949e'
+
+            _map_reb = 'map' if hasattr(df_reb.style, 'map') else 'applymap'
+            styled_reb = (df_reb.style
+                .pipe(lambda s: getattr(s, _map_reb)(_color_accion_reb, subset=['Acción']))
+                .format({'Peso Actual %': '{:.2f}%', 'Peso Objetivo %': '{:.2f}%',
+                          'Diferencia %': '{:+.2f}%', 'Monto a operar (USD)': '{:+,.2f}'})
+                .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+                .set_table_styles([
+                    {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                        ('font-weight', '700'), ('text-align', 'center'),
+                        ('border-bottom', '2px solid #bc8cff'), ('font-size', '11px')]},
+                    {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+                ]))
+            st.dataframe(styled_reb, use_container_width=True, height=min(500, len(df_reb) * 38 + 45))
+
+            fig_reb = go.Figure()
+            fig_reb.add_trace(go.Bar(x=df_reb['Ticker'], y=df_reb['Peso Actual %'], name='Actual', marker_color=C_ACENT))
+            fig_reb.add_trace(go.Bar(x=df_reb['Ticker'], y=df_reb['Peso Objetivo %'], name=cartera_comparar, marker_color=C_MONSTER))
+            fig_reb.update_layout(
+                **PLOTLY_LAYOUT_BASE, barmode='group',
+                title=dict(text='Peso actual vs. objetivo por activo', font=dict(color=C_TEXT, size=13)),
+                xaxis=dict(gridcolor=C_GRID, tickangle=-45), yaxis=dict(gridcolor=C_GRID, title='% de cartera'),
+                height=380, legend=dict(orientation='h', y=1.1), margin=dict(l=10, r=10, t=45, b=80),
+            )
+            st.plotly_chart(fig_reb, use_container_width=True, config=PLOTLY_CONFIG, key='reb_fig_pesos')
+
+            pesos_arr_actual = np.array([pesos_actuales.get(tk, 0.0) for tk in tickers_opt])
+            if pesos_arr_actual.sum() > 0:
+                ret_actual = retornos_opt[tickers_opt] @ pesos_arr_actual
+                m_actual = _opt_metricas_completas(ret_actual, ret_bench_opt)
+                m_obj = metricas_cart[cartera_comparar]
+
+                st.markdown('#### 📐 Tu cartera actual vs. la recomendada')
+                kc1, kc2, kc3, kc4 = st.columns(4)
+                with kc1:
+                    st.metric('CAGR actual', _opt_pct(m_actual['CAGR']),
+                              f"{_opt_pct(m_obj['CAGR'] - m_actual['CAGR'])} vs objetivo")
+                with kc2:
+                    st.metric('Sharpe actual', f"{m_actual['Sharpe']:.2f}",
+                              f"{m_obj['Sharpe'] - m_actual['Sharpe']:+.2f} vs objetivo")
+                with kc3:
+                    st.metric('Volatilidad actual', _opt_pct(m_actual['Volatilidad']),
+                              f"{_opt_pct(m_obj['Volatilidad'] - m_actual['Volatilidad'])} vs objetivo")
+                with kc4:
+                    st.metric('Max Drawdown actual', _opt_pct(m_actual['Max Drawdown']),
+                              f"{_opt_pct(m_obj['Max Drawdown'] - m_actual['Max Drawdown'])} vs objetivo")
+
+                if m_obj['Sharpe'] > m_actual['Sharpe'] + 0.05:
+                    veredicto_reb = (f"La cartera **{cartera_comparar}** mejora tu Sharpe actual — "
+                                      "el rebalanceo sugerido tiene sentido según los datos históricos.")
+                elif m_obj['Sharpe'] < m_actual['Sharpe'] - 0.05:
+                    veredicto_reb = ("Tu cartera actual ya tiene mejor Sharpe histórico que la sugerida — "
+                                      "el rebalanceo no aportaría demasiado según estos datos.")
+                else:
+                    veredicto_reb = "Tu cartera actual y la recomendada tienen un perfil riesgo-retorno histórico similar."
+                st.markdown(f"""
+                <div class="interp-card">
+                  <div class="interp-header">🧭 Lectura del rebalanceo</div>
+                  {veredicto_reb}<br>
+                  <span style="color:#6b7d9a;font-size:11px">Basado en el mismo período histórico usado en la simulación — no es asesoramiento financiero.</span>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.info('No se pudo calcular el rendimiento histórico de tu cartera actual (sin pesos válidos).')
 
     st.markdown('---')
     st.markdown(f'### 📋 Tabla comparativa vs {benchmark_opt}')
