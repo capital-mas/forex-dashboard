@@ -6443,6 +6443,7 @@ elif MODULO == 'finanzas':
 elif MODULO == 'admin_pagos':
     if ES_ADMIN:
         panel_admin_pagos(supabase, USER_ID)
+        panel_gestion_cuentas(supabase, USER_ID)
     else:
         st.warning('No tenés permisos de administrador.')
 
