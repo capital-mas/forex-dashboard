@@ -340,10 +340,18 @@ def panel_admin_pagos(supabase_client, user_id: str):
                     if st.button("✅ Aprobar", key=f"aprobar_{sol['id']}", use_container_width=True):
                         dias = sol.get("dias", 30)
                         vence = datetime.now(timezone.utc) + timedelta(days=dias)
-                        supabase_client.table("perfiles").update({
+                        # upsert (no update): si la cuenta no tenía fila en 'perfiles'
+                        # (usuario nuevo sin perfil creado) un update() no hace nada y
+                        # el pago quedaba "aprobado" sin activar el acceso en silencio.
+                        # También reactivamos 'habilitado' por si la cuenta estaba
+                        # deshabilitada antes de pagar.
+                        supabase_client.table("perfiles").upsert({
+                            "id": sol["user_id"],
+                            "email": sol.get("email"),
                             "plan": "pro",
                             "plan_vence_en": vence.isoformat(),
-                        }).eq("id", sol["user_id"]).execute()
+                            "habilitado": True,
+                        }).execute()
                         supabase_client.table("solicitudes_pago").update({
                             "estado": "aprobado",
                             "revisado_en": datetime.now(timezone.utc).isoformat(),
