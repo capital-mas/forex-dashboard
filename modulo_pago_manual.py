@@ -1,9 +1,21 @@
 """
 modulo_pago_manual.py
 Pago manual de Capital+ — el usuario elige plan y método (Mercado Pago o
-cripto), transfiere, y vos aprobás el acceso a mano (o desde el panel admin).
+cripto), transfiere, y vos aprobás el acceso a mano desde el panel admin.
+
+IMPORTANTE: todas las funciones de este módulo reciben `data_client`,
+que es el cliente de Supabase creado con la service_role key (ver
+clientes_supabase.py). Ese cliente bypassea RLS por completo, así que
+no hace falta ninguna política de RLS en 'perfiles' ni 'solicitudes_pago'
+para que esto funcione. La seguridad la maneja el propio código Python
+(chequeando es_admin antes de dejar hacer nada administrativo).
 
 secrets.toml necesario:
+
+[supabase]
+url = "..."
+anon_key = "..."
+service_role_key = "..."
 
 [pago_manual]
 alias = "tu.alias.mp"
@@ -27,46 +39,20 @@ PLANES = {
 }
 
 
-def obtener_estado_perfil(supabase_client, user_id: str):
+def obtener_estado_perfil(data_client, user_id: str):
     """
     Devuelve el perfil del usuario, o None si todavía no tiene fila en
-    'perfiles' (cuenta nueva sin inicializar, o cuenta deshabilitada a
-    la que le borraste la fila). Usa maybe_single() en vez de single()
-    para NO explotar con APIError cuando hay 0 filas.
+    'perfiles' (raro, porque el trigger de auth.users lo crea solo,
+    pero por las dudas). Usa maybe_single() para no explotar si hay 0 filas.
     """
     res = (
-        supabase_client.table("perfiles")
-        .select("plan, trial_termina_en, plan_vence_en, es_admin, habilitado")
+        data_client.table("perfiles")
+        .select("plan, plan_vence_en, es_admin, habilitado")
         .eq("id", user_id)
         .maybe_single()
         .execute()
     )
-    return res.data  # puede ser None
-
-
-def _crear_perfil_default(supabase_client, user_id: str, email: str):
-    """
-    Crea una fila default (en trial) para un usuario que todavía no
-    tiene perfil. Ajustá los días de trial a gusto.
-    """
-    trial_termina = datetime.now(timezone.utc) + timedelta(days=3)
-    nuevo = {
-        "id": user_id,
-        "email": email,
-        "plan": "trial",
-        "trial_termina_en": trial_termina.isoformat(),
-        "es_admin": False,
-    }
-    supabase_client.table("perfiles").upsert(nuevo).execute()
-    return nuevo
-
-
-def _dias_trial_restantes(trial_termina_en: str) -> int:
-    if not trial_termina_en:
-        return 0
-    venc = datetime.fromisoformat(trial_termina_en.replace("Z", "+00:00"))
-    restante = venc - datetime.now(timezone.utc)
-    return max(0, restante.days)
+    return res.data
 
 
 def _dias_plan_restantes(plan_vence_en: str):
@@ -77,9 +63,9 @@ def _dias_plan_restantes(plan_vence_en: str):
     return max(0, restante.days)
 
 
-def _ya_tiene_solicitud_pendiente(supabase_client, user_id: str) -> bool:
+def _ya_tiene_solicitud_pendiente(data_client, user_id: str) -> bool:
     res = (
-        supabase_client.table("solicitudes_pago")
+        data_client.table("solicitudes_pago")
         .select("id")
         .eq("user_id", user_id)
         .eq("estado", "pendiente")
@@ -89,35 +75,23 @@ def _ya_tiene_solicitud_pendiente(supabase_client, user_id: str) -> bool:
     return len(res.data) > 0
 
 
-def pantalla_suscripcion(supabase_client, user_id: str, email: str):
+def pantalla_suscripcion(data_client, user_id: str, email: str):
     """
-    Bloque de UI: chequea trial / plan pago vigente. Si no hay acceso,
-    deja elegir plan y método de pago, y notificar cuando ya transfirió.
+    Bloque de UI: chequea si la cuenta está habilitada. Si no, deja
+    elegir plan y método de pago, y notificar cuando ya transfirió.
     Devuelve True si el usuario tiene acceso.
     """
-    perfil = obtener_estado_perfil(supabase_client, user_id)
+    perfil = obtener_estado_perfil(data_client, user_id)
 
-    # Cuenta sin fila en 'perfiles' todavía (nueva, o le borraste la fila
-    # para "deshabilitarla"). Antes esto rompía la app con APIError.
     if perfil is None:
-        st.warning("⛔ Tu cuenta no tiene un perfil activo. Contactá al administrador para habilitar el acceso.")
-        # Si preferís que se autogenere un perfil en trial en vez de bloquear,
-        # descomentá estas dos líneas y borrá el st.warning + return False de arriba:
-        # perfil = _crear_perfil_default(supabase_client, user_id, email)
+        st.error("⛔ No se encontró tu perfil. Contactá al administrador.")
         return False
 
-    plan = perfil["plan"]
-
-    # Los admins tienen acceso completo sin pasar por el chequeo de pago
+    # Los admins tienen acceso completo siempre
     if perfil.get("es_admin"):
         return True
 
-    # Cuenta deshabilitada a mano desde el panel de admin
-    if not perfil.get("habilitado", True):
-        st.error("⛔ Tu cuenta fue deshabilitada. Contactá al administrador si creés que es un error.")
-        return False
-
-    if plan == "pro":
+    if perfil.get("habilitado"):
         dias_restantes = _dias_plan_restantes(perfil.get("plan_vence_en"))
         if dias_restantes is None:
             st.success("✅ Tu acceso a Capital+ está activo.")
@@ -125,19 +99,12 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
         if dias_restantes > 0:
             st.success(f"✅ Tu acceso a Capital+ está activo — vence en {dias_restantes} día(s).")
             return True
+        # se venció el plan: lo tratamos como deshabilitado más abajo
         st.warning("Tu acceso pago venció.")
-
-    elif plan == "trial":
-        restantes = _dias_trial_restantes(perfil["trial_termina_en"])
-        if restantes > 0:
-            st.info(f"🎁 Estás en período de prueba — te quedan {restantes} día(s).")
-            st.progress(min(1.0, restantes / 3))
-            return True
-        st.warning("Tu período de prueba terminó.")
 
     st.markdown("### Suscribite a Capital+")
 
-    if _ya_tiene_solicitud_pendiente(supabase_client, user_id):
+    if _ya_tiene_solicitud_pendiente(data_client, user_id):
         st.info("🕐 Tu pago está en revisión. Se activa en poco tiempo una vez confirmado.")
         if st.button("🔄 Verificar de nuevo"):
             st.rerun()
@@ -176,7 +143,7 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
             placeholder="Ej: comprobante #123456",
         )
         if st.button("✅ Ya transferí por Mercado Pago", type="primary", use_container_width=True, key="btn_notif_mp"):
-            supabase_client.table("solicitudes_pago").insert({
+            data_client.table("solicitudes_pago").insert({
                 "user_id": user_id,
                 "email": email,
                 "monto": datos_plan["precio_ars"],
@@ -211,7 +178,7 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
             placeholder="Ej: hash 0xabc123...",
         )
         if st.button("✅ Ya transferí en cripto", type="primary", use_container_width=True, key="btn_notif_cripto"):
-            supabase_client.table("solicitudes_pago").insert({
+            data_client.table("solicitudes_pago").insert({
                 "user_id": user_id,
                 "email": email,
                 "monto": datos_plan["precio_usd"],
@@ -228,15 +195,11 @@ def pantalla_suscripcion(supabase_client, user_id: str, email: str):
     return False
 
 
-def es_admin_usuario(supabase_client, user_id: str) -> bool:
-    """Versión pública de _es_admin, para poder chequear el rol desde app.py
-    antes de decidir si mostrar el ítem de menú del panel de pagos."""
-    return _es_admin(supabase_client, user_id)
-
-
-def _es_admin(supabase_client, user_id: str) -> bool:
+def es_admin_usuario(data_client, user_id: str) -> bool:
+    """Chequea el rol admin, para poder mostrar u ocultar el ítem
+    de menú del panel de pagos desde app.py."""
     res = (
-        supabase_client.table("perfiles")
+        data_client.table("perfiles")
         .select("es_admin")
         .eq("id", user_id)
         .maybe_single()
@@ -247,9 +210,9 @@ def _es_admin(supabase_client, user_id: str) -> bool:
     return bool(res.data.get("es_admin"))
 
 
-def _listar_cuentas(supabase_client):
+def _listar_cuentas(data_client):
     res = (
-        supabase_client.table("perfiles")
+        data_client.table("perfiles")
         .select("id, email, plan, es_admin, habilitado")
         .order("email")
         .execute()
@@ -257,23 +220,20 @@ def _listar_cuentas(supabase_client):
     return res.data
 
 
-def _toggle_habilitado(supabase_client, cuenta_id: str, nuevo_estado: bool):
-    supabase_client.table("perfiles").update(
+def _toggle_habilitado(data_client, cuenta_id: str, nuevo_estado: bool):
+    data_client.table("perfiles").update(
         {"habilitado": nuevo_estado}
     ).eq("id", cuenta_id).execute()
 
 
-def panel_gestion_cuentas(supabase_client, user_id: str):
-    """
-    Panel visible SOLO para admins. Lista todas las cuentas y permite
-    habilitar/deshabilitar el acceso de cualquiera con un click, sin
-    entrar a Supabase.
-    """
-    if not _es_admin(supabase_client, user_id):
+def panel_gestion_cuentas(data_client, user_id: str):
+    """Panel visible SOLO para admins. Lista todas las cuentas y permite
+    habilitar/deshabilitar el acceso de cualquiera con un click."""
+    if not es_admin_usuario(data_client, user_id):
         return
 
     with st.expander("👥 Gestión de cuentas", expanded=False):
-        cuentas = _listar_cuentas(supabase_client)
+        cuentas = _listar_cuentas(data_client)
 
         if not cuentas:
             st.caption("No hay cuentas cargadas.")
@@ -287,32 +247,29 @@ def panel_gestion_cuentas(supabase_client, user_id: str):
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 1, 1])
                 with c1:
-                    estado = "🟢 Habilitada" if cuenta.get("habilitado", True) else "🔴 Deshabilitada"
+                    estado = "🟢 Habilitada" if cuenta.get("habilitado") else "🔴 Deshabilitada"
                     admin_tag = " · 🛠️ admin" if cuenta.get("es_admin") else ""
                     st.markdown(f"**{cuenta['email']}** — plan: {cuenta.get('plan', '-')} — {estado}{admin_tag}")
                 with c2:
-                    if cuenta.get("habilitado", True):
+                    if cuenta.get("habilitado"):
                         if st.button("🚫 Deshabilitar", key=f"deshab_{cuenta['id']}", use_container_width=True):
-                            _toggle_habilitado(supabase_client, cuenta["id"], False)
+                            _toggle_habilitado(data_client, cuenta["id"], False)
                             st.rerun()
                     else:
                         if st.button("✅ Habilitar", key=f"habil_{cuenta['id']}", use_container_width=True):
-                            _toggle_habilitado(supabase_client, cuenta["id"], True)
+                            _toggle_habilitado(data_client, cuenta["id"], True)
                             st.rerun()
 
 
-def panel_admin_pagos(supabase_client, user_id: str):
-    """
-    Panel visible SOLO para cuentas marcadas como es_admin = true.
-    Muestra las solicitudes de pago pendientes (con plan, días y método)
-    con botones para aprobar o rechazar, sin tocar SQL.
-    """
-    if not _es_admin(supabase_client, user_id):
+def panel_admin_pagos(data_client, user_id: str):
+    """Panel visible SOLO para cuentas es_admin = true. Muestra las
+    solicitudes de pago pendientes con botones para aprobar o rechazar."""
+    if not es_admin_usuario(data_client, user_id):
         return
 
     with st.expander("🛠️ Panel de aprobación de pagos", expanded=False):
         res = (
-            supabase_client.table("solicitudes_pago")
+            data_client.table("solicitudes_pago")
             .select("id, user_id, email, monto, moneda, nota, creado_en, plan_nombre, dias, metodo")
             .eq("estado", "pendiente")
             .order("creado_en", desc=True)
@@ -340,19 +297,12 @@ def panel_admin_pagos(supabase_client, user_id: str):
                     if st.button("✅ Aprobar", key=f"aprobar_{sol['id']}", use_container_width=True):
                         dias = sol.get("dias", 30)
                         vence = datetime.now(timezone.utc) + timedelta(days=dias)
-                        # upsert (no update): si la cuenta no tenía fila en 'perfiles'
-                        # (usuario nuevo sin perfil creado) un update() no hace nada y
-                        # el pago quedaba "aprobado" sin activar el acceso en silencio.
-                        # También reactivamos 'habilitado' por si la cuenta estaba
-                        # deshabilitada antes de pagar.
-                        supabase_client.table("perfiles").upsert({
-                            "id": sol["user_id"],
-                            "email": sol.get("email"),
+                        data_client.table("perfiles").update({
                             "plan": "pro",
                             "plan_vence_en": vence.isoformat(),
                             "habilitado": True,
-                        }).execute()
-                        supabase_client.table("solicitudes_pago").update({
+                        }).eq("id", sol["user_id"]).execute()
+                        data_client.table("solicitudes_pago").update({
                             "estado": "aprobado",
                             "revisado_en": datetime.now(timezone.utc).isoformat(),
                         }).eq("id", sol["id"]).execute()
@@ -360,7 +310,7 @@ def panel_admin_pagos(supabase_client, user_id: str):
                         st.rerun()
                 with c2:
                     if st.button("❌ Rechazar", key=f"rechazar_{sol['id']}", use_container_width=True):
-                        supabase_client.table("solicitudes_pago").update({
+                        data_client.table("solicitudes_pago").update({
                             "estado": "rechazado",
                             "revisado_en": datetime.now(timezone.utc).isoformat(),
                         }).eq("id", sol["id"]).execute()
