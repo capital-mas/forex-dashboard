@@ -354,7 +354,14 @@ def init_supabase():
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
 
-supabase = init_supabase()
+@st.cache_resource
+def init_supabase_admin():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_SERVICE_KEY"]
+    return create_client(url, key)
+
+auth_client = init_supabase()      # solo para login/registro/sesión (anon key)
+supabase = init_supabase_admin()   # todo lo demás (service_role, bypassea RLS)
 
 
 def pantalla_landing():
