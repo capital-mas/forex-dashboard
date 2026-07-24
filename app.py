@@ -458,7 +458,7 @@ def pantalla_landing():
                     st.error("Completá email y contraseña.")
                 else:
                     try:
-                        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                        res = auth_client.auth.sign_in_with_password({"email": email, "password": password})
                         st.session_state["usuario"] = res.user
                         cookies.set("sb_refresh_token", res.session.refresh_token)
                         st.rerun()
@@ -479,7 +479,7 @@ def pantalla_landing():
                     st.error("La contraseña debe tener al menos 6 caracteres.")
                 else:
                     try:
-                        supabase.auth.sign_up({"email": email_r, "password": password_r})
+                        auth_client.auth.sign_up({"email": email_r, "password": password_r})
                         st.success("¡Cuenta creada! Revisá tu email para confirmarla y después iniciá sesión.")
                     except Exception as e:
                         st.error(f"Error al registrarse: {e}")
@@ -676,7 +676,7 @@ def restaurar_sesion():
     refresh_token = cookies.get("sb_refresh_token")
     if refresh_token:
         try:
-            res = supabase.auth.refresh_session(refresh_token)
+            res = auth_client.auth.refresh_session(refresh_token)
             st.session_state["usuario"] = res.user
             cookies.set("sb_refresh_token", res.session.refresh_token)
         except Exception:
@@ -6142,7 +6142,7 @@ with st.container(key='nav_pills_wrap'):
                     unsafe_allow_html=True
                 )
                 if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout'):
-                    supabase.auth.sign_out()
+                    auth_client.auth.sign_out()
                     cookies.remove("sb_refresh_token")
                     del st.session_state["usuario"]
                     st.rerun()
@@ -6287,7 +6287,7 @@ with st.container(key='nav_mobile_wrap'):
             _refrescar_cotizaciones()
     with _mc4:
         if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout_mobile'):
-            supabase.auth.sign_out()
+            auth_client.auth.sign_out()
             cookies.remove("sb_refresh_token")
             del st.session_state["usuario"]
             st.rerun()
