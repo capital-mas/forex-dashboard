@@ -6042,7 +6042,7 @@ st.markdown(f"""
       <div class="topbar-brand-icon">📡</div>
       <div>
         <div class="topbar-brand-name">Capital<span>+</span></div>
-        <div class="topbar-brand-sub">Yahoo Finance · Caché 30min</div>
+        <div class="topbar-brand-sub">Actualización · 30min</div>
       </div>
     </div>
     <div style="flex:1"></div>
