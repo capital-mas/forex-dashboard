@@ -87,7 +87,10 @@ st.markdown("""
     font-size: 14px;
   }
   .stApp { background: #07090f; }
-  .block-container { padding: 0 2rem 2rem 2rem !important; max-width: 1400px; }
+  .block-container { 
+    padding: 24px 2rem 2rem 2rem !important;   /* ← antes tenía 0 arriba */
+    max-width: 1400px; 
+  }
 
 
   /* ── Top nav bar ── */
