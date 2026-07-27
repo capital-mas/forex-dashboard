@@ -221,6 +221,7 @@ div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button 
   /* ── Page header ── */
   .page-header {
     padding: 28px 0 20px 0;
+    margin-top: 20px;   /* ← esto es lo que agrega el aire de arriba */
     border-bottom: 1px solid #21262d;
     margin-bottom: 24px;
     text-align: center;
