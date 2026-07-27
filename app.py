@@ -6034,7 +6034,6 @@ st.markdown(f"""
       <span style="width:7px;height:7px;border-radius:50%;background:{_h_color.get(HORIZONTE,'#3a7bd5')};display:inline-block"></span>
       <span style="font-size:11px;font-weight:600;color:{_h_color.get(HORIZONTE,'#3a7bd5')}">{_h_label.get(HORIZONTE,'')}</span>
     </div>
-
     <div class="topbar-brand-center">
       <div class="topbar-brand-icon">📡</div>
       <div>
@@ -6042,7 +6041,6 @@ st.markdown(f"""
         <div class="topbar-brand-sub">Yahoo Finance · Caché 30min</div>
       </div>
     </div>
-
     <div style="flex:1"></div>
     <div class="topbar-time">🕐 {_now_str}</div>
   </div>
