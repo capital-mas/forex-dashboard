@@ -92,14 +92,15 @@ st.markdown("""
 
   /* ── Top nav bar ── */
   .topbar-wrap {
-    position: sticky; top: 5rem; z-index: 998;
-    background: rgba(7,9,15,0.96);
+    position: sticky; top: 0; z-index: 998;
+    background: #07090f;
     border-bottom: 1px solid #21262d;
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     padding: 0;
-}
+  }
   .topbar-inner {
+    position: relative;
     display: flex; align-items: center;
     padding: 0 24px; height: 58px; gap: 0;
   }
@@ -113,12 +114,19 @@ st.markdown("""
     display: flex; align-items: center; justify-content: center;
     font-size: 14px;
   }
+  .topbar-brand-center {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    display: flex; align-items: center; gap: 10px;
+    pointer-events: none;
+  }
   .topbar-brand-name {
-    font-size: 13px; font-weight: 700; color: #e6edf3;
+    font-size: 16px; font-weight: 800; color: #e6edf3;
     letter-spacing: -0.3px; line-height: 1.2;
   }
+  .topbar-brand-name span { color: #6CC24A; }
   .topbar-brand-sub {
-    font-size: 12px; color: #f5f7fa; letter-spacing: 0.2px;
+    font-size: 11px; color: #6b7d9a; letter-spacing: 0.2px;
   }
   .topbar-divider { width: 1px; height: 22px; background: #21262d; margin: 0 20px; flex-shrink: 0; }
   .topbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
@@ -6022,19 +6030,19 @@ MODULO    = st.session_state['nav_modulo']
 st.markdown(f"""
 <div class="topbar-wrap">
   <div class="topbar-inner">
-    <div class="topbar-brand">
-      <div class="topbar-brand-icon">📡</div>
-      <div>
-        <div class="topbar-brand-name">Analizador Cuantitativo</div>
-        <div class="topbar-brand-sub">Yahoo Finance · Caché 30min</div>
-      </div>
-    </div>
-    <div class="topbar-divider"></div>
-    <div style="display:flex;align-items:center;gap:6px;margin-right:16px;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
       <span style="width:7px;height:7px;border-radius:50%;background:{_h_color.get(HORIZONTE,'#3a7bd5')};display:inline-block"></span>
       <span style="font-size:11px;font-weight:600;color:{_h_color.get(HORIZONTE,'#3a7bd5')}">{_h_label.get(HORIZONTE,'')}</span>
     </div>
-    <div class="topbar-divider"></div>
+
+    <div class="topbar-brand-center">
+      <div class="topbar-brand-icon">📡</div>
+      <div>
+        <div class="topbar-brand-name">Capital<span>+</span></div>
+        <div class="topbar-brand-sub">Yahoo Finance · Caché 30min</div>
+      </div>
+    </div>
+
     <div style="flex:1"></div>
     <div class="topbar-time">🕐 {_now_str}</div>
   </div>
