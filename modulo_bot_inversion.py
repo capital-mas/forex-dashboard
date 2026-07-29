@@ -565,7 +565,29 @@ def modulo_bot_inversion(
         return
     if analizar_bot:
         st.session_state['bot_run_flag'] = True
-
+    with st.expander('💰 Configuración de capital y decisión', expanded=False):
+        cfg_bot_user = _bot_obtener_config(supabase, user_id)
+        cb1, cb2, cb3 = st.columns(3)
+        with cb1:
+            capital_inicial_bot = st.number_input(
+                'Capital inicial (USD)', min_value=100.0,
+                value=float(cfg_bot_user['capital_inicial']), step=500.0, key='bot_capital_inicial',
+            )
+        with cb2:
+            pct_por_operacion_bot = st.number_input(
+                '% de capital por operación', min_value=1.0, max_value=100.0,
+                value=float(cfg_bot_user['pct_por_operacion']), step=1.0, key='bot_pct_operacion',
+            )
+        with cb3:
+            minutos_limite_bot = st.number_input(
+                'Minutos límite para decidir', min_value=1, max_value=120,
+                value=int(cfg_bot_user['minutos_limite_decision']), step=1, key='bot_minutos_limite',
+                help='Pasado este tiempo sin Aceptar/Rechazar, la señal expira y no cuenta para el rendimiento.',
+            )
+        if st.button('💾 Guardar configuración', key='bot_guardar_config'):
+            _bot_guardar_config(supabase, user_id, capital_inicial_bot, pct_por_operacion_bot, minutos_limite_bot)
+            st.success('Configuración guardada.')
+            
     if not tickers_bot:
         st.warning('Seleccioná al menos un activo.')
         return
