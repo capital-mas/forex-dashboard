@@ -6493,6 +6493,8 @@ elif MODULO == 'bot_inversion':
         PLOTLY_CONFIG=PLOTLY_CONFIG,
         universo_opciones=UNIVERSO_OPCIONES,
         universo_mapa=UNIVERSO_MAPA,
+        supabase=supabase,
+        user_id=USER_ID,
     )
     
 elif MODULO == 'admin_pagos':
