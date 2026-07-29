@@ -85,7 +85,7 @@ def _barras_por_año(interval):
 def _calcular_bot_dataframe(close, high, low, cfg,
                              antic_min, antic_max, zscore_periodo, zscore_umbral,
                              rsi_nivel_venta, rsi_nivel_compra, divergencia_lookback,
-                             stop_pct_100, stop_pct_50):
+                             stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50):
     """Cálculo puro (sin caché): es liviano — unas pocas rolling windows sobre
     unos cientos de velas — así que no vale la pena cachearlo, y cachearlo mal
     (por ticker) es justamente lo que rompía el análisis multi-activo."""
@@ -162,6 +162,13 @@ def _calcular_bot_dataframe(close, high, low, cfg,
         [df['pct_venta'] == 100, df['pct_venta'] == 50, df['pct_compra'] == 100, df['pct_compra'] == 50],
         [df['precio'] * (1 + stop_pct_100 / 100), df['precio'] * (1 + stop_pct_50 / 100),
          df['precio'] * (1 - stop_pct_100 / 100), df['precio'] * (1 - stop_pct_50 / 100)],
+        default=np.nan,
+    )
+    # Take Profit: dirección opuesta al stop (venta → objetivo abajo, compra → objetivo arriba)
+    df['tp'] = np.select(
+        [df['pct_venta'] == 100, df['pct_venta'] == 50, df['pct_compra'] == 100, df['pct_compra'] == 50],
+        [df['precio'] * (1 - tp_pct_100 / 100), df['precio'] * (1 - tp_pct_50 / 100),
+         df['precio'] * (1 + tp_pct_100 / 100), df['precio'] * (1 + tp_pct_50 / 100)],
         default=np.nan,
     )
     return df
@@ -322,6 +329,11 @@ def modulo_bot_inversion(
             stop_pct_100 = st.number_input('Stop % (señal 100%)', value=1.5, key='bot_stop_100')
         with p6:
             stop_pct_50 = st.number_input('Stop % (señal 50%)', value=3.0, key='bot_stop_50')
+        p7, p8 = st.columns(2)
+        with p7:
+            tp_pct_100 = st.number_input('Take Profit % (señal 100%)', value=3.0, min_value=0.1, key='bot_tp_100')
+        with p8:
+            tp_pct_50 = st.number_input('Take Profit % (señal 50%)', value=5.0, min_value=0.1, key='bot_tp_50')
 
     analizar_bot = st.button('▶ Analizar', key='bot_run', type='primary')
     if not analizar_bot and not st.session_state.get('bot_run_flag'):
@@ -356,8 +368,11 @@ def modulo_bot_inversion(
             cl, hi, lo, cfg,
             antic_min, antic_max, int(zscore_periodo), zscore_umbral,
             rsi_nivel_venta, rsi_nivel_compra, int(divergencia_lookback),
-            stop_pct_100, stop_pct_50,
+            stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50,
         )
+        hi_r = hi.reindex(df_bot.index)
+        lo_r = lo.reindex(df_bot.index)
+        df_bot = _evaluar_resultados_señales(df_bot, hi_r, lo_r)
         resultados_bot[tk] = df_bot
 
     if fallidos:
@@ -378,11 +393,21 @@ def modulo_bot_inversion(
     filas_resumen = []
     for tk, df_bot in resultados_bot.items():
         u = df_bot.iloc[-1]
+        disparos_tk = df_bot[df_bot['disparo'] & (df_bot['estado'] != '—')]
+        n_ok = int((disparos_tk['resultado'] == '✅').sum())
+        n_bad = int((disparos_tk['resultado'] == '❌').sum())
+        n_open = int((disparos_tk['resultado'] == '⏳').sum())
+        cerradas = n_ok + n_bad
+        winrate = f'{n_ok / cerradas * 100:.0f}%' if cerradas > 0 else 'N/D'
         filas_resumen.append({
             'Ticker': tk, 'Señal': u['estado'], 'Precio': fmt_precio(u['precio']),
+            'Última vela': df_bot.index[-1].strftime('%H:%M:%S'),
             'Sent': round(u['sc_sent'], 1), 'Antic': round(u['sc_antic'], 1),
             'Z-Score': round(u['zscore'], 2), 'RSI': round(u['rsi'], 1),
             'Stop': fmt_precio(u['stop']) if not pd.isna(u['stop']) else '—',
+            'TP': fmt_precio(u['tp']) if not pd.isna(u['tp']) else '—',
+            'Track record': f'{n_ok}✅ {n_bad}❌ {n_open}⏳',
+            'Win rate': winrate,
         })
     df_resumen = pd.DataFrame(filas_resumen)
     orden_prioridad = {'VENTA 100%': 0, 'COMPRA 100%': 0, 'VENTA 50%': 1, 'COMPRA 50%': 1, '—': 2}
@@ -439,8 +464,12 @@ def modulo_bot_inversion(
         df_hist_show = pd.DataFrame({
             'Fecha/Hora': df_hist.index.strftime('%Y-%m-%d %H:%M'),
             'Señal': df_hist['estado'],
+            'Resultado': df_hist['resultado'],
             'Precio': df_hist['precio'].apply(fmt_precio),
             'Stop': df_hist['stop'].apply(fmt_precio),
+            'TP': df_hist['tp'].apply(fmt_precio),
+            'Precio Result.': df_hist['precio_resultado'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+            'Velas hasta result.': df_hist['barras_hasta_resultado'].apply(lambda v: int(v) if pd.notna(v) else '—'),
             'Sent': df_hist['sc_sent'].round(1),
             'Antic': df_hist['sc_antic'].round(1),
             'Z-Score': df_hist['zscore'].round(2),
@@ -448,6 +477,7 @@ def modulo_bot_inversion(
         })
         styled_hist = (df_hist_show.style
             .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
+            .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Resultado']))
             .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
             .set_table_styles([
                 {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
@@ -460,13 +490,11 @@ def modulo_bot_inversion(
 
     with st.expander('❓ Cómo funciona esta señal'):
         st.markdown("""
-        Se dispara una señal de **VENTA** o **COMPRA** solo cuando se cumplen **las 4 condiciones a la vez**,
-        calculadas sobre velas intradía (5, 15 o 30 minutos, según elijas arriba):
-        1. **Sentimiento** (percentil del precio) en nivel extremo — ≥96 (100%) / 90-96 (50%) para venta, ≤6 (100%) / 7-10 (50%) para compra.
-        2. **Anticipación** (momentum + compresión de volatilidad) dentro del rango configurado.
-        3. **Z-Score** del precio cruzando el umbral (±2.5 por defecto).
-        4. **RSI** en nivel extremo (≥70 venta / ≤30 compra); si además hay **divergencia** contra el precio, la confirmación es más fuerte.
+        Cada señal disparada se evalúa hacia adelante: se marca **✅** si el precio tocó primero
+        el Take Profit, **❌** si tocó primero el Stop, y **⏳ En curso** si todavía no definió.
 
-        Los precios se descargan con caché de 20 segundos — tocá "🔄 Actualizar precios ahora" para forzar
-        una recarga inmediata. **Esto es informativo, no asesoramiento financiero.**
-        """)
+        ⚠️ **Importante**: esto asume que el Stop es una salida total de la operación. Si en tu
+        operativa real usás el Stop como pie para una **segunda entrada** (promediar) en vez de
+        cerrar, la ❌ no equivale necesariamente a "perdiste la operación completa" — solo indica
+        que el precio llegó primero a ese nivel. Usalo como medida de calidad de la señal, no como
+        tu resultado real de trading.
