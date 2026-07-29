@@ -622,7 +622,51 @@ def modulo_bot_inversion(
         resultados_bot[tk] = df_bot
         _bot_registrar_señales_nuevas(supabase, user_id, tk, horizonte_bot, df_bot, int(minutos_limite_bot))
         _bot_actualizar_resultados_aceptadas(supabase, user_id, tk, horizonte_bot, df_bot)
+def _bot_pendientes_globales(supabase, user_id):
+    """Devuelve los pares (ticker, horizonte) que tienen al menos una señal
+    aceptada sin resultado todavía, sin importar si están en la selección
+    actual del multiselect. Esto es lo que permite que el historial 'siga'
+    aunque el usuario cambie de activos entre sesiones."""
+    try:
+        res = supabase.table('bot_señales_log').select('ticker, horizonte') \
+            .eq('user_id', user_id).eq('decision', 'aceptada').execute()
+        filas = res.data or []
+    except Exception:
+        return []
+    pendientes_check = set()
+    # Filtramos acá (no en la query) los que ya tienen resultado definido,
+    # para evitar descargar de más.
+    try:
+        res2 = supabase.table('bot_señales_log').select('ticker, horizonte, resultado') \
+            .eq('user_id', user_id).eq('decision', 'aceptada').execute()
+        for f in (res2.data or []):
+            if f.get('resultado') in (None, '⏳'):
+                pendientes_check.add((f['ticker'], f['horizonte']))
+    except Exception:
+        pass
+    return list(pendientes_check)
 
+
+def _bot_actualizar_todos_los_pendientes(supabase, user_id, get_close_series):
+    """Recorre TODOS los tickers con señales aceptadas abiertas —estén o no
+    en la selección actual— y les actualiza el resultado. Se llama siempre
+    al entrar al módulo, así el historial no se 'traba' cuando el usuario
+    deja de mirar un activo puntual."""
+    pendientes = _bot_pendientes_globales(supabase, user_id)
+    for ticker, horizonte in pendientes:
+        cfg_h = HORIZONTES_BOT.get(horizonte)
+        if cfg_h is None:
+            continue
+        df_raw = _descargar_intradia(ticker, cfg_h['periodo_descarga'], cfg_h['interval'])
+        if df_raw is None or df_raw.empty:
+            continue
+        cl = get_close_series(df_raw)
+        if cl is None or cl.empty:
+            continue
+        hi = df_raw['High'] if 'High' in df_raw.columns else cl
+        lo = df_raw['Low'] if 'Low' in df_raw.columns else cl
+        df_lite = pd.DataFrame({'high': hi, 'low': lo}).reindex(cl.index)
+        _bot_actualizar_resultados_aceptadas(supabase, user_id, ticker, horizonte, df_lite)    
     if fallidos:
         st.warning(f"⚠️ No se pudo descargar/calcular para: {', '.join(fallidos)} "
                     "(puede ser un símbolo sin datos intradía en Yahoo Finance, o límite temporal).")
@@ -631,6 +675,7 @@ def modulo_bot_inversion(
         st.error('No se pudo calcular ninguna señal con los activos seleccionados.')
         return
     _bot_expirar_vencidas(supabase, user_id)
+    _bot_actualizar_todos_los_pendientes(supabase, user_id, get_close_series)
     st.caption(
         f"🕐 {datetime.now().strftime('%H:%M:%S')} · Temporalidad {horizonte_bot} · "
         f"caché de precios: 20s · tocá '🔄 Actualizar precios ahora' para forzar la recarga."
