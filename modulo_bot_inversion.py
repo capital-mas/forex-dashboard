@@ -482,7 +482,7 @@ def _color_señal_bot(val):
 def modulo_bot_inversion(
     get_close_series, fmt_precio, score_color_hex, kpi_cards_4,
     chips_navegacion, PLOTLY_LAYOUT_BASE, PLOTLY_CONFIG,
-    universo_opciones, universo_mapa,
+    universo_opciones, universo_mapa, supabase, user_id,
 ):
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
