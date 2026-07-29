@@ -171,9 +171,233 @@ def _calcular_bot_dataframe(close, high, low, cfg,
          df['precio'] * (1 + tp_pct_100 / 100), df['precio'] * (1 + tp_pct_50 / 100)],
         default=np.nan,
     )
+    df['high'] = hi
+    df['low'] = lo
+    return df
+
+def _evaluar_resultados_señales(df, hi, lo):
+    """Para cada señal disparada, mira hacia adelante en las velas siguientes
+    y determina si el precio tocó primero el Take Profit (✅) o el Stop (❌).
+    Si todavía no tocó ninguno de los dos, queda '⏳ En curso'.
+
+    IMPORTANTE: esto asume que el stop es una salida total. Si en tu operativa
+    real usás el stop como gatillo para una segunda entrada (promediar) en vez
+    de cerrar la posición, la ❌ no equivale necesariamente a "perdiste la
+    operación" — es solo "el precio llegó primero a tu nivel de stop"."""
+    df = df.copy()
+    n = len(df)
+    resultado = [''] * n
+    precio_resultado = [np.nan] * n
+    barras_hasta = [np.nan] * n
+
+    hi_arr = hi.reindex(df.index).values
+    lo_arr = lo.reindex(df.index).values
+    estado_arr = df['estado'].values
+    disparo_arr = df['disparo'].values
+    tp_arr = df['tp'].values
+    sl_arr = df['stop'].values
+
+    for i in range(n):
+        if not disparo_arr[i] or estado_arr[i] == '—' or pd.isna(tp_arr[i]) or pd.isna(sl_arr[i]):
+            continue
+        es_venta = 'VENTA' in estado_arr[i]
+        tp, sl = tp_arr[i], sl_arr[i]
+        encontrado = False
+        for j in range(i + 1, n):
+            hi_j, lo_j = hi_arr[j], lo_arr[j]
+            if es_venta:
+                toco_tp, toco_sl = lo_j <= tp, hi_j >= sl
+            else:
+                toco_tp, toco_sl = hi_j >= tp, lo_j <= sl
+            if toco_tp and toco_sl:
+                # Ambas se tocaron en la misma vela: no se puede saber cuál fue
+                # primero con datos OHLC diarios/intradía estándar. Se asume el
+                # escenario conservador (perdedor) para no sobreestimar aciertos.
+                resultado[i], precio_resultado[i], barras_hasta[i] = '❌', sl, j - i
+                encontrado = True
+                break
+            elif toco_tp:
+                resultado[i], precio_resultado[i], barras_hasta[i] = '✅', tp, j - i
+                encontrado = True
+                break
+            elif toco_sl:
+                resultado[i], precio_resultado[i], barras_hasta[i] = '❌', sl, j - i
+                encontrado = True
+                break
+        if not encontrado:
+            resultado[i] = '⏳'
+
+    df['resultado'] = resultado
+    df['precio_resultado'] = precio_resultado
+    df['barras_hasta_resultado'] = barras_hasta
     return df
 
 
+def _color_resultado(val):
+    return {'✅': 'color:#3fb950;font-weight:700', '❌': 'color:#f85149;font-weight:700',
+            '⏳': 'color:#e3b341;font-weight:600'}.get(val, '')
+
+# ── Persistencia en Supabase: configuración, registro y decisiones ────
+
+def _bot_obtener_config(supabase, user_id):
+    try:
+        res = supabase.table('bot_config_usuario').select('*').eq('user_id', user_id).limit(1).execute()
+        if res.data:
+            return res.data[0]
+    except Exception:
+        pass
+    return {'capital_inicial': 10000.0, 'pct_por_operacion': 10.0, 'minutos_limite_decision': 10}
+
+
+def _bot_guardar_config(supabase, user_id, capital_inicial, pct_por_operacion, minutos_limite):
+    try:
+        supabase.table('bot_config_usuario').upsert({
+            'user_id': user_id, 'capital_inicial': capital_inicial,
+            'pct_por_operacion': pct_por_operacion, 'minutos_limite_decision': minutos_limite,
+            'actualizado_en': datetime.now().isoformat(),
+        }).execute()
+    except Exception:
+        pass
+
+
+def _bot_registrar_señales_nuevas(supabase, user_id, ticker, horizonte, df_bot, minutos_limite):
+    """Inserta las señales recién disparadas que todavía no estén logueadas.
+    Se intenta insertar una por una y se ignora el error si ya existe (gracias
+    al UNIQUE de la tabla) — así nunca se pisa una decisión ya tomada."""
+    disparos = df_bot[df_bot['disparo'] & (df_bot['estado'] != '—')]
+    for ts, row in disparos.iterrows():
+        fecha_limite = ts.to_pydatetime() + pd.Timedelta(minutes=minutos_limite)
+        fila = {
+            'user_id': user_id, 'ticker': ticker, 'horizonte': horizonte,
+            'fecha_señal': ts.isoformat(), 'tipo_señal': row['estado'],
+            'precio_entrada': float(row['precio']),
+            'tp': float(row['tp']) if pd.notna(row['tp']) else None,
+            'stop': float(row['stop']) if pd.notna(row['stop']) else None,
+            'fecha_limite_decision': fecha_limite.isoformat(),
+        }
+        try:
+            supabase.table('bot_señales_log').insert(fila).execute()
+        except Exception:
+            pass  # ya estaba registrada
+
+
+def _bot_expirar_vencidas(supabase, user_id):
+    """Marca como 'expirada' toda señal sin decisión cuya ventana ya pasó.
+    Esto evita el sesgo de aceptar señales 'a toro pasado'."""
+    try:
+        ahora_iso = datetime.now().isoformat()
+        supabase.table('bot_señales_log').update({'decision': 'expirada'}) \
+            .eq('user_id', user_id).is_('decision', 'null') \
+            .lt('fecha_limite_decision', ahora_iso).execute()
+    except Exception:
+        pass
+
+
+def _bot_pendientes_decision(supabase, user_id):
+    try:
+        ahora_iso = datetime.now().isoformat()
+        res = supabase.table('bot_señales_log').select('*') \
+            .eq('user_id', user_id).is_('decision', 'null') \
+            .gt('fecha_limite_decision', ahora_iso).order('fecha_señal', desc=True).execute()
+        return res.data or []
+    except Exception:
+        return []
+
+
+def _bot_decidir_señal(supabase, señal_id, decision):
+    try:
+        supabase.table('bot_señales_log').update({
+            'decision': decision, 'fecha_decision': datetime.now().isoformat(),
+        }).eq('id', señal_id).execute()
+    except Exception:
+        pass
+
+
+def _bot_actualizar_resultados_aceptadas(supabase, user_id, ticker, horizonte, df_bot):
+    """Para señales ACEPTADAS de este ticker/horizonte sin resultado aún,
+    revisa las velas nuevas para ver si ya tocó TP o Stop."""
+    try:
+        res = supabase.table('bot_señales_log').select('*') \
+            .eq('user_id', user_id).eq('ticker', ticker).eq('horizonte', horizonte) \
+            .eq('decision', 'aceptada').execute()
+        candidatas = [f for f in (res.data or []) if f.get('resultado') in (None, '⏳')]
+    except Exception:
+        candidatas = []
+
+    for fila in candidatas:
+        ts_señal = pd.Timestamp(fila['fecha_señal'])
+        velas_post = df_bot[df_bot.index > ts_señal]
+        if velas_post.empty:
+            continue
+        es_venta = 'VENTA' in fila['tipo_señal']
+        tp, sl = fila['tp'], fila['stop']
+        if tp is None or sl is None:
+            continue
+        for ts_v, row_v in velas_post.iterrows():
+            hi_v, lo_v = row_v['high'], row_v['low']
+            if es_venta:
+                toco_tp, toco_sl = lo_v <= tp, hi_v >= sl
+            else:
+                toco_tp, toco_sl = hi_v >= tp, lo_v <= sl
+            resultado = None
+            if toco_tp and toco_sl:
+                resultado = '❌'  # ambiguo en la misma vela → se asume el escenario conservador
+            elif toco_tp:
+                resultado = '✅'
+            elif toco_sl:
+                resultado = '❌'
+            if resultado:
+                try:
+                    supabase.table('bot_señales_log').update({
+                        'resultado': resultado,
+                        'precio_resultado': float(tp if resultado == '✅' else sl),
+                        'fecha_resultado': ts_v.isoformat(),
+                    }).eq('id', fila['id']).execute()
+                except Exception:
+                    pass
+                break
+
+
+def _bot_calcular_rendimiento(supabase, user_id, capital_inicial, pct_por_operacion):
+    """Arma el rendimiento acumulado a partir de señales ACEPTADAS y con
+    resultado ya definido (✅/❌). Las que siguen '⏳' no afectan el cálculo
+    todavía — se muestran aparte como 'abiertas'."""
+    try:
+        res = supabase.table('bot_señales_log').select('*') \
+            .eq('user_id', user_id).eq('decision', 'aceptada').order('fecha_señal').execute()
+        filas = res.data or []
+    except Exception:
+        filas = []
+
+    capital_por_op = capital_inicial * (pct_por_operacion / 100.0)
+    equity = capital_inicial
+    curva = [{'fecha': 'Inicio', 'equity': capital_inicial}]
+    cerradas = ganadoras = abiertas = 0
+
+    for fila in filas:
+        resultado = fila.get('resultado')
+        precio_entrada = fila['precio_entrada']
+        if resultado == '✅':
+            pct_mov = abs(fila['tp'] - precio_entrada) / precio_entrada
+            equity += capital_por_op * pct_mov
+            ganadoras += 1; cerradas += 1
+        elif resultado == '❌':
+            pct_mov = abs(fila['stop'] - precio_entrada) / precio_entrada
+            equity -= capital_por_op * pct_mov
+            cerradas += 1
+        else:
+            abiertas += 1
+            continue
+        curva.append({'fecha': fila.get('fecha_resultado') or fila['fecha_señal'], 'equity': equity})
+
+    return {
+        'capital_inicial': capital_inicial, 'capital_actual': equity,
+        'rendimiento_pct': (equity / capital_inicial - 1) * 100,
+        'win_rate': (ganadoras / cerradas * 100) if cerradas > 0 else None,
+        'cerradas': cerradas, 'ganadoras': ganadoras, 'perdedoras': cerradas - ganadoras,
+        'abiertas': abiertas, 'total_señales': len(filas), 'curva': curva,
+    }
+    
 # ── Descarga intradía — TTL corto para que se sienta "en vivo" ────────
 
 @st.cache_data(ttl=20, show_spinner=False)
