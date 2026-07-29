@@ -620,6 +620,8 @@ def modulo_bot_inversion(
         lo_r = lo.reindex(df_bot.index)
         df_bot = _evaluar_resultados_señales(df_bot, hi_r, lo_r)
         resultados_bot[tk] = df_bot
+        _bot_registrar_señales_nuevas(supabase, user_id, tk, horizonte_bot, df_bot, int(minutos_limite_bot))
+        _bot_actualizar_resultados_aceptadas(supabase, user_id, tk, horizonte_bot, df_bot)
 
     if fallidos:
         st.warning(f"⚠️ No se pudo descargar/calcular para: {', '.join(fallidos)} "
