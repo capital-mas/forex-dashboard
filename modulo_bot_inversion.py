@@ -397,7 +397,44 @@ def _bot_calcular_rendimiento(supabase, user_id, capital_inicial, pct_por_operac
         'cerradas': cerradas, 'ganadoras': ganadoras, 'perdedoras': cerradas - ganadoras,
         'abiertas': abiertas, 'total_señales': len(filas), 'curva': curva,
     }
-    
+def _bot_rendimiento_por_ticker(supabase, user_id, capital_inicial, pct_por_operacion):
+    """Mismo cálculo que _bot_calcular_rendimiento pero agrupado por ticker,
+    para ver qué activos vienen aportando y cuáles restando."""
+    try:
+        res = supabase.table('bot_señales_log').select('*') \
+            .eq('user_id', user_id).eq('decision', 'aceptada').order('fecha_señal').execute()
+        filas = res.data or []
+    except Exception:
+        filas = []
+
+    capital_por_op = capital_inicial * (pct_por_operacion / 100.0)
+    por_ticker = {}
+    for fila in filas:
+        tk = fila['ticker']
+        d = por_ticker.setdefault(tk, {'aporte_usd': 0.0, 'ganadoras': 0, 'perdedoras': 0, 'abiertas': 0})
+        resultado = fila.get('resultado')
+        precio_entrada = fila['precio_entrada']
+        if resultado == '✅':
+            pct_mov = abs(fila['tp'] - precio_entrada) / precio_entrada
+            d['aporte_usd'] += capital_por_op * pct_mov
+            d['ganadoras'] += 1
+        elif resultado == '❌':
+            pct_mov = abs(fila['stop'] - precio_entrada) / precio_entrada
+            d['aporte_usd'] -= capital_por_op * pct_mov
+            d['perdedoras'] += 1
+        else:
+            d['abiertas'] += 1
+
+    filas_out = []
+    for tk, d in sorted(por_ticker.items(), key=lambda x: x[1]['aporte_usd'], reverse=True):
+        cerradas = d['ganadoras'] + d['perdedoras']
+        wr = f"{d['ganadoras'] / cerradas * 100:.0f}%" if cerradas > 0 else 'N/D'
+        filas_out.append({
+            'Ticker': tk, 'Aporte al capital (USD)': round(d['aporte_usd'], 2),
+            'Ganadoras': d['ganadoras'], 'Perdedoras': d['perdedoras'],
+            'Abiertas': d['abiertas'], 'Win Rate': wr,
+        })
+    return pd.DataFrame(filas_out)    
 # ── Descarga intradía — TTL corto para que se sienta "en vivo" ────────
 
 @st.cache_data(ttl=20, show_spinner=False)
@@ -841,6 +878,51 @@ def _bot_actualizar_todos_los_pendientes(supabase, user_id, get_close_series):
             'esto evita medir con sesgo retrospectivo (aceptar solo las que ya sabías que salieron bien). '
             'Las señales "en curso" (⏳) todavía no suman ni restan al capital.'
         )
+
+        st.markdown('#### 📊 Rendimiento por activo')
+        df_por_tk = _bot_rendimiento_por_ticker(supabase, user_id, capital_inicial_bot, pct_por_operacion_bot)
+        if df_por_tk.empty:
+            st.info('Todavía no hay operaciones cerradas para desglosar por activo.')
+        else:
+            def _color_aporte(val):
+                try:
+                    v = float(val)
+                    return f'color:{"#3fb950" if v >= 0 else "#f85149"};font-weight:700'
+                except Exception:
+                    return ''
+            _map_pt = 'map' if hasattr(df_por_tk.style, 'map') else 'applymap'
+            styled_pt = (df_por_tk.style
+                .pipe(lambda s: getattr(s, _map_pt)(_color_aporte, subset=['Aporte al capital (USD)']))
+                .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+                .set_table_styles([
+                    {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                        ('font-weight', '700'), ('text-align', 'center'),
+                        ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                    {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+                ]))
+            st.dataframe(styled_pt, use_container_width=True, height=min(400, len(df_por_tk) * 40 + 45))
+            st.caption('El activo que aparece "seleccionado o no" no importa para este cálculo: se suma todo lo que aceptaste alguna vez, esté o no en tu multiselect actual.')
+
+        st.markdown('#### ⚠️ Reiniciar historial')
+        st.caption('Esto borra TODAS tus señales aceptadas/rechazadas/expiradas y arranca el rendimiento de cero. No afecta a otros usuarios.')
+        if st.button('🗑️ Reiniciar mi historial completo', key='bot_reset_btn'):
+            st.session_state['bot_reset_confirmar'] = True
+        if st.session_state.get('bot_reset_confirmar'):
+            st.warning('¿Confirmás? Esta acción no se puede deshacer.')
+            cconf1, cconf2 = st.columns(2)
+            with cconf1:
+                if st.button('✅ Sí, borrar todo', key='bot_reset_confirm_yes'):
+                    try:
+                        supabase.table('bot_señales_log').delete().eq('user_id', user_id).execute()
+                        st.session_state['bot_reset_confirmar'] = False
+                        st.success('Historial reiniciado.')
+                        st.rerun()
+                    except Exception:
+                        st.error('No se pudo reiniciar el historial. Probá de nuevo.')
+            with cconf2:
+                if st.button('✖️ Cancelar', key='bot_reset_confirm_no'):
+                    st.session_state['bot_reset_confirmar'] = False
+                    st.rerun()
     with st.expander('❓ Cómo funciona esta señal'):
         st.markdown("""
         Cada señal disparada se evalúa hacia adelante: se marca **✅** si el precio tocó primero
