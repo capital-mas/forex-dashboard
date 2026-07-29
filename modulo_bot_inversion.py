@@ -924,12 +924,10 @@ def _bot_actualizar_todos_los_pendientes(supabase, user_id, get_close_series):
                     st.session_state['bot_reset_confirmar'] = False
                     st.rerun()
     with st.expander('❓ Cómo funciona esta señal'):
-        st.markdown("""
-        Cada señal disparada se evalúa hacia adelante: se marca **✅** si el precio tocó primero
+        st.markdown('Cada señal disparada se evalúa hacia adelante: se marca **✅** si el precio tocó primero
         el Take Profit, **❌** si tocó primero el Stop, y **⏳ En curso** si todavía no definió.
-
         ⚠️ **Importante**: esto asume que el Stop es una salida total de la operación. Si en tu
         operativa real usás el Stop como pie para una **segunda entrada** (promediar) en vez de
         cerrar, la ❌ no equivale necesariamente a "perdiste la operación completa" — solo indica
         que el precio llegó primero a ese nivel. Usalo como medida de calidad de la señal, no como
-        tu resultado real de trading.
+        tu resultado real de trading.'
