@@ -1,23 +1,40 @@
 # ==============================================================
 #  MÓDULO BOT DE INVERSIÓN — Señales Sent./Antic./Z-Score/RSI+Div
+#  Versión intradía: temporalidades 5/15/30 min, multi-activo (hasta 10)
 #  Portado desde el indicador Pine Script "Top-Down Cuantitativo
 #  — Solo Señales (Sent/Antic/Z/RSI-Div)".
-#
-#  Uso: importar modulo_bot_inversion() en la app principal y
-#  llamarlo pasando las funciones/objetos ya definidos ahí
-#  (mismo patrón que modulo_promediador). Ver instrucciones de
-#  integración al final del archivo.
 # ==============================================================
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
+MAX_ACTIVOS_BOT = 10
+
+# yfinance permite hasta 60 días de historia para velas de 5m/15m/30m.
+# Usamos el máximo posible para tener la ventana estadística más robusta.
 HORIZONTES_BOT = {
-    'Corto Plazo':   dict(ventana_valor=63,   ventana_momento=21,  rsi_periodo=7,  vol_periodo=10, bb_periodo=10, atr_periodo=14, ret_dias=5,  mom_escala=2.00, periodo_descarga='6mo'),
-    'Mediano Plazo': dict(ventana_valor=504,  ventana_momento=126, rsi_periodo=14, vol_periodo=20, bb_periodo=20, atr_periodo=14, ret_dias=20, mom_escala=0.60, periodo_descarga='3y'),
-    'Largo Plazo':   dict(ventana_valor=1260, ventana_momento=504, rsi_periodo=21, vol_periodo=60, bb_periodo=50, atr_periodo=21, ret_dias=60, mom_escala=0.35, periodo_descarga='7y'),
+    '5 minutos': dict(
+        interval='5m', periodo_descarga='60d',
+        ventana_valor=560, ventana_momento=90, rsi_periodo=14,
+        vol_periodo=40, bb_periodo=30, atr_periodo=14,
+        ret_dias=12, mom_escala=3.0,
+    ),
+    '15 minutos': dict(
+        interval='15m', periodo_descarga='60d',
+        ventana_valor=380, ventana_momento=65, rsi_periodo=14,
+        vol_periodo=30, bb_periodo=26, atr_periodo=14,
+        ret_dias=8, mom_escala=2.2,
+    ),
+    '30 minutos': dict(
+        interval='30m', periodo_descarga='60d',
+        ventana_valor=250, ventana_momento=48, rsi_periodo=14,
+        vol_periodo=24, bb_periodo=20, atr_periodo=14,
+        ret_dias=6, mom_escala=1.6,
+    ),
 }
 
 C_BOT_VENTA_100  = '#f85149'
@@ -39,9 +56,11 @@ def _rsi_sma(close, length):
     return rsi.fillna(50)
 
 
-def _vol_anual_rolling(close, length):
+def _vol_anual_rolling(close, length, barras_por_año):
+    """Anualiza la volatilidad según la cantidad de barras intradía por año
+    (varía con la temporalidad: 5m/15m/30m tienen distinta cantidad de barras/día)."""
     ret = close.pct_change()
-    return ret.rolling(length).std() * np.sqrt(252) * 100
+    return ret.rolling(length).std() * np.sqrt(barras_por_año) * 100
 
 
 def _rolling_percentrank(s, length):
@@ -55,27 +74,33 @@ def _rolling_percentrank(s, length):
     return s.rolling(length, min_periods=min_p).apply(_r, raw=True)
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def _calcular_bot_dataframe(_close, _high, _low, horizonte,
+def _barras_por_año(interval):
+    """Barras de mercado (~6.5hs, ~252 días) por año, según temporalidad."""
+    minutos_sesion = 6.5 * 60
+    minutos_vela = {'5m': 5, '15m': 15, '30m': 30}.get(interval, 15)
+    barras_dia = minutos_sesion / minutos_vela
+    return barras_dia * 252
+
+
+def _calcular_bot_dataframe(close, high, low, cfg,
                              antic_min, antic_max, zscore_periodo, zscore_umbral,
                              rsi_nivel_venta, rsi_nivel_compra, divergencia_lookback,
                              stop_pct_100, stop_pct_50):
-    """Los parámetros con prefijo '_' (Series) no se usan para la clave de
-    caché de Streamlit; el resto sí, así se recalcula si cambia cualquier input."""
-    cfg = HORIZONTES_BOT[horizonte]
-    cl = _close.dropna()
-    hi = _high.reindex(cl.index)
-    lo = _low.reindex(cl.index)
+    """Cálculo puro (sin caché): es liviano — unas pocas rolling windows sobre
+    unos cientos de velas — así que no vale la pena cachearlo, y cachearlo mal
+    (por ticker) es justamente lo que rompía el análisis multi-activo."""
+    cl = close.dropna()
+    hi = high.reindex(cl.index)
+    lo = low.reindex(cl.index)
+    barras_año = _barras_por_año(cfg['interval'])
 
-    # Score Acumulación (se calcula pero ya no se usa para la señal — igual que en el Pine v6)
     precio_pct = _rolling_percentrank(cl, cfg['ventana_valor'])
     rsi_valor = _rsi_sma(cl, cfg['rsi_periodo'])
     rsi_pct = 100 - _rolling_percentrank(rsi_valor, cfg['ventana_valor'])
-    vol_valor = _vol_anual_rolling(cl, cfg['vol_periodo'])
+    vol_valor = _vol_anual_rolling(cl, cfg['vol_periodo'], barras_año)
     vol_pct = 100 - _rolling_percentrank(vol_valor, cfg['ventana_valor'])
-    sc_acum = (100 - precio_pct) * 0.40 + rsi_pct * 0.35 + vol_pct * 0.25  # noqa: F841 (informativo)
+    sc_acum = (100 - precio_pct) * 0.40 + rsi_pct * 0.35 + vol_pct * 0.25  # informativo
 
-    # Score Anticipación
     ret_mom = cl.pct_change(cfg['ret_dias']) * 100
     mom = (50 + ret_mom * cfg['mom_escala']).clip(0, 100)
 
@@ -90,16 +115,12 @@ def _calcular_bot_dataframe(_close, _high, _low, horizonte,
     bb_c = 100 - _rolling_percentrank(bbw, cfg['ventana_momento'])
 
     sc_antic = mom * 0.40 + comp_atr * 0.30 + bb_c * 0.30
-
-    # Score Sentimiento (idéntico a precio_pct, como en el Pine original)
     sc_sent = precio_pct
 
-    # Z-Score del precio
     z_media = cl.rolling(zscore_periodo).mean()
     z_std = cl.rolling(zscore_periodo).std()
     zscore = (cl - z_media) / z_std.replace(0, np.nan)
 
-    # RSI extremo + Divergencia
     rsi_alto = rsi_valor >= rsi_nivel_venta
     rsi_bajo = rsi_valor <= rsi_nivel_compra
     div_baj = (cl > cl.shift(divergencia_lookback)) & (rsi_valor < rsi_valor.shift(divergencia_lookback))
@@ -107,7 +128,6 @@ def _calcular_bot_dataframe(_close, _high, _low, horizonte,
     rsi_pts_venta = np.where(rsi_alto, np.where(div_baj, 2, 1), 0)
     rsi_pts_compra = np.where(rsi_bajo, np.where(div_alc, 2, 1), 0)
 
-    # Señal de posición: 4 condiciones obligatorias en simultáneo
     antic_valida = (sc_antic >= antic_min) & (sc_antic <= antic_max)
     z_venta = zscore >= zscore_umbral
     z_compra = zscore <= -zscore_umbral
@@ -129,7 +149,6 @@ def _calcular_bot_dataframe(_close, _high, _low, horizonte,
     estado[pct_venta == 50] = 'VENTA 50%'
     estado[pct_compra == 100] = 'COMPRA 100%'
     estado[pct_compra == 50] = 'COMPRA 50%'
-    # Disparo único: solo la barra donde arranca la señal (igual que "estado_anterior" en Pine)
     disparo = (estado != '—') & (estado != estado.shift(1))
 
     df = pd.DataFrame({
@@ -147,6 +166,45 @@ def _calcular_bot_dataframe(_close, _high, _low, horizonte,
     )
     return df
 
+
+# ── Descarga intradía — TTL corto para que se sienta "en vivo" ────────
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _descargar_intradia(ticker, periodo, intervalo):
+    try:
+        import yfinance as yf
+        d = yf.download(ticker, period=periodo, interval=intervalo,
+                         progress=False, auto_adjust=True)
+        if d is None or d.empty:
+            return None
+        if isinstance(d.columns, pd.MultiIndex):
+            d.columns = d.columns.get_level_values(0)
+        if 'Close' not in d.columns:
+            cols_close = [c for c in d.columns if 'close' in str(c).lower()]
+            if cols_close:
+                d = d.rename(columns={cols_close[0]: 'Close'})
+            else:
+                return None
+        return d.dropna(subset=['Close'])
+    except Exception:
+        return None
+
+
+def _fetch_paralelo_bot(tickers, cfg):
+    """Descarga en paralelo los precios intradía de todos los activos elegidos."""
+    resultados = {}
+    with ThreadPoolExecutor(max_workers=min(10, max(len(tickers), 1))) as ex:
+        futuros = {
+            ex.submit(_descargar_intradia, tk, cfg['periodo_descarga'], cfg['interval']): tk
+            for tk in tickers
+        }
+        for fut in as_completed(futuros):
+            tk = futuros[fut]
+            resultados[tk] = fut.result()
+    return resultados
+
+
+# ── Gráfico de señales ──────────────────────────────────────────────
 
 def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
     fig = go.Figure()
@@ -167,7 +225,7 @@ def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
         title=dict(text=f'{ticker} — Señales del Bot de Inversión', font=dict(size=14)),
-        height=520, hovermode='x unified',
+        height=480, hovermode='x unified',
         legend=dict(orientation='h', y=1.1),
         xaxis=dict(gridcolor='#21262d'), yaxis=dict(gridcolor='#21262d'),
         margin=dict(l=10, r=10, t=50, b=10),
@@ -175,36 +233,78 @@ def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
     return fig
 
 
+def _color_estado(estado):
+    return {
+        'VENTA 100%': C_BOT_VENTA_100, 'VENTA 50%': C_BOT_VENTA_50,
+        'COMPRA 100%': C_BOT_COMPRA_100, 'COMPRA 50%': C_BOT_COMPRA_50, '—': '#8b949e',
+    }.get(estado, '#8b949e')
+
+
+def _color_señal_bot(val):
+    c = {'VENTA 100%': C_BOT_VENTA_100, 'VENTA 50%': C_BOT_VENTA_50,
+         'COMPRA 100%': C_BOT_COMPRA_100, 'COMPRA 50%': C_BOT_COMPRA_50}.get(val, '#e6edf3')
+    return f'color:{c};font-weight:700'
+
+
 # ── Módulo principal ────────────────────────────────────────────────
 
 def modulo_bot_inversion(
-    descargar_datos, get_close_series, fmt_precio,
-    score_color_hex, kpi_cards_4, selector_ticker_autocomplete,
+    get_close_series, fmt_precio, score_color_hex, kpi_cards_4,
     chips_navegacion, PLOTLY_LAYOUT_BASE, PLOTLY_CONFIG,
+    universo_opciones, universo_mapa,
 ):
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d; border-top:2px solid #6CC24A;
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Señales Cuantitativas</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Señales Intradía</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
         Señal de COMPRA/VENTA basada en 4 condiciones obligatorias simultáneas:
         <b style="color:#e3b341">Sentimiento</b> en nivel extremo,
         <b style="color:#e3b341">Anticipación</b> dentro de rango válido,
         <b style="color:#e3b341">Z-Score</b> del precio y
         <b style="color:#e3b341">RSI + Divergencia</b>.
-        Portado del indicador Pine Script "Top-Down Cuantitativo — Solo Señales".
+        Analizá hasta <b style="color:#e3b341">10 activos</b> en simultáneo, en velas de
+        <b style="color:#e3b341">5, 15 o 30 minutos</b>.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    c1, c2 = st.columns([3, 1])
+    c1, c2 = st.columns([2, 1])
     with c1:
-        ticker_bot = selector_ticker_autocomplete('bot_inversion_ticker', label='Ticker')
+        horizonte_bot = st.selectbox(
+            'Temporalidad', list(HORIZONTES_BOT.keys()), index=1, key='bot_horizonte',
+        )
     with c2:
-        horizonte_bot = st.selectbox('Horizonte', list(HORIZONTES_BOT.keys()), index=1, key='bot_horizonte')
+        st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+        if st.button('🔄 Actualizar precios ahora', key='bot_refresh_btn', use_container_width=True):
+            _descargar_intradia.clear()
+            st.rerun()
 
-    with st.expander('⚙️ Parámetros de la señal (opcional)', expanded=False):
+    st.markdown(f'#### 🎯 Activos a analizar (hasta {MAX_ACTIVOS_BOT})')
+    seleccion = st.multiselect(
+        'Elegí hasta 10 activos', universo_opciones,
+        default=st.session_state.get('bot_activos_sel', []),
+        max_selections=MAX_ACTIVOS_BOT, key='bot_activos_multiselect',
+        help='Buscá por nombre o ticker: acciones, ETFs, forex, cripto o commodities.',
+    )
+    st.session_state['bot_activos_sel'] = seleccion
+
+    manual_extra = st.text_input(
+        'Agregar tickers manuales (separados por coma, opcional)',
+        key='bot_activos_manual', placeholder='Ej: XYZ, ABC-USD',
+    )
+
+    tickers_bot = [universo_mapa.get(s, s) for s in seleccion]
+    if manual_extra:
+        tickers_bot += [t.strip().upper() for t in manual_extra.split(',') if t.strip()]
+    tickers_bot = list(dict.fromkeys(tickers_bot))  # dedup preservando orden
+
+    if len(tickers_bot) > MAX_ACTIVOS_BOT:
+        st.warning(f'Se seleccionaron más de {MAX_ACTIVOS_BOT} activos — se van a analizar solo los primeros {MAX_ACTIVOS_BOT}.')
+        tickers_bot = tickers_bot[:MAX_ACTIVOS_BOT]
+
+    with st.expander('⚙️ Parámetros de la señal (opcional, aplican a todos los activos)', expanded=False):
         p1, p2, p3 = st.columns(3)
         with p1:
             antic_min = st.number_input('Anticipación mínima', value=15.0, key='bot_antic_min')
@@ -219,50 +319,107 @@ def modulo_bot_inversion(
         with p4:
             divergencia_lookback = st.number_input('Barras divergencia', value=5, min_value=2, key='bot_div_lookback')
         with p5:
-            stop_pct_100 = st.number_input('Stop % (señal 100%)', value=5.0, key='bot_stop_100')
+            stop_pct_100 = st.number_input('Stop % (señal 100%)', value=1.5, key='bot_stop_100')
         with p6:
-            stop_pct_50 = st.number_input('Stop % (señal 50%)', value=10.0, key='bot_stop_50')
+            stop_pct_50 = st.number_input('Stop % (señal 50%)', value=3.0, key='bot_stop_50')
 
     analizar_bot = st.button('▶ Analizar', key='bot_run', type='primary')
     if not analizar_bot and not st.session_state.get('bot_run_flag'):
-        st.info('Elegí un ticker y horizonte, después presioná "Analizar".')
+        st.info(f'Elegí la temporalidad y hasta {MAX_ACTIVOS_BOT} activos, después presioná "Analizar".')
         return
     if analizar_bot:
         st.session_state['bot_run_flag'] = True
 
-    if not ticker_bot:
-        st.warning('Ingresá un ticker válido.')
+    if not tickers_bot:
+        st.warning('Seleccioná al menos un activo.')
         return
 
     cfg = HORIZONTES_BOT[horizonte_bot]
-    with st.spinner(f'Descargando historial ({cfg["periodo_descarga"]}) y calculando señales...'):
-        df_raw = descargar_datos(ticker_bot, cfg['periodo_descarga'])
-    if df_raw is None or df_raw.empty:
-        st.error(f'No se encontraron datos para {ticker_bot}.')
-        return
-    cl = get_close_series(df_raw)
-    if cl is None or len(cl.dropna()) < cfg['ventana_valor'] // 2:
-        st.warning(f'Historial insuficiente para {horizonte_bot} (se recomienda más historia para este ticker).')
-        return
-    hi = df_raw['High'] if 'High' in df_raw.columns else cl
-    lo = df_raw['Low'] if 'Low' in df_raw.columns else cl
 
-    df_bot = _calcular_bot_dataframe(
-        cl, hi, lo, horizonte_bot,
-        antic_min, antic_max, int(zscore_periodo), zscore_umbral,
-        rsi_nivel_venta, rsi_nivel_compra, int(divergencia_lookback),
-        stop_pct_100, stop_pct_50,
+    with st.spinner(f'Descargando velas de {horizonte_bot} para {len(tickers_bot)} activo(s)...'):
+        precios_raw = _fetch_paralelo_bot(tickers_bot, cfg)
+
+    resultados_bot = {}
+    fallidos = []
+    for tk in tickers_bot:
+        df_raw = precios_raw.get(tk)
+        if df_raw is None or df_raw.empty:
+            fallidos.append(tk)
+            continue
+        cl = get_close_series(df_raw)
+        if cl is None or len(cl.dropna()) < max(30, cfg['ventana_valor'] // 4):
+            fallidos.append(tk)
+            continue
+        hi = df_raw['High'] if 'High' in df_raw.columns else cl
+        lo = df_raw['Low'] if 'Low' in df_raw.columns else cl
+        df_bot = _calcular_bot_dataframe(
+            cl, hi, lo, cfg,
+            antic_min, antic_max, int(zscore_periodo), zscore_umbral,
+            rsi_nivel_venta, rsi_nivel_compra, int(divergencia_lookback),
+            stop_pct_100, stop_pct_50,
+        )
+        resultados_bot[tk] = df_bot
+
+    if fallidos:
+        st.warning(f"⚠️ No se pudo descargar/calcular para: {', '.join(fallidos)} "
+                    "(puede ser un símbolo sin datos intradía en Yahoo Finance, o límite temporal).")
+
+    if not resultados_bot:
+        st.error('No se pudo calcular ninguna señal con los activos seleccionados.')
+        return
+
+    st.caption(
+        f"🕐 {datetime.now().strftime('%H:%M:%S')} · Temporalidad {horizonte_bot} · "
+        f"caché de precios: 20s · tocá '🔄 Actualizar precios ahora' para forzar la recarga."
     )
 
-    ultimo = df_bot.iloc[-1]
+    # ── Resumen multi-activo ─────────────────────────────────────────
+    st.markdown('### 📋 Resumen — señal actual por activo')
+    filas_resumen = []
+    for tk, df_bot in resultados_bot.items():
+        u = df_bot.iloc[-1]
+        filas_resumen.append({
+            'Ticker': tk, 'Señal': u['estado'], 'Precio': fmt_precio(u['precio']),
+            'Sent': round(u['sc_sent'], 1), 'Antic': round(u['sc_antic'], 1),
+            'Z-Score': round(u['zscore'], 2), 'RSI': round(u['rsi'], 1),
+            'Stop': fmt_precio(u['stop']) if not pd.isna(u['stop']) else '—',
+        })
+    df_resumen = pd.DataFrame(filas_resumen)
+    orden_prioridad = {'VENTA 100%': 0, 'COMPRA 100%': 0, 'VENTA 50%': 1, 'COMPRA 50%': 1, '—': 2}
+    df_resumen['_orden'] = df_resumen['Señal'].map(orden_prioridad)
+    df_resumen = df_resumen.sort_values('_orden').drop(columns=['_orden'])
+
+    _map = 'map' if hasattr(df_resumen.style, 'map') else 'applymap'
+    styled_resumen = (df_resumen.style
+        .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
+        .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+        .set_table_styles([
+            {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                ('font-weight', '700'), ('text-align', 'center'),
+                ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+            {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+        ]))
+    st.dataframe(styled_resumen, use_container_width=True, height=min(400, len(df_resumen) * 40 + 45))
+    chips_navegacion([(tk, tk) for tk in resultados_bot.keys()], 'bot_inversion_resumen')
+
+    n_señales = int((df_resumen['Señal'] != '—').sum())
+    if n_señales > 0:
+        st.success(f'⚡ {n_señales} activo(s) con señal activa ahora mismo.')
+
+    # ── Detalle de un activo ─────────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🔍 Detalle por activo')
+    ticker_detalle = st.selectbox(
+        'Elegí un activo para ver el gráfico y el historial completo',
+        list(resultados_bot.keys()), key='bot_detalle_sel',
+    )
+    df_bot_sel = resultados_bot[ticker_detalle]
+    ultimo = df_bot_sel.iloc[-1]
     estado_actual = ultimo['estado']
-    color_estado = {
-        'VENTA 100%': C_BOT_VENTA_100, 'VENTA 50%': C_BOT_VENTA_50,
-        'COMPRA 100%': C_BOT_COMPRA_100, 'COMPRA 50%': C_BOT_COMPRA_50, '—': '#8b949e',
-    }.get(estado_actual, '#8b949e')
+    color_estado = _color_estado(estado_actual)
 
     kpi_cards_4([
-        ('Señal Actual', estado_actual, f'{ticker_bot} · {horizonte_bot}', color_estado),
+        ('Señal Actual', estado_actual, f'{ticker_detalle} · {horizonte_bot}', color_estado),
         ('Precio', fmt_precio(ultimo['precio']),
          f"Stop sugerido: {fmt_precio(ultimo['stop']) if not pd.isna(ultimo['stop']) else '—'}", '#3a7bd5'),
         ('Sentimiento / Anticipación', f"{ultimo['sc_sent']:.0f} / {ultimo['sc_antic']:.0f}",
@@ -271,16 +428,16 @@ def modulo_bot_inversion(
          f"Umbral ±{zscore_umbral} · RSI {rsi_nivel_compra:.0f}-{rsi_nivel_venta:.0f}", '#e3b341'),
     ])
 
-    st.plotly_chart(_fig_bot_señales(ticker_bot, df_bot, PLOTLY_LAYOUT_BASE),
-                     use_container_width=True, config=PLOTLY_CONFIG, key='bot_fig_señales')
+    st.plotly_chart(_fig_bot_señales(ticker_detalle, df_bot_sel, PLOTLY_LAYOUT_BASE),
+                     use_container_width=True, config=PLOTLY_CONFIG, key=f'bot_fig_señales_{ticker_detalle}')
 
-    st.markdown('### 📋 Historial de señales disparadas')
-    df_hist = df_bot[df_bot['disparo']].copy().sort_index(ascending=False)
+    st.markdown('#### 📋 Historial de señales disparadas')
+    df_hist = df_bot_sel[df_bot_sel['disparo']].copy().sort_index(ascending=False)
     if df_hist.empty:
         st.info('No se disparó ninguna señal en el período analizado con los parámetros actuales.')
     else:
         df_hist_show = pd.DataFrame({
-            'Fecha': df_hist.index.strftime('%Y-%m-%d'),
+            'Fecha/Hora': df_hist.index.strftime('%Y-%m-%d %H:%M'),
             'Señal': df_hist['estado'],
             'Precio': df_hist['precio'].apply(fmt_precio),
             'Stop': df_hist['stop'].apply(fmt_precio),
@@ -289,66 +446,27 @@ def modulo_bot_inversion(
             'Z-Score': df_hist['zscore'].round(2),
             'RSI': df_hist['rsi'].round(1),
         })
-
-        def _color_señal_bot(val):
-            c = {'VENTA 100%': C_BOT_VENTA_100, 'VENTA 50%': C_BOT_VENTA_50,
-                 'COMPRA 100%': C_BOT_COMPRA_100, 'COMPRA 50%': C_BOT_COMPRA_50}.get(val, '#e6edf3')
-            return f'color:{c};font-weight:700'
-
-        _map = 'map' if hasattr(df_hist_show.style, 'map') else 'applymap'
-        styled = (df_hist_show.style
-                  .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
-                  .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
-                  .set_table_styles([
-                      {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
-                          ('font-weight', '700'), ('text-align', 'center'),
-                          ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
-                      {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
-                  ]))
-        st.dataframe(styled, use_container_width=True, height=min(500, len(df_hist_show) * 38 + 45))
-        st.caption(f'{len(df_hist_show)} señales disparadas en el historial analizado ({cfg["periodo_descarga"]}).')
+        styled_hist = (df_hist_show.style
+            .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
+            .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+            .set_table_styles([
+                {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                    ('font-weight', '700'), ('text-align', 'center'),
+                    ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+            ]))
+        st.dataframe(styled_hist, use_container_width=True, height=min(500, len(df_hist_show) * 38 + 45))
+        st.caption(f'{len(df_hist_show)} señales disparadas en el historial analizado ({cfg["periodo_descarga"]} · {horizonte_bot}).')
 
     with st.expander('❓ Cómo funciona esta señal'):
         st.markdown("""
-        Se dispara una señal de **VENTA** o **COMPRA** solo cuando se cumplen **las 4 condiciones a la vez**:
+        Se dispara una señal de **VENTA** o **COMPRA** solo cuando se cumplen **las 4 condiciones a la vez**,
+        calculadas sobre velas intradía (5, 15 o 30 minutos, según elijas arriba):
         1. **Sentimiento** (percentil del precio) en nivel extremo — ≥96 (100%) / 90-96 (50%) para venta, ≤6 (100%) / 7-10 (50%) para compra.
         2. **Anticipación** (momentum + compresión de volatilidad) dentro del rango configurado.
         3. **Z-Score** del precio cruzando el umbral (±2.5 por defecto).
         4. **RSI** en nivel extremo (≥70 venta / ≤30 compra); si además hay **divergencia** contra el precio, la confirmación es más fuerte.
 
-        Al ser 4 condiciones simultáneas, las señales son poco frecuentes — están pensadas como confirmaciones
-        de alta convicción, no como señales diarias. **Esto es informativo, no asesoramiento financiero.**
+        Los precios se descargan con caché de 20 segundos — tocá "🔄 Actualizar precios ahora" para forzar
+        una recarga inmediata. **Esto es informativo, no asesoramiento financiero.**
         """)
-
-    chips_navegacion([(ticker_bot, ticker_bot)], 'bot_inversion')
-
-
-# ==============================================================
-#  INSTRUCCIONES DE INTEGRACIÓN EN LA APP PRINCIPAL
-#  (no ejecutar esto — es la guía para pegar en tu script grande)
-# ==============================================================
-#
-# 1) Import, junto a los otros módulos:
-#    from modulo_bot_inversion import modulo_bot_inversion
-#
-# 2) Agregar 'bot_inversion' a los diccionarios de nav (junto a 'finanzas', 'promediador', etc.):
-#    titulos['bot_inversion']   = ('Bot de Inversión', '🤖', 'Señales Sent./Antic./Z-Score/RSI+Div')
-#    badge_map['bot_inversion'] = ('#6CC24A', 'rgba(108,194,74,0.12)', 'BOT')
-#
-# 3) Agregar un botón en el popover "Mi Cuenta" (o como pill de nav propia):
-#    if st.button('🤖 Bot de Inversión', use_container_width=True, key='menu_bot_inversion'):
-#        st.session_state['nav_horizonte'] = 'bot_inversion'
-#        st.session_state['nav_modulo'] = 'bot_inversion'
-#        st.rerun()
-#
-#    (y su equivalente en _OPCIONES_HORIZONTE_MOBILE para el nav de celular)
-#
-# 4) Agregar la rama de renderizado, junto a las otras (elif MODULO == 'pares': ...):
-#    elif MODULO == 'bot_inversion':
-#        modulo_bot_inversion(
-#            descargar_datos=descargar_datos, get_close_series=get_close_series,
-#            fmt_precio=fmt_precio, score_color_hex=score_color_hex,
-#            kpi_cards_4=kpi_cards_4, selector_ticker_autocomplete=selector_ticker_autocomplete,
-#            chips_navegacion=chips_navegacion, PLOTLY_LAYOUT_BASE=PLOTLY_LAYOUT_BASE,
-#            PLOTLY_CONFIG=PLOTLY_CONFIG,
-#        )
