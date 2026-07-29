@@ -630,12 +630,37 @@ def modulo_bot_inversion(
     if not resultados_bot:
         st.error('No se pudo calcular ninguna señal con los activos seleccionados.')
         return
-
+    _bot_expirar_vencidas(supabase, user_id)
     st.caption(
         f"🕐 {datetime.now().strftime('%H:%M:%S')} · Temporalidad {horizonte_bot} · "
         f"caché de precios: 20s · tocá '🔄 Actualizar precios ahora' para forzar la recarga."
     )
-
+    
+    st.markdown('### ⏱️ Señales pendientes de decisión')
+    pendientes = _bot_pendientes_decision(supabase, user_id)
+    if not pendientes:
+        st.info('No hay señales esperando tu decisión ahora mismo.')
+    else:
+        for p in pendientes:
+            fecha_lim = pd.Timestamp(p['fecha_limite_decision'])
+            mins_restantes = max(0, int((fecha_lim - pd.Timestamp.now(tz=fecha_lim.tz)).total_seconds() // 60))
+            col_info, col_ok, col_no = st.columns([4, 1, 1])
+            with col_info:
+                st.markdown(
+                    f"**{p['ticker']}** · {p['tipo_señal']} · Entrada: {fmt_precio(p['precio_entrada'])} · "
+                    f"TP: {fmt_precio(p['tp'])} · Stop: {fmt_precio(p['stop'])} · "
+                    f"⏳ Quedan **{mins_restantes} min** para decidir"
+                )
+            with col_ok:
+                if st.button('✅ Aceptar', key=f"bot_aceptar_{p['id']}", use_container_width=True):
+                    _bot_decidir_señal(supabase, p['id'], 'aceptada')
+                    st.rerun()
+            with col_no:
+                if st.button('❌ Rechazar', key=f"bot_rechazar_{p['id']}", use_container_width=True):
+                    _bot_decidir_señal(supabase, p['id'], 'rechazada')
+                    st.rerun()
+    st.markdown('---')
+    
     # ── Resumen multi-activo ─────────────────────────────────────────
     st.markdown('### 📋 Resumen — señal actual por activo')
     filas_resumen = []
@@ -736,6 +761,41 @@ def modulo_bot_inversion(
         st.dataframe(styled_hist, use_container_width=True, height=min(500, len(df_hist_show) * 38 + 45))
         st.caption(f'{len(df_hist_show)} señales disparadas en el historial analizado ({cfg["periodo_descarga"]} · {horizonte_bot}).')
 
+    st.markdown('---')
+    st.markdown('### 📈 Rendimiento del bot (solo señales aceptadas)')
+    rend = _bot_calcular_rendimiento(supabase, user_id, capital_inicial_bot, pct_por_operacion_bot)
+
+    if rend['total_señales'] == 0:
+        st.info('Todavía no aceptaste ninguna señal — el rendimiento se arma a medida que decidís sobre las que aparecen.')
+    else:
+        color_rend = '#3fb950' if rend['rendimiento_pct'] >= 0 else '#f85149'
+        kpi_cards_4([
+            ('Capital Actual', f"USD {rend['capital_actual']:,.2f}",
+             f"Inicial: USD {rend['capital_inicial']:,.2f}", color_rend),
+            ('Rendimiento', f"{rend['rendimiento_pct']:+.2f}%", 'Sobre capital inicial', color_rend),
+            ('Win Rate', f"{rend['win_rate']:.0f}%" if rend['win_rate'] is not None else 'N/D',
+             f"{rend['ganadoras']}✅ / {rend['perdedoras']}❌ cerradas", '#3a7bd5'),
+            ('Operaciones', str(rend['total_señales']),
+             f"{rend['cerradas']} cerradas · {rend['abiertas']} en curso", '#e3b341'),
+        ])
+
+        fig_eq = go.Figure()
+        eq_x = [str(c['fecha'])[:16] for c in rend['curva']]
+        eq_y = [c['equity'] for c in rend['curva']]
+        fig_eq.add_trace(go.Scatter(x=eq_x, y=eq_y, mode='lines+markers',
+                                     line=dict(color=color_rend, width=2)))
+        fig_eq.update_layout(
+            **PLOTLY_LAYOUT_BASE, height=340,
+            title=dict(text='Evolución del capital (señales aceptadas)', font=dict(size=13)),
+            xaxis=dict(gridcolor='#21262d'), yaxis=dict(gridcolor='#21262d', title='USD'),
+            margin=dict(l=10, r=10, t=45, b=10),
+        )
+        st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key='bot_equity_fig')
+        st.caption(
+            'Solo se cuentan señales que aceptaste dentro del límite de tiempo configurado — '
+            'esto evita medir con sesgo retrospectivo (aceptar solo las que ya sabías que salieron bien). '
+            'Las señales "en curso" (⏳) todavía no suman ni restan al capital.'
+        )
     with st.expander('❓ Cómo funciona esta señal'):
         st.markdown("""
         Cada señal disparada se evalúa hacia adelante: se marca **✅** si el precio tocó primero
