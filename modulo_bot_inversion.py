@@ -1,8 +1,17 @@
 # ==============================================================
-#  MÓDULO BOT DE INVERSIÓN — Señales Sent./Antic./Z-Score/RSI+Div
-#  Versión intradía: temporalidades 5/15/30 min, multi-activo (hasta 10)
+#  MÓDULO BOT DE INVERSIÓN — Señales Fractal/Sentimiento/Z-Score/RSI
+#  Versión intradía: temporalidades 5/15/30 min, 1h y 4h, multi-activo (hasta 10)
 #  Portado desde el indicador Pine Script "Top-Down Cuantitativo
-#  — Solo Señales (Sent/Antic/Z/RSI-Div)".
+#  — Fractal + Sentimiento + Z-Score + RSI v15".
+#
+#  v2: se reemplaza el motor de Sentimiento+Anticipación por el
+#      esquema de conteo del Pine v15: 4 condiciones por lado
+#      (Fractal, Sentimiento, Z-Score, RSI). 4/4 cumplidas → señal
+#      completa (equivalente a "100%"); 3/4 cumplidas → entrada
+#      anticipada (equivalente a "50%"). Se mantiene el mismo
+#      esquema de nombres de estado ('VENTA 100%'/'VENTA 50%'/etc.)
+#      para no romper la tabla bot_señales_log ni el resto del
+#      motor de seguimiento/rendimiento, que no se tocan.
 # ==============================================================
 
 import numpy as np
@@ -14,26 +23,29 @@ from datetime import datetime
 
 MAX_ACTIVOS_BOT = 10
 
-# yfinance permite hasta 60 días de historia para velas de 5m/15m/30m.
-# Usamos el máximo posible para tener la ventana estadística más robusta.
+# yfinance permite hasta 60 días de historia para velas de 5m/15m/30m,
+# y hasta 730 días para velas de 60m. No existe intervalo nativo de 4h:
+# se arma resampleando velas de 60m (agrupando OHLC de a 4 en 4).
 HORIZONTES_BOT = {
     '5 minutos': dict(
-        interval='5m', periodo_descarga='60d',
-        ventana_valor=560, ventana_momento=90, rsi_periodo=14,
-        vol_periodo=40, bb_periodo=30, atr_periodo=14,
-        ret_dias=12, mom_escala=3.0,
+        interval='5m', periodo_descarga='60d', resample=None, minutos_vela=5,
+        ventana_valor=560, rsi_periodo=14,
     ),
     '15 minutos': dict(
-        interval='15m', periodo_descarga='60d',
-        ventana_valor=380, ventana_momento=65, rsi_periodo=14,
-        vol_periodo=30, bb_periodo=26, atr_periodo=14,
-        ret_dias=8, mom_escala=2.2,
+        interval='15m', periodo_descarga='60d', resample=None, minutos_vela=15,
+        ventana_valor=380, rsi_periodo=14,
     ),
     '30 minutos': dict(
-        interval='30m', periodo_descarga='60d',
-        ventana_valor=250, ventana_momento=48, rsi_periodo=14,
-        vol_periodo=24, bb_periodo=20, atr_periodo=14,
-        ret_dias=6, mom_escala=1.6,
+        interval='30m', periodo_descarga='60d', resample=None, minutos_vela=30,
+        ventana_valor=250, rsi_periodo=14,
+    ),
+    '1 hora': dict(
+        interval='60m', periodo_descarga='730d', resample=None, minutos_vela=60,
+        ventana_valor=180, rsi_periodo=14,
+    ),
+    '4 horas': dict(
+        interval='60m', periodo_descarga='730d', resample='4h', minutos_vela=240,
+        ventana_valor=120, rsi_periodo=14,
     ),
 }
 
@@ -56,13 +68,6 @@ def _rsi_sma(close, length):
     return rsi.fillna(50)
 
 
-def _vol_anual_rolling(close, length, barras_por_año):
-    """Anualiza la volatilidad según la cantidad de barras intradía por año
-    (varía con la temporalidad: 5m/15m/30m tienen distinta cantidad de barras/día)."""
-    ret = close.pct_change()
-    return ret.rolling(length).std() * np.sqrt(barras_por_año) * 100
-
-
 def _rolling_percentrank(s, length):
     """Equivalente a ta.percentrank de Pine: % de las barras anteriores
     (dentro de la ventana) que son menores al valor actual."""
@@ -74,75 +79,71 @@ def _rolling_percentrank(s, length):
     return s.rolling(length, min_periods=min_p).apply(_r, raw=True)
 
 
-def _barras_por_año(interval):
-    """Barras de mercado (~6.5hs, ~252 días) por año, según temporalidad."""
-    minutos_sesion = 6.5 * 60
-    minutos_vela = {'5m': 5, '15m': 15, '30m': 30}.get(interval, 15)
-    barras_dia = minutos_sesion / minutos_vela
-    return barras_dia * 252
+def _pivote_confirmado(serie, izq, der, modo='max'):
+    """Equivalente a ta.pivothigh/ta.pivotlow de Pine: True en la barra donde
+    se confirma un pivote (techo si modo='max', piso si modo='min'), usando
+    'izq' barras a la izquierda y 'der' barras a la derecha. La confirmación
+    aparece 'der' barras después del pico real (igual que en Pine, donde el
+    fractal 'tarda' en confirmarse)."""
+    ventana = izq + der + 1
+    roll = serie.rolling(ventana, min_periods=ventana).max() if modo == 'max' \
+        else serie.rolling(ventana, min_periods=ventana).min()
+    # roll, evaluado en la posición i+der, es el máximo/mínimo de la ventana
+    # [i-izq, i+der]. shift(-der) lo trae a la posición i, y comparándolo con
+    # serie[i] sabemos si i es el pico. shift(der) recién publica ese dato
+    # 'der' barras más tarde, que es cuando de verdad se puede confirmar.
+    es_pivote = serie == roll.shift(-der)
+    confirmado = es_pivote.shift(der)
+    return confirmado.fillna(False).astype(bool)
 
 
 def _calcular_bot_dataframe(close, high, low, cfg,
-                             antic_min, antic_max, zscore_periodo, zscore_umbral,
-                             rsi_nivel_venta, rsi_nivel_compra, divergencia_lookback,
+                             sent_min_compra, sent_max_compra, sent_min_venta, sent_max_venta,
+                             zscore_periodo, zscore_umbral,
+                             rsi_nivel_venta, rsi_nivel_compra,
+                             fractal_izq, fractal_der,
                              stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50):
     """Cálculo puro (sin caché): es liviano — unas pocas rolling windows sobre
     unos cientos de velas — así que no vale la pena cachearlo, y cachearlo mal
-    (por ticker) es justamente lo que rompía el análisis multi-activo."""
+    (por ticker) es justamente lo que rompía el análisis multi-activo.
+
+    4 condiciones por lado, evaluadas en la barra actual:
+      Fractal (pivote confirmado), Sentimiento (percentil de precio dentro
+      de rango), Z-Score (± umbral), RSI (nivel de sobrecompra/sobreventa).
+      4/4 → señal completa ('...100%'). 3/4 → entrada anticipada ('...50%')."""
     cl = close.dropna()
     hi = high.reindex(cl.index)
     lo = low.reindex(cl.index)
-    barras_año = _barras_por_año(cfg['interval'])
 
-    precio_pct = _rolling_percentrank(cl, cfg['ventana_valor'])
+    sc_sent = _rolling_percentrank(cl, cfg['ventana_valor'])
     rsi_valor = _rsi_sma(cl, cfg['rsi_periodo'])
-    rsi_pct = 100 - _rolling_percentrank(rsi_valor, cfg['ventana_valor'])
-    vol_valor = _vol_anual_rolling(cl, cfg['vol_periodo'], barras_año)
-    vol_pct = 100 - _rolling_percentrank(vol_valor, cfg['ventana_valor'])
-    sc_acum = (100 - precio_pct) * 0.40 + rsi_pct * 0.35 + vol_pct * 0.25  # informativo
-
-    ret_mom = cl.pct_change(cfg['ret_dias']) * 100
-    mom = (50 + ret_mom * cfg['mom_escala']).clip(0, 100)
-
-    tr = pd.concat([hi - lo, (hi - cl.shift(1)).abs(), (lo - cl.shift(1)).abs()], axis=1).max(axis=1)
-    atr = tr.rolling(cfg['atr_periodo']).mean()
-    atr_media = atr.rolling(cfg['ventana_momento']).mean()
-    comp_atr = (100 - (atr / atr_media * 50)).clip(0, 100)
-
-    bb_media = cl.rolling(cfg['bb_periodo']).mean()
-    bb_std = cl.rolling(cfg['bb_periodo']).std()
-    bbw = (bb_std / bb_media.replace(0, np.nan)) * 100
-    bb_c = 100 - _rolling_percentrank(bbw, cfg['ventana_momento'])
-
-    sc_antic = mom * 0.40 + comp_atr * 0.30 + bb_c * 0.30
-    sc_sent = precio_pct
 
     z_media = cl.rolling(zscore_periodo).mean()
     z_std = cl.rolling(zscore_periodo).std()
     zscore = (cl - z_media) / z_std.replace(0, np.nan)
 
-    rsi_alto = rsi_valor >= rsi_nivel_venta
-    rsi_bajo = rsi_valor <= rsi_nivel_compra
-    div_baj = (cl > cl.shift(divergencia_lookback)) & (rsi_valor < rsi_valor.shift(divergencia_lookback))
-    div_alc = (cl < cl.shift(divergencia_lookback)) & (rsi_valor > rsi_valor.shift(divergencia_lookback))
-    rsi_pts_venta = np.where(rsi_alto, np.where(div_baj, 2, 1), 0)
-    rsi_pts_compra = np.where(rsi_bajo, np.where(div_alc, 2, 1), 0)
+    fractal_top = _pivote_confirmado(hi, fractal_izq, fractal_der, modo='max')
+    fractal_bottom = _pivote_confirmado(lo, fractal_izq, fractal_der, modo='min')
 
-    antic_valida = (sc_antic >= antic_min) & (sc_antic <= antic_max)
-    z_venta = zscore >= zscore_umbral
-    z_compra = zscore <= -zscore_umbral
-    rsi_cond_venta = rsi_pts_venta > 0
-    rsi_cond_compra = rsi_pts_compra > 0
+    sent_venta_ok  = (sc_sent >= sent_min_venta)  & (sc_sent <= sent_max_venta)
+    sent_compra_ok = (sc_sent >= sent_min_compra) & (sc_sent <= sent_max_compra)
+    z_venta_ok  = zscore >= zscore_umbral
+    z_compra_ok = zscore <= -zscore_umbral
+    rsi_venta_ok  = rsi_valor >= rsi_nivel_venta
+    rsi_compra_ok = rsi_valor <= rsi_nivel_compra
+
+    count_venta = (fractal_top.astype(int) + sent_venta_ok.astype(int)
+                   + z_venta_ok.astype(int) + rsi_venta_ok.astype(int))
+    count_compra = (fractal_bottom.astype(int) + sent_compra_ok.astype(int)
+                     + z_compra_ok.astype(int) + rsi_compra_ok.astype(int))
 
     pct_venta = pd.Series(0.0, index=cl.index)
-    pct_venta[(sc_sent >= 96) & (sc_sent <= 100) & antic_valida & z_venta & rsi_cond_venta] = 100.0
-    mask50v = (sc_sent >= 90) & (sc_sent < 96) & antic_valida & z_venta & rsi_cond_venta & (pct_venta == 0)
-    pct_venta[mask50v] = 50.0
+    pct_venta[count_venta == 4] = 100.0
+    pct_venta[count_venta == 3] = 50.0
 
     pct_compra = pd.Series(0.0, index=cl.index)
-    pct_compra[(sc_sent >= 0) & (sc_sent <= 6) & antic_valida & z_compra & rsi_cond_compra] = 100.0
-    mask50c = (sc_sent > 7) & (sc_sent <= 10) & antic_valida & z_compra & rsi_cond_compra & (pct_compra == 0)
-    pct_compra[mask50c] = 50.0
+    pct_compra[count_compra == 4] = 100.0
+    pct_compra[count_compra == 3] = 50.0
 
     estado = pd.Series('—', index=cl.index)
     estado[pct_venta == 100] = 'VENTA 100%'
@@ -152,9 +153,9 @@ def _calcular_bot_dataframe(close, high, low, cfg,
     disparo = (estado != '—') & (estado != estado.shift(1))
 
     df = pd.DataFrame({
-        'precio': cl, 'sc_acum': sc_acum, 'sc_antic': sc_antic, 'sc_sent': sc_sent,
-        'zscore': zscore, 'rsi': rsi_valor,
-        'rsi_pts_venta': rsi_pts_venta, 'rsi_pts_compra': rsi_pts_compra,
+        'precio': cl, 'sc_sent': sc_sent, 'zscore': zscore, 'rsi': rsi_valor,
+        'fractal_top': fractal_top, 'fractal_bottom': fractal_bottom,
+        'count_venta': count_venta, 'count_compra': count_compra,
         'pct_venta': pct_venta, 'pct_compra': pct_compra,
         'estado': estado, 'disparo': disparo,
     })
@@ -391,6 +392,8 @@ def _bot_actualizar_todos_los_pendientes(supabase, user_id, get_close_series):
         if cfg_h is None:
             continue
         df_raw = _descargar_intradia(ticker, cfg_h['periodo_descarga'], cfg_h['interval'])
+        if cfg_h.get('resample'):
+            df_raw = _resamplear_ohlc(df_raw, cfg_h['resample']) if df_raw is not None else None
         if df_raw is None or df_raw.empty:
             continue
         cl = get_close_series(df_raw)
@@ -502,6 +505,31 @@ def _descargar_intradia(ticker, periodo, intervalo):
         return None
 
 
+def _resamplear_ohlc(df, regla):
+    """Agrupa velas más chicas (ej. 60m) en velas más grandes (ej. 4h),
+    respetando la lógica OHLC: apertura=primera, máximo=el más alto,
+    mínimo=el más bajo, cierre=el último."""
+    if df is None or df.empty:
+        return None
+    try:
+        agregado = {}
+        if 'Open' in df.columns:
+            agregado['Open'] = 'first'
+        if 'High' in df.columns:
+            agregado['High'] = 'max'
+        if 'Low' in df.columns:
+            agregado['Low'] = 'min'
+        if 'Close' not in df.columns:
+            return None
+        agregado['Close'] = 'last'
+        if 'Volume' in df.columns:
+            agregado['Volume'] = 'sum'
+        out = df.resample(regla).agg(agregado)
+        return out.dropna(subset=['Close'])
+    except Exception:
+        return None
+
+
 def _fetch_paralelo_bot(tickers, cfg):
     """Descarga en paralelo los precios intradía de todos los activos elegidos."""
     resultados = {}
@@ -558,6 +586,14 @@ def _color_señal_bot(val):
     return f'color:{c};font-weight:700'
 
 
+def _marca_fractal(row):
+    if row.get('fractal_top'):
+        return '🔻 Techo'
+    if row.get('fractal_bottom'):
+        return '🔺 Piso'
+    return '–'
+
+
 # ── Módulo principal ────────────────────────────────────────────────
 
 def modulo_bot_inversion(
@@ -571,13 +607,15 @@ def modulo_bot_inversion(
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
       <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Señales Intradía</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Señal de COMPRA/VENTA basada en 4 condiciones obligatorias simultáneas:
+        Señal basada en 4 condiciones evaluadas en tiempo real:
+        <b style="color:#e3b341">Fractal</b> (piso/techo confirmado),
         <b style="color:#e3b341">Sentimiento</b> en nivel extremo,
-        <b style="color:#e3b341">Anticipación</b> dentro de rango válido,
         <b style="color:#e3b341">Z-Score</b> del precio y
-        <b style="color:#e3b341">RSI + Divergencia</b>.
+        <b style="color:#e3b341">RSI</b> en sobrecompra/sobreventa.
+        4 de 4 condiciones → señal <b style="color:#3fb950">completa</b>.
+        3 de 4 → entrada <b style="color:#e3b341">anticipada</b> (más débil).
         Analizá hasta <b style="color:#e3b341">10 activos</b> en simultáneo, en velas de
-        <b style="color:#e3b341">5, 15 o 30 minutos</b>.
+        <b style="color:#e3b341">5, 15, 30 minutos, 1 hora o 4 horas</b>.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -619,26 +657,37 @@ def modulo_bot_inversion(
     with st.expander('⚙️ Parámetros de la señal (opcional, aplican a todos los activos)', expanded=False):
         p1, p2, p3 = st.columns(3)
         with p1:
-            antic_min = st.number_input('Anticipación mínima', value=15.0, key='bot_antic_min')
-            antic_max = st.number_input('Anticipación máxima', value=38.0, key='bot_antic_max')
+            st.markdown('**Fractal**')
+            fractal_izq = st.number_input('Barras izquierda', value=8, min_value=1, key='bot_fractal_izq')
+            fractal_der = st.number_input('Barras derecha (retraso confirmación)', value=8, min_value=1, key='bot_fractal_der')
         with p2:
-            zscore_periodo = st.number_input('Período Z-Score', value=20, min_value=5, key='bot_z_periodo')
-            zscore_umbral = st.number_input('Umbral Z-Score (±)', value=2.5, min_value=0.1, step=0.1, key='bot_z_umbral')
+            st.markdown('**Z-Score**')
+            zscore_periodo = st.number_input('Período', value=20, min_value=5, key='bot_z_periodo')
+            zscore_umbral = st.number_input('Umbral (±)', value=2.5, min_value=0.1, step=0.1, key='bot_z_umbral')
         with p3:
-            rsi_nivel_venta = st.number_input('Nivel RSI venta (≥)', value=70.0, key='bot_rsi_venta')
-            rsi_nivel_compra = st.number_input('Nivel RSI compra (≤)', value=30.0, key='bot_rsi_compra')
-        p4, p5, p6 = st.columns(3)
+            st.markdown('**RSI**')
+            rsi_nivel_venta = st.number_input('Nivel venta (≥)', value=70.0, key='bot_rsi_venta')
+            rsi_nivel_compra = st.number_input('Nivel compra (≤)', value=30.0, key='bot_rsi_compra')
+
+        p4, p5 = st.columns(2)
         with p4:
-            divergencia_lookback = st.number_input('Barras divergencia', value=5, min_value=2, key='bot_div_lookback')
+            st.markdown('**Sentimiento — rango COMPRA** (percentil del precio)')
+            sent_min_compra = st.number_input('Mínimo', value=0.0, min_value=0.0, max_value=100.0, key='bot_sent_min_compra')
+            sent_max_compra = st.number_input('Máximo', value=10.0, min_value=0.0, max_value=100.0, key='bot_sent_max_compra')
         with p5:
-            stop_pct_100 = st.number_input('Stop % (señal 100%)', value=1.5, key='bot_stop_100')
+            st.markdown('**Sentimiento — rango VENTA** (percentil del precio)')
+            sent_min_venta = st.number_input('Mínimo', value=90.0, min_value=0.0, max_value=100.0, key='bot_sent_min_venta')
+            sent_max_venta = st.number_input('Máximo', value=100.0, min_value=0.0, max_value=100.0, key='bot_sent_max_venta')
+
+        p6, p7 = st.columns(2)
         with p6:
-            stop_pct_50 = st.number_input('Stop % (señal 50%)', value=3.0, key='bot_stop_50')
-        p7, p8 = st.columns(2)
+            st.markdown('**Stop Loss**')
+            stop_pct_100 = st.number_input('Stop % — señal completa (4/4)', value=5.0, min_value=0.1, step=0.1, key='bot_stop_100')
+            stop_pct_50 = st.number_input('Stop % — entrada anticipada (3/4)', value=5.0, min_value=0.1, step=0.1, key='bot_stop_50')
         with p7:
-            tp_pct_100 = st.number_input('Take Profit % (señal 100%)', value=3.0, min_value=0.1, key='bot_tp_100')
-        with p8:
-            tp_pct_50 = st.number_input('Take Profit % (señal 50%)', value=5.0, min_value=0.1, key='bot_tp_50')
+            st.markdown('**Take Profit**')
+            tp_pct_100 = st.number_input('TP % — señal completa (4/4)', value=1.5, min_value=0.1, step=0.1, key='bot_tp_100')
+            tp_pct_50 = st.number_input('TP % — entrada anticipada (3/4)', value=1.5, min_value=0.1, step=0.1, key='bot_tp_50')
 
     analizar_bot = st.button('▶ Analizar', key='bot_run', type='primary')
     if not analizar_bot and not st.session_state.get('bot_run_flag'):
@@ -685,6 +734,11 @@ def modulo_bot_inversion(
         if df_raw is None or df_raw.empty:
             fallidos.append(tk)
             continue
+        if cfg.get('resample'):
+            df_raw = _resamplear_ohlc(df_raw, cfg['resample'])
+            if df_raw is None or df_raw.empty:
+                fallidos.append(tk)
+                continue
         cl = get_close_series(df_raw)
         if cl is None or len(cl.dropna()) < max(30, cfg['ventana_valor'] // 4):
             fallidos.append(tk)
@@ -693,8 +747,10 @@ def modulo_bot_inversion(
         lo = df_raw['Low'] if 'Low' in df_raw.columns else cl
         df_bot = _calcular_bot_dataframe(
             cl, hi, lo, cfg,
-            antic_min, antic_max, int(zscore_periodo), zscore_umbral,
-            rsi_nivel_venta, rsi_nivel_compra, int(divergencia_lookback),
+            sent_min_compra, sent_max_compra, sent_min_venta, sent_max_venta,
+            int(zscore_periodo), zscore_umbral,
+            rsi_nivel_venta, rsi_nivel_compra,
+            int(fractal_izq), int(fractal_der),
             stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50,
         )
         hi_r = hi.reindex(df_bot.index)
@@ -757,8 +813,10 @@ def modulo_bot_inversion(
         filas_resumen.append({
             'Ticker': tk, 'Señal': u['estado'], 'Precio': fmt_precio(u['precio']),
             'Última vela': df_bot.index[-1].strftime('%H:%M:%S'),
-            'Sent': round(u['sc_sent'], 1), 'Antic': round(u['sc_antic'], 1),
+            'Fractal': _marca_fractal(u),
+            'Sent': round(u['sc_sent'], 1),
             'Z-Score': round(u['zscore'], 2), 'RSI': round(u['rsi'], 1),
+            'Cond V': f"{int(u['count_venta'])}/4", 'Cond C': f"{int(u['count_compra'])}/4",
             'Stop': fmt_precio(u['stop']) if not pd.isna(u['stop']) else '—',
             'TP': fmt_precio(u['tp']) if not pd.isna(u['tp']) else '—',
             'Track record': f'{n_ok}✅ {n_bad}❌ {n_open}⏳',
@@ -802,10 +860,10 @@ def modulo_bot_inversion(
         ('Señal Actual', estado_actual, f'{ticker_detalle} · {horizonte_bot}', color_estado),
         ('Precio', fmt_precio(ultimo['precio']),
          f"Stop sugerido: {fmt_precio(ultimo['stop']) if not pd.isna(ultimo['stop']) else '—'}", '#3a7bd5'),
-        ('Sentimiento / Anticipación', f"{ultimo['sc_sent']:.0f} / {ultimo['sc_antic']:.0f}",
-         'Ambos sobre 100', score_color_hex(ultimo['sc_sent'])),
+        ('Sentimiento / Fractal', f"{ultimo['sc_sent']:.0f} · {_marca_fractal(ultimo)}",
+         'Percentil de precio · pivote confirmado', score_color_hex(ultimo['sc_sent'])),
         ('Z-Score / RSI', f"{ultimo['zscore']:+.2f} / {ultimo['rsi']:.1f}",
-         f"Umbral ±{zscore_umbral} · RSI {rsi_nivel_compra:.0f}-{rsi_nivel_venta:.0f}", '#e3b341'),
+         f"Cond. Venta {int(ultimo['count_venta'])}/4 · Cond. Compra {int(ultimo['count_compra'])}/4", '#e3b341'),
     ])
 
     st.plotly_chart(_fig_bot_señales(ticker_detalle, df_bot_sel, PLOTLY_LAYOUT_BASE),
@@ -825,10 +883,12 @@ def modulo_bot_inversion(
             'TP': df_hist['tp'].apply(fmt_precio),
             'Precio Result.': df_hist['precio_resultado'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
             'Velas hasta result.': df_hist['barras_hasta_resultado'].apply(lambda v: int(v) if pd.notna(v) else '—'),
+            'Fractal': df_hist.apply(_marca_fractal, axis=1),
             'Sent': df_hist['sc_sent'].round(1),
-            'Antic': df_hist['sc_antic'].round(1),
             'Z-Score': df_hist['zscore'].round(2),
             'RSI': df_hist['rsi'].round(1),
+            'Cond V': df_hist['count_venta'].astype(int).astype(str) + '/4',
+            'Cond C': df_hist['count_compra'].astype(int).astype(str) + '/4',
         })
         styled_hist = (df_hist_show.style
             .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
@@ -925,9 +985,22 @@ def modulo_bot_inversion(
                     st.rerun()
     with st.expander('❓ Cómo funciona esta señal'):
         st.markdown("""
-        Cada señal disparada se evalúa hacia adelante: se marca **✅** si el precio tocó primero el Take Profit, **❌** si tocó primero el Stop, y **⏳ En curso** si todavía no definió.
-        
-        ⚠️ **Importante**: esto asume que el Stop es una salida total de la operación. Si en tu operativa real usás el Stop como pie para una **segunda entrada** (promediar) en vez de cerrar, la ❌ no equivale necesariamente a "perdiste la operación completa"; solo indica que el precio llegó primero a ese nivel.
-        
+        Cada barra se evalúa contra 4 condiciones por lado: **Fractal** (piso/techo confirmado con
+        barras de izquierda/derecha), **Sentimiento** (percentil del precio dentro del rango elegido),
+        **Z-Score** (desvíos respecto a la media móvil) y **RSI** (nivel de sobrecompra/sobreventa).
+
+        - **4 de 4 condiciones cumplidas** → señal **completa** (mostrada como "100%"), con el Stop y
+          Take Profit más amplios que configuraste.
+        - **3 de 4 condiciones cumplidas** → **entrada anticipada** (mostrada como "50%"), más débil
+          y con su propio Stop/TP.
+
+        Cada señal disparada se evalúa hacia adelante: se marca **✅** si el precio tocó primero el
+        Take Profit, **❌** si tocó primero el Stop, y **⏳ En curso** si todavía no definió.
+
+        ⚠️ **Importante**: esto asume que el Stop es una salida total de la operación. Si en tu operativa
+        real usás el Stop como pie para una **segunda entrada** (promediar) en vez de cerrar, la ❌ no
+        equivale necesariamente a "perdiste la operación completa"; solo indica que el precio llegó
+        primero a ese nivel.
+
         Usalo como medida de calidad de la señal, no como tu resultado real de trading.
         """)
