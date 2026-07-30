@@ -6388,7 +6388,7 @@ titulos = {
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
     'promediador': ('Promediador + Stop Loss', '📐', 'Precio promedio, tendencia y gestión de riesgo con apalancamiento'),
-    'bot_inversion': ('Bot de Inversión', '🤖', 'Señales Sent./Antic./Z-Score/RSI+Div'),
+    'bot_inversion': ('Bot de Inversión', '🤖', 'Fractal + Sentimiento + Z-Score + RSI, con conteo 4/4 y 3/4'),
     'calendario': ('Calendario Económico', '📆', 'Eventos económicos relevantes y su impacto en mercados'),
     'noticias': ('Noticias', '📰', 'Noticias y análisis de mercado'),
     'admin_pagos': ('Panel de Aprobación de Pagos', '🛠️', 'Revisión y aprobación de solicitudes de pago manual'),
