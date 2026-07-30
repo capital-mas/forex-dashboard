@@ -12,6 +12,26 @@
 #      esquema de nombres de estado ('VENTA 100%'/'VENTA 50%'/etc.)
 #      para no romper la tabla bot_señales_log ni el resto del
 #      motor de seguimiento/rendimiento, que no se tocan.
+#
+#  v3: se agrega REBALANCEO (promediar en contra) y SIMULACIÓN DE
+#      CAPITAL COMPUESTO:
+#        - Rebalanceo: cuando una operación ACEPTADA avanza un %
+#          configurable del camino hacia su Stop (no cuando lo
+#          toca), se dispara una 2da entrada del 50% del capital
+#          de la entrada original, al precio de ese momento. Se
+#          recalcula un precio promedio ponderado por cantidad
+#          (capital/precio) y, sobre ese promedio, un nuevo
+#          Stop/TP usando los MISMOS % configurados originalmente
+#          para esa señal (100% o 50%).
+#        - Capital compuesto: al ACEPTAR una señal, el tamaño de
+#          esa entrada (capital_original_usd) se calcula como
+#          % de operación sobre el capital ACTUAL (resultado de
+#          todas las operaciones aceptadas y cerradas hasta ese
+#          momento), no sobre el capital inicial fijo. Así el
+#          tamaño de cada entrada "se va moviendo" con el capital.
+#
+#      Requiere columnas nuevas en bot_señales_log (ver el bloque
+#      SQL al final de este archivo, en el comentario MIGRACIÓN).
 # ==============================================================
 
 import numpy as np
@@ -53,6 +73,7 @@ C_BOT_VENTA_100  = '#f85149'
 C_BOT_VENTA_50   = '#f0883e'
 C_BOT_COMPRA_100 = '#3fb950'
 C_BOT_COMPRA_50  = '#2dd4bf'
+C_BOT_REBALANCEO = '#a371f7'
 
 
 # ── Funciones auxiliares (equivalentes a las de Pine Script) ──────────
@@ -181,10 +202,14 @@ def _evaluar_resultados_señales(df, hi, lo):
     y determina si el precio tocó primero el Take Profit (✅) o el Stop (❌).
     Si todavía no tocó ninguno de los dos, queda '⏳ En curso'.
 
-    IMPORTANTE: esto asume que el stop es una salida total. Si en tu operativa
-    real usás el stop como gatillo para una segunda entrada (promediar) en vez
-    de cerrar la posición, la ❌ no equivale necesariamente a "perdiste la
-    operación" — es solo "el precio llegó primero a tu nivel de stop"."""
+    NOTA: esta evaluación es la del historial "en vivo" del gráfico (no toca
+    Supabase) y usa siempre el Stop/TP originales de la señal — no conoce el
+    rebalanceo, que solo aplica a operaciones ACEPTADAS y se calcula aparte
+    contra bot_señales_log (ver _bot_chequear_rebalanceos más abajo). Si en tu
+    operativa real usás el stop como gatillo para una segunda entrada
+    (promediar) en vez de cerrar la posición, la ❌ de esta tabla no equivale
+    necesariamente a "perdiste la operación" — es solo "el precio llegó
+    primero a tu nivel de stop original"."""
     df = df.copy()
     n = len(df)
     resultado = [''] * n
@@ -261,13 +286,20 @@ def _bot_guardar_config(supabase, user_id, capital_inicial, pct_por_operacion, m
         pass
 
 
-def _bot_registrar_señales_nuevas(supabase, user_id, ticker, horizonte, df_bot, minutos_limite):
+def _bot_registrar_señales_nuevas(supabase, user_id, ticker, horizonte, df_bot, minutos_limite,
+                                    stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50):
     """Inserta las señales recién disparadas que todavía no estén logueadas.
     Se intenta insertar una por una y se ignora el error si ya existe (gracias
-    al UNIQUE de la tabla) — así nunca se pisa una decisión ya tomada."""
+    al UNIQUE de la tabla) — así nunca se pisa una decisión ya tomada.
+
+    Además de los campos originales, guarda 'stop_pct_usado' y 'tp_pct_usado'
+    (el % configurado que corresponde a esa señal, 100% o 50%): son los que
+    se van a reaplicar sobre el precio promedio el día que la operación se
+    rebalancee, para que el nuevo Stop/TP respete los mismos % originales."""
     disparos = df_bot[df_bot['disparo'] & (df_bot['estado'] != '—')]
     for ts, row in disparos.iterrows():
         fecha_limite = ts.to_pydatetime() + pd.Timedelta(minutes=minutos_limite)
+        es_100 = '100%' in row['estado']
         fila = {
             'user_id': user_id, 'ticker': ticker, 'horizonte': horizonte,
             'fecha_señal': ts.isoformat(), 'tipo_señal': row['estado'],
@@ -275,6 +307,8 @@ def _bot_registrar_señales_nuevas(supabase, user_id, ticker, horizonte, df_bot,
             'tp': float(row['tp']) if pd.notna(row['tp']) else None,
             'stop': float(row['stop']) if pd.notna(row['stop']) else None,
             'fecha_limite_decision': fecha_limite.isoformat(),
+            'stop_pct_usado': float(stop_pct_100 if es_100 else stop_pct_50),
+            'tp_pct_usado': float(tp_pct_100 if es_100 else tp_pct_50),
         }
         try:
             supabase.table('bot_señales_log').insert(fila).execute()
@@ -305,18 +339,127 @@ def _bot_pendientes_decision(supabase, user_id):
         return []
 
 
-def _bot_decidir_señal(supabase, señal_id, decision):
+def _bot_obtener_equity_actual(supabase, user_id, capital_inicial, pct_por_operacion):
+    """Devuelve el capital (equity) resultante de todas las operaciones
+    aceptadas y ya cerradas hasta este momento. Se usa para dimensionar la
+    PRÓXIMA entrada con el % de capital configurado — así el tamaño de cada
+    operación se va moviendo junto con el capital (simulación de capital
+    compuesto), en vez de quedar siempre atado al capital inicial fijo."""
+    rend = _bot_calcular_rendimiento(supabase, user_id, capital_inicial, pct_por_operacion)
+    return rend['capital_actual']
+
+
+def _bot_decidir_señal(supabase, señal_id, decision,
+                        capital_inicial=None, pct_por_operacion=None, user_id=None):
+    """Guarda la decisión (aceptada/rechazada). Si se acepta, además calcula
+    y guarda 'capital_original_usd' = % de operación sobre el capital ACTUAL
+    (no el inicial fijo), que es lo que después usan el rebalanceo y el
+    cálculo de rendimiento para dimensionar esta operación en particular."""
+    payload = {'decision': decision, 'fecha_decision': datetime.now().isoformat()}
+    if decision == 'aceptada' and None not in (capital_inicial, pct_por_operacion, user_id):
+        equity_actual = _bot_obtener_equity_actual(supabase, user_id, capital_inicial, pct_por_operacion)
+        capital_original = equity_actual * (pct_por_operacion / 100.0)
+        payload['capital_original_usd'] = capital_original
+        payload['capital_total_usd'] = capital_original  # se ajusta si más tarde se rebalancea
     try:
-        supabase.table('bot_señales_log').update({
-            'decision': decision, 'fecha_decision': datetime.now().isoformat(),
-        }).eq('id', señal_id).execute()
+        supabase.table('bot_señales_log').update(payload).eq('id', señal_id).execute()
     except Exception:
         pass
 
 
+def _bot_chequear_rebalanceos(supabase, user_id, ticker, horizonte, df_bot,
+                                rebalanceo_umbral_pct, rebalanceo_pct_capital):
+    """Recorre las señales ACEPTADAS de este ticker/horizonte que todavía no
+    tienen resultado ni fueron rebalanceadas, y revisa vela por vela si el
+    precio ya recorrió 'rebalanceo_umbral_pct' % de la distancia entre la
+    entrada y el Stop (en contra) — NO espera a que el Stop se toque.
+
+    Si se cumple, dispara una 2da entrada de tamaño
+    'capital_original_usd' * rebalanceo_pct_capital/100, al precio de esa
+    vela. Calcula el precio promedio ponderado por cantidad (capital/precio,
+    igual que promediar acciones/contratos reales) y, sobre ese promedio,
+    el nuevo Stop/TP reaplicando los MISMOS % configurados originalmente
+    para esa señal (stop_pct_usado / tp_pct_usado)."""
+    try:
+        res = supabase.table('bot_señales_log').select('*') \
+            .eq('user_id', user_id).eq('ticker', ticker).eq('horizonte', horizonte) \
+            .eq('decision', 'aceptada').execute()
+        candidatas = [f for f in (res.data or [])
+                      if f.get('resultado') in (None, '⏳') and not f.get('rebalanceada')
+                      and f.get('capital_original_usd') and f.get('stop_pct_usado') is not None
+                      and f.get('tp_pct_usado') is not None and f.get('stop') is not None]
+    except Exception:
+        candidatas = []
+
+    for fila in candidatas:
+        ts_señal = pd.Timestamp(fila['fecha_señal'])
+        velas_post = df_bot[df_bot.index > ts_señal]
+        if velas_post.empty or 'precio' not in velas_post.columns:
+            continue
+
+        es_venta = 'VENTA' in fila['tipo_señal']
+        p0 = fila['precio_entrada']
+        stop0 = fila['stop']
+        stop_pct_usado = fila['stop_pct_usado']
+        tp_pct_usado = fila['tp_pct_usado']
+        distancia_stop = abs(stop0 - p0)
+        if distancia_stop == 0:
+            continue
+
+        for ts_v, row_v in velas_post.iterrows():
+            precio_v = row_v.get('precio')
+            if precio_v is None or pd.isna(precio_v):
+                continue
+
+            avance_pct = ((precio_v - p0) / distancia_stop * 100) if es_venta \
+                else ((p0 - precio_v) / distancia_stop * 100)
+
+            # Si el precio ya se fue de largo y tocó (o pasó) el Stop original
+            # antes de llegar al umbral, no corresponde rebalancear: esa vela
+            # ya la va a cerrar como ❌ el chequeo normal de resultado.
+            if avance_pct >= 100:
+                break
+
+            if avance_pct >= rebalanceo_umbral_pct:
+                capital_original = float(fila['capital_original_usd'])
+                capital_rebalanceo = capital_original * (rebalanceo_pct_capital / 100.0)
+                qty1 = capital_original / p0
+                qty2 = capital_rebalanceo / precio_v
+                precio_promedio = (capital_original + capital_rebalanceo) / (qty1 + qty2)
+                if es_venta:
+                    stop_final = precio_promedio * (1 + stop_pct_usado / 100)
+                    tp_final = precio_promedio * (1 - tp_pct_usado / 100)
+                else:
+                    stop_final = precio_promedio * (1 - stop_pct_usado / 100)
+                    tp_final = precio_promedio * (1 + tp_pct_usado / 100)
+                try:
+                    supabase.table('bot_señales_log').update({
+                        'rebalanceada': True,
+                        'precio_rebalanceo': float(precio_v),
+                        'fecha_rebalanceo': ts_v.isoformat(),
+                        'capital_rebalanceo_usd': float(capital_rebalanceo),
+                        'capital_total_usd': float(capital_original + capital_rebalanceo),
+                        'precio_promedio': float(precio_promedio),
+                        'stop_final': float(stop_final),
+                        'tp_final': float(tp_final),
+                    }).eq('id', fila['id']).execute()
+                except Exception:
+                    pass
+                break
+
+
 def _bot_actualizar_resultados_aceptadas(supabase, user_id, ticker, horizonte, df_bot):
     """Para señales ACEPTADAS de este ticker/horizonte sin resultado aún,
-    revisa las velas nuevas para ver si ya tocó TP o Stop."""
+    revisa las velas nuevas para ver si ya tocó TP o Stop.
+
+    Si la operación fue rebalanceada, evalúa contra 'stop_final'/'tp_final'
+    (calculados sobre el precio promedio) y solo mirando velas a partir del
+    momento del rebalanceo; si no fue rebalanceada, evalúa contra el Stop/TP
+    originales de la señal, como antes.
+
+    IMPORTANTE: llamar esta función DESPUÉS de _bot_chequear_rebalanceos en
+    cada pasada, para que una operación recién rebalanceada ya se evalúe
+    contra su Stop/TP nuevo en la misma corrida."""
     try:
         res = supabase.table('bot_señales_log').select('*') \
             .eq('user_id', user_id).eq('ticker', ticker).eq('horizonte', horizonte) \
@@ -331,9 +474,16 @@ def _bot_actualizar_resultados_aceptadas(supabase, user_id, ticker, horizonte, d
         if velas_post.empty:
             continue
         es_venta = 'VENTA' in fila['tipo_señal']
-        tp, sl = fila['tp'], fila['stop']
-        if tp is None or sl is None:
+
+        if fila.get('rebalanceada'):
+            tp, sl = fila.get('tp_final'), fila.get('stop_final')
+            if fila.get('fecha_rebalanceo'):
+                velas_post = velas_post[velas_post.index >= pd.Timestamp(fila['fecha_rebalanceo'])]
+        else:
+            tp, sl = fila.get('tp'), fila.get('stop')
+        if tp is None or sl is None or velas_post.empty:
             continue
+
         for ts_v, row_v in velas_post.iterrows():
             hi_v, lo_v = row_v['high'], row_v['low']
             if es_venta:
@@ -381,11 +531,12 @@ def _bot_pendientes_globales(supabase, user_id):
     return list(pendientes_check)
 
 
-def _bot_actualizar_todos_los_pendientes(supabase, user_id, get_close_series):
+def _bot_actualizar_todos_los_pendientes(supabase, user_id, get_close_series,
+                                           rebalanceo_umbral_pct, rebalanceo_pct_capital):
     """Recorre TODOS los tickers con señales aceptadas abiertas —estén o no
-    en la selección actual— y les actualiza el resultado. Se llama siempre
-    al entrar al módulo, así el historial no se 'traba' cuando el usuario
-    deja de mirar un activo puntual."""
+    en la selección actual— y les actualiza rebalanceo + resultado. Se llama
+    siempre al entrar al módulo, así el historial no se 'traba' cuando el
+    usuario deja de mirar un activo puntual."""
     pendientes = _bot_pendientes_globales(supabase, user_id)
     for ticker, horizonte in pendientes:
         cfg_h = HORIZONTES_BOT.get(horizonte)
@@ -401,14 +552,23 @@ def _bot_actualizar_todos_los_pendientes(supabase, user_id, get_close_series):
             continue
         hi = df_raw['High'] if 'High' in df_raw.columns else cl
         lo = df_raw['Low'] if 'Low' in df_raw.columns else cl
-        df_lite = pd.DataFrame({'high': hi, 'low': lo}).reindex(cl.index)
+        df_lite = pd.DataFrame({'precio': cl, 'high': hi, 'low': lo}).reindex(cl.index)
+        _bot_chequear_rebalanceos(supabase, user_id, ticker, horizonte, df_lite,
+                                    rebalanceo_umbral_pct, rebalanceo_pct_capital)
         _bot_actualizar_resultados_aceptadas(supabase, user_id, ticker, horizonte, df_lite)
 
 
 def _bot_calcular_rendimiento(supabase, user_id, capital_inicial, pct_por_operacion):
     """Arma el rendimiento acumulado a partir de señales ACEPTADAS y con
     resultado ya definido (✅/❌). Las que siguen '⏳' no afectan el cálculo
-    todavía — se muestran aparte como 'abiertas'."""
+    todavía — se muestran aparte como 'abiertas'.
+
+    El tamaño de cada operación es 'capital_total_usd' (guardado al aceptar,
+    y ajustado si se rebalanceó), NO un % fijo del capital inicial — así el
+    capital operado en cada trade refleja el capital que había disponible en
+    ESE momento (simulación de capital compuesto). El % de movimiento se
+    calcula sobre el precio promedio (si hubo rebalanceo) o sobre el precio
+    de entrada original."""
     try:
         res = supabase.table('bot_señales_log').select('*') \
             .eq('user_id', user_id).eq('decision', 'aceptada').order('fecha_señal').execute()
@@ -416,21 +576,27 @@ def _bot_calcular_rendimiento(supabase, user_id, capital_inicial, pct_por_operac
     except Exception:
         filas = []
 
-    capital_por_op = capital_inicial * (pct_por_operacion / 100.0)
     equity = capital_inicial
     curva = [{'fecha': 'Inicio', 'equity': capital_inicial}]
-    cerradas = ganadoras = abiertas = 0
+    cerradas = ganadoras = abiertas = rebalanceos = 0
 
     for fila in filas:
+        if fila.get('rebalanceada'):
+            rebalanceos += 1
         resultado = fila.get('resultado')
-        precio_entrada = fila['precio_entrada']
-        if resultado == '✅':
-            pct_mov = abs(fila['tp'] - precio_entrada) / precio_entrada
-            equity += capital_por_op * pct_mov
+        precio_base = fila.get('precio_promedio') if fila.get('rebalanceada') else fila.get('precio_entrada')
+        tp_base = fila.get('tp_final') if fila.get('rebalanceada') else fila.get('tp')
+        stop_base = fila.get('stop_final') if fila.get('rebalanceada') else fila.get('stop')
+        capital_operado = fila.get('capital_total_usd') or fila.get('capital_original_usd') \
+            or (capital_inicial * (pct_por_operacion / 100.0))
+
+        if resultado == '✅' and tp_base and precio_base:
+            pct_mov = abs(tp_base - precio_base) / precio_base
+            equity += capital_operado * pct_mov
             ganadoras += 1; cerradas += 1
-        elif resultado == '❌':
-            pct_mov = abs(fila['stop'] - precio_entrada) / precio_entrada
-            equity -= capital_por_op * pct_mov
+        elif resultado == '❌' and stop_base and precio_base:
+            pct_mov = abs(stop_base - precio_base) / precio_base
+            equity -= capital_operado * pct_mov
             cerradas += 1
         else:
             abiertas += 1
@@ -443,7 +609,10 @@ def _bot_calcular_rendimiento(supabase, user_id, capital_inicial, pct_por_operac
         'win_rate': (ganadoras / cerradas * 100) if cerradas > 0 else None,
         'cerradas': cerradas, 'ganadoras': ganadoras, 'perdedoras': cerradas - ganadoras,
         'abiertas': abiertas, 'total_señales': len(filas), 'curva': curva,
+        'rebalanceos': rebalanceos,
     }
+
+
 def _bot_rendimiento_por_ticker(supabase, user_id, capital_inicial, pct_por_operacion):
     """Mismo cálculo que _bot_calcular_rendimiento pero agrupado por ticker,
     para ver qué activos vienen aportando y cuáles restando."""
@@ -454,20 +623,27 @@ def _bot_rendimiento_por_ticker(supabase, user_id, capital_inicial, pct_por_oper
     except Exception:
         filas = []
 
-    capital_por_op = capital_inicial * (pct_por_operacion / 100.0)
     por_ticker = {}
     for fila in filas:
         tk = fila['ticker']
-        d = por_ticker.setdefault(tk, {'aporte_usd': 0.0, 'ganadoras': 0, 'perdedoras': 0, 'abiertas': 0})
+        d = por_ticker.setdefault(tk, {'aporte_usd': 0.0, 'ganadoras': 0, 'perdedoras': 0,
+                                        'abiertas': 0, 'rebalanceos': 0})
+        if fila.get('rebalanceada'):
+            d['rebalanceos'] += 1
         resultado = fila.get('resultado')
-        precio_entrada = fila['precio_entrada']
-        if resultado == '✅':
-            pct_mov = abs(fila['tp'] - precio_entrada) / precio_entrada
-            d['aporte_usd'] += capital_por_op * pct_mov
+        precio_base = fila.get('precio_promedio') if fila.get('rebalanceada') else fila.get('precio_entrada')
+        tp_base = fila.get('tp_final') if fila.get('rebalanceada') else fila.get('tp')
+        stop_base = fila.get('stop_final') if fila.get('rebalanceada') else fila.get('stop')
+        capital_operado = fila.get('capital_total_usd') or fila.get('capital_original_usd') \
+            or (capital_inicial * (pct_por_operacion / 100.0))
+
+        if resultado == '✅' and tp_base and precio_base:
+            pct_mov = abs(tp_base - precio_base) / precio_base
+            d['aporte_usd'] += capital_operado * pct_mov
             d['ganadoras'] += 1
-        elif resultado == '❌':
-            pct_mov = abs(fila['stop'] - precio_entrada) / precio_entrada
-            d['aporte_usd'] -= capital_por_op * pct_mov
+        elif resultado == '❌' and stop_base and precio_base:
+            pct_mov = abs(stop_base - precio_base) / precio_base
+            d['aporte_usd'] -= capital_operado * pct_mov
             d['perdedoras'] += 1
         else:
             d['abiertas'] += 1
@@ -479,9 +655,24 @@ def _bot_rendimiento_por_ticker(supabase, user_id, capital_inicial, pct_por_oper
         filas_out.append({
             'Ticker': tk, 'Aporte al capital (USD)': round(d['aporte_usd'], 2),
             'Ganadoras': d['ganadoras'], 'Perdedoras': d['perdedoras'],
-            'Abiertas': d['abiertas'], 'Win Rate': wr,
+            'Abiertas': d['abiertas'], 'Rebalanceos': d['rebalanceos'], 'Win Rate': wr,
         })
-    return pd.DataFrame(filas_out)    
+    return pd.DataFrame(filas_out)
+
+
+def _bot_detalle_aceptadas(supabase, user_id, ticker, horizonte):
+    """Trae las operaciones aceptadas de este ticker/horizonte (incluye
+    abiertas), para mostrar en la UI el estado de capital/rebalanceo real
+    de cada una — a diferencia del historial de señales del gráfico, que es
+    puramente informativo y no conoce el rebalanceo."""
+    try:
+        res = supabase.table('bot_señales_log').select('*') \
+            .eq('user_id', user_id).eq('ticker', ticker).eq('horizonte', horizonte) \
+            .eq('decision', 'aceptada').order('fecha_señal', desc=True).execute()
+        return res.data or []
+    except Exception:
+        return []
+
 # ── Descarga intradía — TTL corto para que se sienta "en vivo" ────────
 
 @st.cache_data(ttl=20, show_spinner=False)
@@ -616,6 +807,10 @@ def modulo_bot_inversion(
         3 de 4 → entrada <b style="color:#e3b341">anticipada</b> (más débil).
         Analizá hasta <b style="color:#e3b341">10 activos</b> en simultáneo, en velas de
         <b style="color:#e3b341">5, 15, 30 minutos, 1 hora o 4 horas</b>.
+        Las operaciones <b style="color:#a371f7">aceptadas</b> se dimensionan sobre el
+        capital <b style="color:#a371f7">actual</b> (compuesto) y, si el precio se acerca
+        al Stop sin llegar a tocarlo, el bot <b style="color:#a371f7">rebalancea</b>
+        (promedia) automáticamente.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -689,6 +884,24 @@ def modulo_bot_inversion(
             tp_pct_100 = st.number_input('TP % — señal completa (4/4)', value=1.5, min_value=0.1, step=0.1, key='bot_tp_100')
             tp_pct_50 = st.number_input('TP % — entrada anticipada (3/4)', value=1.5, min_value=0.1, step=0.1, key='bot_tp_50')
 
+        p8, p9 = st.columns(2)
+        with p8:
+            st.markdown('**🔁 Rebalanceo** (promediar antes de tocar el Stop)')
+            rebalanceo_umbral_pct = st.number_input(
+                'Disparar al X% del camino hacia el Stop', value=80.0,
+                min_value=10.0, max_value=99.0, step=5.0, key='bot_rebalanceo_umbral',
+                help=('Ej: 80 = si el precio ya recorrió el 80% de la distancia entre tu '
+                      'entrada y el Stop (en contra), se dispara una 2da entrada para '
+                      'promediar. No espera a que el precio toque el Stop.'),
+            )
+        with p9:
+            st.markdown('**Tamaño de la 2da entrada**')
+            rebalanceo_pct_capital = st.number_input(
+                '% del capital de la entrada original', value=50.0,
+                min_value=5.0, max_value=200.0, step=5.0, key='bot_rebalanceo_pct_capital',
+                help='El Stop/TP de la posición promediada se recalcula con los mismos % configurados arriba, aplicados sobre el nuevo precio promedio.',
+            )
+
     analizar_bot = st.button('▶ Analizar', key='bot_run', type='primary')
     if not analizar_bot and not st.session_state.get('bot_run_flag'):
         st.info(f'Elegí la temporalidad y hasta {MAX_ACTIVOS_BOT} activos, después presioná "Analizar".')
@@ -707,6 +920,7 @@ def modulo_bot_inversion(
             pct_por_operacion_bot = st.number_input(
                 '% de capital por operación', min_value=1.0, max_value=100.0,
                 value=float(cfg_bot_user['pct_por_operacion']), step=1.0, key='bot_pct_operacion',
+                help='Se aplica sobre el capital ACTUAL (compuesto), no sobre el capital inicial fijo.',
             )
         with cb3:
             minutos_limite_bot = st.number_input(
@@ -757,7 +971,13 @@ def modulo_bot_inversion(
         lo_r = lo.reindex(df_bot.index)
         df_bot = _evaluar_resultados_señales(df_bot, hi_r, lo_r)
         resultados_bot[tk] = df_bot
-        _bot_registrar_señales_nuevas(supabase, user_id, tk, horizonte_bot, df_bot, int(minutos_limite_bot))
+        _bot_registrar_señales_nuevas(supabase, user_id, tk, horizonte_bot, df_bot, int(minutos_limite_bot),
+                                        stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50)
+        # Orden importante: primero se chequea si corresponde rebalanceo (así
+        # una operación recién promediada ya usa su Stop/TP nuevo) y recién
+        # después se evalúa si tocó TP/Stop.
+        _bot_chequear_rebalanceos(supabase, user_id, tk, horizonte_bot, df_bot,
+                                    rebalanceo_umbral_pct, rebalanceo_pct_capital)
         _bot_actualizar_resultados_aceptadas(supabase, user_id, tk, horizonte_bot, df_bot)
 
     if fallidos:
@@ -768,7 +988,8 @@ def modulo_bot_inversion(
         st.error('No se pudo calcular ninguna señal con los activos seleccionados.')
         return
     _bot_expirar_vencidas(supabase, user_id)
-    _bot_actualizar_todos_los_pendientes(supabase, user_id, get_close_series)
+    _bot_actualizar_todos_los_pendientes(supabase, user_id, get_close_series,
+                                           rebalanceo_umbral_pct, rebalanceo_pct_capital)
     st.caption(
         f"🕐 {datetime.now().strftime('%H:%M:%S')} · Temporalidad {horizonte_bot} · "
         f"caché de precios: 20s · tocá '🔄 Actualizar precios ahora' para forzar la recarga."
@@ -791,7 +1012,10 @@ def modulo_bot_inversion(
                 )
             with col_ok:
                 if st.button('✅ Aceptar', key=f"bot_aceptar_{p['id']}", use_container_width=True):
-                    _bot_decidir_señal(supabase, p['id'], 'aceptada')
+                    _bot_decidir_señal(supabase, p['id'], 'aceptada',
+                                         capital_inicial=capital_inicial_bot,
+                                         pct_por_operacion=pct_por_operacion_bot,
+                                         user_id=user_id)
                     st.rerun()
             with col_no:
                 if st.button('❌ Rechazar', key=f"bot_rechazar_{p['id']}", use_container_width=True):
@@ -903,6 +1127,40 @@ def modulo_bot_inversion(
         st.dataframe(styled_hist, use_container_width=True, height=min(500, len(df_hist_show) * 38 + 45))
         st.caption(f'{len(df_hist_show)} señales disparadas en el historial analizado ({cfg["periodo_descarga"]} · {horizonte_bot}).')
 
+    # ── Estado real de las operaciones aceptadas (con rebalanceo) ────
+    st.markdown('#### 💼 Operaciones aceptadas de este activo (estado real, con rebalanceo)')
+    aceptadas_tk = _bot_detalle_aceptadas(supabase, user_id, ticker_detalle, horizonte_bot)
+    if not aceptadas_tk:
+        st.info('Todavía no aceptaste ninguna señal de este activo en esta temporalidad.')
+    else:
+        filas_acept = []
+        for f in aceptadas_tk:
+            rebal = bool(f.get('rebalanceada'))
+            filas_acept.append({
+                'Fecha señal': pd.Timestamp(f['fecha_señal']).strftime('%Y-%m-%d %H:%M'),
+                'Tipo': f['tipo_señal'],
+                'Entrada': fmt_precio(f['precio_entrada']),
+                'Capital orig.': f"USD {f.get('capital_original_usd', 0):,.0f}" if f.get('capital_original_usd') else '—',
+                'Rebalanceada': '🔁 Sí' if rebal else '—',
+                'Precio rebal.': fmt_precio(f['precio_rebalanceo']) if rebal and f.get('precio_rebalanceo') else '—',
+                'Precio promedio': fmt_precio(f['precio_promedio']) if rebal and f.get('precio_promedio') else '—',
+                'Capital total': f"USD {f.get('capital_total_usd', 0):,.0f}" if f.get('capital_total_usd') else '—',
+                'Stop vigente': fmt_precio(f['stop_final'] if rebal else f.get('stop')) if (f.get('stop_final') or f.get('stop')) else '—',
+                'TP vigente': fmt_precio(f['tp_final'] if rebal else f.get('tp')) if (f.get('tp_final') or f.get('tp')) else '—',
+                'Resultado': f.get('resultado') or '⏳',
+            })
+        df_acept_show = pd.DataFrame(filas_acept)
+        styled_acept = (df_acept_show.style
+            .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Resultado']))
+            .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+            .set_table_styles([
+                {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                    ('font-weight', '700'), ('text-align', 'center'),
+                    ('border-bottom', f'2px solid {C_BOT_REBALANCEO}'), ('font-size', '11px')]},
+                {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+            ]))
+        st.dataframe(styled_acept, use_container_width=True, height=min(360, len(df_acept_show) * 38 + 45))
+
     st.markdown('---')
     st.markdown('### 📈 Rendimiento del bot (solo señales aceptadas)')
     rend = _bot_calcular_rendimiento(supabase, user_id, capital_inicial_bot, pct_por_operacion_bot)
@@ -918,7 +1176,7 @@ def modulo_bot_inversion(
             ('Win Rate', f"{rend['win_rate']:.0f}%" if rend['win_rate'] is not None else 'N/D',
              f"{rend['ganadoras']}✅ / {rend['perdedoras']}❌ cerradas", '#3a7bd5'),
             ('Operaciones', str(rend['total_señales']),
-             f"{rend['cerradas']} cerradas · {rend['abiertas']} en curso", '#e3b341'),
+             f"{rend['cerradas']} cerradas · {rend['abiertas']} en curso · {rend['rebalanceos']} 🔁 rebalanceadas", '#e3b341'),
         ])
 
         fig_eq = go.Figure()
@@ -936,6 +1194,9 @@ def modulo_bot_inversion(
         st.caption(
             'Solo se cuentan señales que aceptaste dentro del límite de tiempo configurado — '
             'esto evita medir con sesgo retrospectivo (aceptar solo las que ya sabías que salieron bien). '
+            'Cada operación se dimensiona con el % de capital configurado sobre el capital ACTUAL en el '
+            'momento de aceptarla (simulación de capital compuesto), y si se rebalanceó, el resultado se '
+            'calcula sobre el precio promedio y el capital total (original + rebalanceo). '
             'Las señales "en curso" (⏳) todavía no suman ni restan al capital.'
         )
 
@@ -997,10 +1258,21 @@ def modulo_bot_inversion(
         Cada señal disparada se evalúa hacia adelante: se marca **✅** si el precio tocó primero el
         Take Profit, **❌** si tocó primero el Stop, y **⏳ En curso** si todavía no definió.
 
-        ⚠️ **Importante**: esto asume que el Stop es una salida total de la operación. Si en tu operativa
-        real usás el Stop como pie para una **segunda entrada** (promediar) en vez de cerrar, la ❌ no
-        equivale necesariamente a "perdiste la operación completa"; solo indica que el precio llegó
-        primero a ese nivel.
+        **🔁 Rebalanceo (solo en operaciones aceptadas)**: si el precio recorre el % configurado del
+        camino hacia el Stop (por defecto 80%) SIN llegar a tocarlo, el bot dispara una 2da entrada de
+        tamaño = 50% del capital de la entrada original (configurable), calcula un **precio promedio**
+        ponderado por cantidad (capital ÷ precio, como promediar acciones o contratos reales), y sobre
+        ese promedio recalcula el Stop y el TP usando los **mismos %** que configuraste originalmente.
+        De ahí en más, el resultado de esa operación se evalúa contra el Stop/TP nuevos.
+
+        **💰 Simulación de capital compuesto**: al aceptar una señal, el tamaño de esa entrada se
+        calcula como el % de operación configurado sobre el **capital actual** (resultado de todas las
+        operaciones aceptadas y cerradas hasta ese momento), no sobre el capital inicial fijo. Así el
+        tamaño de cada entrada se va ajustando junto con el capital, hacia arriba o hacia abajo.
+
+        ⚠️ **Importante**: si NO se llegó a rebalancear una operación, el Stop se sigue tratando como
+        una salida total. Solo cuando el bot rebalancea de verdad se está "promediando en vez de cerrar";
+        el resto del tiempo, tocar el Stop original todavía implica cerrar la posición con esa pérdida.
 
         Usalo como medida de calidad de la señal, no como tu resultado real de trading.
         """)
