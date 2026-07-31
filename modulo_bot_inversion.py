@@ -895,78 +895,73 @@ def modulo_bot_inversion(
         st.info('No se disparó ninguna señal en el período analizado con los parámetros actuales.')
     else:
         def _monto(ts, clave):
-        m = montos.get(ts)
-        if not m or m.get(clave) is None:
-            return '—'
-        return f"USD {m[clave]:,.2f}"
-     
-    def _fecha_fmt(v):
-        return v.strftime('%Y-%m-%d %H:%M') if pd.notna(v) else '—'
-     
-    def _ganancia_perdida_usd(ts, row):
-        """Para las tomadas: la ganancia/pérdida real, compuesta, de la
-        simulación. Para las 'No tomada' (⛔): un estimado hipotético — usa el
-        capital INICIAL configurado (no el equity real compuesto, porque esa
-        operación nunca se ejecutó y no hay forma de saber qué equity hubiera
-        tenido en ese momento si se hubiera tomado)."""
-        if row['tomada']:
-            val = rend['pnl_por_señal'].get(ts)
-            if val is None:
+            m = montos.get(ts)
+            if not m or m.get(clave) is None:
                 return '—'
-            return f"USD {val:+,.2f}"
-        else:
-            if pd.isna(row['retorno_pct']):
+            return f"USD {m[clave]:,.2f}"
+
+        def _fecha_fmt(v):
+            return v.strftime('%Y-%m-%d %H:%M') if pd.notna(v) else '—'
+
+        def _ganancia_perdida_usd(ts, row):
+            if row['tomada']:
+                val = rend['pnl_por_señal'].get(ts)
+                if val is None:
+                    return '—'
+                return f"USD {val:+,.2f}"
+            else:
+                if pd.isna(row['retorno_pct']):
+                    return '—'
+                capital_ref = capital_inicial_bot * (pct_por_operacion_bot / 100.0)
+                val = capital_ref * (row['retorno_pct'] / 100.0) * apalancamiento_bot
+                return f"USD {val:+,.2f} (hipot.)"
+
+        def _resultado_si_no_tomada(row):
+            if row['tomada']:
                 return '—'
-            capital_ref = capital_inicial_bot * (pct_por_operacion_bot / 100.0)
-            val = capital_ref * (row['retorno_pct'] / 100.0) * apalancamiento_bot
-            return f"USD {val:+,.2f} (hipot.)"
-     
-    def _resultado_si_no_tomada(row):
-        if row['tomada']:
-            return '—'
-        return row['resultado_teorico'] if row['resultado_teorico'] else '—'
-     
-    df_hist_show = pd.DataFrame({
-        'Fecha/Hora': df_hist.index.strftime('%Y-%m-%d %H:%M'),
-        'Señal': df_hist['estado'],
-        'Tomada': df_hist['tomada'].apply(lambda v: 'Sí' if v else 'No'),
-        'Resultado': df_hist['resultado'].apply(lambda v: 'No tomada' if v == '⛔' else v),
-        'Si no se tomó': df_hist.apply(_resultado_si_no_tomada, axis=1),          # NUEVO
-        'Fecha cierre': df_hist['fecha_cierre'].apply(_fecha_fmt),                # NUEVO
-        'Ganancia/Pérdida (USD)': [_ganancia_perdida_usd(ts, df_hist.loc[ts]) for ts in df_hist.index],  # NUEVO
-        '1ra entrada': df_hist['precio'].apply(fmt_precio),
-        'Monto 1ra': [_monto(ts, 'e1') for ts in df_hist.index],
-        '2da entrada': df_hist['entrada2_precio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-        'Monto 2da': [_monto(ts, 'e2') for ts in df_hist.index],
-        '3ra entrada': df_hist['entrada3_precio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-        'Monto 3ra': [_monto(ts, 'e3') for ts in df_hist.index],
-        'Precio promedio': df_hist['precio_promedio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-        'Stop vigente': df_hist['stop_vigente'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-        'TP vigente': df_hist['tp_vigente'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-        'Precio Result.': df_hist['precio_resultado'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-        'Velas hasta result.': df_hist['barras_hasta_resultado'].apply(lambda v: int(v) if pd.notna(v) else '—'),
-        'Fractal': df_hist.apply(_marca_fractal, axis=1),
-        'Sent': df_hist['sc_sent'].round(1),
-        'Z-Score': df_hist['zscore'].round(2),
-        'RSI': df_hist['rsi'].round(1),
-        'Cond V': df_hist['count_venta'].astype(int).astype(str) + '/4',
-        'Cond C': df_hist['count_compra'].astype(int).astype(str) + '/4',
-    })
-     
-    _color_tomada = lambda v: 'color:#8b949e' if v == 'No' else 'color:#3fb950;font-weight:700'
-    styled_hist = (df_hist_show.style
-        .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
-        .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Resultado']))
-        .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Si no se tomó']))   # NUEVO: mismo estilo ✅/❌/⏳
-        .pipe(lambda s: getattr(s, _map)(_color_tomada, subset=['Tomada']))
-        .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
-        .set_table_styles([
-            {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
-                ('font-weight', '700'), ('text-align', 'center'),
-                ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
-            {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
-        ]))
-    st.dataframe(styled_hist, use_container_width=True, height=min(500, len(df_hist_show) * 38 + 45))
+            return row['resultado_teorico'] if row['resultado_teorico'] else '—'
+
+        df_hist_show = pd.DataFrame({
+            'Fecha/Hora': df_hist.index.strftime('%Y-%m-%d %H:%M'),
+            'Señal': df_hist['estado'],
+            'Tomada': df_hist['tomada'].apply(lambda v: 'Sí' if v else 'No'),
+            'Resultado': df_hist['resultado'].apply(lambda v: 'No tomada' if v == '⛔' else v),
+            'Si no se tomó': df_hist.apply(_resultado_si_no_tomada, axis=1),
+            'Fecha cierre': df_hist['fecha_cierre'].apply(_fecha_fmt),
+            'Ganancia/Pérdida (USD)': [_ganancia_perdida_usd(ts, df_hist.loc[ts]) for ts in df_hist.index],
+            '1ra entrada': df_hist['precio'].apply(fmt_precio),
+            'Monto 1ra': [_monto(ts, 'e1') for ts in df_hist.index],
+            '2da entrada': df_hist['entrada2_precio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+            'Monto 2da': [_monto(ts, 'e2') for ts in df_hist.index],
+            '3ra entrada': df_hist['entrada3_precio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+            'Monto 3ra': [_monto(ts, 'e3') for ts in df_hist.index],
+            'Precio promedio': df_hist['precio_promedio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+            'Stop vigente': df_hist['stop_vigente'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+            'TP vigente': df_hist['tp_vigente'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+            'Precio Result.': df_hist['precio_resultado'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+            'Velas hasta result.': df_hist['barras_hasta_resultado'].apply(lambda v: int(v) if pd.notna(v) else '—'),
+            'Fractal': df_hist.apply(_marca_fractal, axis=1),
+            'Sent': df_hist['sc_sent'].round(1),
+            'Z-Score': df_hist['zscore'].round(2),
+            'RSI': df_hist['rsi'].round(1),
+            'Cond V': df_hist['count_venta'].astype(int).astype(str) + '/4',
+            'Cond C': df_hist['count_compra'].astype(int).astype(str) + '/4',
+        })
+
+        _color_tomada = lambda v: 'color:#8b949e' if v == 'No' else 'color:#3fb950;font-weight:700'
+        styled_hist = (df_hist_show.style
+            .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
+            .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Resultado']))
+            .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Si no se tomó']))
+            .pipe(lambda s: getattr(s, _map)(_color_tomada, subset=['Tomada']))
+            .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+            .set_table_styles([
+                {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                    ('font-weight', '700'), ('text-align', 'center'),
+                    ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+            ]))
+        st.dataframe(styled_hist, use_container_width=True, height=min(500, len(df_hist_show) * 38 + 45))
         n_no_tomadas = int((~df_hist['tomada']).sum())
         st.caption(
             f'{len(df_hist_show)} señales disparadas en el historial analizado ({cfg["periodo_descarga"]} · '
