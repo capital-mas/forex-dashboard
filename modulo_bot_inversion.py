@@ -1,44 +1,40 @@
 # ==============================================================
-#  MÓDULO BOT DE INVERSIÓN — Señales Fractal/Sentimiento/Z-Score/RSI
+#  MÓDULO BOT DE INVERSIÓN — Rango + Volatilidad + Rejilla + Trailing
 #  Versión intradía: temporalidades 5/15/30 min, 1h y 4h, multi-activo (hasta 10)
-#  Portado desde el indicador Pine Script "Top-Down Cuantitativo
-#  — Fractal + Sentimiento + Z-Score + RSI v15".
 #
-#  v2: se reemplaza el motor de Sentimiento+Anticipación por el
-#      esquema de conteo del Pine v15: 4 condiciones por lado
-#      (Fractal, Sentimiento, Z-Score, RSI). 4/4 cumplidas → señal
-#      completa (equivalente a "100%"); 3/4 cumplidas → entrada
-#      anticipada (equivalente a "50%"). Se mantiene el mismo
-#      esquema de nombres de estado ('VENTA 100%'/'VENTA 50%'/etc.)
-#      para no romper la tabla bot_señales_log ni el resto del
-#      motor de seguimiento/rendimiento, que no se tocan.
+#  v6: se REEMPLAZA por completo el motor anterior (Fractal + Sentimiento +
+#      Z-Score + RSI, Pine v15) por un motor nuevo, de un solo tipo de
+#      operación por activo a la vez ("holdeo"):
 #
-#  v3: se agrega REBALANCEO (promediar en contra) y SIMULACIÓN DE
-#      CAPITAL COMPUESTO.
+#        1) RANGO: canal de Donchian (máximo/mínimo de N velas) — define
+#           el techo y el piso donde se mueve el precio.
+#        2) VOLATILIDAD: ATR (rango verdadero promedio) — es la unidad de
+#           medida de todo lo demás (rejilla, activación de trailing,
+#           distancia del trailing, stop duro).
+#        3) REJILLA: cuando el precio entra en la zona baja del rango
+#           (cerca del piso) el bot abre una posición COMPRA; si entra en
+#           la zona alta (cerca del techo), abre VENTA. Si el precio sigue
+#           moviéndose en contra en pasos de X × ATR, el bot agrega nuevas
+#           entradas (hasta un máximo configurable), recalculando el
+#           precio promedio — igual espíritu que el "rebalanceo" de la
+#           versión anterior, pero ahora es la forma NORMAL de operar
+#           (rejilla), no una excepción.
+#        4) HOLDEO: el bot sostiene la posición (todas las entradas de la
+#           rejilla juntas) hasta que se activa y toca el trailing, o hasta
+#           que se rompe el stop duro (por fuera del rango, en unidades de
+#           ATR) — no hay Take Profit fijo.
+#        5) TRAILING (por volatilidad): una vez que el precio avanzó a
+#           favor una cierta cantidad de ATR desde el precio promedio, se
+#           activa un trailing stop = precio extremo alcanzado ∓ X × ATR,
+#           que se va ajustando (ratchet) a favor de la posición. El cierre
+#           se marca ✅ si el trailing se activó por encima del precio
+#           promedio (ganancia) o ❌ si el cierre fue por el stop duro o
+#           por un trailing que quedó por debajo del promedio.
 #
-#  v4: la herramienta pasa a ser de SOLO OBSERVACIÓN — todas las
-#      señales que dispara el bot se registran automáticamente
-#      como si hubieran sido aceptadas (ya no hay botones de
-#      Aceptar/Rechazar ni ventana de decisión). El capital inicial
-#      queda fijo en USD 100 y el rendimiento se simula bajo
-#      distintos niveles de apalancamiento (1x a 5x) sobre la MISMA
-#      secuencia de operaciones que arroja el bot, para poder
-#      comparar cómo se hubiera movido el capital en cada caso.
-#      El rebalanceo (promediar antes de tocar el Stop, y recalcular
-#      el Stop/TP sobre el precio promedio) sigue funcionando igual
-#      que antes, de forma totalmente automática.
-#
-#  v5: se saca toda la simulación/estado "real" que dependía de
-#      bot_señales_log en Supabase (registro de señales, chequeo de
-#      rebalanceo y resultado contra el log, tabla de "Operaciones
-#      de este activo"). En su lugar, la simulación de rendimiento se
-#      arma 100% EN MEMORIA, directamente sobre el mismo "Historial
-#      de señales disparadas" que ya se calcula en cada corrida
-#      (misma ventana de datos descargada de Yahoo Finance). El
-#      rebalanceo se sigue simulando (también en memoria, con la
-#      misma lógica de siempre) y el capital inicial de la
-#      simulación pasa a ser configurable, desde USD 50 en adelante,
-#      en lugar de estar fijo en USD 100.
+#      Solo puede haber UNA posición abierta por activo a la vez (no se
+#      abren posiciones nuevas mientras el bot sigue "holdeando" la
+#      anterior), igual que en la versión anterior no se permitía
+#      solapamiento.
 # ==============================================================
 
 import numpy as np
@@ -50,14 +46,9 @@ from datetime import datetime
 
 MAX_ACTIVOS_BOT = 10
 
-# Capital inicial de la simulación: ahora es configurable desde la UI
-# (mínimo USD 50). Estas son solo el piso y el valor por defecto que se
-# usan la primera vez, antes de que el usuario elija otro monto.
 CAPITAL_MINIMO_BOT = 50.0
 CAPITAL_INICIAL_BOT_DEFAULT = 100.0
 
-# Niveles de apalancamiento que se pueden comparar sobre la misma secuencia
-# de operaciones que va arrojando el bot.
 APALANCAMIENTOS_BOT = [1, 2, 3, 4, 5]
 
 # yfinance permite hasta 60 días de historia para velas de 5m/15m/30m,
@@ -66,325 +57,279 @@ APALANCAMIENTOS_BOT = [1, 2, 3, 4, 5]
 HORIZONTES_BOT = {
     '5 minutos': dict(
         interval='5m', periodo_descarga='60d', resample=None, minutos_vela=5,
-        ventana_valor=560, rsi_periodo=14,
     ),
     '15 minutos': dict(
         interval='15m', periodo_descarga='60d', resample=None, minutos_vela=15,
-        ventana_valor=380, rsi_periodo=14,
     ),
     '30 minutos': dict(
         interval='30m', periodo_descarga='60d', resample=None, minutos_vela=30,
-        ventana_valor=250, rsi_periodo=14,
     ),
     '1 hora': dict(
         interval='60m', periodo_descarga='730d', resample=None, minutos_vela=60,
-        ventana_valor=180, rsi_periodo=14,
     ),
     '4 horas': dict(
         interval='60m', periodo_descarga='730d', resample='4h', minutos_vela=240,
-        ventana_valor=120, rsi_periodo=14,
     ),
 }
 
-C_BOT_VENTA_100  = '#f85149'
-C_BOT_VENTA_50   = '#f0883e'
-C_BOT_COMPRA_100 = '#3fb950'
-C_BOT_COMPRA_50  = '#2dd4bf'
-C_BOT_REBALANCEO = '#a371f7'
+C_BOT_HOLD_COMPRA  = '#3fb950'
+C_BOT_HOLD_VENTA   = '#f85149'
+C_BOT_TRAILING     = '#a371f7'
+C_BOT_GRID_ENTRADA = '#e3b341'
+C_BOT_CIERRE_OK    = '#3fb950'
+C_BOT_CIERRE_BAD   = '#f85149'
 
 
-# ── Funciones auxiliares (equivalentes a las de Pine Script) ──────────
+# ── Volatilidad y rango ────────────────────────────────────────────────
 
-def _rsi_sma(close, length):
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(length).mean()
-    avg_loss = loss.rolling(length).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.fillna(50)
-
-
-def _rolling_percentrank(s, length):
-    """Equivalente a ta.percentrank de Pine: % de las barras anteriores
-    (dentro de la ventana) que son menores al valor actual."""
-    min_p = max(5, length // 4)
-
-    def _r(x):
-        return (x < x[-1]).sum() / len(x) * 100
-
-    return s.rolling(length, min_periods=min_p).apply(_r, raw=True)
+def _atr(high, low, close, periodo):
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        (high - low).abs(),
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.rolling(periodo, min_periods=max(3, periodo // 3)).mean()
 
 
-def _pivote_confirmado(serie, izq, der, modo='max'):
-    """Equivalente a ta.pivothigh/ta.pivotlow de Pine: True en la barra donde
-    se confirma un pivote (techo si modo='max', piso si modo='min'), usando
-    'izq' barras a la izquierda y 'der' barras a la derecha. La confirmación
-    aparece 'der' barras después del pico real (igual que en Pine, donde el
-    fractal 'tarda' en confirmarse)."""
-    ventana = izq + der + 1
-    roll = serie.rolling(ventana, min_periods=ventana).max() if modo == 'max' \
-        else serie.rolling(ventana, min_periods=ventana).min()
-    # roll, evaluado en la posición i+der, es el máximo/mínimo de la ventana
-    # [i-izq, i+der]. shift(-der) lo trae a la posición i, y comparándolo con
-    # serie[i] sabemos si i es el pico. shift(der) recién publica ese dato
-    # 'der' barras más tarde, que es cuando de verdad se puede confirmar.
-    es_pivote = serie == roll.shift(-der)
-    confirmado = es_pivote.shift(der)
-    return confirmado.fillna(False).astype(bool)
+def _donchian(high, low, periodo):
+    r_high = high.rolling(periodo, min_periods=max(5, periodo // 3)).max()
+    r_low = low.rolling(periodo, min_periods=max(5, periodo // 3)).min()
+    return r_high, r_low
 
 
-def _calcular_bot_dataframe(close, high, low, cfg,
-                             sent_min_compra, sent_max_compra, sent_min_venta, sent_max_venta,
-                             zscore_periodo, zscore_umbral,
-                             rsi_nivel_venta, rsi_nivel_compra,
-                             fractal_izq, fractal_der,
-                             stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50):
-    """Cálculo puro (sin caché): es liviano — unas pocas rolling windows sobre
-    unos cientos de velas — así que no vale la pena cachearlo, y cachearlo mal
-    (por ticker) es justamente lo que rompía el análisis multi-activo.
+# ── Motor: rango + volatilidad + rejilla + holdeo + trailing ──────────
 
-    4 condiciones por lado, evaluadas en la barra actual:
-      Fractal (pivote confirmado), Sentimiento (percentil de precio dentro
-      de rango), Z-Score (± umbral), RSI (nivel de sobrecompra/sobreventa).
-      4/4 → señal completa ('...100%'). 3/4 → entrada anticipada ('...50%')."""
+def _motor_grid_trailing(close, high, low,
+                          atr_periodo, rango_periodo,
+                          grid_step_atr, zona_compra_pct, zona_venta_pct,
+                          max_niveles, pct_capital_nivel,
+                          trailing_activacion_atr, trailing_atr_mult,
+                          hard_stop_atr_mult):
+    """Recorre las velas en orden y arma, en un solo pase con estado, tanto
+    la serie continua (para el gráfico) como la lista de operaciones
+    ('trades': cada una es un ciclo completo de holdeo, desde que se abre
+    la 1ra entrada hasta que se cierra por trailing o por stop duro, o
+    queda '⏳ en curso' si todavía está abierta al final de los datos)."""
     cl = close.dropna()
     hi = high.reindex(cl.index)
     lo = low.reindex(cl.index)
 
-    sc_sent = _rolling_percentrank(cl, cfg['ventana_valor'])
-    rsi_valor = _rsi_sma(cl, cfg['rsi_periodo'])
+    atr = _atr(hi, lo, cl, atr_periodo)
+    r_high, r_low = _donchian(hi, lo, rango_periodo)
+    rango_amplitud = (r_high - r_low).replace(0, np.nan)
+    pos_pct = ((cl - r_low) / rango_amplitud * 100).clip(0, 100)
 
-    z_media = cl.rolling(zscore_periodo).mean()
-    z_std = cl.rolling(zscore_periodo).std()
-    zscore = (cl - z_media) / z_std.replace(0, np.nan)
+    idx = cl.index
+    n = len(cl)
+    precio_arr = cl.values
+    hi_arr = hi.values
+    lo_arr = lo.values
+    atr_arr = atr.values
+    rhigh_arr = r_high.values
+    rlow_arr = r_low.values
+    pos_arr = pos_pct.values
 
-    fractal_top = _pivote_confirmado(hi, fractal_izq, fractal_der, modo='max')
-    fractal_bottom = _pivote_confirmado(lo, fractal_izq, fractal_der, modo='min')
+    estado = ['—'] * n
+    evento = [''] * n
+    precio_promedio_serie = [np.nan] * n
+    trailing_activo_serie = [False] * n
+    trailing_stop_serie = [np.nan] * n
+    hard_stop_serie = [np.nan] * n
 
-    sent_venta_ok  = (sc_sent >= sent_min_venta)  & (sc_sent <= sent_max_venta)
-    sent_compra_ok = (sc_sent >= sent_min_compra) & (sc_sent <= sent_max_compra)
-    z_venta_ok  = zscore >= zscore_umbral
-    z_compra_ok = zscore <= -zscore_umbral
-    rsi_venta_ok  = rsi_valor >= rsi_nivel_venta
-    rsi_compra_ok = rsi_valor <= rsi_nivel_compra
+    trades = []
+    pos_actual = None  # dict con el estado de la posición abierta
 
-    count_venta = (fractal_top.astype(int) + sent_venta_ok.astype(int)
-                   + z_venta_ok.astype(int) + rsi_venta_ok.astype(int))
-    count_compra = (fractal_bottom.astype(int) + sent_compra_ok.astype(int)
-                     + z_compra_ok.astype(int) + rsi_compra_ok.astype(int))
+    for i in range(n):
+        precio = precio_arr[i]
+        a = atr_arr[i]
+        if np.isnan(precio) or np.isnan(a) or np.isnan(pos_arr[i]):
+            continue
 
-    pct_venta = pd.Series(0.0, index=cl.index)
-    pct_venta[count_venta == 4] = 100.0
-    pct_venta[count_venta == 3] = 50.0
+        if pos_actual is None:
+            if pos_arr[i] <= zona_compra_pct:
+                pos_actual = dict(
+                    direccion='COMPRA', fecha_apertura=idx[i],
+                    entradas=[precio], fechas_entradas=[idx[i]], pesos=[1.0],
+                    precio_prom=precio, extremo=hi_arr[i],
+                    trailing_activo=False, trailing_stop=np.nan,
+                    hard_stop=rlow_arr[i] - hard_stop_atr_mult * a,
+                )
+            elif pos_arr[i] >= zona_venta_pct:
+                pos_actual = dict(
+                    direccion='VENTA', fecha_apertura=idx[i],
+                    entradas=[precio], fechas_entradas=[idx[i]], pesos=[1.0],
+                    precio_prom=precio, extremo=lo_arr[i],
+                    trailing_activo=False, trailing_stop=np.nan,
+                    hard_stop=rhigh_arr[i] + hard_stop_atr_mult * a,
+                )
+            if pos_actual is not None:
+                trades.append(pos_actual)
+                estado[i] = f"HOLD {pos_actual['direccion']}"
+                evento[i] = 'Entrada 1'
+                precio_promedio_serie[i] = pos_actual['precio_prom']
+                hard_stop_serie[i] = pos_actual['hard_stop']
+            continue
 
-    pct_compra = pd.Series(0.0, index=cl.index)
-    pct_compra[count_compra == 4] = 100.0
-    pct_compra[count_compra == 3] = 50.0
+        # ── hay una posición abierta: actualizarla ──
+        d = pos_actual['direccion']
+        estado[i] = f'HOLD {d}'
 
-    estado = pd.Series('—', index=cl.index)
-    estado[pct_venta == 100] = 'VENTA 100%'
-    estado[pct_venta == 50] = 'VENTA 50%'
-    estado[pct_compra == 100] = 'COMPRA 100%'
-    estado[pct_compra == 50] = 'COMPRA 50%'
-    disparo = (estado != '—') & (estado != estado.shift(1))
+        if d == 'COMPRA':
+            pos_actual['extremo'] = max(pos_actual['extremo'], hi_arr[i])
+        else:
+            pos_actual['extremo'] = min(pos_actual['extremo'], lo_arr[i])
+
+        # -- nueva entrada de rejilla (promediar) si el precio siguió en contra --
+        if len(pos_actual['entradas']) < max_niveles:
+            distancia = (pos_actual['precio_prom'] - precio) if d == 'COMPRA' \
+                else (precio - pos_actual['precio_prom'])
+            if distancia >= grid_step_atr * a:
+                peso_nuevo = pos_actual['pesos'][0] * (pct_capital_nivel / 100.0)
+                pos_actual['entradas'].append(precio)
+                pos_actual['fechas_entradas'].append(idx[i])
+                pos_actual['pesos'].append(peso_nuevo)
+                cantidad_total = sum(w / p for w, p in zip(pos_actual['pesos'], pos_actual['entradas']))
+                capital_total = sum(pos_actual['pesos'])
+                pos_actual['precio_prom'] = capital_total / cantidad_total
+                evento[i] = f"Entrada {len(pos_actual['entradas'])} (rejilla)"
+
+        # -- stop duro: se recalcula contra el rango vigente, solo se endurece --
+        if d == 'COMPRA':
+            candidato = rlow_arr[i] - hard_stop_atr_mult * a
+            pos_actual['hard_stop'] = max(pos_actual['hard_stop'], candidato) \
+                if not np.isnan(pos_actual['hard_stop']) else candidato
+        else:
+            candidato = rhigh_arr[i] + hard_stop_atr_mult * a
+            pos_actual['hard_stop'] = min(pos_actual['hard_stop'], candidato) \
+                if not np.isnan(pos_actual['hard_stop']) else candidato
+
+        # -- activación del trailing --
+        if not pos_actual['trailing_activo']:
+            avance = (precio - pos_actual['precio_prom']) if d == 'COMPRA' \
+                else (pos_actual['precio_prom'] - precio)
+            if avance >= trailing_activacion_atr * a:
+                pos_actual['trailing_activo'] = True
+                pos_actual['fecha_trailing_activado'] = idx[i]
+                if evento[i] == '':
+                    evento[i] = 'Trailing activado'
+
+        # -- ratchet del trailing stop --
+        if pos_actual['trailing_activo']:
+            if d == 'COMPRA':
+                nuevo = pos_actual['extremo'] - trailing_atr_mult * a
+                pos_actual['trailing_stop'] = max(pos_actual['trailing_stop'], nuevo) \
+                    if not np.isnan(pos_actual['trailing_stop']) else nuevo
+            else:
+                nuevo = pos_actual['extremo'] + trailing_atr_mult * a
+                pos_actual['trailing_stop'] = min(pos_actual['trailing_stop'], nuevo) \
+                    if not np.isnan(pos_actual['trailing_stop']) else nuevo
+
+        precio_promedio_serie[i] = pos_actual['precio_prom']
+        trailing_activo_serie[i] = pos_actual['trailing_activo']
+        trailing_stop_serie[i] = pos_actual['trailing_stop']
+        hard_stop_serie[i] = pos_actual['hard_stop']
+
+        # -- chequeo de cierre (con máximo/mínimo intravela) --
+        cerro, res, precio_cierre = False, None, None
+        if d == 'COMPRA':
+            if pos_actual['trailing_activo'] and lo_arr[i] <= pos_actual['trailing_stop']:
+                precio_cierre = pos_actual['trailing_stop']
+                res = '✅' if precio_cierre >= pos_actual['precio_prom'] else '❌'
+                cerro = True
+            elif not pos_actual['trailing_activo'] and lo_arr[i] <= pos_actual['hard_stop']:
+                precio_cierre = pos_actual['hard_stop']
+                res = '❌'
+                cerro = True
+        else:
+            if pos_actual['trailing_activo'] and hi_arr[i] >= pos_actual['trailing_stop']:
+                precio_cierre = pos_actual['trailing_stop']
+                res = '✅' if precio_cierre <= pos_actual['precio_prom'] else '❌'
+                cerro = True
+            elif not pos_actual['trailing_activo'] and hi_arr[i] >= pos_actual['hard_stop']:
+                precio_cierre = pos_actual['hard_stop']
+                res = '❌'
+                cerro = True
+
+        if cerro:
+            retorno_pct = (precio_cierre - pos_actual['precio_prom']) / pos_actual['precio_prom'] * 100 \
+                if d == 'COMPRA' else (pos_actual['precio_prom'] - precio_cierre) / pos_actual['precio_prom'] * 100
+            pos_actual['resultado'] = res
+            pos_actual['precio_cierre'] = precio_cierre
+            pos_actual['fecha_cierre'] = idx[i]
+            pos_actual['retorno_pct'] = retorno_pct
+            pos_actual['velas_hasta_cierre'] = i  # se corrige a "relativas" más abajo
+            evento[i] = 'Cierre ✅' if res == '✅' else 'Cierre ❌'
+            pos_actual = None
+
+    # posición que sigue abierta al final de los datos: queda "en curso"
+    if pos_actual is not None:
+        precio_last = precio_arr[-1]
+        d = pos_actual['direccion']
+        pos_actual['resultado'] = '⏳'
+        pos_actual['precio_cierre'] = np.nan
+        pos_actual['fecha_cierre'] = pd.NaT
+        pos_actual['retorno_pct'] = (precio_last - pos_actual['precio_prom']) / pos_actual['precio_prom'] * 100 \
+            if d == 'COMPRA' else (pos_actual['precio_prom'] - precio_last) / pos_actual['precio_prom'] * 100
+        pos_actual['velas_hasta_cierre'] = np.nan
+
+    # convertir "velas_hasta_cierre" (índice absoluto) a relativas a la apertura
+    idx_pos = {ts: k for k, ts in enumerate(idx)}
+    for t in trades:
+        if pd.notna(t.get('fecha_cierre', pd.NaT)):
+            t['velas_hasta_cierre'] = idx_pos[t['fecha_cierre']] - idx_pos[t['fecha_apertura']]
 
     df = pd.DataFrame({
-        'precio': cl, 'sc_sent': sc_sent, 'zscore': zscore, 'rsi': rsi_valor,
-        'fractal_top': fractal_top, 'fractal_bottom': fractal_bottom,
-        'count_venta': count_venta, 'count_compra': count_compra,
-        'pct_venta': pct_venta, 'pct_compra': pct_compra,
-        'estado': estado, 'disparo': disparo,
-    })
-    df['stop'] = np.select(
-        [df['pct_venta'] == 100, df['pct_venta'] == 50, df['pct_compra'] == 100, df['pct_compra'] == 50],
-        [df['precio'] * (1 + stop_pct_100 / 100), df['precio'] * (1 + stop_pct_50 / 100),
-         df['precio'] * (1 - stop_pct_100 / 100), df['precio'] * (1 - stop_pct_50 / 100)],
-        default=np.nan,
-    )
-    # Take Profit: dirección opuesta al stop (venta → objetivo abajo, compra → objetivo arriba)
-    df['tp'] = np.select(
-        [df['pct_venta'] == 100, df['pct_venta'] == 50, df['pct_compra'] == 100, df['pct_compra'] == 50],
-        [df['precio'] * (1 - tp_pct_100 / 100), df['precio'] * (1 - tp_pct_50 / 100),
-         df['precio'] * (1 + tp_pct_100 / 100), df['precio'] * (1 + tp_pct_50 / 100)],
-        default=np.nan,
-    )
-    df['high'] = hi
-    df['low'] = lo
-    return df
+        'precio': cl, 'high': hi, 'low': lo, 'atr': atr,
+        'range_high': r_high, 'range_low': r_low, 'pos_pct': pos_pct,
+        'estado': estado, 'evento': evento,
+        'precio_promedio': precio_promedio_serie,
+        'trailing_activo': trailing_activo_serie,
+        'trailing_stop': trailing_stop_serie, 'hard_stop': hard_stop_serie,
+    }, index=idx)
+    return df, trades
 
-def _evaluar_señales_con_rebalanceo(df, rebalanceo_umbral_pct, rebalanceo_pct_capital,
-                                      stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50,
-                                      max_entradas=3):
-    """Igual que antes, pero ahora el resultado (rebalanceo + Stop/TP + ✅/❌/⏳)
-    se calcula para TODAS las señales disparadas, incluidas las que quedan
-    bloqueadas por solapamiento (⛔). Para esas, el resultado se guarda en
-    'resultado_teorico' (qué hubiera pasado SI se hubiera tomado, como
-    operación independiente) sin que afecte el encadenamiento real de
-    operaciones (ocupado_hasta solo se actualiza con las que sí se toman,
-    exactamente igual que antes)."""
-    df = df.copy()
-    n = len(df)
-    resultado = [''] * n
-    resultado_teorico = [''] * n          # NUEVO
-    precio_resultado = [np.nan] * n
-    barras_hasta = [np.nan] * n
-    fecha_cierre = [pd.NaT] * n           # NUEVO
-    retorno_pct = [np.nan] * n            # NUEVO: % de movimiento a favor/en contra
-    tomada = [False] * n
-    num_rebalanceos = [0] * n
-    entrada2_precio = [np.nan] * n
-    entrada3_precio = [np.nan] * n
-    fecha_entrada2 = [pd.NaT] * n
-    fecha_entrada3 = [pd.NaT] * n
-    precio_promedio_arr = [np.nan] * n
-    stop_vigente_arr = [np.nan] * n
-    tp_vigente_arr = [np.nan] * n
- 
-    idx = df.index
-    hi_arr = df['high'].values
-    lo_arr = df['low'].values
-    precio_arr = df['precio'].values
-    estado_arr = df['estado'].values
-    disparo_arr = df['disparo'].values
-    tp_arr = df['tp'].values
-    sl_arr = df['stop'].values
- 
-    ocupado_hasta = -1  # solo avanza con operaciones REALMENTE tomadas
- 
-    for i in range(n):
-        if not disparo_arr[i] or estado_arr[i] == '—' or pd.isna(tp_arr[i]) or pd.isna(sl_arr[i]):
-            continue
- 
-        fue_tomada = i > ocupado_hasta
-        tomada[i] = fue_tomada
- 
-        es_venta = 'VENTA' in estado_arr[i]
-        es_100 = '100%' in estado_arr[i]
-        stop_pct_usado = stop_pct_100 if es_100 else stop_pct_50
-        tp_pct_usado = tp_pct_100 if es_100 else tp_pct_50
- 
-        precio_prom = precio_arr[i]
-        stop_vigente = sl_arr[i]
-        tp_vigente = tp_arr[i]
-        capital_total = 100.0
-        qty_total = capital_total / precio_prom
-        j_cursor = i + 1
-        n_entradas = 1
- 
-        # ── Rebalanceo: se simula igual, tomada o no, para que lo hipotético
-        # también refleje cómo hubiera evolucionado el precio promedio ──
-        while n_entradas < max_entradas:
-            distancia_stop = abs(stop_vigente - precio_prom)
-            if distancia_stop <= 0:
-                break
-            j_reb = None
-            for j in range(j_cursor, n):
-                precio_j = precio_arr[j]
-                if precio_j is None or (isinstance(precio_j, float) and np.isnan(precio_j)):
-                    continue
-                avance_pct = ((precio_j - precio_prom) / distancia_stop * 100) if es_venta \
-                    else ((precio_prom - precio_j) / distancia_stop * 100)
-                if avance_pct >= 100:
-                    break
-                if avance_pct >= rebalanceo_umbral_pct:
-                    j_reb = j
-                    break
-            if j_reb is None:
-                break
- 
-            precio_j = precio_arr[j_reb]
-            capital_entrada = 100.0 * (rebalanceo_pct_capital / 100.0)
-            qty_entrada = capital_entrada / precio_j
-            capital_total += capital_entrada
-            qty_total += qty_entrada
-            precio_prom = capital_total / qty_total
-            if es_venta:
-                stop_vigente = precio_prom * (1 + stop_pct_usado / 100)
-                tp_vigente = precio_prom * (1 - tp_pct_usado / 100)
-            else:
-                stop_vigente = precio_prom * (1 - stop_pct_usado / 100)
-                tp_vigente = precio_prom * (1 + tp_pct_usado / 100)
- 
-            n_entradas += 1
-            num_rebalanceos[i] = n_entradas - 1
-            if n_entradas == 2:
-                entrada2_precio[i] = precio_j
-                fecha_entrada2[i] = idx[j_reb]
-            elif n_entradas == 3:
-                entrada3_precio[i] = precio_j
-                fecha_entrada3[i] = idx[j_reb]
-            j_cursor = j_reb
- 
-        if n_entradas > 1:
-            precio_promedio_arr[i] = precio_prom
-        stop_vigente_arr[i] = stop_vigente
-        tp_vigente_arr[i] = tp_vigente
- 
-        # ── Resultado (se calcula siempre, tomada o no) ──
-        encontrado = False
-        j_exit = n - 1
-        res = '⏳'
-        for j in range(j_cursor, n):
-            hi_j, lo_j = hi_arr[j], lo_arr[j]
-            if es_venta:
-                toco_tp, toco_sl = lo_j <= tp_vigente, hi_j >= stop_vigente
-            else:
-                toco_tp, toco_sl = hi_j >= tp_vigente, lo_j <= stop_vigente
-            if toco_tp or toco_sl:
-                if toco_sl:
-                    res, precio_resultado[i] = '❌', stop_vigente
-                else:
-                    res, precio_resultado[i] = '✅', tp_vigente
-                barras_hasta[i] = j - i
-                fecha_cierre[i] = idx[j]
-                j_exit = j
-                encontrado = True
-                break
- 
-        if encontrado:
-            if res == '✅':
-                retorno_pct[i] = abs(tp_vigente - precio_prom) / precio_prom * 100
-            else:
-                retorno_pct[i] = -abs(stop_vigente - precio_prom) / precio_prom * 100
- 
-        if fue_tomada:
-            resultado[i] = res
-            ocupado_hasta = j_exit          # solo avanza si REALMENTE se tomó
-        else:
-            resultado[i] = '⛔'
-            resultado_teorico[i] = res      # qué hubiera pasado si se tomaba
- 
-    df['resultado'] = resultado
-    df['resultado_teorico'] = resultado_teorico
-    df['precio_resultado'] = precio_resultado
-    df['barras_hasta_resultado'] = barras_hasta
-    df['fecha_cierre'] = fecha_cierre
-    df['retorno_pct'] = retorno_pct
-    df['tomada'] = tomada
-    df['num_rebalanceos'] = num_rebalanceos
-    df['rebalanceada'] = [x > 0 for x in num_rebalanceos]
-    df['entrada2_precio'] = entrada2_precio
-    df['entrada3_precio'] = entrada3_precio
-    df['fecha_entrada2'] = fecha_entrada2
-    df['fecha_entrada3'] = fecha_entrada3
-    df['precio_promedio'] = precio_promedio_arr
-    df['stop_vigente'] = stop_vigente_arr
-    df['tp_vigente'] = tp_vigente_arr
+
+def _trades_a_dataframe(trades, fmt_precio):
+    if not trades:
+        return pd.DataFrame()
+    filas = []
+    for t in trades:
+        n_ent = len(t['entradas'])
+        filas.append({
+            'Apertura': t['fecha_apertura'],
+            'Dirección': t['direccion'],
+            'Entradas': n_ent,
+            '1ra entrada': fmt_precio(t['entradas'][0]),
+            '2da entrada': fmt_precio(t['entradas'][1]) if n_ent >= 2 else '—',
+            '3ra entrada': fmt_precio(t['entradas'][2]) if n_ent >= 3 else '—',
+            'Precio promedio': fmt_precio(t['precio_prom']),
+            'Trailing activado': 'Sí' if t.get('trailing_activo') else 'No',
+            'Trailing stop': fmt_precio(t['trailing_stop']) if not pd.isna(t.get('trailing_stop', np.nan)) else '—',
+            'Stop duro': fmt_precio(t['hard_stop']) if not pd.isna(t.get('hard_stop', np.nan)) else '—',
+            'Resultado': t['resultado'],
+            'Cierre': t['fecha_cierre'].strftime('%Y-%m-%d %H:%M') if pd.notna(t.get('fecha_cierre', pd.NaT)) else '—',
+            'Precio cierre': fmt_precio(t['precio_cierre']) if not pd.isna(t.get('precio_cierre', np.nan)) else '—',
+            'Retorno %': f"{t['retorno_pct']:+.2f}%" if not pd.isna(t.get('retorno_pct', np.nan)) else '—',
+            'Velas hasta cierre': int(t['velas_hasta_cierre']) if not pd.isna(t.get('velas_hasta_cierre', np.nan)) else '—',
+        })
+    df = pd.DataFrame(filas).sort_values('Apertura', ascending=False)
+    df['Apertura'] = df['Apertura'].dt.strftime('%Y-%m-%d %H:%M')
     return df
- 
 
 
 def _color_resultado(val):
-    return {'✅': 'color:#3fb950;font-weight:700', '❌': 'color:#f85149;font-weight:700',
+    return {'✅': f'color:{C_BOT_CIERRE_OK};font-weight:700',
+            '❌': f'color:{C_BOT_CIERRE_BAD};font-weight:700',
             '⏳': 'color:#e3b341;font-weight:600'}.get(val, '')
 
 
-def _color_rebalanceada(val):
-    return f'color:{C_BOT_REBALANCEO};font-weight:700' if val == 'Sí' else ''
+def _color_direccion(val):
+    c = C_BOT_HOLD_COMPRA if val == 'COMPRA' else C_BOT_HOLD_VENTA
+    return f'color:{c};font-weight:700'
 
-# ── Persistencia en Supabase: configuración, registro automático y rebalanceo ─
+
+# ── Persistencia en Supabase: solo configuración de capital/apalancamiento ─
 
 def _bot_obtener_config(supabase, user_id):
     try:
@@ -408,83 +353,56 @@ def _bot_guardar_config(supabase, user_id, capital_inicial, pct_por_operacion, a
         pass
 
 
-# ── Simulación de rendimiento — 100% en memoria ────────────────────────
+# ── Simulación de rendimiento — 100% en memoria, sobre la lista de trades ──
 #
-# Todo lo que antes se guardaba y recalculaba contra la tabla
-# bot_señales_log de Supabase (registro de señales, chequeo de rebalanceo,
-# chequeo de resultado, curva de capital) se arma ahora directamente sobre
-# el "Historial de señales disparadas" que ya calcula _calcular_bot_dataframe
-# + _evaluar_señales_con_rebalanceo para el activo/temporalidad
-# seleccionados. Esta función NO recalcula el rebalanceo, el resultado ni
-# cuáles señales se tomaron — los toma tal cual quedaron en df_bot, así el
-# Win Rate que ves en el resumen, en la tabla de historial y en esta
-# simulación son siempre EL MISMO número, sin importar el apalancamiento o
-# el capital elegidos (esos dos solo afectan cuánto gana/pierde cada
-# operación y el tamaño en USD de cada entrada, no si gana o pierde ni
-# cuáles señales se toman).
+# Recorre los ciclos de holdeo (apertura → cierre) en orden cronológico y
+# va componiendo el capital simulado. El tamaño de cada entrada (1ra, 2da,
+# 3ra) se calcula sobre el capital simulado vigente al momento de abrir esa
+# operación (compuesto), igual que la 1ra entrada; la 2da y 3ra son el %
+# de rejilla configurado sobre esa misma 1ra entrada. El Win Rate depende
+# solo de la secuencia de trades (no del apalancamiento ni del capital).
 
-def _bot_simular_en_memoria(df_bot, capital_inicial, pct_por_operacion, apalancamiento,
-                              rebalanceo_pct_capital):
-    """Igual que antes, pero ahora también devuelve 'pnl_por_señal': un dict
-    {timestamp_de_la_señal: ganancia_o_perdida_en_USD} para cada operación
-    CERRADA (✅ o ❌), calculado sobre el capital simulado en el momento en
-    que se abrió esa operación (ya compuesto)."""
-    disparos = df_bot[df_bot['disparo'] & (df_bot['estado'] != '—') & (df_bot['tomada'] == True)]
+def _bot_simular_en_memoria(trades, capital_inicial, pct_por_operacion, apalancamiento,
+                             pct_capital_nivel):
+    cerrados = [t for t in trades if t['resultado'] in ('✅', '❌')]
+    cerrados = sorted(cerrados, key=lambda t: t['fecha_apertura'])
     equity = capital_inicial
     curva = [{'fecha': 'Inicio', 'equity': equity}]
-    cerradas = ganadoras = abiertas = rebalanceos = 0
+    ganadoras = 0
+    rebalanceos = 0
     montos = {}
-    pnl_por_señal = {}   # NUEVO
- 
-    for ts, row in disparos.iterrows():
-        resultado = row['resultado']
-        n_reb = int(row.get('num_rebalanceos', 0) or 0)
-        if n_reb > 0:
+    pnl_por_trade = {}
+
+    for t in cerrados:
+        n_ent = len(t['entradas'])
+        if n_ent > 1:
             rebalanceos += 1
-        precio_base = row['precio_promedio'] if n_reb > 0 else row['precio']
-        tp_base = row['tp_vigente']
-        stop_base = row['stop_vigente']
- 
         capital_operado = equity * (pct_por_operacion / 100.0)
-        monto_e2 = capital_operado * (rebalanceo_pct_capital / 100.0) if n_reb >= 1 else None
-        monto_e3 = capital_operado * (rebalanceo_pct_capital / 100.0) if n_reb >= 2 else None
-        montos[ts] = {
-            'e1': capital_operado, 'e2': monto_e2, 'e3': monto_e3,
-            'total': capital_operado + (monto_e2 or 0) + (monto_e3 or 0),
-        }
- 
-        if pd.isna(precio_base) or pd.isna(tp_base) or pd.isna(stop_base):
-            abiertas += 1
-            continue
- 
-        if resultado == '✅':
-            pct_mov = abs(tp_base - precio_base) / precio_base
-            ganancia = capital_operado * pct_mov * apalancamiento
-            equity += ganancia
-            pnl_por_señal[ts] = ganancia
-            ganadoras += 1; cerradas += 1
-        elif resultado == '❌':
-            pct_mov = abs(stop_base - precio_base) / precio_base
-            perdida = min(capital_operado * pct_mov * apalancamiento, capital_operado)
-            equity -= perdida
-            pnl_por_señal[ts] = -perdida
-            cerradas += 1
-        else:
-            abiertas += 1
-            continue
- 
-        curva.append({'fecha': ts.strftime('%Y-%m-%d %H:%M'), 'equity': equity})
- 
+        monto_e2 = capital_operado * (pct_capital_nivel / 100.0) if n_ent >= 2 else None
+        monto_e3 = capital_operado * (pct_capital_nivel / 100.0) if n_ent >= 3 else None
+        capital_total = capital_operado + (monto_e2 or 0) + (monto_e3 or 0)
+        montos[t['fecha_apertura']] = {'e1': capital_operado, 'e2': monto_e2, 'e3': monto_e3, 'total': capital_total}
+
+        pnl = capital_total * (t['retorno_pct'] / 100.0) * apalancamiento
+        pnl = max(pnl, -capital_total)  # la pérdida nunca supera el capital arriesgado en el ciclo
+        equity += pnl
+        pnl_por_trade[t['fecha_apertura']] = pnl
+        if t['resultado'] == '✅':
+            ganadoras += 1
+        curva.append({'fecha': t['fecha_cierre'].strftime('%Y-%m-%d %H:%M'), 'equity': equity})
+
+    cerradas_n = len(cerrados)
+    abiertas_n = sum(1 for t in trades if t['resultado'] == '⏳')
+
     return {
         'capital_inicial': capital_inicial, 'capital_actual': equity,
         'rendimiento_pct': (equity / capital_inicial - 1) * 100 if capital_inicial else 0.0,
-        'win_rate': (ganadoras / cerradas * 100) if cerradas > 0 else None,
-        'cerradas': cerradas, 'ganadoras': ganadoras, 'perdedoras': cerradas - ganadoras,
-        'abiertas': abiertas, 'total_señales': len(disparos), 'curva': curva,
+        'win_rate': (ganadoras / cerradas_n * 100) if cerradas_n > 0 else None,
+        'cerradas': cerradas_n, 'ganadoras': ganadoras, 'perdedoras': cerradas_n - ganadoras,
+        'abiertas': abiertas_n, 'total_trades': len(trades), 'curva': curva,
         'rebalanceos': rebalanceos, 'apalancamiento': apalancamiento, 'montos': montos,
-        'pnl_por_señal': pnl_por_señal,   # NUEVO
+        'pnl_por_trade': pnl_por_trade,
     }
- 
 
 
 # ── Descarga intradía — TTL corto para que se sienta "en vivo" ────────
@@ -549,27 +467,42 @@ def _fetch_paralelo_bot(tickers, cfg):
     return resultados
 
 
-# ── Gráfico de señales ──────────────────────────────────────────────
+# ── Gráfico: precio + rango (Donchian) + eventos del bot ──────────────
 
-def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
+def _fig_bot_grid(ticker, df, trades, PLOTLY_LAYOUT_BASE):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df.index, y=df['precio'], line=dict(color='#3a7bd5', width=1.8), name='Precio'))
-    for tipo, color, symbol in [
-        ('VENTA 100%', C_BOT_VENTA_100, 'triangle-down'),
-        ('VENTA 50%', C_BOT_VENTA_50, 'triangle-down'),
-        ('COMPRA 100%', C_BOT_COMPRA_100, 'triangle-up'),
-        ('COMPRA 50%', C_BOT_COMPRA_50, 'triangle-up'),
-    ]:
-        sub = df[(df['disparo']) & (df['estado'] == tipo)]
-        if sub.empty:
-            continue
-        fig.add_trace(go.Scatter(
-            x=sub.index, y=sub['precio'], mode='markers', name=tipo,
-            marker=dict(size=12, color=color, symbol=symbol, line=dict(width=1, color='#0d1117')),
-        ))
+    fig.add_trace(go.Scatter(x=df.index, y=df['range_high'], line=dict(color='#8b949e', width=1, dash='dot'),
+                              name='Techo del rango'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['range_low'], line=dict(color='#8b949e', width=1, dash='dot'),
+                              name='Piso del rango', fill='tonexty', fillcolor='rgba(139,148,158,0.05)'))
+
+    aperturas_c = [t['fecha_apertura'] for t in trades if t['direccion'] == 'COMPRA']
+    aperturas_v = [t['fecha_apertura'] for t in trades if t['direccion'] == 'VENTA']
+    cierres_ok = [t['fecha_cierre'] for t in trades if t['resultado'] == '✅']
+    cierres_bad = [t['fecha_cierre'] for t in trades if t['resultado'] == '❌']
+
+    def _y(fechas):
+        return [df.loc[f, 'precio'] for f in fechas if f in df.index]
+
+    if aperturas_c:
+        fig.add_trace(go.Scatter(x=aperturas_c, y=_y(aperturas_c), mode='markers', name='Apertura COMPRA',
+                                  marker=dict(size=11, color=C_BOT_HOLD_COMPRA, symbol='triangle-up',
+                                              line=dict(width=1, color='#0d1117'))))
+    if aperturas_v:
+        fig.add_trace(go.Scatter(x=aperturas_v, y=_y(aperturas_v), mode='markers', name='Apertura VENTA',
+                                  marker=dict(size=11, color=C_BOT_HOLD_VENTA, symbol='triangle-down',
+                                              line=dict(width=1, color='#0d1117'))))
+    if cierres_ok:
+        fig.add_trace(go.Scatter(x=cierres_ok, y=_y(cierres_ok), mode='markers', name='Cierre ✅',
+                                  marker=dict(size=10, color=C_BOT_CIERRE_OK, symbol='x')))
+    if cierres_bad:
+        fig.add_trace(go.Scatter(x=cierres_bad, y=_y(cierres_bad), mode='markers', name='Cierre ❌',
+                                  marker=dict(size=10, color=C_BOT_CIERRE_BAD, symbol='x')))
+
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text=f'{ticker} — Señales del Bot de Inversión', font=dict(size=14)),
+        title=dict(text=f'{ticker} — Rango, rejilla y trailing del bot', font=dict(size=14)),
         height=480, hovermode='x unified',
         legend=dict(orientation='h', y=1.1),
         xaxis=dict(gridcolor='#21262d'), yaxis=dict(gridcolor='#21262d'),
@@ -579,24 +512,11 @@ def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
 
 
 def _color_estado(estado):
-    return {
-        'VENTA 100%': C_BOT_VENTA_100, 'VENTA 50%': C_BOT_VENTA_50,
-        'COMPRA 100%': C_BOT_COMPRA_100, 'COMPRA 50%': C_BOT_COMPRA_50, '—': '#8b949e',
-    }.get(estado, '#8b949e')
-
-
-def _color_señal_bot(val):
-    c = {'VENTA 100%': C_BOT_VENTA_100, 'VENTA 50%': C_BOT_VENTA_50,
-         'COMPRA 100%': C_BOT_COMPRA_100, 'COMPRA 50%': C_BOT_COMPRA_50}.get(val, '#e6edf3')
-    return f'color:{c};font-weight:700'
-
-
-def _marca_fractal(row):
-    if row.get('fractal_top'):
-        return '🔻 Techo'
-    if row.get('fractal_bottom'):
-        return '🔺 Piso'
-    return '–'
+    if 'COMPRA' in estado:
+        return C_BOT_HOLD_COMPRA
+    if 'VENTA' in estado:
+        return C_BOT_HOLD_VENTA
+    return '#8b949e'
 
 
 # ── Módulo principal ────────────────────────────────────────────────
@@ -610,22 +530,18 @@ def modulo_bot_inversion(
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d; border-top:2px solid #6CC24A;
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Señales Intradía</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Rango · Volatilidad · Rejilla · Trailing</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Herramienta de <b style="color:#e3b341">observación</b>: el bot dispara señales solo,
-        basado en 4 condiciones evaluadas en tiempo real —
-        <b style="color:#e3b341">Fractal</b> (piso/techo confirmado),
-        <b style="color:#e3b341">Sentimiento</b> en nivel extremo,
-        <b style="color:#e3b341">Z-Score</b> del precio y
-        <b style="color:#e3b341">RSI</b> en sobrecompra/sobreventa—
-        y las va tomando <b style="color:#a371f7">automáticamente</b>, sin que haga falta
-        aceptar ni rechazar nada. Si el precio se acerca al Stop sin llegar a tocarlo, el bot
-        <b style="color:#a371f7">rebalancea</b> (promedia) y recalcula el Stop/TP solo.
-        La simulación de capital se arma directamente sobre el
-        <b style="color:#e3b341">historial de señales disparadas</b> de cada activo, con un
-        capital inicial configurable <b style="color:#e3b341">desde USD 50</b>
-        y podés ver cómo hubiera rendido con <b style="color:#e3b341">apalancamiento de 1x a 5x</b>
-        sobre la misma secuencia de operaciones. Analizá hasta
+        Herramienta de <b style="color:#e3b341">observación</b>: el bot detecta el
+        <b style="color:#e3b341">Rango</b> del precio (canal de Donchian) y mide la
+        <b style="color:#e3b341">Volatilidad</b> (ATR). Cuando el precio entra en la zona baja
+        del rango abre una posición de <b style="color:#3fb950">COMPRA</b>, y en la zona alta,
+        de <b style="color:#f85149">VENTA</b>. Si el precio sigue en contra en pasos de ATR,
+        el bot agrega entradas a la <b style="color:#e3b341">rejilla</b> (promedia), y
+        <b style="color:#a371f7">holdea</b> la posición hasta que un
+        <b style="color:#a371f7">trailing stop</b> (también en unidades de ATR) se activa y
+        se toca, o hasta que se rompe un stop duro fuera del rango. Todo es
+        <b style="color:#a371f7">automático</b>: no hay botones de Aceptar/Rechazar. Analizá hasta
         <b style="color:#e3b341">10 activos</b> en simultáneo, en velas de
         <b style="color:#e3b341">5, 15, 30 minutos, 1 hora o 4 horas</b>.
       </div>
@@ -660,64 +576,42 @@ def modulo_bot_inversion(
     tickers_bot = [universo_mapa.get(s, s) for s in seleccion]
     if manual_extra:
         tickers_bot += [t.strip().upper() for t in manual_extra.split(',') if t.strip()]
-    tickers_bot = list(dict.fromkeys(tickers_bot))  # dedup preservando orden
+    tickers_bot = list(dict.fromkeys(tickers_bot))
 
     if len(tickers_bot) > MAX_ACTIVOS_BOT:
         st.warning(f'Se seleccionaron más de {MAX_ACTIVOS_BOT} activos — se van a analizar solo los primeros {MAX_ACTIVOS_BOT}.')
         tickers_bot = tickers_bot[:MAX_ACTIVOS_BOT]
 
-    with st.expander('⚙️ Parámetros de la señal (opcional, aplican a todos los activos)', expanded=False):
-        p1, p2, p3 = st.columns(3)
+    with st.expander('⚙️ Parámetros de la estrategia (opcional, aplican a todos los activos)', expanded=False):
+        p1, p2 = st.columns(2)
         with p1:
-            st.markdown('**Fractal**')
-            fractal_izq = st.number_input('Barras izquierda', value=8, min_value=1, key='bot_fractal_izq')
-            fractal_der = st.number_input('Barras derecha (retraso confirmación)', value=8, min_value=1, key='bot_fractal_der')
+            st.markdown('**📏 Rango (Donchian)**')
+            rango_periodo = st.number_input('Período (velas)', value=50, min_value=10, key='bot_rango_periodo')
+            zona_compra_pct = st.number_input('Zona COMPRA: hasta % del rango', value=20.0,
+                                               min_value=1.0, max_value=49.0, step=1.0, key='bot_zona_compra')
+            zona_venta_pct = st.number_input('Zona VENTA: desde % del rango', value=80.0,
+                                              min_value=51.0, max_value=99.0, step=1.0, key='bot_zona_venta')
         with p2:
-            st.markdown('**Z-Score**')
-            zscore_periodo = st.number_input('Período', value=20, min_value=5, key='bot_z_periodo')
-            zscore_umbral = st.number_input('Umbral (±)', value=2.5, min_value=0.1, step=0.1, key='bot_z_umbral')
+            st.markdown('**📊 Volatilidad (ATR)**')
+            atr_periodo = st.number_input('Período ATR (velas)', value=14, min_value=3, key='bot_atr_periodo')
+            hard_stop_atr_mult = st.number_input('Stop duro: × ATR más allá del rango', value=1.0,
+                                                  min_value=0.1, step=0.1, key='bot_hard_stop_atr')
+
+        p3, p4 = st.columns(2)
         with p3:
-            st.markdown('**RSI**')
-            rsi_nivel_venta = st.number_input('Nivel venta (≥)', value=70.0, key='bot_rsi_venta')
-            rsi_nivel_compra = st.number_input('Nivel compra (≤)', value=30.0, key='bot_rsi_compra')
-
-        p4, p5 = st.columns(2)
+            st.markdown('**🔲 Rejilla (holdeo)**')
+            grid_step_atr = st.number_input('Nueva entrada cada × ATR en contra', value=1.0,
+                                             min_value=0.1, step=0.1, key='bot_grid_step_atr')
+            max_niveles = st.number_input('Máximo de entradas por ciclo', value=3, min_value=1, max_value=6,
+                                           key='bot_max_niveles')
+            pct_capital_nivel = st.number_input('Tamaño de cada entrada extra (% de la 1ra)', value=50.0,
+                                                 min_value=5.0, max_value=200.0, step=5.0, key='bot_pct_capital_nivel')
         with p4:
-            st.markdown('**Sentimiento — rango COMPRA** (percentil del precio)')
-            sent_min_compra = st.number_input('Mínimo', value=0.0, min_value=0.0, max_value=100.0, key='bot_sent_min_compra')
-            sent_max_compra = st.number_input('Máximo', value=10.0, min_value=0.0, max_value=100.0, key='bot_sent_max_compra')
-        with p5:
-            st.markdown('**Sentimiento — rango VENTA** (percentil del precio)')
-            sent_min_venta = st.number_input('Mínimo', value=90.0, min_value=0.0, max_value=100.0, key='bot_sent_min_venta')
-            sent_max_venta = st.number_input('Máximo', value=100.0, min_value=0.0, max_value=100.0, key='bot_sent_max_venta')
-
-        p6, p7 = st.columns(2)
-        with p6:
-            st.markdown('**Stop Loss**')
-            stop_pct_100 = st.number_input('Stop % — señal completa (4/4)', value=5.0, min_value=0.1, step=0.1, key='bot_stop_100')
-            stop_pct_50 = st.number_input('Stop % — entrada anticipada (3/4)', value=5.0, min_value=0.1, step=0.1, key='bot_stop_50')
-        with p7:
-            st.markdown('**Take Profit**')
-            tp_pct_100 = st.number_input('TP % — señal completa (4/4)', value=1.5, min_value=0.1, step=0.1, key='bot_tp_100')
-            tp_pct_50 = st.number_input('TP % — entrada anticipada (3/4)', value=1.5, min_value=0.1, step=0.1, key='bot_tp_50')
-
-        p8, p9 = st.columns(2)
-        with p8:
-            st.markdown('**🔁 Rebalanceo** (promediar antes de tocar el Stop)')
-            rebalanceo_umbral_pct = st.number_input(
-                'Disparar al X% del camino hacia el Stop', value=80.0,
-                min_value=10.0, max_value=99.0, step=5.0, key='bot_rebalanceo_umbral',
-                help=('Ej: 80 = si el precio ya recorrió el 80% de la distancia entre tu '
-                      'entrada y el Stop (en contra), se dispara una 2da entrada para '
-                      'promediar. No espera a que el precio toque el Stop. Es automático.'),
-            )
-        with p9:
-            st.markdown('**Tamaño de la 2da entrada**')
-            rebalanceo_pct_capital = st.number_input(
-                '% del capital de la entrada original', value=50.0,
-                min_value=5.0, max_value=200.0, step=5.0, key='bot_rebalanceo_pct_capital',
-                help='El Stop/TP de la posición promediada se recalcula con los mismos % configurados arriba, aplicados sobre el nuevo precio promedio.',
-            )
+            st.markdown('**🎯 Trailing (por volatilidad)**')
+            trailing_activacion_atr = st.number_input('Se activa tras avanzar × ATR a favor', value=1.0,
+                                                        min_value=0.1, step=0.1, key='bot_trailing_activacion')
+            trailing_atr_mult = st.number_input('Distancia del trailing: × ATR', value=1.5,
+                                                 min_value=0.1, step=0.1, key='bot_trailing_atr_mult')
 
     analizar_bot = st.button('▶ Analizar', key='bot_run', type='primary')
     if not analizar_bot and not st.session_state.get('bot_run_flag'):
@@ -738,9 +632,9 @@ def modulo_bot_inversion(
             )
         with cb2:
             pct_por_operacion_bot = st.number_input(
-                '% de capital por operación', min_value=1.0, max_value=100.0,
+                '% de capital por ciclo (1ra entrada)', min_value=1.0, max_value=100.0,
                 value=float(cfg_bot_user.get('pct_por_operacion', 10.0)), step=1.0, key='bot_pct_operacion',
-                help='Se aplica sobre el capital simulado (compone con cada operación cerrada).',
+                help='Se aplica sobre el capital simulado (compone con cada ciclo cerrado). La 2da/3ra entrada son el % de rejilla configurado sobre esta.',
             )
         with cb3:
             apalancamiento_bot = st.select_slider(
@@ -749,9 +643,9 @@ def modulo_bot_inversion(
                 key='bot_apalancamiento',
             )
         st.caption(
-            'La simulación recorre, en orden cronológico, el historial de señales disparadas de cada '
-            'activo (con su ✅/❌/⏳ y su rebalanceo) y va componiendo el capital desde el monto inicial '
-            'elegido arriba — no depende de sesiones anteriores, se arma de nuevo en cada corrida.'
+            'La simulación recorre, en orden cronológico, los ciclos de holdeo (apertura → cierre) de cada '
+            'activo y va componiendo el capital desde el monto inicial elegido arriba — no depende de sesiones '
+            'anteriores, se arma de nuevo en cada corrida.'
         )
         if st.button('💾 Guardar configuración', key='bot_guardar_config'):
             _bot_guardar_config(supabase, user_id, capital_inicial_bot, pct_por_operacion_bot, apalancamiento_bot)
@@ -768,6 +662,7 @@ def modulo_bot_inversion(
 
     resultados_bot = {}
     fallidos = []
+    ventana_minima = max(rango_periodo, atr_periodo) + 20
     for tk in tickers_bot:
         df_raw = precios_raw.get(tk)
         if df_raw is None or df_raw.empty:
@@ -779,24 +674,20 @@ def modulo_bot_inversion(
                 fallidos.append(tk)
                 continue
         cl = get_close_series(df_raw)
-        if cl is None or len(cl.dropna()) < max(30, cfg['ventana_valor'] // 4):
+        if cl is None or len(cl.dropna()) < ventana_minima:
             fallidos.append(tk)
             continue
         hi = df_raw['High'] if 'High' in df_raw.columns else cl
         lo = df_raw['Low'] if 'Low' in df_raw.columns else cl
-        df_bot = _calcular_bot_dataframe(
-            cl, hi, lo, cfg,
-            sent_min_compra, sent_max_compra, sent_min_venta, sent_max_venta,
-            int(zscore_periodo), zscore_umbral,
-            rsi_nivel_venta, rsi_nivel_compra,
-            int(fractal_izq), int(fractal_der),
-            stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50,
+        df_bot, trades = _motor_grid_trailing(
+            cl, hi, lo,
+            int(atr_periodo), int(rango_periodo),
+            grid_step_atr, zona_compra_pct, zona_venta_pct,
+            int(max_niveles), pct_capital_nivel,
+            trailing_activacion_atr, trailing_atr_mult,
+            hard_stop_atr_mult,
         )
-        df_bot = _evaluar_señales_con_rebalanceo(
-            df_bot, rebalanceo_umbral_pct, rebalanceo_pct_capital,
-            stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50,
-        )
-        resultados_bot[tk] = df_bot
+        resultados_bot[tk] = {'df': df_bot, 'trades': trades}
 
     if fallidos:
         st.warning(f"⚠️ No se pudo descargar/calcular para: {', '.join(fallidos)} "
@@ -811,37 +702,37 @@ def modulo_bot_inversion(
     )
 
     # ── Resumen multi-activo ─────────────────────────────────────────
-    st.markdown('### 📋 Resumen — señal actual por activo')
+    st.markdown('### 📋 Resumen — estado actual por activo')
     filas_resumen = []
-    for tk, df_bot in resultados_bot.items():
+    for tk, r in resultados_bot.items():
+        df_bot, trades = r['df'], r['trades']
         u = df_bot.iloc[-1]
-        disparos_tk = df_bot[df_bot['disparo'] & (df_bot['estado'] != '—') & (df_bot['tomada'] == True)]
-        n_no_tomadas_tk = int((df_bot['disparo'] & (df_bot['estado'] != '—') & (~df_bot['tomada'])).sum())
-        n_ok = int((disparos_tk['resultado'] == '✅').sum())
-        n_bad = int((disparos_tk['resultado'] == '❌').sum())
-        n_open = int((disparos_tk['resultado'] == '⏳').sum())
-        cerradas = n_ok + n_bad
-        winrate = f'{n_ok / cerradas * 100:.0f}%' if cerradas > 0 else 'N/D'
+        cerrados_tk = [t for t in trades if t['resultado'] in ('✅', '❌')]
+        n_ok = sum(1 for t in cerrados_tk if t['resultado'] == '✅')
+        n_bad = len(cerrados_tk) - n_ok
+        n_open = sum(1 for t in trades if t['resultado'] == '⏳')
+        winrate = f'{n_ok / len(cerrados_tk) * 100:.0f}%' if cerrados_tk else 'N/D'
+        n_entradas_actual = int((df_bot['precio_promedio'].notna() & (df_bot.index == df_bot.index[-1])).sum())
         filas_resumen.append({
-            'Ticker': tk, 'Señal': u['estado'], 'Precio': fmt_precio(u['precio']),
+            'Ticker': tk, 'Estado': u['estado'], 'Precio': fmt_precio(u['precio']),
             'Última vela': df_bot.index[-1].strftime('%H:%M:%S'),
-            'Fractal': _marca_fractal(u),
-            'Sent': round(u['sc_sent'], 1),
-            'Z-Score': round(u['zscore'], 2), 'RSI': round(u['rsi'], 1),
-            'Cond V': f"{int(u['count_venta'])}/4", 'Cond C': f"{int(u['count_compra'])}/4",
-            'Stop': fmt_precio(u['stop']) if not pd.isna(u['stop']) else '—',
-            'TP': fmt_precio(u['tp']) if not pd.isna(u['tp']) else '—',
-            'Track record': f'{n_ok}✅ {n_bad}❌ {n_open}⏳' + (f' · {n_no_tomadas_tk}⛔' if n_no_tomadas_tk else ''),
+            'Pos. en rango': f"{u['pos_pct']:.0f}%" if not pd.isna(u['pos_pct']) else '—',
+            'ATR': fmt_precio(u['atr']) if not pd.isna(u['atr']) else '—',
+            'Techo': fmt_precio(u['range_high']) if not pd.isna(u['range_high']) else '—',
+            'Piso': fmt_precio(u['range_low']) if not pd.isna(u['range_low']) else '—',
+            'Precio promedio': fmt_precio(u['precio_promedio']) if not pd.isna(u['precio_promedio']) else '—',
+            'Trailing': 'Activo' if u['trailing_activo'] else ('Holdeando' if u['estado'] != '—' else '—'),
+            'Stop vigente': (fmt_precio(u['trailing_stop']) if u['trailing_activo'] and not pd.isna(u['trailing_stop'])
+                              else (fmt_precio(u['hard_stop']) if not pd.isna(u['hard_stop']) else '—')),
+            'Track record': f'{n_ok}✅ {n_bad}❌ {n_open}⏳',
             'Win rate': winrate,
         })
     df_resumen = pd.DataFrame(filas_resumen)
-    orden_prioridad = {'VENTA 100%': 0, 'COMPRA 100%': 0, 'VENTA 50%': 1, 'COMPRA 50%': 1, '—': 2}
-    df_resumen['_orden'] = df_resumen['Señal'].map(orden_prioridad)
-    df_resumen = df_resumen.sort_values('_orden').drop(columns=['_orden'])
+    orden_prioridad = df_resumen['Estado'].apply(lambda e: 0 if e != '—' else 1)
+    df_resumen = df_resumen.assign(_orden=orden_prioridad).sort_values('_orden').drop(columns=['_orden'])
 
     _map = 'map' if hasattr(df_resumen.style, 'map') else 'applymap'
     styled_resumen = (df_resumen.style
-        .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
         .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
         .set_table_styles([
             {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
@@ -852,9 +743,9 @@ def modulo_bot_inversion(
     st.dataframe(styled_resumen, use_container_width=True, height=min(400, len(df_resumen) * 40 + 45))
     chips_navegacion([(tk, tk) for tk in resultados_bot.keys()], 'bot_inversion_resumen')
 
-    n_señales = int((df_resumen['Señal'] != '—').sum())
-    if n_señales > 0:
-        st.success(f'⚡ {n_señales} activo(s) con señal activa ahora mismo.')
+    n_holdeando = int((df_resumen['Estado'] != '—').sum())
+    if n_holdeando > 0:
+        st.success(f'⚡ {n_holdeando} activo(s) con una posición holdeada ahora mismo.')
 
     # ── Detalle de un activo ─────────────────────────────────────────
     st.markdown('---')
@@ -863,97 +754,64 @@ def modulo_bot_inversion(
         'Elegí un activo para ver el gráfico y el historial completo',
         list(resultados_bot.keys()), key='bot_detalle_sel',
     )
-    df_bot_sel = resultados_bot[ticker_detalle]
+    df_bot_sel = resultados_bot[ticker_detalle]['df']
+    trades_sel = resultados_bot[ticker_detalle]['trades']
     ultimo = df_bot_sel.iloc[-1]
     estado_actual = ultimo['estado']
     color_estado = _color_estado(estado_actual)
 
     kpi_cards_4([
-        ('Señal Actual', estado_actual, f'{ticker_detalle} · {horizonte_bot}', color_estado),
+        ('Estado Actual', estado_actual, f'{ticker_detalle} · {horizonte_bot}', color_estado),
         ('Precio', fmt_precio(ultimo['precio']),
-         f"Stop sugerido: {fmt_precio(ultimo['stop']) if not pd.isna(ultimo['stop']) else '—'}", '#3a7bd5'),
-        ('Sentimiento / Fractal', f"{ultimo['sc_sent']:.0f} · {_marca_fractal(ultimo)}",
-         'Percentil de precio · pivote confirmado', score_color_hex(ultimo['sc_sent'])),
-        ('Z-Score / RSI', f"{ultimo['zscore']:+.2f} / {ultimo['rsi']:.1f}",
-         f"Cond. Venta {int(ultimo['count_venta'])}/4 · Cond. Compra {int(ultimo['count_compra'])}/4", '#e3b341'),
+         f"Stop vigente: {(fmt_precio(ultimo['trailing_stop']) if ultimo['trailing_activo'] and not pd.isna(ultimo['trailing_stop']) else (fmt_precio(ultimo['hard_stop']) if not pd.isna(ultimo['hard_stop']) else '—'))}",
+         '#3a7bd5'),
+        ('Rango / Posición', f"{fmt_precio(ultimo['range_low'])} – {fmt_precio(ultimo['range_high'])}",
+         f"Posición en el rango: {ultimo['pos_pct']:.0f}%" if not pd.isna(ultimo['pos_pct']) else '—',
+         score_color_hex(ultimo['pos_pct']) if not pd.isna(ultimo['pos_pct']) else '#8b949e'),
+        ('ATR / Trailing', fmt_precio(ultimo['atr']) if not pd.isna(ultimo['atr']) else '—',
+         'Trailing activo' if ultimo['trailing_activo'] else 'Trailing no activado aún', '#e3b341'),
     ])
 
-    st.plotly_chart(_fig_bot_señales(ticker_detalle, df_bot_sel, PLOTLY_LAYOUT_BASE),
-                     use_container_width=True, config=PLOTLY_CONFIG, key=f'bot_fig_señales_{ticker_detalle}')
+    st.plotly_chart(_fig_bot_grid(ticker_detalle, df_bot_sel, trades_sel, PLOTLY_LAYOUT_BASE),
+                     use_container_width=True, config=PLOTLY_CONFIG, key=f'bot_fig_grid_{ticker_detalle}')
 
-    # La simulación se corre antes de armar la tabla de historial para poder
-    # mostrar, en esa misma tabla, cuántos USD representó cada entrada real
-    # (1ra, 2da y 3ra) según el capital/% por operación/apalancamiento
-    # elegidos arriba.
-    rend = _bot_simular_en_memoria(df_bot_sel, capital_inicial_bot, pct_por_operacion_bot,
-                                     apalancamiento_bot, rebalanceo_pct_capital)
+    rend = _bot_simular_en_memoria(trades_sel, capital_inicial_bot, pct_por_operacion_bot,
+                                     apalancamiento_bot, pct_capital_nivel)
     montos = rend['montos']
+    pnl_por_trade = rend['pnl_por_trade']
 
-    st.markdown('#### 📋 Historial de señales disparadas')
-    df_hist = df_bot_sel[df_bot_sel['disparo']].copy().sort_index(ascending=False)
-    if df_hist.empty:
-        st.info('No se disparó ninguna señal en el período analizado con los parámetros actuales.')
+    st.markdown('#### 📋 Historial de ciclos (holdeos)')
+    df_hist_show = _trades_a_dataframe(trades_sel, fmt_precio)
+    if df_hist_show.empty:
+        st.info('No se abrió ningún ciclo en el período analizado con los parámetros actuales.')
     else:
+        fechas_apertura_ordenadas = [t['fecha_apertura'] for t in
+                                      sorted(trades_sel, key=lambda t: t['fecha_apertura'], reverse=True)]
+
         def _monto(ts, clave):
             m = montos.get(ts)
             if not m or m.get(clave) is None:
                 return '—'
             return f"USD {m[clave]:,.2f}"
 
-        def _fecha_fmt(v):
-            return v.strftime('%Y-%m-%d %H:%M') if pd.notna(v) else '—'
-
-        def _ganancia_perdida_usd(ts, row):
-            if row['tomada']:
-                val = rend['pnl_por_señal'].get(ts)
-                if val is None:
-                    return '—'
-                return f"USD {val:+,.2f}"
-            else:
-                if pd.isna(row['retorno_pct']):
-                    return '—'
-                capital_ref = capital_inicial_bot * (pct_por_operacion_bot / 100.0)
-                val = capital_ref * (row['retorno_pct'] / 100.0) * apalancamiento_bot
-                return f"USD {val:+,.2f} (hipot.)"
-
-        def _resultado_si_no_tomada(row):
-            if row['tomada']:
+        def _ganancia(ts, trade):
+            if trade['resultado'] == '⏳':
                 return '—'
-            return row['resultado_teorico'] if row['resultado_teorico'] else '—'
+            val = pnl_por_trade.get(ts)
+            return f"USD {val:+,.2f}" if val is not None else '—'
 
-        df_hist_show = pd.DataFrame({
-            'Fecha/Hora': df_hist.index.strftime('%Y-%m-%d %H:%M'),
-            'Señal': df_hist['estado'],
-            'Tomada': df_hist['tomada'].apply(lambda v: 'Sí' if v else 'No'),
-            'Resultado': df_hist['resultado'].apply(lambda v: 'No tomada' if v == '⛔' else v),
-            'Si no se tomó': df_hist.apply(_resultado_si_no_tomada, axis=1),
-            'Fecha cierre': df_hist['fecha_cierre'].apply(_fecha_fmt),
-            'Ganancia/Pérdida (USD)': [_ganancia_perdida_usd(ts, df_hist.loc[ts]) for ts in df_hist.index],
-            '1ra entrada': df_hist['precio'].apply(fmt_precio),
-            'Monto 1ra': [_monto(ts, 'e1') for ts in df_hist.index],
-            '2da entrada': df_hist['entrada2_precio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'Monto 2da': [_monto(ts, 'e2') for ts in df_hist.index],
-            '3ra entrada': df_hist['entrada3_precio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'Monto 3ra': [_monto(ts, 'e3') for ts in df_hist.index],
-            'Precio promedio': df_hist['precio_promedio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'Stop vigente': df_hist['stop_vigente'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'TP vigente': df_hist['tp_vigente'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'Precio Result.': df_hist['precio_resultado'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'Velas hasta result.': df_hist['barras_hasta_resultado'].apply(lambda v: int(v) if pd.notna(v) else '—'),
-            'Fractal': df_hist.apply(_marca_fractal, axis=1),
-            'Sent': df_hist['sc_sent'].round(1),
-            'Z-Score': df_hist['zscore'].round(2),
-            'RSI': df_hist['rsi'].round(1),
-            'Cond V': df_hist['count_venta'].astype(int).astype(str) + '/4',
-            'Cond C': df_hist['count_compra'].astype(int).astype(str) + '/4',
-        })
+        trades_por_fecha = {t['fecha_apertura']: t for t in trades_sel}
+        df_hist_show.insert(len(df_hist_show.columns) - 0, 'Ganancia/Pérdida (USD)',
+                             [_ganancia(ts, trades_por_fecha[ts]) for ts in fechas_apertura_ordenadas])
+        df_hist_show.insert(1, 'Monto 1ra', [_monto(ts, 'e1') for ts in fechas_apertura_ordenadas])
+        df_hist_show.insert(2, 'Monto 2da', [_monto(ts, 'e2') for ts in fechas_apertura_ordenadas])
+        df_hist_show.insert(3, 'Monto 3ra', [_monto(ts, 'e3') for ts in fechas_apertura_ordenadas])
 
-        _color_tomada = lambda v: 'color:#8b949e' if v == 'No' else 'color:#3fb950;font-weight:700'
+        _color_tomada = lambda v: 'color:#8b949e' if v == 'No' else f'color:{C_BOT_TRAILING};font-weight:700'
         styled_hist = (df_hist_show.style
-            .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
+            .pipe(lambda s: getattr(s, _map)(_color_direccion, subset=['Dirección']))
             .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Resultado']))
-            .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Si no se tomó']))
-            .pipe(lambda s: getattr(s, _map)(_color_tomada, subset=['Tomada']))
+            .pipe(lambda s: getattr(s, _map)(_color_tomada, subset=['Trailing activado']))
             .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
             .set_table_styles([
                 {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
@@ -962,25 +820,22 @@ def modulo_bot_inversion(
                 {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
             ]))
         st.dataframe(styled_hist, use_container_width=True, height=min(500, len(df_hist_show) * 38 + 45))
-        n_no_tomadas = int((~df_hist['tomada']).sum())
         st.caption(
-            f'{len(df_hist_show)} señales disparadas en el historial analizado ({cfg["periodo_descarga"]} · '
-            f'{horizonte_bot}) · {n_no_tomadas} no tomadas por tener otra operación abierta en ese momento. '
-            'El Resultado, el Stop/TP "vigente" y los montos de cada entrada ya tienen en cuenta el rebalanceo '
-            'y el capital simulado — son los mismos que usa la simulación de rendimiento de abajo, así que el '
-            'Win Rate cierra en toda la pantalla.'
+            f'{len(df_hist_show)} ciclos de holdeo en el período analizado ({cfg["periodo_descarga"]} · {horizonte_bot}). '
+            'Solo puede haber un ciclo abierto por activo a la vez: mientras el bot está holdeando una posición, '
+            'no evalúa nuevas aperturas. El Precio promedio y el Stop vigente ya tienen en cuenta la rejilla, y los '
+            'montos usan el mismo capital simulado que la sección de abajo, así que el Win Rate cierra en toda la pantalla.'
         )
-
 
     st.markdown('---')
     st.markdown(f'### 📈 Rendimiento simulado — {ticker_detalle} (apalancamiento {apalancamiento_bot}x)')
     st.caption(
-        'Se recorre, en orden cronológico, el historial de señales TOMADAS de arriba (con su '
-        'rebalanceo simulado) y se va componiendo el capital desde el monto inicial elegido.'
+        'Se recorren, en orden cronológico, los ciclos CERRADOS de arriba (con su rejilla ya resuelta) '
+        'y se va componiendo el capital desde el monto inicial elegido.'
     )
 
-    if rend['total_señales'] == 0:
-        st.info('No se disparó ninguna señal de este activo en el período analizado — el rendimiento se arma solo cuando aparecen operaciones.')
+    if rend['total_trades'] == 0:
+        st.info('No se abrió ningún ciclo de este activo en el período analizado — el rendimiento se arma solo cuando aparecen operaciones.')
     else:
         color_rend = '#3fb950' if rend['rendimiento_pct'] >= 0 else '#f85149'
         kpi_cards_4([
@@ -988,9 +843,9 @@ def modulo_bot_inversion(
              f"Inicial: USD {rend['capital_inicial']:,.2f} · {apalancamiento_bot}x", color_rend),
             ('Rendimiento', f"{rend['rendimiento_pct']:+.2f}%", 'Sobre capital inicial', color_rend),
             ('Win Rate', f"{rend['win_rate']:.0f}%" if rend['win_rate'] is not None else 'N/D',
-             f"{rend['ganadoras']}✅ / {rend['perdedoras']}❌ cerradas", '#3a7bd5'),
-            ('Operaciones', str(rend['total_señales']),
-             f"{rend['cerradas']} cerradas · {rend['abiertas']} en curso · {rend['rebalanceos']} 🔁 rebalanceadas", '#e3b341'),
+             f"{rend['ganadoras']}✅ / {rend['perdedoras']}❌ cerrados", '#3a7bd5'),
+            ('Ciclos', str(rend['total_trades']),
+             f"{rend['cerradas']} cerrados · {rend['abiertas']} en curso · {rend['rebalanceos']} 🔲 con rejilla", '#e3b341'),
         ])
 
         fig_eq = go.Figure()
@@ -1006,77 +861,69 @@ def modulo_bot_inversion(
         )
         st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key='bot_equity_fig')
         st.caption(
-            'Todas las señales del historial se cuentan automáticamente, no hay sesgo de selección '
-            'manual. Cada operación arriesga el % de capital configurado sobre el capital SIMULADO en '
-            'ese momento (capital compuesto), multiplicado por el apalancamiento elegido. Si la '
-            'operación fue rebalanceada, el resultado se calcula sobre el precio promedio y el Stop/TP '
-            'recalculados. Las operaciones "en curso" (⏳) todavía no suman ni restan al capital.'
+            'Todos los ciclos del historial se cuentan automáticamente, no hay sesgo de selección manual. '
+            'Cada ciclo arriesga el % de capital configurado sobre el capital SIMULADO en ese momento '
+            '(capital compuesto), multiplicado por el apalancamiento elegido. Los ciclos "en curso" (⏳) '
+            'todavía no suman ni restan al capital.'
         )
 
         st.markdown('#### ⚖️ Comparativa por apalancamiento')
-        st.caption(f'Misma secuencia de señales de {ticker_detalle}, simulada con cada nivel de apalancamiento.')
+        st.caption(f'Misma secuencia de ciclos de {ticker_detalle}, simulada con cada nivel de apalancamiento.')
         filas_comp = []
         for lev in APALANCAMIENTOS_BOT:
             r_lev = rend if lev == apalancamiento_bot else \
-                _bot_simular_en_memoria(df_bot_sel, capital_inicial_bot, pct_por_operacion_bot, lev, rebalanceo_pct_capital)
+                _bot_simular_en_memoria(trades_sel, capital_inicial_bot, pct_por_operacion_bot, lev, pct_capital_nivel)
             filas_comp.append({
                 'Apalancamiento': f'{lev}x' + (' ← actual' if lev == apalancamiento_bot else ''),
                 'Capital final (USD)': round(r_lev['capital_actual'], 2),
                 'Rendimiento': f"{r_lev['rendimiento_pct']:+.2f}%",
-                'Cerradas': r_lev['cerradas'],
+                'Cerrados': r_lev['cerradas'],
                 'Win Rate': f"{r_lev['win_rate']:.0f}%" if r_lev['win_rate'] is not None else 'N/D',
             })
         df_comp = pd.DataFrame(filas_comp)
         st.dataframe(df_comp, use_container_width=True, height=min(260, len(df_comp) * 38 + 45), hide_index=True)
 
-    with st.expander('❓ Cómo funciona esta señal'):
+    with st.expander('❓ Cómo funciona esta estrategia'):
         st.markdown(f"""
-        Cada barra se evalúa contra 4 condiciones por lado: **Fractal** (piso/techo confirmado con
-        barras de izquierda/derecha), **Sentimiento** (percentil del precio dentro del rango elegido),
-        **Z-Score** (desvíos respecto a la media móvil) y **RSI** (nivel de sobrecompra/sobreventa).
+        **📏 Rango**: el bot calcula un canal de Donchian (máximo y mínimo de las últimas N velas). Ese
+        canal define el "techo" y el "piso" donde se está moviendo el precio, y la posición del precio
+        actual dentro de ese rango se expresa como un %: 0% = tocando el piso, 100% = tocando el techo.
 
-        - **4 de 4 condiciones cumplidas** → señal **completa** (mostrada como "100%"), con el Stop y
-          Take Profit más amplios que configuraste.
-        - **3 de 4 condiciones cumplidas** → **entrada anticipada** (mostrada como "50%"), más débil
-          y con su propio Stop/TP.
+        **📊 Volatilidad**: se mide con el ATR (rango verdadero promedio de las últimas N velas). El ATR
+        es la unidad de medida de todo lo demás: cada cuánto se agrega una entrada a la rejilla, cuándo se
+        activa el trailing, qué tan lejos queda el trailing del precio, y qué tan lejos del rango queda el
+        stop duro.
 
-        Cada señal disparada se evalúa hacia adelante: se marca **✅** si el precio tocó primero el
-        Take Profit, **❌** si tocó primero el Stop, y **⏳ En curso** si todavía no definió.
+        **🔲 Rejilla y holdeo**: cuando el precio entra en la zona baja del rango (por debajo del %
+        configurado) el bot abre una posición **COMPRA**; si entra en la zona alta, abre **VENTA**. Si el
+        precio sigue moviéndose en contra en pasos de **{grid_step_atr} × ATR**, se agrega una nueva
+        entrada (hasta un máximo de **{int(max_niveles)}**), de un tamaño igual al **{pct_capital_nivel:.0f}%**
+        del monto de la 1ra entrada, y se recalcula el **precio promedio** ponderado por el capital de cada
+        entrada. El bot sostiene ("holdea") toda la posición junta — no vende parcialmente.
 
-        **🤖 Todo es automático**: no hay botones de Aceptar/Rechazar. Cada señal que dispara el bot
-        queda registrada en el historial y forma parte del rendimiento simulado — esta herramienta es
-        para observar el comportamiento del bot, no para decidir manualmente sobre cada operación.
+        **🎯 Trailing (por volatilidad)**: una vez que el precio avanzó a favor **{trailing_activacion_atr} × ATR**
+        desde el precio promedio, se activa un trailing stop ubicado a **{trailing_atr_mult} × ATR** del
+        precio extremo alcanzado desde la apertura del ciclo. El trailing solo se ajusta a favor de la
+        posición (nunca retrocede). El cierre se marca **✅** si al tocarse el trailing el precio de cierre
+        queda por encima del promedio (COMPRA) o por debajo (VENTA), y **❌** si queda del otro lado.
 
-        **🚫 Sin solapamiento**: si aparece una señal nueva mientras el bot todavía tiene una operación
-        abierta de ese mismo activo (una anterior que no cerró ✅ ni ❌), esa señal NO se toma — queda
-        marcada como **"No tomada"** en el historial (Resultado ⛔), para que veas que el bot la vio pero
-        no operó. No afecta el capital ni el Win Rate.
+        **🛑 Stop duro**: mientras el trailing todavía no se activó, la posición se protege con un stop
+        duro ubicado a **{hard_stop_atr_mult} × ATR** por fuera del rango vigente (por debajo del piso para
+        COMPRA, por encima del techo para VENTA). Si se toca antes de que el trailing se active, el ciclo
+        cierra **❌**.
 
-        **🔁 Rebalanceo (hasta 3 entradas)**: si el precio recorre el % configurado del camino hacia el
-        Stop vigente (por defecto 80%) SIN llegar a tocarlo, el bot dispara una entrada adicional de
-        tamaño = % configurable del capital de la 1ra entrada, calcula un **precio promedio** ponderado
-        por cantidad (capital ÷ precio, como promediar acciones o contratos reales), y sobre ese promedio
-        recalcula el Stop y el TP usando los **mismos %** que configuraste originalmente. Esto puede
-        repetirse una vez más (3ra entrada), usando como referencia el nuevo promedio y el nuevo Stop.
-        De ahí en más, el resultado de la operación se evalúa contra el Stop/TP más recientes. Todo este
-        cálculo se hace al vuelo, sobre el historial de señales disparadas que ves más arriba — no queda
-        nada guardado entre sesiones.
+        **🚫 Un solo ciclo a la vez**: mientras el bot está holdeando una posición de un activo, no evalúa
+        nuevas aperturas de ese mismo activo — recién vuelve a buscar zona de COMPRA/VENTA una vez que el
+        ciclo anterior cerró.
 
-        **💵 Monto de cada entrada**: en la tabla de historial, "Monto 1ra/2da/3ra" muestra cuántos USD
-        representó cada entrada real, calculados con el % de capital por operación y el capital simulado
-        en ese momento (compuesto) — la 2da y 3ra entrada son el % de rebalanceo configurado sobre esa
-        misma 1ra entrada.
+        **🤖 Todo es automático**: no hay botones de Aceptar/Rechazar. Cada ciclo que abre el bot queda
+        registrado en el historial y forma parte del rendimiento simulado.
 
         **💰 Capital simulado y apalancamiento**: el capital inicial es **configurable, desde
-        USD {CAPITAL_MINIMO_BOT:,.0f}**. Cada operación arriesga el % de capital configurado sobre
-        el capital simulado en ese momento (compuesto), multiplicado por el apalancamiento elegido
-        (1x a 5x). Podés comparar los 5 niveles sobre la misma secuencia de señales de este activo en
-        la tabla "Comparativa por apalancamiento". La pérdida de una operación individual nunca supera
-        el 100% del capital arriesgado en la 1ra entrada (simula que se liquida esa posición puntual).
+        USD {CAPITAL_MINIMO_BOT:,.0f}**. Cada ciclo arriesga el % de capital configurado sobre el capital
+        simulado en ese momento (compuesto), multiplicado por el apalancamiento elegido (1x a 5x). Podés
+        comparar los 5 niveles sobre la misma secuencia de ciclos de este activo en la tabla "Comparativa
+        por apalancamiento". La pérdida de un ciclo nunca supera el 100% del capital arriesgado en ese ciclo.
 
-        ⚠️ **Importante**: si NO se llegó a rebalancear una operación, el Stop se sigue tratando como
-        una salida total. Solo cuando el bot rebalancea de verdad se está "promediando en vez de cerrar";
-        el resto del tiempo, tocar el Stop vigente todavía implica cerrar la posición con esa pérdida.
-
-        Usalo como medida de calidad de la señal, no como tu resultado real de trading.
+        Usalo como medida de calidad de la estrategia, no como tu resultado real de trading.
         """)
