@@ -217,41 +217,21 @@ def _calcular_bot_dataframe(close, high, low, cfg,
 def _evaluar_señales_con_rebalanceo(df, rebalanceo_umbral_pct, rebalanceo_pct_capital,
                                       stop_pct_100, stop_pct_50, tp_pct_100, tp_pct_50,
                                       max_entradas=3):
-    """Para cada señal disparada, calcula UN ÚNICO resultado (✅/❌/⏳/⛔) que ya
-    tiene en cuenta el rebalanceo y el solapamiento de operaciones — así toda
-    la pantalla (resumen, historial de señales, win rate y simulación de
-    capital) lee siempre el mismo dato y no puede haber números que no
-    cierren entre sí.
-
-    Reglas, en orden cronológico:
-      1. **Sin solapamiento**: si esta señal aparece mientras todavía hay una
-         operación abierta de este mismo activo (una anterior que no cerró
-         ✅/❌ todavía), el bot NO la toma — queda marcada con resultado
-         '⛔' (no tomada) y no genera entradas ni afecta el capital. Sigue
-         apareciendo en el historial para que se vea que el bot la vio pero
-         no operó.
-      2. **Rebalanceo (hasta 2 veces → 3 entradas en total)**: si el precio
-         recorre 'rebalanceo_umbral_pct' % del camino hacia el Stop vigente
-         SIN llegar a tocarlo, se dispara una entrada adicional (tamaño =
-         'rebalanceo_pct_capital' % de la 1ra entrada), se recalcula el
-         precio promedio ponderado por cantidad y, sobre ese promedio, el
-         nuevo Stop/TP (mismos % configurados originalmente). Esto puede
-         repetirse una segunda vez (3ra entrada) usando como referencia el
-         nuevo promedio y el nuevo Stop — hasta un máximo de 'max_entradas'
-         entradas por operación.
-      3. **Resultado** contra el Stop/TP vigentes en ese momento: ✅ si tocó
-         primero el TP, ❌ si tocó primero el Stop (o si ambos se tocan en
-         la misma vela — no se puede saber cuál fue primero con datos OHLC
-         estándar, así que se asume el escenario conservador), ⏳ si
-         todavía no definió (en cuyo caso la operación se considera abierta
-         hasta el final de los datos disponibles, bloqueando señales
-         nuevas de este activo hasta que aparezcan más datos).
-    """
+    """Igual que antes, pero ahora el resultado (rebalanceo + Stop/TP + ✅/❌/⏳)
+    se calcula para TODAS las señales disparadas, incluidas las que quedan
+    bloqueadas por solapamiento (⛔). Para esas, el resultado se guarda en
+    'resultado_teorico' (qué hubiera pasado SI se hubiera tomado, como
+    operación independiente) sin que afecte el encadenamiento real de
+    operaciones (ocupado_hasta solo se actualiza con las que sí se toman,
+    exactamente igual que antes)."""
     df = df.copy()
     n = len(df)
     resultado = [''] * n
+    resultado_teorico = [''] * n          # NUEVO
     precio_resultado = [np.nan] * n
     barras_hasta = [np.nan] * n
+    fecha_cierre = [pd.NaT] * n           # NUEVO
+    retorno_pct = [np.nan] * n            # NUEVO: % de movimiento a favor/en contra
     tomada = [False] * n
     num_rebalanceos = [0] * n
     entrada2_precio = [np.nan] * n
@@ -261,7 +241,7 @@ def _evaluar_señales_con_rebalanceo(df, rebalanceo_umbral_pct, rebalanceo_pct_c
     precio_promedio_arr = [np.nan] * n
     stop_vigente_arr = [np.nan] * n
     tp_vigente_arr = [np.nan] * n
-
+ 
     idx = df.index
     hi_arr = df['high'].values
     lo_arr = df['low'].values
@@ -270,32 +250,31 @@ def _evaluar_señales_con_rebalanceo(df, rebalanceo_umbral_pct, rebalanceo_pct_c
     disparo_arr = df['disparo'].values
     tp_arr = df['tp'].values
     sl_arr = df['stop'].values
-
-    ocupado_hasta = -1  # índice de la última barra "ocupada" por una operación en curso
-
+ 
+    ocupado_hasta = -1  # solo avanza con operaciones REALMENTE tomadas
+ 
     for i in range(n):
         if not disparo_arr[i] or estado_arr[i] == '—' or pd.isna(tp_arr[i]) or pd.isna(sl_arr[i]):
             continue
-
-        if i <= ocupado_hasta:
-            resultado[i] = '⛔'  # no tomada: ya había una operación abierta en este activo
-            continue
-
-        tomada[i] = True
+ 
+        fue_tomada = i > ocupado_hasta
+        tomada[i] = fue_tomada
+ 
         es_venta = 'VENTA' in estado_arr[i]
         es_100 = '100%' in estado_arr[i]
         stop_pct_usado = stop_pct_100 if es_100 else stop_pct_50
         tp_pct_usado = tp_pct_100 if es_100 else tp_pct_50
-
+ 
         precio_prom = precio_arr[i]
         stop_vigente = sl_arr[i]
         tp_vigente = tp_arr[i]
-        capital_total = 100.0  # unidad nominal (peso relativo), no dólares reales
+        capital_total = 100.0
         qty_total = capital_total / precio_prom
         j_cursor = i + 1
         n_entradas = 1
-
-        # ── 1) ¿Corresponde rebalanceo (1ra o 2da vez) antes de tocar el Stop vigente? ──
+ 
+        # ── Rebalanceo: se simula igual, tomada o no, para que lo hipotético
+        # también refleje cómo hubiera evolucionado el precio promedio ──
         while n_entradas < max_entradas:
             distancia_stop = abs(stop_vigente - precio_prom)
             if distancia_stop <= 0:
@@ -308,13 +287,13 @@ def _evaluar_señales_con_rebalanceo(df, rebalanceo_umbral_pct, rebalanceo_pct_c
                 avance_pct = ((precio_j - precio_prom) / distancia_stop * 100) if es_venta \
                     else ((precio_prom - precio_j) / distancia_stop * 100)
                 if avance_pct >= 100:
-                    break  # ya tocó/pasó el Stop vigente antes de llegar a un nuevo rebalanceo
+                    break
                 if avance_pct >= rebalanceo_umbral_pct:
                     j_reb = j
                     break
             if j_reb is None:
                 break
-
+ 
             precio_j = precio_arr[j_reb]
             capital_entrada = 100.0 * (rebalanceo_pct_capital / 100.0)
             qty_entrada = capital_entrada / precio_j
@@ -327,7 +306,7 @@ def _evaluar_señales_con_rebalanceo(df, rebalanceo_umbral_pct, rebalanceo_pct_c
             else:
                 stop_vigente = precio_prom * (1 - stop_pct_usado / 100)
                 tp_vigente = precio_prom * (1 + tp_pct_usado / 100)
-
+ 
             n_entradas += 1
             num_rebalanceos[i] = n_entradas - 1
             if n_entradas == 2:
@@ -337,15 +316,16 @@ def _evaluar_señales_con_rebalanceo(df, rebalanceo_umbral_pct, rebalanceo_pct_c
                 entrada3_precio[i] = precio_j
                 fecha_entrada3[i] = idx[j_reb]
             j_cursor = j_reb
-
+ 
         if n_entradas > 1:
             precio_promedio_arr[i] = precio_prom
         stop_vigente_arr[i] = stop_vigente
         tp_vigente_arr[i] = tp_vigente
-
-        # ── 2) Resultado contra el Stop/TP vigente, desde la última entrada ──
+ 
+        # ── Resultado (se calcula siempre, tomada o no) ──
         encontrado = False
-        j_exit = n - 1  # si no se resuelve, la operación queda "abierta" hasta el final de los datos
+        j_exit = n - 1
+        res = '⏳'
         for j in range(j_cursor, n):
             hi_j, lo_j = hi_arr[j], lo_arr[j]
             if es_venta:
@@ -354,21 +334,34 @@ def _evaluar_señales_con_rebalanceo(df, rebalanceo_umbral_pct, rebalanceo_pct_c
                 toco_tp, toco_sl = hi_j >= tp_vigente, lo_j <= stop_vigente
             if toco_tp or toco_sl:
                 if toco_sl:
-                    resultado[i], precio_resultado[i] = '❌', stop_vigente
+                    res, precio_resultado[i] = '❌', stop_vigente
                 else:
-                    resultado[i], precio_resultado[i] = '✅', tp_vigente
+                    res, precio_resultado[i] = '✅', tp_vigente
                 barras_hasta[i] = j - i
+                fecha_cierre[i] = idx[j]
                 j_exit = j
                 encontrado = True
                 break
-        if not encontrado:
-            resultado[i] = '⏳'
-
-        ocupado_hasta = j_exit
-
+ 
+        if encontrado:
+            if res == '✅':
+                retorno_pct[i] = abs(tp_vigente - precio_prom) / precio_prom * 100
+            else:
+                retorno_pct[i] = -abs(stop_vigente - precio_prom) / precio_prom * 100
+ 
+        if fue_tomada:
+            resultado[i] = res
+            ocupado_hasta = j_exit          # solo avanza si REALMENTE se tomó
+        else:
+            resultado[i] = '⛔'
+            resultado_teorico[i] = res      # qué hubiera pasado si se tomaba
+ 
     df['resultado'] = resultado
+    df['resultado_teorico'] = resultado_teorico
     df['precio_resultado'] = precio_resultado
     df['barras_hasta_resultado'] = barras_hasta
+    df['fecha_cierre'] = fecha_cierre
+    df['retorno_pct'] = retorno_pct
     df['tomada'] = tomada
     df['num_rebalanceos'] = num_rebalanceos
     df['rebalanceada'] = [x > 0 for x in num_rebalanceos]
@@ -380,6 +373,7 @@ def _evaluar_señales_con_rebalanceo(df, rebalanceo_umbral_pct, rebalanceo_pct_c
     df['stop_vigente'] = stop_vigente_arr
     df['tp_vigente'] = tp_vigente_arr
     return df
+ 
 
 
 def _color_resultado(val):
@@ -431,22 +425,17 @@ def _bot_guardar_config(supabase, user_id, capital_inicial, pct_por_operacion, a
 
 def _bot_simular_en_memoria(df_bot, capital_inicial, pct_por_operacion, apalancamiento,
                               rebalanceo_pct_capital):
-    """Recorre, en orden cronológico, las señales TOMADAS de df_bot (las que
-    no quedaron bloqueadas por tener otra operación abierta) y compone el
-    capital: cada operación cerrada arriesga 'pct_por_operacion' % del
-    capital ACTUAL de esta simulación (la 1ra entrada), multiplicado por el
-    apalancamiento. Las entradas adicionales por rebalanceo (2da y 3ra, si
-    las hubo) se dimensionan como 'rebalanceo_pct_capital' % de esa misma
-    1ra entrada — así el tamaño en USD de cada entrada queda guardado en
-    'montos', para mostrarlo en la tabla de historial. La pérdida de una
-    operación nunca supera el 100% del capital arriesgado en la 1ra entrada
-    (se simula que esa posición se liquida, no toda la cuenta)."""
+    """Igual que antes, pero ahora también devuelve 'pnl_por_señal': un dict
+    {timestamp_de_la_señal: ganancia_o_perdida_en_USD} para cada operación
+    CERRADA (✅ o ❌), calculado sobre el capital simulado en el momento en
+    que se abrió esa operación (ya compuesto)."""
     disparos = df_bot[df_bot['disparo'] & (df_bot['estado'] != '—') & (df_bot['tomada'] == True)]
     equity = capital_inicial
     curva = [{'fecha': 'Inicio', 'equity': equity}]
     cerradas = ganadoras = abiertas = rebalanceos = 0
     montos = {}
-
+    pnl_por_señal = {}   # NUEVO
+ 
     for ts, row in disparos.iterrows():
         resultado = row['resultado']
         n_reb = int(row.get('num_rebalanceos', 0) or 0)
@@ -455,7 +444,7 @@ def _bot_simular_en_memoria(df_bot, capital_inicial, pct_por_operacion, apalanca
         precio_base = row['precio_promedio'] if n_reb > 0 else row['precio']
         tp_base = row['tp_vigente']
         stop_base = row['stop_vigente']
-
+ 
         capital_operado = equity * (pct_por_operacion / 100.0)
         monto_e2 = capital_operado * (rebalanceo_pct_capital / 100.0) if n_reb >= 1 else None
         monto_e3 = capital_operado * (rebalanceo_pct_capital / 100.0) if n_reb >= 2 else None
@@ -463,26 +452,29 @@ def _bot_simular_en_memoria(df_bot, capital_inicial, pct_por_operacion, apalanca
             'e1': capital_operado, 'e2': monto_e2, 'e3': monto_e3,
             'total': capital_operado + (monto_e2 or 0) + (monto_e3 or 0),
         }
-
+ 
         if pd.isna(precio_base) or pd.isna(tp_base) or pd.isna(stop_base):
             abiertas += 1
             continue
-
+ 
         if resultado == '✅':
             pct_mov = abs(tp_base - precio_base) / precio_base
-            equity += capital_operado * pct_mov * apalancamiento
+            ganancia = capital_operado * pct_mov * apalancamiento
+            equity += ganancia
+            pnl_por_señal[ts] = ganancia
             ganadoras += 1; cerradas += 1
         elif resultado == '❌':
             pct_mov = abs(stop_base - precio_base) / precio_base
             perdida = min(capital_operado * pct_mov * apalancamiento, capital_operado)
             equity -= perdida
+            pnl_por_señal[ts] = -perdida
             cerradas += 1
         else:
             abiertas += 1
             continue
-
+ 
         curva.append({'fecha': ts.strftime('%Y-%m-%d %H:%M'), 'equity': equity})
-
+ 
     return {
         'capital_inicial': capital_inicial, 'capital_actual': equity,
         'rendimiento_pct': (equity / capital_inicial - 1) * 100 if capital_inicial else 0.0,
@@ -490,7 +482,9 @@ def _bot_simular_en_memoria(df_bot, capital_inicial, pct_por_operacion, apalanca
         'cerradas': cerradas, 'ganadoras': ganadoras, 'perdedoras': cerradas - ganadoras,
         'abiertas': abiertas, 'total_señales': len(disparos), 'curva': curva,
         'rebalanceos': rebalanceos, 'apalancamiento': apalancamiento, 'montos': montos,
+        'pnl_por_señal': pnl_por_señal,   # NUEVO
     }
+ 
 
 
 # ── Descarga intradía — TTL corto para que se sienta "en vivo" ────────
@@ -901,47 +895,78 @@ def modulo_bot_inversion(
         st.info('No se disparó ninguna señal en el período analizado con los parámetros actuales.')
     else:
         def _monto(ts, clave):
-            m = montos.get(ts)
-            if not m or m.get(clave) is None:
+        m = montos.get(ts)
+        if not m or m.get(clave) is None:
+            return '—'
+        return f"USD {m[clave]:,.2f}"
+     
+    def _fecha_fmt(v):
+        return v.strftime('%Y-%m-%d %H:%M') if pd.notna(v) else '—'
+     
+    def _ganancia_perdida_usd(ts, row):
+        """Para las tomadas: la ganancia/pérdida real, compuesta, de la
+        simulación. Para las 'No tomada' (⛔): un estimado hipotético — usa el
+        capital INICIAL configurado (no el equity real compuesto, porque esa
+        operación nunca se ejecutó y no hay forma de saber qué equity hubiera
+        tenido en ese momento si se hubiera tomado)."""
+        if row['tomada']:
+            val = rend['pnl_por_señal'].get(ts)
+            if val is None:
                 return '—'
-            return f"USD {m[clave]:,.2f}"
-
-        df_hist_show = pd.DataFrame({
-            'Fecha/Hora': df_hist.index.strftime('%Y-%m-%d %H:%M'),
-            'Señal': df_hist['estado'],
-            'Tomada': df_hist['tomada'].apply(lambda v: 'Sí' if v else 'No'),
-            'Resultado': df_hist['resultado'].apply(lambda v: 'No tomada' if v == '⛔' else v),
-            '1ra entrada': df_hist['precio'].apply(fmt_precio),
-            'Monto 1ra': [_monto(ts, 'e1') for ts in df_hist.index],
-            '2da entrada': df_hist['entrada2_precio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'Monto 2da': [_monto(ts, 'e2') for ts in df_hist.index],
-            '3ra entrada': df_hist['entrada3_precio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'Monto 3ra': [_monto(ts, 'e3') for ts in df_hist.index],
-            'Precio promedio': df_hist['precio_promedio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'Stop vigente': df_hist['stop_vigente'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'TP vigente': df_hist['tp_vigente'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'Precio Result.': df_hist['precio_resultado'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
-            'Velas hasta result.': df_hist['barras_hasta_resultado'].apply(lambda v: int(v) if pd.notna(v) else '—'),
-            'Fractal': df_hist.apply(_marca_fractal, axis=1),
-            'Sent': df_hist['sc_sent'].round(1),
-            'Z-Score': df_hist['zscore'].round(2),
-            'RSI': df_hist['rsi'].round(1),
-            'Cond V': df_hist['count_venta'].astype(int).astype(str) + '/4',
-            'Cond C': df_hist['count_compra'].astype(int).astype(str) + '/4',
-        })
-        _color_tomada = lambda v: 'color:#8b949e' if v == 'No' else 'color:#3fb950;font-weight:700'
-        styled_hist = (df_hist_show.style
-            .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
-            .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Resultado']))
-            .pipe(lambda s: getattr(s, _map)(_color_tomada, subset=['Tomada']))
-            .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
-            .set_table_styles([
-                {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
-                    ('font-weight', '700'), ('text-align', 'center'),
-                    ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
-                {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
-            ]))
-        st.dataframe(styled_hist, use_container_width=True, height=min(500, len(df_hist_show) * 38 + 45))
+            return f"USD {val:+,.2f}"
+        else:
+            if pd.isna(row['retorno_pct']):
+                return '—'
+            capital_ref = capital_inicial_bot * (pct_por_operacion_bot / 100.0)
+            val = capital_ref * (row['retorno_pct'] / 100.0) * apalancamiento_bot
+            return f"USD {val:+,.2f} (hipot.)"
+     
+    def _resultado_si_no_tomada(row):
+        if row['tomada']:
+            return '—'
+        return row['resultado_teorico'] if row['resultado_teorico'] else '—'
+     
+    df_hist_show = pd.DataFrame({
+        'Fecha/Hora': df_hist.index.strftime('%Y-%m-%d %H:%M'),
+        'Señal': df_hist['estado'],
+        'Tomada': df_hist['tomada'].apply(lambda v: 'Sí' if v else 'No'),
+        'Resultado': df_hist['resultado'].apply(lambda v: 'No tomada' if v == '⛔' else v),
+        'Si no se tomó': df_hist.apply(_resultado_si_no_tomada, axis=1),          # NUEVO
+        'Fecha cierre': df_hist['fecha_cierre'].apply(_fecha_fmt),                # NUEVO
+        'Ganancia/Pérdida (USD)': [_ganancia_perdida_usd(ts, df_hist.loc[ts]) for ts in df_hist.index],  # NUEVO
+        '1ra entrada': df_hist['precio'].apply(fmt_precio),
+        'Monto 1ra': [_monto(ts, 'e1') for ts in df_hist.index],
+        '2da entrada': df_hist['entrada2_precio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+        'Monto 2da': [_monto(ts, 'e2') for ts in df_hist.index],
+        '3ra entrada': df_hist['entrada3_precio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+        'Monto 3ra': [_monto(ts, 'e3') for ts in df_hist.index],
+        'Precio promedio': df_hist['precio_promedio'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+        'Stop vigente': df_hist['stop_vigente'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+        'TP vigente': df_hist['tp_vigente'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+        'Precio Result.': df_hist['precio_resultado'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
+        'Velas hasta result.': df_hist['barras_hasta_resultado'].apply(lambda v: int(v) if pd.notna(v) else '—'),
+        'Fractal': df_hist.apply(_marca_fractal, axis=1),
+        'Sent': df_hist['sc_sent'].round(1),
+        'Z-Score': df_hist['zscore'].round(2),
+        'RSI': df_hist['rsi'].round(1),
+        'Cond V': df_hist['count_venta'].astype(int).astype(str) + '/4',
+        'Cond C': df_hist['count_compra'].astype(int).astype(str) + '/4',
+    })
+     
+    _color_tomada = lambda v: 'color:#8b949e' if v == 'No' else 'color:#3fb950;font-weight:700'
+    styled_hist = (df_hist_show.style
+        .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
+        .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Resultado']))
+        .pipe(lambda s: getattr(s, _map)(_color_resultado, subset=['Si no se tomó']))   # NUEVO: mismo estilo ✅/❌/⏳
+        .pipe(lambda s: getattr(s, _map)(_color_tomada, subset=['Tomada']))
+        .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+        .set_table_styles([
+            {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                ('font-weight', '700'), ('text-align', 'center'),
+                ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+            {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+        ]))
+    st.dataframe(styled_hist, use_container_width=True, height=min(500, len(df_hist_show) * 38 + 45))
         n_no_tomadas = int((~df_hist['tomada']).sum())
         st.caption(
             f'{len(df_hist_show)} señales disparadas en el historial analizado ({cfg["periodo_descarga"]} · '
