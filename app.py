@@ -6026,7 +6026,7 @@ for key, default in [
 
 _now_str = ahora_ar().strftime('%H:%M')
 _h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'finanzas': '#6CC24A'}
-_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Pares', 'opciones': 'Opciones', 'finanzas': 'Finanzas'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'finanzas': 'Finanzas'}
 
 
 HORIZONTE = st.session_state['nav_horizonte']
@@ -6104,7 +6104,7 @@ with st.container(key='nav_pills_wrap'):
              HORIZONTE=='comparador', None, 'comparador', 'comparador')
     _nav_btn(_c[5], '🧮 Optimizar', 'nav_optimizador',
              HORIZONTE=='optimizador', None, 'optimizador', 'optimizador')
-    _nav_btn(_c[6], '🔗 Pares', 'nav_pares',
+    _nav_btn(_c[6], '🔄 Rotación', 'nav_pares',
              HORIZONTE=='pares', None, 'pares', 'pares')
     _nav_btn(_c[7], '🎲 Opciones', 'nav_opciones',
              HORIZONTE=='opciones', None, 'opciones', 'opciones')
@@ -6371,7 +6371,7 @@ titulos = {
     'buscador':  ('Buscador Universal', '🔍', 'Análisis completo por ticker — corto y largo plazo'),
     'comparador':('Comparador de Activos', '⚖️', 'Comparación lado a lado — rendimiento y scores cuantitativos'),
     'optimizador': ('Optimizador de Cartera', '🧮', 'Monte Carlo · Frontera eficiente · Comparación vs benchmark'),
-    'pares': ('Scanner de Pares (Mean Reversion)', '🔗', 'Ratios entre activos del mismo sector — Z-Score y bandas de reversión'),
+    'pares': ('Rotación y Pares', '🔄', 'Portfolio Rotation · Sector Rotation · Scanner de Pares (Mean Reversion)'),
     'forex':     ('Análisis Forex', '💱', 'Pares de divisas — ranking y oportunidades de acumulación'),
     'paises':    ('Países / Índices Globales', '🌍', 'Índices nacionales y regionales — flujo de capital macro'),
     'sectores':  ('Sectores S&P500', '📊', '11 sectores GICS — rotación y momentum'),
@@ -6405,7 +6405,7 @@ badge_map = {
     'buscador':   ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BÚSQUEDA'),
     'comparador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'COMPARADOR'),
     'optimizador':('#bc8cff', 'rgba(188,140,255,0.12)','OPTIMIZADOR'),
-    'pares':      ('#79c0ff', 'rgba(121,192,255,0.12)','PARES'),
+    'pares': ('#79c0ff', 'rgba(121,192,255,0.12)', 'ROTACIÓN'),
     'opciones': ('#bc5cff', 'rgba(188,92,255,0.12)', 'OPCIONES'),
     'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
     'promediador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'PROMEDIADOR'),
@@ -6459,7 +6459,27 @@ elif MODULO == 'optimizador':
 
 
 elif MODULO == 'pares':
-    modulo_scanner_pares()
+    tab_rot_port, tab_rot_sec, tab_rot_pares = st.tabs([
+        '📊 Portfolio Rotation', '🔄 Sector Rotation', '🔗 Pares (Mean Reversion)',
+    ])
+    with tab_rot_port:
+        modulo_portfolio_rotation(
+            acciones_por_industria=ACCIONES_POR_INDUSTRIA,
+            supabase=supabase, user_id=USER_ID,
+            get_close_series=get_close_series, fmt_precio=fmt_precio,
+            score_color_hex=score_color_hex, kpi_cards_4=kpi_cards_4,
+            chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
+        )
+    with tab_rot_sec:
+        modulo_sector_rotation(
+            sectores_gics=SECTORES_GICS,
+            supabase=supabase, user_id=USER_ID,
+            get_close_series=get_close_series, fmt_precio=fmt_precio,
+            score_color_hex=score_color_hex, kpi_cards_4=kpi_cards_4,
+            chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
+        )
+    with tab_rot_pares:
+        modulo_scanner_pares()
 
 elif MODULO == 'opciones':
     modulo_opciones()
