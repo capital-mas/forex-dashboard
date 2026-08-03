@@ -6466,16 +6466,14 @@ elif MODULO == 'pares':
         modulo_portfolio_rotation(
             acciones_por_industria=ACCIONES_POR_INDUSTRIA,
             supabase=supabase, user_id=USER_ID,
-            get_close_series=get_close_series, fmt_precio=fmt_precio,
-            score_color_hex=score_color_hex, kpi_cards_4=kpi_cards_4,
+            fmt_precio=fmt_precio, kpi_cards_4=kpi_cards_4,
             chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
         )
     with tab_rot_sec:
         modulo_sector_rotation(
             sectores_gics=SECTORES_GICS,
             supabase=supabase, user_id=USER_ID,
-            get_close_series=get_close_series, fmt_precio=fmt_precio,
-            score_color_hex=score_color_hex, kpi_cards_4=kpi_cards_4,
+            fmt_precio=fmt_precio, kpi_cards_4=kpi_cards_4,
             chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
         )
     with tab_rot_pares:
