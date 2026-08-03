@@ -3165,6 +3165,187 @@ def _senal_color(s):
 
 
 # ==============================================================
+#  RESUMEN VISUAL FUNDAMENTAL — semáforo + scores 0-10 + veredicto
+# ==============================================================
+
+def _resumen_visual_fundamental(res):
+    """Toma el dict que devuelve analizar_fundamental() y arma:
+    - categorias: lista de (nombre, emoji, label) para la tabla semáforo
+    - 4 scores 0-10 (calidad, valoración, crecimiento, riesgo)
+    - veredicto final y una conclusión de una línea."""
+
+    def _prom(lst):
+        lst = [x for x in lst if x is not None]
+        return round(sum(lst) / len(lst), 1) if lst else None
+
+    roe = res.get('roe'); gm = res.get('gross_margin'); om = res.get('op_margin')
+    fcf = res.get('fcf'); rg = res.get('revenue_growth'); de = res.get('debt_equity')
+    cr = res.get('curr_ratio'); per = res.get('per'); pb = res.get('pb')
+    peg = res.get('peg'); beta = res.get('beta'); eg = res.get('eps_growth')
+    ytd = res.get('alza_ytd')
+
+    categorias = []
+
+    if roe is not None:
+        v = roe * 100
+        if   v >= 25: categorias.append(('Rentabilidad (ROE)', '🟢', 'Excepcional'))
+        elif v >= 15: categorias.append(('Rentabilidad (ROE)', '🟢', 'Buena'))
+        elif v >= 8:  categorias.append(('Rentabilidad (ROE)', '🟡', 'Aceptable'))
+        else:         categorias.append(('Rentabilidad (ROE)', '🔴', 'Débil'))
+
+    if gm is not None:
+        v = gm * 100
+        if   v >= 60: categorias.append(('Margen Bruto', '🟢', 'Excelente'))
+        elif v >= 40: categorias.append(('Margen Bruto', '🟢', 'Bueno'))
+        elif v >= 20: categorias.append(('Margen Bruto', '🟡', 'Moderado'))
+        else:         categorias.append(('Margen Bruto', '🔴', 'Bajo'))
+
+    if fcf is not None:
+        categorias.append(('Flujo de Caja (FCF)', '🟢' if fcf > 0 else '🔴',
+                            'Positivo' if fcf > 0 else 'Negativo'))
+
+    if rg is not None:
+        v = rg * 100
+        if   v >= 20: categorias.append(('Crecimiento', '🟢', 'Muy alto'))
+        elif v >= 10: categorias.append(('Crecimiento', '🟢', 'Bueno'))
+        elif v >= 0:  categorias.append(('Crecimiento', '🟡', 'Moderado'))
+        else:         categorias.append(('Crecimiento', '🔴', 'Contracción'))
+
+    if de is not None:
+        if   de < 0.5: categorias.append(('Endeudamiento', '🟢', 'Muy bajo'))
+        elif de < 1:   categorias.append(('Endeudamiento', '🟢', 'Conservador'))
+        elif de < 2:   categorias.append(('Endeudamiento', '🟡', 'Elevado'))
+        else:          categorias.append(('Endeudamiento', '🔴', 'Muy elevado'))
+
+    if cr is not None:
+        if   cr >= 2:   categorias.append(('Liquidez', '🟢', 'Excelente'))
+        elif cr >= 1.5: categorias.append(('Liquidez', '🟢', 'Saludable'))
+        elif cr >= 1:   categorias.append(('Liquidez', '🟡', 'Ajustada'))
+        else:           categorias.append(('Liquidez', '🔴', 'Riesgo de liquidez'))
+
+    if per is not None and per > 0:
+        if   per < 10: categorias.append(('Valoración', '🟢', 'Muy barata'))
+        elif per < 15: categorias.append(('Valoración', '🟢', 'Barata'))
+        elif per < 25: categorias.append(('Valoración', '🟡', 'Normal'))
+        elif per < 40: categorias.append(('Valoración', '🟠', 'Exigente'))
+        else:          categorias.append(('Valoración', '🔴', 'Muy exigente'))
+
+    if beta is not None:
+        if   beta < 0.8: categorias.append(('Volatilidad', '🟢', 'Baja (defensiva)'))
+        elif beta < 1.2: categorias.append(('Volatilidad', '🟡', 'En línea con el mercado'))
+        elif beta < 1.5: categorias.append(('Volatilidad', '🟠', 'Alta'))
+        else:            categorias.append(('Volatilidad', '🔴', 'Muy alta'))
+
+    # ── Scores 0-10 ──────────────────────────────────────────────
+    calidad = _prom([
+        min(10, max(0, roe * 100 / 3)) if roe is not None else None,
+        min(10, max(0, gm * 100 / 7)) if gm is not None else None,
+        min(10, max(0, om * 100 / 3.5)) if om is not None else None,
+        (10 if fcf and fcf > 0 else 2) if fcf is not None else None,
+        max(0, 10 - de * 3) if de is not None else None,
+    ])
+
+    valoracion = _prom([
+        max(0, min(10, 10 - (per - 10) * 10 / 30)) if per else None,
+        max(0, min(10, 10 - (peg - 0.5) * 10 / 2)) if peg else None,
+        max(0, min(10, 10 - (pb - 1) * 10 / 7)) if pb else None,
+    ])
+
+    crecimiento = _prom([
+        max(0, min(10, 5 + rg * 100 / 4)) if rg is not None else None,
+        max(0, min(10, 5 + eg * 100 / 4)) if eg is not None else None,
+        max(0, min(10, 5 + ytd / 6)) if ytd is not None else None,
+    ])
+
+    riesgo = _prom([
+        max(0, min(10, beta * 5)) if beta is not None else None,
+        max(0, min(10, de * 3)) if de is not None else None,
+        max(0, min(10, 10 - (cr - 1) * 5)) if cr is not None else None,
+    ])
+
+    componentes = [calidad, valoracion, crecimiento, (10 - riesgo) if riesgo is not None else None]
+    pesos = [0.35, 0.20, 0.25, 0.20]
+    num, den = 0.0, 0.0
+    for c, p in zip(componentes, pesos):
+        if c is not None:
+            num += c * p; den += p
+    conclusion = round(num / den, 1) if den > 0 else None
+
+    if conclusion is None:
+        veredicto, v_emoji = 'SIN DATOS SUFICIENTES', '⚪'
+    elif conclusion >= 8.5:
+        veredicto, v_emoji = 'COMPRA FUERTE', '🟢'
+    elif conclusion >= 7:
+        veredicto, v_emoji = 'COMPRA', '🟢'
+    elif conclusion >= 5.5:
+        veredicto, v_emoji = 'MANTENER', '🟡'
+    elif conclusion >= 4:
+        veredicto, v_emoji = 'RIESGO', '🟠'
+    else:
+        veredicto, v_emoji = 'EVITAR', '🔴'
+
+    def _frase(valor, mapa):
+        if valor is None: return 'sin datos suficientes de calidad'
+        for (lo, hi), txt in mapa.items():
+            if lo <= valor < hi: return txt
+        return 'sin datos suficientes'
+
+    txt_calidad = _frase(calidad, {(8.5,999):'de altísima calidad',(7,8.5):'de buena calidad',
+                                    (5,7):'de calidad aceptable',(0,5):'de calidad débil'})
+    txt_valor = _frase(valoracion, {(7,999):'con valoración atractiva',(4,7):'con valoración razonable',
+                                     (0,4):'con valoración exigente'})
+    conclusion_texto = (f'Empresa {txt_calidad}, {txt_valor}.'
+                         if calidad is not None and valoracion is not None
+                         else 'Datos insuficientes para una conclusión completa.')
+
+    return dict(categorias=categorias, calidad=calidad, valoracion=valoracion,
+                crecimiento=crecimiento, riesgo=riesgo, conclusion=conclusion,
+                veredicto=veredicto, v_emoji=v_emoji, conclusion_texto=conclusion_texto)
+
+
+def render_resumen_visual_fundamental(res):
+    resumen = _resumen_visual_fundamental(res)
+
+    color_map = {'🟢': '#3fb950', '🟡': '#e3b341', '🟠': '#f0883e', '🔴': '#f85149'}
+    filas_html = ''.join(
+        f'<tr style="border-bottom:1px solid #21262d">'
+        f'<td style="padding:9px 14px;text-align:left;color:#e6edf3;font-size:13px">{emo} {nombre}</td>'
+        f'<td style="padding:9px 14px;text-align:right;font-weight:700;font-size:13px;'
+        f'color:{color_map.get(emo,"#8b949e")}">{label}</td></tr>'
+        for nombre, emo, label in resumen['categorias']
+    )
+    st.markdown(f"""
+    <div style="background:#0d1117;border:1px solid #21262d;border-radius:10px;overflow:hidden;margin-bottom:16px">
+      <table style="width:100%;border-collapse:collapse">{filas_html}</table>
+    </div>
+    """, unsafe_allow_html=True)
+
+    def _fmt_score(v):
+        return f'{v:.1f}/10' if v is not None else 'N/D'
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric('⭐ Calidad del Negocio', _fmt_score(resumen['calidad']))
+    with c2: st.metric('💰 Valoración', _fmt_score(resumen['valoracion']))
+    with c3: st.metric('📈 Potencial de Crecimiento', _fmt_score(resumen['crecimiento']))
+    with c4: st.metric('⚠️ Nivel de Riesgo', _fmt_score(resumen['riesgo']))
+
+    v_color = color_map.get(resumen['v_emoji'], '#8b949e')
+    st.markdown(f"""
+    <div style="background:{v_color}15;border:1.5px solid {v_color};border-radius:12px;
+         padding:18px 22px;text-align:center;margin:16px 0">
+      <div style="font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Veredicto Final</div>
+      <div style="font-size:22px;font-weight:800;color:{v_color}">{resumen['v_emoji']} {resumen['veredicto']}</div>
+    </div>
+    <div style="background:#0d1117;border:1px solid #21262d;border-radius:10px;padding:14px 18px">
+      <div style="font-size:12px;color:#6CC24A;font-weight:700;margin-bottom:4px">⭐ Conclusión</div>
+      <div style="font-size:14px;color:#e6edf3">
+        <b>{_fmt_score(resumen['conclusion'])}</b> — {resumen['conclusion_texto']}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ==============================================================
 #  PERFIL DE EMPRESA — logo, capitalización, descripción del negocio
 # ==============================================================
 
@@ -3503,224 +3684,226 @@ def modulo_buscador():
 def _renderizar_buscador(ticker):
     st.markdown(f'<div class="sec-title">Resultados para: {ticker}</div>', unsafe_allow_html=True)
 
-
     industria = TICKER_INDUSTRY.get(ticker, 'Externo / Manual')
 
-    render_perfil_empresa(ticker, key_suffix='buscador_top')
+    # ── Selector de qué mostrar ─────────────────────────────────
+    SECCIONES_DISPONIBLES = {
+        '🏢 Perfil de la empresa':                     'perfil',
+        '⚡ Corto Plazo (1-30 días)':                   'corto',
+        '📈 Largo Plazo (2 años cuantitativo)':         'largo',
+        '📊 Análisis Fundamental':                      'fundamental',
+        '📐 Top-Down Cuantitativo (Mediano/Largo Plazo)':'tdc',
+        '👥📑 Accionistas y Estados Financieros':       'estados',
+    }
+    secciones_sel = st.multiselect(
+        '¿Qué querés ver?', list(SECCIONES_DISPONIBLES.keys()),
+        default=st.session_state.get('buscador_secciones_sel', list(SECCIONES_DISPONIBLES.keys())),
+        key='buscador_secciones_sel',
+        help='Elegí qué bloques de análisis mostrar para este ticker.',
+    )
+    activos = set(SECCIONES_DISPONIBLES[s] for s in secciones_sel)
 
-    st.markdown('### ⚡ Análisis Corto Plazo (1–30 días)')
-    with st.spinner('Cargando datos de corto plazo...'):
-        df_v = descargar_datos(ticker, '3mo')
-        df_m = descargar_datos(ticker, '1mo')
+    if not activos:
+        st.info('Seleccioná al menos una sección arriba para ver el análisis.')
+        return
 
+    if 'perfil' in activos:
+        render_perfil_empresa(ticker, key_suffix='buscador_top')
 
-    if df_v is None or df_m is None:
-        st.warning(f'No se encontraron datos para {ticker}. Verificá que el símbolo sea correcto.')
-    else:
-        cl_v = get_close_series(df_v)
-        cl_m = get_close_series(df_m)
-        if cl_v is not None and cl_m is not None and len(cl_v.dropna()) >= 15:
-            atr = calcular_atr(df_m)
-            sa, sn, ss = scores_corto(cl_v, cl_m, atr)
-            sf  = sa*0.45 + sn*0.35 + ss*0.20
-            rsi = float(calcular_rsi(cl_m, p=7).iloc[-1])
-            ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
-            ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
-            precio  = float(cl_m.iloc[-1])
-            señal   = señal_accion_corto(sa, sn, ss)
-            lbl_sa, col_sa, _ = clasificar_score(sa)
+    # ── Corto plazo ──────────────────────────────────────────────
+    if 'corto' in activos:
+        st.markdown('### ⚡ Análisis Corto Plazo (1–30 días)')
+        with st.spinner('Cargando datos de corto plazo...'):
+            df_v = descargar_datos(ticker, '3mo')
+            df_m = descargar_datos(ticker, '1mo')
 
-
-            kpi_cards_4([
-                ('Score Acumulación', f'{sa:.0f}/100', lbl_sa, col_sa),
-                ('Score Anticipación', f'{sn:.0f}/100', 'Momentum futuro', score_color_hex(sn)),
-                ('Score Sentimiento', f'{ss:.0f}/100', 'Percentil precio', score_color_hex(ss)),
-                ('Score Final', f'{sf:.0f}/100', 'Compuesto 45/35/20', score_color_hex(sf)),
-            ])
-
-
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1: st.metric('RSI (7)', f'{rsi:.1f}', help=G('RSI'))
-            with c2: st.metric('Ret 5d', f'{ret_5d:+.2f}%')
-            with c3: st.metric('Ret 10d', f'{ret_10d:+.2f}%')
-            with c4: st.metric('Precio', fmt_precio(precio))
-            with c5: st.metric('Industria', industria[:15])
-
-
-            st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{señal}</span></div>', unsafe_allow_html=True)
-
-
-            precios = cl_m.values
-            if len(precios) > 2:
-                st.plotly_chart(fig_mini_precio(ticker, precios), use_container_width=True, config=PLOTLY_CONFIG, key=f'mini_{ticker}')
+        if df_v is None or df_m is None:
+            st.warning(f'No se encontraron datos para {ticker}. Verificá que el símbolo sea correcto.')
         else:
-            st.info('Datos insuficientes para el análisis de corto plazo.')
+            cl_v = get_close_series(df_v)
+            cl_m = get_close_series(df_m)
+            if cl_v is not None and cl_m is not None and len(cl_v.dropna()) >= 15:
+                atr = calcular_atr(df_m)
+                sa, sn, ss = scores_corto(cl_v, cl_m, atr)
+                sf  = sa*0.45 + sn*0.35 + ss*0.20
+                rsi = float(calcular_rsi(cl_m, p=7).iloc[-1])
+                ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m)>=6 else 0
+                ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
+                precio  = float(cl_m.iloc[-1])
+                señal   = señal_accion_corto(sa, sn, ss)
+                lbl_sa, col_sa, _ = clasificar_score(sa)
 
-
-    st.markdown('---')
-
-
-    st.markdown('### 📈 Análisis Largo Plazo (2 años cuantitativo)')
-    with st.spinner('Cargando 2 años de datos...'):
-        df_tk = descargar_datos(ticker, '2y')
-
-
-    if df_tk is None or df_tk.empty:
-        st.warning('No hay datos suficientes para el análisis de largo plazo.')
-        return
-
-
-    cl = get_close_series(df_tk)
-    if cl is None or len(cl) < 150:
-        st.info('Se necesitan al menos 150 sesiones para el análisis cuantitativo.')
-        return
-
-
-    r = analizar_largo(ticker, cl)
-    if r is None:
-        st.warning('No se pudo calcular el análisis cuantitativo.')
-        return
-
-
-    render_largo_completo(ticker, cl, r, key_suffix='buscador', df_ohlc=df_tk)
-
-
-    # ── ANÁLISIS FUNDAMENTAL ──────────────────────────────────────────────
-    st.markdown('---')
-    st.markdown('### 📊 Análisis Fundamental')
-
-    industria_fund = TICKER_INDUSTRY.get(ticker, 'Sin Clasificar')
-    sector_fund    = SECTOR_MAP_FUND.get(industria_fund, 'Sin Clasificar')
-
-    with st.spinner('Descargando ratios fundamentales...'):
-        res_fund = analizar_fundamental(ticker, industria_fund)
-
-    if res_fund is None:
-        st.info('No se encontraron datos fundamentales para este activo (puede ser cripto, forex o commodity sin estados financieros).')
-    else:
-        sc_col_b, sc_bg_b = _senal_color(res_fund['senal_final'])
-        bench_b = res_fund['bench']
-
-        cols_fund_kpi = st.columns(4)
-        with cols_fund_kpi[0]:
-            _tip_senal = 'Resumen automático basado en el conteo de señales positivas vs. alertas detectadas en los ratios.'
-            st.markdown(
-                f'<div class="kpi-card" title="{_tip_senal}"><div class="kpi-accent" style="background:{sc_col_b}"></div>'
-                f'<div class="kpi-label">Señal Fundamental ⓘ</div>'
-                f'<div class="kpi-value">{res_fund["senal_final"]}</div>'
-                f'<div class="kpi-sub">✅ {res_fund["n_ok"]} positivas · ⚠️ {res_fund["n_alt"]} alertas</div></div>',
-                unsafe_allow_html=True
-            )
-        with cols_fund_kpi[1]:
-            kpi_card_fundamental('Valuación', '#3a7bd5', [
-                ('PER', f"{_fmt_num(res_fund.get('per'))}x"),
-                ('P/B', f"{_fmt_num(res_fund.get('pb'))}x"),
-                ('EV/EBITDA', f"{_fmt_num(res_fund.get('ev_ebitda'))}x"),
-                ('PEG', f"{_fmt_num(res_fund.get('peg'))}"),
-            ], f"{G('PER')} | {G('P/B')}")
-        with cols_fund_kpi[2]:
-            kpi_card_fundamental('Rentabilidad', '#3fb950', [
-                ('ROE', _fmt_pct(res_fund.get('roe'))),
-                ('ROA', _fmt_pct(res_fund.get('roa'))),
-                ('Mg.Bruto', _fmt_pct(res_fund.get('gross_margin'))),
-                ('Mg.Op.', _fmt_pct(res_fund.get('op_margin'))),
-            ], f"{G('ROE')} | {G('ROA')}")
-        with cols_fund_kpi[3]:
-            kpi_card_fundamental('Solvencia / Flujo', '#e3b341', [
-                ('D/E', f"{_fmt_num(res_fund.get('debt_equity'))}x"),
-                ('Curr.Ratio', f"{_fmt_num(res_fund.get('curr_ratio'))}x"),
-                ('FCF', _fmt_big(res_fund.get('fcf'))),
-                ('Beta', _fmt_num(res_fund.get('beta'))),
-            ], f"{G('FCF')} | {G('Beta')}")
-        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
-
-        mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
-        with mc1: st.metric('Sector', sector_fund[:16])
-        with mc2: st.metric('Industria', industria_fund[:16])
-        with mc3: st.metric('Rev. Growth', _fmt_pct(res_fund.get('revenue_growth')))
-        with mc4: st.metric('Div. Yield', _fmt_pct(res_fund.get('div_yield')), help=G('Dividend Yield'))
-        with mc5: st.metric('Precio Obj.', fmt_precio(res_fund.get('target_price')))
-        with mc6: st.metric('Rec. Analistas', res_fund.get('recommendation') or 'N/D')
-
-        st.markdown(f"""
-        <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
-             border-radius:8px;padding:10px 16px;margin:10px 0;font-size:13px;color:#f5f7fa;line-height:1.8'>
-          <b style='color:#3a7bd5;font-size:13px'>BENCHMARK {sector_fund.upper()}</b><br>
-          {bench_b['descripcion']}<br>
-          <b style='color:#f5f7fa'>Métricas clave:</b> {' · '.join(bench_b.get('metricas_clave', []))}
-        </div>
-        """, unsafe_allow_html=True)
-
-        ok_sigs_b  = [(t,m) for t,m in res_fund['senales'] if t=='OK']
-        alt_sigs_b = [(t,m) for t,m in res_fund['senales'] if t=='ALT']
-        col_sig1, col_sig2 = st.columns(2)
-        with col_sig1:
-            st.markdown('<div style="font-size:11px;font-weight:700;color:#3fb950;margin-bottom:4px">✅ SEÑALES POSITIVAS</div>', unsafe_allow_html=True)
-            if ok_sigs_b:
-                for _, msg in ok_sigs_b:
-                    st.markdown(f'<div style="font-size:11px;color:#3fb950;padding:2px 0;border-bottom:1px solid #21262d">• {msg}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div style="font-size:11px;color:#6b7d9a">Sin señales positivas detectadas</div>', unsafe_allow_html=True)
-        with col_sig2:
-            st.markdown('<div style="font-size:11px;font-weight:700;color:#f85149;margin-bottom:4px">⚠️ ALERTAS</div>', unsafe_allow_html=True)
-            if alt_sigs_b:
-                for _, msg in alt_sigs_b:
-                    st.markdown(f'<div style="font-size:11px;color:#f85149;padding:2px 0;border-bottom:1px solid #21262d">• {msg}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div style="font-size:11px;color:#6b7d9a">Sin alertas detectadas</div>', unsafe_allow_html=True)
-
-        if res_fund['sector_senales']:
-            st.markdown('<div style="margin-top:12px;font-size:11px;font-weight:700;color:#3a7bd5;margin-bottom:4px">📐 COMPARATIVA VS BENCHMARK SECTORIAL</div>', unsafe_allow_html=True)
-            for tipo, msg in res_fund['sector_senales']:
-                col_vs_b = '#3fb950' if tipo == 'POS' else '#f85149'
-                ico_vs_b = '✔' if tipo == 'POS' else '✘'
-                st.markdown(f'<div style="font-size:11px;color:{col_vs_b};padding:3px 0;border-bottom:1px solid #21262d">{ico_vs_b} {msg}</div>', unsafe_allow_html=True)
-
-# ── TOP-DOWN CUANTITATIVO (Mediano/Largo Plazo) ────────────────────────
-    st.markdown('---')
-    st.markdown('### 📐 Top-Down Cuantitativo (Mediano/Largo Plazo)')
-
-    with st.spinner('Calculando scores Top-Down Cuantitativo...'):
-        tdc_mp = _tdc_analizar_ticker(ticker, HORIZONTES_TDC['MP'])
-        tdc_lp = _tdc_analizar_ticker(ticker, HORIZONTES_TDC['LP'])
-
-    if tdc_mp is None and tdc_lp is None:
-        st.info('No hay historial suficiente para calcular el Top-Down Cuantitativo de este activo '
-                '(se necesitan al menos ~100 sesiones para Mediano Plazo y ~250 para Largo Plazo).')
-    else:
-        tab_tdc_mp, tab_tdc_lp = st.tabs(['📆 Mediano Plazo (3-6 meses)', '📆 Largo Plazo (1-2 años)'])
-        for tab_obj, d_tdc, hz_key in [(tab_tdc_mp, tdc_mp, 'MP'), (tab_tdc_lp, tdc_lp, 'LP')]:
-            with tab_obj:
-                if d_tdc is None:
-                    st.info(f"Historial insuficiente para calcular {HORIZONTES_TDC[hz_key]['nombre'].lower()} "
-                            f"(mínimo {HORIZONTES_TDC[hz_key]['min_dias_valor']} sesiones).")
-                    continue
-                cfg_hz = HORIZONTES_TDC[hz_key]
-                lbl_sa_tdc, col_sa_tdc, _ = clasificar_score(d_tdc['sa'])
                 kpi_cards_4([
-                    ('Score Acumulación', f"{d_tdc['sa']:.0f}/100", lbl_sa_tdc, col_sa_tdc),
-                    ('Score Anticipación', f"{d_tdc['sn']:.0f}/100", 'Momentum', score_color_hex(d_tdc['sn'])),
-                    ('Score Sentimiento', f"{d_tdc['ss']:.0f}/100", 'Percentil precio', score_color_hex(d_tdc['ss'])),
-                    ('Score Final', f"{d_tdc['sf']:.0f}/100", 'Compuesto 45/35/20', score_color_hex(d_tdc['sf'])),
+                    ('Score Acumulación', f'{sa:.0f}/100', lbl_sa, col_sa),
+                    ('Score Anticipación', f'{sn:.0f}/100', 'Momentum futuro', score_color_hex(sn)),
+                    ('Score Sentimiento', f'{ss:.0f}/100', 'Percentil precio', score_color_hex(ss)),
+                    ('Score Final', f'{sf:.0f}/100', 'Compuesto 45/35/20', score_color_hex(sf)),
                 ])
-                c1t, c2t, c3t = st.columns(3)
-                with c1t: st.metric(f"Ret {cfg_hz['ret_label_1']}", f"{d_tdc['ret_1']:+.2f}%")
-                with c2t: st.metric(f"Ret {cfg_hz['ret_label_2']}", f"{d_tdc['ret_2']:+.2f}%")
-                with c3t: st.metric('RSI', f"{d_tdc['rsi']:.1f}")
-                st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{d_tdc["accion"]}</span></div>',
-                            unsafe_allow_html=True)
-                _, col_lbl_tdc, emo_lbl_tdc = _tdc_clasificar(d_tdc['sa'])
+
+                c1, c2, c3, c4, c5 = st.columns(5)
+                with c1: st.metric('RSI (7)', f'{rsi:.1f}', help=G('RSI'))
+                with c2: st.metric('Ret 5d', f'{ret_5d:+.2f}%')
+                with c3: st.metric('Ret 10d', f'{ret_10d:+.2f}%')
+                with c4: st.metric('Precio', fmt_precio(precio))
+                with c5: st.metric('Industria', industria[:15])
+
+                st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{señal}</span></div>', unsafe_allow_html=True)
+
+                precios = cl_m.values
+                if len(precios) > 2:
+                    st.plotly_chart(fig_mini_precio(ticker, precios), use_container_width=True, config=PLOTLY_CONFIG, key=f'mini_{ticker}')
+            else:
+                st.info('Datos insuficientes para el análisis de corto plazo.')
+
+    # ── Largo plazo ──────────────────────────────────────────────
+    r = None
+    cl = None
+    df_tk = None
+    if 'largo' in activos or 'estados' in activos or 'tdc' in activos:
+        # descargamos precios una sola vez si hace falta para largo
+        pass
+
+    if 'largo' in activos:
+        if activos != {'largo'}:
+            st.markdown('---')
+        st.markdown('### 📈 Análisis Largo Plazo (2 años cuantitativo)')
+        with st.spinner('Cargando 2 años de datos...'):
+            df_tk = descargar_datos(ticker, '2y')
+
+        if df_tk is None or df_tk.empty:
+            st.warning('No hay datos suficientes para el análisis de largo plazo.')
+        else:
+            cl = get_close_series(df_tk)
+            if cl is None or len(cl) < 150:
+                st.info('Se necesitan al menos 150 sesiones para el análisis cuantitativo.')
+            else:
+                r = analizar_largo(ticker, cl)
+                if r is None:
+                    st.warning('No se pudo calcular el análisis cuantitativo.')
+                else:
+                    render_largo_completo(ticker, cl, r, key_suffix='buscador', df_ohlc=df_tk)
+
+    # ── ANÁLISIS FUNDAMENTAL — resumen visual ───────────────────────
+    if 'fundamental' in activos:
+        st.markdown('---')
+        st.markdown('### 📊 Análisis Fundamental')
+
+        industria_fund = TICKER_INDUSTRY.get(ticker, 'Sin Clasificar')
+        sector_fund    = SECTOR_MAP_FUND.get(industria_fund, 'Sin Clasificar')
+
+        with st.spinner('Descargando ratios fundamentales...'):
+            res_fund = analizar_fundamental(ticker, industria_fund)
+
+        if res_fund is None:
+            st.info('No se encontraron datos fundamentales para este activo (puede ser cripto, forex o commodity sin estados financieros).')
+        else:
+            mc1, mc2, mc3 = st.columns(3)
+            with mc1: st.metric('Sector', sector_fund[:20])
+            with mc2: st.metric('Industria', industria_fund[:20])
+            with mc3: st.metric('Rec. Analistas', res_fund.get('recommendation') or 'N/D')
+
+            render_resumen_visual_fundamental(res_fund)
+
+            with st.expander('🔎 Ver todos los datos y señales detalladas'):
+                bench_b = res_fund['bench']
+                cols_fund_kpi = st.columns(3)
+                with cols_fund_kpi[0]:
+                    kpi_card_fundamental('Valuación', '#3a7bd5', [
+                        ('PER', f"{_fmt_num(res_fund.get('per'))}x"),
+                        ('P/B', f"{_fmt_num(res_fund.get('pb'))}x"),
+                        ('EV/EBITDA', f"{_fmt_num(res_fund.get('ev_ebitda'))}x"),
+                        ('PEG', f"{_fmt_num(res_fund.get('peg'))}"),
+                    ], f"{G('PER')} | {G('P/B')}")
+                with cols_fund_kpi[1]:
+                    kpi_card_fundamental('Rentabilidad', '#3fb950', [
+                        ('ROE', _fmt_pct(res_fund.get('roe'))),
+                        ('ROA', _fmt_pct(res_fund.get('roa'))),
+                        ('Mg.Bruto', _fmt_pct(res_fund.get('gross_margin'))),
+                        ('Mg.Op.', _fmt_pct(res_fund.get('op_margin'))),
+                    ], f"{G('ROE')} | {G('ROA')}")
+                with cols_fund_kpi[2]:
+                    kpi_card_fundamental('Solvencia / Flujo', '#e3b341', [
+                        ('D/E', f"{_fmt_num(res_fund.get('debt_equity'))}x"),
+                        ('Curr.Ratio', f"{_fmt_num(res_fund.get('curr_ratio'))}x"),
+                        ('FCF', _fmt_big(res_fund.get('fcf'))),
+                        ('Beta', _fmt_num(res_fund.get('beta'))),
+                    ], f"{G('FCF')} | {G('Beta')}")
+
                 st.markdown(f"""
-                <div class="interp-card">
-                  <div class="interp-header">{emo_lbl_tdc} {ticker} · {cfg_hz['nombre']} · {col_lbl_tdc}</div>
-                  {_tdc_texto_interpretacion(d_tdc['sa'], d_tdc['sn'], d_tdc['ss'])}
+                <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
+                     border-radius:8px;padding:10px 16px;margin:10px 0;font-size:13px;color:#f5f7fa;line-height:1.8'>
+                  <b style='color:#3a7bd5;font-size:13px'>BENCHMARK {sector_fund.upper()}</b><br>
+                  {bench_b['descripcion']}<br>
+                  <b style='color:#f5f7fa'>Métricas clave:</b> {' · '.join(bench_b.get('metricas_clave', []))}
                 </div>
                 """, unsafe_allow_html=True)
 
-    # ── ACCIONISTAS Y ESTADOS FINANCIEROS ─────────────────────────────────
-    st.markdown('---')
-    st.markdown('### 👥📑 Accionistas y Estados Financieros')
-    render_analisis_profundo(ticker, key_suffix='buscador')
+                ok_sigs_b  = [(t,m) for t,m in res_fund['senales'] if t=='OK']
+                alt_sigs_b = [(t,m) for t,m in res_fund['senales'] if t=='ALT']
+                col_sig1, col_sig2 = st.columns(2)
+                with col_sig1:
+                    st.markdown('<div style="font-size:11px;font-weight:700;color:#3fb950;margin-bottom:4px">✅ SEÑALES POSITIVAS</div>', unsafe_allow_html=True)
+                    for _, msg in ok_sigs_b:
+                        st.markdown(f'<div style="font-size:11px;color:#3fb950;padding:2px 0;border-bottom:1px solid #21262d">• {msg}</div>', unsafe_allow_html=True)
+                with col_sig2:
+                    st.markdown('<div style="font-size:11px;font-weight:700;color:#f85149;margin-bottom:4px">⚠️ ALERTAS</div>', unsafe_allow_html=True)
+                    for _, msg in alt_sigs_b:
+                        st.markdown(f'<div style="font-size:11px;color:#f85149;padding:2px 0;border-bottom:1px solid #21262d">• {msg}</div>', unsafe_allow_html=True)
+
+                if res_fund['sector_senales']:
+                    st.markdown('<div style="margin-top:12px;font-size:11px;font-weight:700;color:#3a7bd5;margin-bottom:4px">📐 COMPARATIVA VS BENCHMARK SECTORIAL</div>', unsafe_allow_html=True)
+                    for tipo, msg in res_fund['sector_senales']:
+                        col_vs_b = '#3fb950' if tipo == 'POS' else '#f85149'
+                        ico_vs_b = '✔' if tipo == 'POS' else '✘'
+                        st.markdown(f'<div style="font-size:11px;color:{col_vs_b};padding:3px 0;border-bottom:1px solid #21262d">{ico_vs_b} {msg}</div>', unsafe_allow_html=True)
+
+    # ── TOP-DOWN CUANTITATIVO ────────────────────────────────────
+    if 'tdc' in activos:
+        st.markdown('---')
+        st.markdown('### 📐 Top-Down Cuantitativo (Mediano/Largo Plazo)')
+
+        with st.spinner('Calculando scores Top-Down Cuantitativo...'):
+            tdc_mp = _tdc_analizar_ticker(ticker, HORIZONTES_TDC['MP'])
+            tdc_lp = _tdc_analizar_ticker(ticker, HORIZONTES_TDC['LP'])
+
+        if tdc_mp is None and tdc_lp is None:
+            st.info('No hay historial suficiente para calcular el Top-Down Cuantitativo de este activo '
+                    '(se necesitan al menos ~100 sesiones para Mediano Plazo y ~250 para Largo Plazo).')
+        else:
+            tab_tdc_mp, tab_tdc_lp = st.tabs(['📆 Mediano Plazo (3-6 meses)', '📆 Largo Plazo (1-2 años)'])
+            for tab_obj, d_tdc, hz_key in [(tab_tdc_mp, tdc_mp, 'MP'), (tab_tdc_lp, tdc_lp, 'LP')]:
+                with tab_obj:
+                    if d_tdc is None:
+                        st.info(f"Historial insuficiente para calcular {HORIZONTES_TDC[hz_key]['nombre'].lower()} "
+                                f"(mínimo {HORIZONTES_TDC[hz_key]['min_dias_valor']} sesiones).")
+                        continue
+                    cfg_hz = HORIZONTES_TDC[hz_key]
+                    lbl_sa_tdc, col_sa_tdc, _ = clasificar_score(d_tdc['sa'])
+                    kpi_cards_4([
+                        ('Score Acumulación', f"{d_tdc['sa']:.0f}/100", lbl_sa_tdc, col_sa_tdc),
+                        ('Score Anticipación', f"{d_tdc['sn']:.0f}/100", 'Momentum', score_color_hex(d_tdc['sn'])),
+                        ('Score Sentimiento', f"{d_tdc['ss']:.0f}/100", 'Percentil precio', score_color_hex(d_tdc['ss'])),
+                        ('Score Final', f"{d_tdc['sf']:.0f}/100", 'Compuesto 45/35/20', score_color_hex(d_tdc['sf'])),
+                    ])
+                    c1t, c2t, c3t = st.columns(3)
+                    with c1t: st.metric(f"Ret {cfg_hz['ret_label_1']}", f"{d_tdc['ret_1']:+.2f}%")
+                    with c2t: st.metric(f"Ret {cfg_hz['ret_label_2']}", f"{d_tdc['ret_2']:+.2f}%")
+                    with c3t: st.metric('RSI', f"{d_tdc['rsi']:.1f}")
+                    st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{d_tdc["accion"]}</span></div>',
+                                unsafe_allow_html=True)
+                    _, col_lbl_tdc, emo_lbl_tdc = _tdc_clasificar(d_tdc['sa'])
+                    st.markdown(f"""
+                    <div class="interp-card">
+                      <div class="interp-header">{emo_lbl_tdc} {ticker} · {cfg_hz['nombre']} · {col_lbl_tdc}</div>
+                      {_tdc_texto_interpretacion(d_tdc['sa'], d_tdc['sn'], d_tdc['ss'])}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    # ── ACCIONISTAS Y ESTADOS FINANCIEROS ─────────────────────────
+    if 'estados' in activos:
+        st.markdown('---')
+        st.markdown('### 👥📑 Accionistas y Estados Financieros')
+        render_analisis_profundo(ticker, key_suffix='buscador')
 
 
 # ==============================================================
