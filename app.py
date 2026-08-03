@@ -3551,7 +3551,6 @@ def render_perfil_empresa(ticker, key_suffix=''):
         perfil['descripcion'] = 'Descripción no disponible.'
         return
 
-    logo = logo_html(perfil['logo_url'], size=48, dominio_fallback=perfil.get('dominio'))
     mc = _fmt_big(perfil.get('market_cap'))
     ev = _fmt_big(perfil.get('enterprise_value'))
     empleados = f"{perfil['empleados']:,}" if perfil.get('empleados') else 'N/D'
@@ -3578,12 +3577,9 @@ def render_perfil_empresa(ticker, key_suffix=''):
     st.markdown(f"""
     <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #3a7bd5;
          border-radius:12px;padding:20px 24px;margin-bottom:16px">
-      <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap">
-        {logo}
-        <div>
-          <div style="font-size:16px;font-weight:700;color:#e6edf3">{perfil['nombre']} <span style="color:#6b7d9a;font-size:12px">({ticker})</span></div>
-          <div style="font-size:12px;color:#f5f7fa">{perfil.get('sector') or 'N/D'} · {perfil.get('industria_yahoo') or 'N/D'} · {exchange}</div>
-        </div>
+      <div style="text-align:center;margin-bottom:14px">
+        <div style="font-size:17px;font-weight:700;color:#e6edf3">{perfil['nombre']} <span style="color:#6b7d9a;font-size:12px">({ticker})</span></div>
+        <div style="font-size:12px;color:#f5f7fa;margin-top:2px">{perfil.get('sector') or 'N/D'} · {perfil.get('industria_yahoo') or 'N/D'} · {exchange}</div>
       </div>
       <div class="kpi-card-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px">
         <div><div class="kpi-metric-label">Market Cap</div><div class="kpi-metric-value">{mc}</div></div>
