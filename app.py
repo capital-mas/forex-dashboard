@@ -5525,6 +5525,59 @@ def modulo_scanner_pares():
     st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
     st.caption(f'{len(df_f)} pares mostrados de {len(df_res)} totales')
 
+    # ── BUSCAR SEÑALES POR ACTIVO ──────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🔎 Buscar señales por activo')
+    st.caption('Elegí un activo puntual y mirá TODAS las parejas donde aparece (como numerador o denominador), con su sector, Z-Score y señal.')
+
+    activos_disponibles = sorted(tickers_codigos.keys())
+    activo_sel = st.selectbox('Activo', activos_disponibles, key='pares_activo_sel')
+
+    if activo_sel:
+        df_activo = df_res[
+            (df_res['Numerador'] == activo_sel) | (df_res['Denominador'] == activo_sel)
+        ].copy()
+        df_activo = df_activo.sort_values(
+            'Z-Score', key=lambda s: s.abs(), ascending=False
+        ).reset_index(drop=True)
+
+        if df_activo.empty:
+            st.info(f'No hay parejas calculadas para {activo_sel} con los sectores/parámetros elegidos arriba.')
+        else:
+            n_compra_act = int((df_activo['Z-Score'] < -z_entry).sum())
+            n_venta_act  = int((df_activo['Z-Score'] > z_entry).sum())
+            n_neutro_act = int((df_activo['Z-Score'].abs() < z_exit).sum())
+            kpi_cards_4([
+                ('Parejas encontradas', str(len(df_activo)), activo_sel, '#3a7bd5'),
+                ('🟢 Señal compra', str(n_compra_act), f'Z < -{z_entry}', '#3fb950'),
+                ('🔴 Señal venta', str(n_venta_act), f'Z > {z_entry}', '#f85149'),
+                ('⚪ Neutros', str(n_neutro_act), f'|Z| < {z_exit}', '#e3b341'),
+            ])
+
+            styled_act = (
+                df_activo[['Sector', 'Pareja', 'Ratio', 'Media', 'Z-Score', 'Señal']].style
+                .pipe(lambda s: getattr(s, _map)(_color_z, subset=['Z-Score']))
+                .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+                .set_table_styles([
+                    {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                        ('font-weight', '700'), ('text-align', 'center'),
+                        ('border-bottom', '2px solid #79c0ff'), ('font-size', '11px')]},
+                    {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+                ])
+            )
+            st.dataframe(styled_act, use_container_width=True,
+                         height=min(500, max(150, len(df_activo) * 38 + 45)))
+
+            with st.expander(f'📝 Lectura detallada de cada pareja de {activo_sel}', expanded=False):
+                for _, fila_act in df_activo.iterrows():
+                    st.markdown(f"""
+                    <div class="interp-card">
+                      <div class="interp-header">{fila_act['Pareja']} · Sector: {fila_act['Sector']} · Z-Score: {fila_act['Z-Score']:+.2f}</div>
+                      {fila_act['Lectura']}<br>
+                      <span style="color:#6b7d9a;font-size:11px">Señal actual: {fila_act['Señal']}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
     st.markdown('---')
     st.markdown('### 📈 Detalle de un par')
     pares_disp = df_f['Pareja'].tolist()
