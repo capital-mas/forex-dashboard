@@ -1,43 +1,46 @@
 # ==============================================================
-#  MÓDULO BOT DE INVERSIÓN — v7: Motor de Medias Móviles + RSI + MACD
-#  Reemplaza por completo el motor anterior (Fractal/Sentimiento/
-#  Z-Score/RSI de conteo 4/4). Estrategia de TENDENCIA con sistema
-#  de puntaje y Stop dinámico (estilo "Andy": 2×ATR inicial,
-#  breakeven al +5%, trailing al +10%).
+#  MÓDULO BOT DE INVERSIÓN — v8: Motor de Pila de EMAs (9/20/50/200/
+#  300/400/500) con objetivo y Stop PROGRESIVOS. Reemplaza por
+#  completo el motor anterior de puntaje (SMA50/200/300 + Stop
+#  "método Andy" con ATR). Estrategia LONG-ONLY, de tendencia pura.
 #
-#  📈 COMPRA (tendencia fuerte)
-#     Medias:  EMA20 > SMA50 > SMA200 > SMA300, precio > EMA20,
-#              EMA20 con pendiente positiva.
-#     RSI(14): entre 55 y 70 (veto si > 75).
-#     MACD:    cruce alcista de la línea MACD sobre la señal,
-#              histograma positivo (preferible cruce sobre 0).
-#     Filtros: volumen > SMA20(volumen); no comprar si el precio
-#              está > 8-10% por encima de la EMA20 (evita entrar tarde).
-#     Puntaje: EMA20>SMA50 +20, SMA50>SMA200 +20, SMA200>SMA300 +20,
-#              RSI 55-70 +15, cruce alcista MACD +15, histograma +10.
-#              80-100 = COMPRA FUERTE · 65-79 = COMPRA MODERADA.
+#  Medias usadas: EMA9 (muy corto plazo), EMA20 (confirmación de
+#  impulso), EMA50 (activación de la operación / primer Stop),
+#  EMA200 (1er objetivo), EMA300 (2do objetivo), EMA400 (3er
+#  objetivo), EMA500 (tendencia de muy largo plazo).
 #
-#  📉 VENTA (con medias 9/20/50/200)
-#     Medias:  EMA9 < EMA20 < SMA50 < SMA200, precio < EMA20.
-#     RSI(14): < 45 (más fuerte si < 40).
-#     MACD:    cruce bajista, histograma negativo.
-#     Puntaje: EMA9<EMA20 +25, EMA20<SMA50 +20, precio<SMA200 +20,
-#              RSI<45 +15, cruce bajista MACD +20.
-#              80-100 = VENTA INMEDIATA · 60-79 = REDUCIR POSICIÓN.
+#  📈 ENTRADA (COMPRA) — solo si se cumple TODO:
+#     1) Cruce alcista reciente: EMA9 cruza por encima de EMA20.
+#     2) Pila alcista corta:     EMA9 > EMA20 > EMA50.
+#     3) Precio > EMA50.
+#     4) RSI(14) > 55 (veto si > 75, demasiado extendido).
+#     5) MACD alcista: cruce de la línea MACD sobre la señal
+#        (reciente) con histograma positivo.
+#     Opcional (recomendado): exigir además que las medias largas
+#     estén alineadas — EMA50 > EMA200 > EMA300 > EMA400 > EMA500 —
+#     para evitar señales falsas en mercados laterales.
 #
-#  🛑 Stop dinámico ("método Andy")
-#     Inicial: 2×ATR(14) en contra del precio de entrada.
-#     +5% de ganancia  → mover Stop a breakeven (precio de entrada).
-#     +10% de ganancia → trailing: Stop sube/baja hasta el máximo
-#                        entre EMA20 actual y 2×ATR actual (nunca
-#                        se afloja, solo se ajusta a favor).
-#     Salida anticipada: si el precio cierra en contra de la EMA20
-#                        Y el histograma del MACD confirma el giro,
-#                        se cierra ahí mismo, sin esperar al Stop.
+#  🎯 OBJETIVO Y STOP PROGRESIVOS (nunca baja, solo sube)
+#     Al comprar:            Stop = EMA50   · Objetivo = EMA200.
+#     Cierra sobre EMA200 →  Stop = EMA200  · Objetivo = EMA300.
+#     Cierra sobre EMA300 →  Stop = EMA300  · Objetivo = EMA400.
+#     Cierra sobre EMA400 →  Stop = EMA400  · Objetivo = EMA500.
+#     Cierra sobre EMA500 →  Stop = EMA500  · Sin objetivo fijo:
+#       se mantiene la posición mientras el precio siga sobre la
+#       EMA500 (podría seguir subiendo mucho más).
+#     Mientras el precio no supere el objetivo vigente, NO se
+#     vende — simplemente se mantiene la posición. El Stop en cada
+#     tramo sigue el valor actual de su EMA (trailing), pero jamás
+#     se afloja hacia abajo.
 #
-#  Timeframes: 15, 30, 45 minutos, 1h, 4h y 1 día (se sacó 5min, se
-#  agregó 45min). Pensá 1 día como marco de tendencia principal y
-#  4h como marco de entrada — si coinciden, mejor probabilidad.
+#  📉 SALIDA (VENTA) — pérdida de fuerza de la tendencia:
+#     EMA9 cruza por debajo de EMA20 Y además EMA9 < EMA50 Y
+#     EMA20 < EMA50 (pila EMA9 < EMA20 < EMA50). Esto cierra la
+#     posición aunque el Stop todavía no se haya tocado.
+#
+#  Timeframes: 15, 30, 45 minutos, 1h, 4h y 1 día. Pensá 1 día como
+#  marco de tendencia principal y 4h como marco de entrada — si
+#  coinciden, mejor probabilidad.
 #
 #  Auto-actualización: si está instalado streamlit-autorefresh
 #  (pip install streamlit-autorefresh), la pantalla se refresca sola
@@ -134,22 +137,24 @@ ACCIONES_POR_INDUSTRIA = {
     'Cripto (ETF/Coin)':  ['BTC-USD','ETH-USD','SOL-USD','BNB-USD','XRP-USD','ADA-USD','DOGE-USD','AVAX-USD','DOT-USD','MATIC-USD', 'LINK-USD','LTC-USD','ATOM-USD','ETC-USD','XLM-USD','FIL-USD','ICP-USD','HBAR-USD','NEAR-USD','ARB-USD', 'COIN','MARA','RIOT','CLSK','HUT','BITF','BTDR','IREN','CAN','WULF'],
 }
 
-C_COMPRA_FUERTE     = '#3fb950'
-C_COMPRA_MODERADA   = '#2dd4bf'
-C_VENTA_INMEDIATA   = '#f85149'
-C_REDUCIR_POSICION  = '#f0883e'
+C_COMPRA        = '#3fb950'
+C_VENTA         = '#f85149'
+C_EN_POSICION   = '#2dd4bf'
 
-MIN_BARRAS_NECESARIAS = 320  # SMA300 + margen
+# Niveles de objetivo/Stop progresivos, en orden. El índice 0 es el
+# tramo inicial (Stop=EMA50, Objetivo=EMA200); al superar el objetivo
+# de un tramo se pasa al siguiente. El último tramo (EMA500) no tiene
+# objetivo: se mantiene la posición sin techo fijo.
+NIVELES_STOP     = ['ema50', 'ema200', 'ema300', 'ema400', 'ema500']
+NIVELES_OBJETIVO = ['ema200', 'ema300', 'ema400', 'ema500', None]
+
+MIN_BARRAS_NECESARIAS = 520  # EMA500 + margen de calentamiento
 
 
 # ── Indicadores ─────────────────────────────────────────────────
 
 def _ema(series, length):
     return series.ewm(span=length, adjust=False).mean()
-
-
-def _sma(series, length):
-    return series.rolling(length).mean()
 
 
 def _rsi_wilder(close, length=14):
@@ -172,126 +177,134 @@ def _macd(close, fast=12, slow=26, signal=9):
     return macd_line, signal_line, hist
 
 
-def _atr(high, low, close, length=14):
-    prev_close = close.shift(1)
-    tr = pd.concat([
-        (high - low),
-        (high - prev_close).abs(),
-        (low - prev_close).abs(),
-    ], axis=1).max(axis=1)
-    return tr.rolling(length).mean()
 
 
-# ── Motor de señales (puntaje de tendencia) ─────────────────────
+
+# ── Motor de señales (pila de EMAs 9/20/50/200/300/400/500) ─────
 
 def _calcular_bot_dataframe_ma(close, high, low, volume,
                                  rsi_periodo, macd_fast, macd_slow, macd_signal,
-                                 atr_periodo, pendiente_ema20_barras,
-                                 extension_max_pct, cruce_lookback_barras,
-                                 usar_filtro_volumen):
-    """Calcula todos los indicadores y el puntaje de COMPRA/VENTA para
-    cada barra. No mira hacia adelante: todo se calcula con datos
-    disponibles hasta la barra actual."""
+                                 cruce_lookback_barras, exigir_alineacion_larga):
+    """Calcula todos los indicadores y las señales de COMPRA/VENTA
+    para cada barra según la estrategia de pila de EMAs. No mira
+    hacia adelante: todo se calcula con datos disponibles hasta la
+    barra actual.
+
+    COMPRA: cruce alcista reciente EMA9/EMA20, pila EMA9>EMA20>EMA50,
+    precio sobre EMA50, RSI>55 (veto si RSI>75) y MACD alcista
+    (cruce reciente + histograma positivo). Si `exigir_alineacion_larga`
+    está activo, además pide EMA50>EMA200>EMA300>EMA400>EMA500.
+
+    VENTA (pérdida de fuerza): cruce bajista reciente EMA9/EMA20 y
+    pila EMA9<EMA20<EMA50. Esta señal también se usa, barra a barra
+    (no solo en el disparo), como gatillo de salida dentro de la
+    simulación de operaciones.
+    """
     cl = close.dropna()
     hi = high.reindex(cl.index)
     lo = low.reindex(cl.index)
-    vol = volume.reindex(cl.index) if volume is not None else None
+    volume = volume.reindex(cl.index) if volume is not None else None  # se conserva el parámetro por compatibilidad, no se usa como filtro
 
     ema9 = _ema(cl, 9)
     ema20 = _ema(cl, 20)
-    sma50 = _sma(cl, 50)
-    sma200 = _sma(cl, 200)
-    sma300 = _sma(cl, 300)
+    ema50 = _ema(cl, 50)
+    ema200 = _ema(cl, 200)
+    ema300 = _ema(cl, 300)
+    ema400 = _ema(cl, 400)
+    ema500 = _ema(cl, 500)
     rsi_valor = _rsi_wilder(cl, rsi_periodo)
     macd_line, macd_signal_line, macd_hist = _macd(cl, macd_fast, macd_slow, macd_signal)
-    atr_valor = _atr(hi, lo, cl, atr_periodo)
 
-    # Volumen: si no hay dato confiable (None, todo NaN o todo cero),
-    # se desactiva el filtro automáticamente para no bloquear todo.
-    volumen_disponible = (vol is not None) and (vol.fillna(0).sum() > 0)
-    if volumen_disponible:
-        vol_sma20 = vol.rolling(20).mean()
-        volumen_ok = vol > vol_sma20
-    else:
-        volumen_ok = pd.Series(True, index=cl.index)
+    # ── Paso 1: cruce de EMA9/EMA20 (confirmación de entrada/salida) ──
+    cross_up_9_20 = (ema9 > ema20) & (ema9.shift(1) <= ema20.shift(1))
+    cross_up_9_20_reciente = cross_up_9_20.rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
+    cross_down_9_20 = (ema9 < ema20) & (ema9.shift(1) >= ema20.shift(1))
+    cross_down_9_20_reciente = cross_down_9_20.rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
 
-    ema20_pendiente_pos = ema20 > ema20.shift(pendiente_ema20_barras)
-    precio_sobre_ema20 = cl > ema20
-    precio_bajo_ema20 = cl < ema20
-    extendido = cl > ema20 * (1 + extension_max_pct / 100.0)
+    # ── Pila corta de EMAs ──
+    pila_alcista = (ema9 > ema20) & (ema20 > ema50)
+    pila_bajista = (ema9 < ema20) & (ema20 < ema50)
+
+    precio_sobre_ema50 = cl > ema50
+    precio_bajo_ema50 = cl < ema50
+
+    # ── RSI: solo veta malas entradas ──
+    rsi_ok_compra = rsi_valor > 55
     rsi_veto_compra = rsi_valor > 75
 
+    # ── MACD: debe confirmar ──
     macd_cross_up = (macd_line > macd_signal_line) & (macd_line.shift(1) <= macd_signal_line.shift(1))
     macd_cross_up_reciente = macd_cross_up.rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
+    macd_alcista = macd_cross_up_reciente & (macd_hist > 0)
+
     macd_cross_down = (macd_line < macd_signal_line) & (macd_line.shift(1) >= macd_signal_line.shift(1))
     macd_cross_down_reciente = macd_cross_down.rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
+    macd_bajista = macd_cross_down_reciente & (macd_hist < 0)
 
-    # ── Puntaje COMPRA (máx. 100) ──
-    pts_compra = (
-        (ema20 > sma50).astype(int) * 20 +
-        (sma50 > sma200).astype(int) * 20 +
-        (sma200 > sma300).astype(int) * 20 +
-        ((rsi_valor >= 55) & (rsi_valor <= 70)).astype(int) * 15 +
-        macd_cross_up_reciente.astype(int) * 15 +
-        (macd_hist > 0).astype(int) * 10
-    )
-    # Requisitos que NO puntúan pero vetan la señal aunque el puntaje sea alto
-    gate_compra = precio_sobre_ema20 & ema20_pendiente_pos & (~rsi_veto_compra) & (~extendido) & volumen_ok
+    # ── Mejora opcional: alineación de las medias largas ──
+    alineacion_larga_alcista = (ema50 > ema200) & (ema200 > ema300) & (ema300 > ema400) & (ema400 > ema500)
+    alineacion_larga_bajista = (ema50 < ema200) & (ema200 < ema300) & (ema300 < ema400) & (ema400 < ema500)
 
-    # ── Puntaje VENTA (máx. 100) ──
-    pts_venta = (
-        (ema9 < ema20).astype(int) * 25 +
-        (ema20 < sma50).astype(int) * 20 +
-        (cl < sma200).astype(int) * 20 +
-        (rsi_valor < 45).astype(int) * 15 +
-        macd_cross_down_reciente.astype(int) * 20
+    entrada_compra = (
+        cross_up_9_20_reciente & pila_alcista & precio_sobre_ema50 &
+        rsi_ok_compra & (~rsi_veto_compra) & macd_alcista
     )
-    gate_venta = precio_bajo_ema20
+    if exigir_alineacion_larga:
+        entrada_compra = entrada_compra & alineacion_larga_alcista
+
+    # La señal de venta (pérdida de fuerza) es la condición "dura" del
+    # enunciado: cruce bajista EMA9/EMA20 + pila EMA9<EMA20<EMA50. No
+    # se le exige RSI/MACD para no demorar una salida de riesgo.
+    senal_venta = cross_down_9_20_reciente & pila_bajista & precio_bajo_ema50
 
     estado = pd.Series('—', index=cl.index)
-    estado[gate_compra & (pts_compra >= 65) & (pts_compra < 80)] = 'COMPRA MODERADA'
-    estado[gate_compra & (pts_compra >= 80)] = 'COMPRA FUERTE'
-    estado[gate_venta & (pts_venta >= 60) & (pts_venta < 80)] = 'REDUCIR POSICIÓN'
-    estado[gate_venta & (pts_venta >= 80)] = 'VENTA INMEDIATA'
+    estado[entrada_compra] = 'COMPRA'
+    estado[senal_venta] = 'VENTA'
     disparo = (estado != '—') & (estado != estado.shift(1))
 
     df = pd.DataFrame({
         'precio': cl, 'high': hi, 'low': lo,
-        'ema9': ema9, 'ema20': ema20, 'sma50': sma50, 'sma200': sma200, 'sma300': sma300,
+        'ema9': ema9, 'ema20': ema20, 'ema50': ema50,
+        'ema200': ema200, 'ema300': ema300, 'ema400': ema400, 'ema500': ema500,
         'rsi': rsi_valor, 'macd': macd_line, 'macd_signal': macd_signal_line, 'macd_hist': macd_hist,
-        'atr': atr_valor,
-        'pts_compra': pts_compra, 'pts_venta': pts_venta,
-        'gate_compra': gate_compra, 'gate_venta': gate_venta,
-        'rsi_veto_compra': rsi_veto_compra, 'extendido': extendido,
-        'volumen_ok': volumen_ok,
+        'pila_alcista': pila_alcista, 'pila_bajista': pila_bajista,
+        'alineacion_larga_alcista': alineacion_larga_alcista,
+        'alineacion_larga_bajista': alineacion_larga_bajista,
+        'rsi_veto_compra': rsi_veto_compra,
+        'macd_alcista': macd_alcista, 'macd_bajista': macd_bajista,
+        'senal_venta': senal_venta,
         'estado': estado, 'disparo': disparo,
     })
-    df.attrs['volumen_disponible'] = volumen_disponible
     return df
 
 
-# ── Simulación de operaciones con Stop dinámico (2×ATR + trailing) ──
+# ── Simulación de operaciones — Objetivo y Stop progresivos ──────
+#  Compra → Stop=EMA50, Objetivo=EMA200
+#  Cierra sobre EMA200 → Stop=EMA200, Objetivo=EMA300
+#  Cierra sobre EMA300 → Stop=EMA300, Objetivo=EMA400
+#  Cierra sobre EMA400 → Stop=EMA400, Objetivo=EMA500
+#  Cierra sobre EMA500 → Stop=EMA500, sin objetivo (se mantiene)
+#  El Stop de cada tramo sigue el valor actual de su EMA (trailing)
+#  pero JAMÁS se afloja hacia abajo. La posición se cierra si el
+#  precio toca el Stop vigente, o si aparece la señal de venta
+#  (pérdida de fuerza: EMA9<EMA20<EMA50), lo que ocurra primero.
 
-def _simular_operaciones_ma(df, atr_mult_inicial=2.0, gatillo_breakeven_pct=5.0,
-                              gatillo_trailing_pct=10.0, atr_mult_trailing=2.0):
-    """Recorre cada señal disparada y simula la operación vela a vela:
-    Stop inicial a 2×ATR, breakeven al +5%, trailing (EMA20 o 2×ATR,
-    lo que proteja más) al +10%, y salida anticipada si el precio
-    cierra en contra de la EMA20 con el MACD confirmando el giro.
-    Se calcula para TODAS las señales (incluidas las bloqueadas por
-    solapamiento ⛔, de forma hipotética), pero solo las señales
-    REALMENTE tomadas bloquean señales nuevas del mismo activo."""
+def _simular_operaciones_ma(df):
     df = df.copy()
     n = len(df)
     idx = df.index
     precio_arr = df['precio'].values
     high_arr = df['high'].values
     low_arr = df['low'].values
-    ema20_arr = df['ema20'].values
-    atr_arr = df['atr'].values
-    hist_arr = df['macd_hist'].values
     estado_arr = df['estado'].values
     disparo_arr = df['disparo'].values
+    senal_venta_arr = df['senal_venta'].values
+
+    arr_por_nombre = {
+        'ema50': df['ema50'].values, 'ema200': df['ema200'].values,
+        'ema300': df['ema300'].values, 'ema400': df['ema400'].values,
+        'ema500': df['ema500'].values,
+    }
 
     resultado = [''] * n
     resultado_teorico = [''] * n
@@ -300,24 +313,25 @@ def _simular_operaciones_ma(df, atr_mult_inicial=2.0, gatillo_breakeven_pct=5.0,
     tomada = [False] * n
     motivo_cierre = [''] * n
     stop_final_arr = [np.nan] * n
-    direccion_arr = [''] * n
+    nivel_alcanzado_arr = [''] * n
 
     ocupado_hasta = -1
 
     for i in range(n):
-        if not disparo_arr[i] or estado_arr[i] == '—':
+        if not disparo_arr[i] or estado_arr[i] != 'COMPRA':
             continue
-        if pd.isna(atr_arr[i]) or pd.isna(ema20_arr[i]):
+        if pd.isna(arr_por_nombre['ema50'][i]):
             continue
 
         fue_tomada = i > ocupado_hasta
         tomada[i] = fue_tomada
-        es_compra = 'COMPRA' in estado_arr[i]
-        direccion_arr[i] = 'compra' if es_compra else 'venta'
 
         entry = precio_arr[i]
-        stop = entry - atr_mult_inicial * atr_arr[i] if es_compra else entry + atr_mult_inicial * atr_arr[i]
-        breakeven_hecho = False
+        nivel_idx = 0
+        stop_col = NIVELES_STOP[nivel_idx]        # 'ema50'
+        objetivo_col = NIVELES_OBJETIVO[nivel_idx]  # 'ema200'
+        stop = arr_por_nombre[stop_col][i]
+        nivel_texto = 'Inicial (Stop EMA50 · Objetivo EMA200)'
 
         j_exit = n - 1
         precio_exit = precio_arr[n - 1]
@@ -325,40 +339,37 @@ def _simular_operaciones_ma(df, atr_mult_inicial=2.0, gatillo_breakeven_pct=5.0,
 
         for j in range(i + 1, n):
             hi_j, lo_j, cl_j = high_arr[j], low_arr[j], precio_arr[j]
-            ema20_j, atr_j, hist_j = ema20_arr[j], atr_arr[j], hist_arr[j]
 
-            # 1) ¿Tocó el Stop vigente en esta vela?
-            if es_compra and lo_j <= stop:
-                precio_exit, j_exit, motivo = stop, j, 'Tocó Stop'
+            # 1) Actualizar el Stop del tramo vigente (trailing, solo sube)
+            candidato_stop = arr_por_nombre[stop_col][j]
+            if not pd.isna(candidato_stop):
+                stop = max(stop, candidato_stop)
+
+            # 2) ¿Tocó el Stop?
+            if lo_j <= stop:
+                precio_exit, j_exit, motivo = stop, j, f'Tocó Stop ({stop_col.upper()})'
                 break
-            if (not es_compra) and hi_j >= stop:
-                precio_exit, j_exit, motivo = stop, j, 'Tocó Stop'
+
+            # 3) ¿Señal de venta por pérdida de fuerza?
+            if senal_venta_arr[j]:
+                precio_exit, j_exit, motivo = cl_j, j, 'Señal de venta (EMA9<EMA20<EMA50)'
                 break
 
-            # 2) Salida anticipada: cierre en contra de la EMA20 + MACD confirma el giro
-            if not pd.isna(ema20_j) and not pd.isna(hist_j):
-                giro_confirmado = (cl_j < ema20_j and hist_j < 0) if es_compra \
-                    else (cl_j > ema20_j and hist_j > 0)
-                if giro_confirmado:
-                    precio_exit, j_exit, motivo = cl_j, j, 'Cierre en contra de EMA20 + giro MACD'
-                    break
-
-            # 3) Actualizar Stop dinámico (breakeven / trailing)
-            if not pd.isna(atr_j) and not pd.isna(ema20_j):
-                ganancia_pct = ((cl_j - entry) / entry * 100) if es_compra else ((entry - cl_j) / entry * 100)
-                if not breakeven_hecho and ganancia_pct >= gatillo_breakeven_pct:
-                    stop = entry
-                    breakeven_hecho = True
-                if ganancia_pct >= gatillo_trailing_pct:
-                    if es_compra:
-                        candidato = max(ema20_j, cl_j - atr_mult_trailing * atr_j)
-                        stop = max(stop, candidato)
-                    else:
-                        candidato = min(ema20_j, cl_j + atr_mult_trailing * atr_j)
-                        stop = min(stop, candidato)
+            # 4) ¿Rompió el objetivo vigente? → sube de tramo
+            if objetivo_col is not None:
+                objetivo_val = arr_por_nombre[objetivo_col][j]
+                if not pd.isna(objetivo_val) and cl_j > objetivo_val:
+                    nivel_idx += 1
+                    stop_col = NIVELES_STOP[nivel_idx]
+                    objetivo_col = NIVELES_OBJETIVO[nivel_idx]
+                    nuevo_stop_val = arr_por_nombre[stop_col][j]
+                    if not pd.isna(nuevo_stop_val):
+                        stop = max(stop, nuevo_stop_val)
+                    nivel_texto = (f'Rompió {stop_col.upper()} · Objetivo {objetivo_col.upper()}'
+                                   if objetivo_col else f'Rompió {stop_col.upper()} · sin objetivo fijo (tendencia)')
 
         if motivo != 'Fin de datos (operación en curso)':
-            ret = ((precio_exit - entry) / entry * 100) if es_compra else ((entry - precio_exit) / entry * 100)
+            ret = (precio_exit - entry) / entry * 100
             res = '✅' if ret > 0 else ('❌' if ret < 0 else '➖')
             fecha_cierre_val = idx[j_exit]
         else:
@@ -377,8 +388,9 @@ def _simular_operaciones_ma(df, atr_mult_inicial=2.0, gatillo_breakeven_pct=5.0,
         fecha_cierre[i] = fecha_cierre_val
         motivo_cierre[i] = motivo
         stop_final_arr[i] = stop
+        nivel_alcanzado_arr[i] = nivel_texto
 
-    df['direccion'] = direccion_arr
+    df['direccion'] = ['compra' if e == 'COMPRA' else '' for e in estado_arr]
     df['resultado'] = resultado
     df['resultado_teorico'] = resultado_teorico
     df['fecha_cierre'] = fecha_cierre
@@ -386,6 +398,7 @@ def _simular_operaciones_ma(df, atr_mult_inicial=2.0, gatillo_breakeven_pct=5.0,
     df['tomada'] = tomada
     df['motivo_cierre'] = motivo_cierre
     df['stop_final'] = stop_final_arr
+    df['nivel_alcanzado'] = nivel_alcanzado_arr
     return df
 
 
@@ -421,11 +434,6 @@ def _bot_guardar_config(supabase, user_id, capital_inicial, pct_por_operacion, a
 # ── Simulación de capital — 100% en memoria ─────────────────────
 
 def _bot_simular_en_memoria(df_bot, capital_inicial, pct_por_operacion, apalancamiento):
-    """Recorre en orden cronológico las señales TOMADAS y compone el
-    capital: cada operación cerrada arriesga 'pct_por_operacion' % del
-    capital ACTUAL, multiplicado por el apalancamiento, aplicado sobre
-    el % de retorno real que arrojó el Stop dinámico. La pérdida de
-    una operación nunca supera el 100% del capital arriesgado en ella."""
     disparos = df_bot[df_bot['disparo'] & (df_bot['estado'] != '—') & (df_bot['tomada'] == True)]
     equity = capital_inicial
     curva = [{'fecha': 'Inicio', 'equity': equity}]
@@ -524,14 +532,16 @@ def _fetch_paralelo_bot(tickers, cfg):
 def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df.index, y=df['precio'], line=dict(color='#3a7bd5', width=1.3), name='Precio'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema9'], line=dict(color='#f778ba', width=1, dash='dot'), name='EMA9'))
     fig.add_trace(go.Scatter(x=df.index, y=df['ema20'], line=dict(color='#e3b341', width=1, dash='dot'), name='EMA20'))
-    fig.add_trace(go.Scatter(x=df.index, y=df['sma50'], line=dict(color='#a371f7', width=1, dash='dot'), name='SMA50'))
-    fig.add_trace(go.Scatter(x=df.index, y=df['sma200'], line=dict(color='#8b949e', width=1, dash='dot'), name='SMA200'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema50'], line=dict(color='#a371f7', width=1.2, dash='dot'), name='EMA50 (Stop inicial)'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema200'], line=dict(color='#3fb950', width=1.2, dash='dash'), name='EMA200 (Obj. 1)'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema300'], line=dict(color='#2dd4bf', width=1, dash='dash'), name='EMA300 (Obj. 2)'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema400'], line=dict(color='#58a6ff', width=1, dash='dash'), name='EMA400 (Obj. 3)'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema500'], line=dict(color='#8b949e', width=1, dash='dash'), name='EMA500 (largo plazo)'))
     for tipo, color, symbol in [
-        ('COMPRA FUERTE', C_COMPRA_FUERTE, 'triangle-up'),
-        ('COMPRA MODERADA', C_COMPRA_MODERADA, 'triangle-up'),
-        ('VENTA INMEDIATA', C_VENTA_INMEDIATA, 'triangle-down'),
-        ('REDUCIR POSICIÓN', C_REDUCIR_POSICION, 'triangle-down'),
+        ('COMPRA', C_COMPRA, 'triangle-up'),
+        ('VENTA', C_VENTA, 'triangle-down'),
     ]:
         sub = df[(df['disparo']) & (df['estado'] == tipo)]
         if sub.empty:
@@ -542,7 +552,7 @@ def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
         ))
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text=f'{ticker} — Señales del Bot de Inversión', font=dict(size=14)),
+        title=dict(text=f'{ticker} — Señales del Bot de Inversión (pila de EMAs)', font=dict(size=14)),
         height=480, hovermode='x unified',
         legend=dict(orientation='h', y=1.1),
         xaxis=dict(gridcolor='#21262d'), yaxis=dict(gridcolor='#21262d'),
@@ -552,15 +562,11 @@ def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
 
 
 def _color_estado(estado):
-    return {
-        'COMPRA FUERTE': C_COMPRA_FUERTE, 'COMPRA MODERADA': C_COMPRA_MODERADA,
-        'VENTA INMEDIATA': C_VENTA_INMEDIATA, 'REDUCIR POSICIÓN': C_REDUCIR_POSICION, '—': '#8b949e',
-    }.get(estado, '#8b949e')
+    return {'COMPRA': C_COMPRA, 'VENTA': C_VENTA, '—': '#8b949e'}.get(estado, '#8b949e')
 
 
 def _color_señal_bot(val):
-    c = {'COMPRA FUERTE': C_COMPRA_FUERTE, 'COMPRA MODERADA': C_COMPRA_MODERADA,
-         'VENTA INMEDIATA': C_VENTA_INMEDIATA, 'REDUCIR POSICIÓN': C_REDUCIR_POSICION}.get(val, '#e6edf3')
+    c = {'COMPRA': C_COMPRA, 'VENTA': C_VENTA}.get(val, '#e6edf3')
     return f'color:{c};font-weight:700'
 
 
@@ -575,17 +581,19 @@ def modulo_bot_inversion(
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d; border-top:2px solid #6CC24A;
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Tendencia (EMA/SMA + RSI + MACD)</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Pila de EMAs (9/20/50/200/300/400/500)</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Estrategia de <b style="color:#e3b341">tendencia</b> con sistema de puntaje:
-        <b style="color:#e3b341">COMPRA</b> cuando EMA20 &gt; SMA50 &gt; SMA200 &gt; SMA300, el precio
-        está sobre la EMA20 con pendiente positiva, el RSI está entre 55-70 y el MACD cruza al alza.
-        <b style="color:#e3b341">VENTA</b> con el set EMA9/EMA20/SMA50/SMA200, precio bajo la EMA20,
-        RSI &lt; 45 y MACD cruzando a la baja. El Stop es <b style="color:#a371f7">dinámico</b>:
-        arranca en 2×ATR, pasa a breakeven al +5% y hace trailing al +10% (EMA20 o 2×ATR, lo que más
-        proteja). Se sale antes si el precio cierra en contra de la EMA20 y el MACD confirma el giro.
-        Analizá hasta <b style="color:#e3b341">10 activos</b> en <b style="color:#e3b341">5, 15, 30 min,
-        1h, 4h o 1 día</b> — comparar la tendencia diaria con la entrada en 4h suele dar más probabilidad.
+        Estrategia de <b style="color:#e3b341">tendencia pura (long-only)</b>. <b style="color:#e3b341">COMPRA</b>
+        cuando hay cruce alcista EMA9/EMA20, se forma la pila EMA9 &gt; EMA20 &gt; EMA50, el precio está
+        sobre la EMA50, el RSI supera 55 (se veta si supera 75) y el MACD confirma al alza.
+        El <b style="color:#a371f7">objetivo y el Stop son progresivos</b>: arranca con Stop en EMA50 y
+        objetivo en EMA200; al cerrar por encima de cada objetivo, el Stop sube a esa misma EMA y el
+        objetivo pasa a la siguiente (EMA200 → EMA300 → EMA400 → EMA500) — el Stop nunca baja. Al superar
+        la EMA500 ya no hay objetivo fijo: se mantiene la posición mientras el precio siga arriba.
+        <b style="color:#e3b341">VENTA</b> (pérdida de fuerza) cuando la pila se invierte: EMA9 cruza
+        debajo de EMA20 y ambas quedan debajo de EMA50. Analizá hasta <b style="color:#e3b341">10
+        activos</b> en <b style="color:#e3b341">15, 30, 45 min, 1h, 4h o 1 día</b> — comparar la
+        tendencia diaria con la entrada en 4h suele dar más probabilidad.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -664,34 +672,18 @@ def modulo_bot_inversion(
                 help='Da un poco de margen para que el resto de las condiciones (medias, RSI) alcancen al cruce.',
             )
 
-        p4, p5 = st.columns(2)
+        p4, = st.columns(1)
         with p4:
-            st.markdown('**Filtro de tendencia (EMA20)**')
-            pendiente_ema20_barras = st.number_input(
-                'Pendiente positiva: comparar contra hace N barras', value=3, min_value=1, key='bot_ema20_pendiente',
+            st.markdown('**Filtro de calidad (opcional)**')
+            exigir_alineacion_larga = st.checkbox(
+                'Exigir alineación de EMAs largas para comprar (EMA50 > EMA200 > EMA300 > EMA400 > EMA500)',
+                value=False, key='bot_exigir_alineacion',
+                help='Reduce señales falsas en mercados laterales, a costa de entrar más tarde en la tendencia.',
             )
-            extension_max_pct = st.number_input(
-                'No comprar si el precio está más de X% sobre la EMA20', value=9.0,
-                min_value=1.0, max_value=20.0, step=0.5, key='bot_extension_max',
-                help='Evita comprar demasiado tarde, con el precio ya muy estirado.',
-            )
-        with p5:
-            st.markdown('**Volumen y ATR**')
-            usar_filtro_volumen = st.checkbox(
-                'Exigir volumen > SMA20(volumen) para comprar', value=True, key='bot_usar_volumen',
-                help='Si el ticker no trae volumen confiable (común en forex/cripto vía Yahoo Finance), se ignora automáticamente.',
-            )
-            atr_periodo = st.number_input('Período ATR', value=14, min_value=2, key='bot_atr_periodo')
-
-        p6, p7 = st.columns(2)
-        with p6:
-            st.markdown('**Stop inicial**')
-            atr_mult_inicial = st.number_input('Múltiplo de ATR para el Stop inicial', value=2.0, min_value=0.5, step=0.25, key='bot_atr_mult_inicial')
-        with p7:
-            st.markdown('**Trailing Stop**')
-            gatillo_breakeven_pct = st.number_input('Mover a breakeven al ganar (%)', value=5.0, min_value=0.5, step=0.5, key='bot_gatillo_breakeven')
-            gatillo_trailing_pct = st.number_input('Empezar trailing al ganar (%)', value=10.0, min_value=1.0, step=0.5, key='bot_gatillo_trailing')
-            atr_mult_trailing = st.number_input('Múltiplo de ATR para el trailing', value=2.0, min_value=0.5, step=0.25, key='bot_atr_mult_trailing')
+        st.caption(
+            'El Stop y el objetivo NO se configuran acá: son progresivos por diseño de la estrategia '
+            '(Stop inicial en EMA50, objetivo EMA200 → EMA300 → EMA400 → EMA500, el Stop nunca baja).'
+        )
 
     analizar_bot = st.button('▶ Analizar', key='bot_run', type='primary')
     if not analizar_bot and not st.session_state.get('bot_run_flag'):
@@ -765,25 +757,19 @@ def modulo_bot_inversion(
         df_bot = _calcular_bot_dataframe_ma(
             cl, hi, lo, vol,
             int(rsi_periodo), int(macd_fast), int(macd_slow), int(macd_signal),
-            int(atr_periodo), int(pendiente_ema20_barras),
-            extension_max_pct, int(cruce_lookback_barras), usar_filtro_volumen,
+            int(cruce_lookback_barras), exigir_alineacion_larga,
         )
-        df_bot = _simular_operaciones_ma(
-            df_bot, atr_mult_inicial, gatillo_breakeven_pct, gatillo_trailing_pct, atr_mult_trailing,
-        )
+        df_bot = _simular_operaciones_ma(df_bot)
         resultados_bot[tk] = df_bot
 
     if fallidos:
         st.warning(f"⚠️ No se pudo descargar/calcular para: {', '.join(fallidos)} "
-                    f"(datos insuficientes para SMA300 — hacen falta al menos {MIN_BARRAS_NECESARIAS} velas —, "
+                    f"(datos insuficientes para EMA500 — hacen falta al menos {MIN_BARRAS_NECESARIAS} velas —, "
                     "o símbolo sin datos en Yahoo Finance).")
 
     if not resultados_bot:
         st.error('No se pudo calcular ninguna señal con los activos seleccionados.')
         return
-
-    if not any(df.attrs.get('volumen_disponible', False) for df in resultados_bot.values()) and usar_filtro_volumen:
-        st.caption('ℹ️ Ninguno de los activos analizados trae volumen confiable — el filtro de volumen se ignoró automáticamente para todos.')
 
     st.caption(
         f"🕐 {datetime.now().strftime('%H:%M:%S')} · Temporalidad {horizonte_bot} · "
@@ -802,19 +788,18 @@ def modulo_bot_inversion(
         n_open = int((disparos_tk['resultado'] == '⏳').sum())
         cerradas = n_ok + n_bad
         winrate = f'{n_ok / cerradas * 100:.0f}%' if cerradas > 0 else 'N/D'
-        pts = int(u['pts_compra']) if 'COMPRA' in u['estado'] else (int(u['pts_venta']) if u['estado'] in ('VENTA INMEDIATA', 'REDUCIR POSICIÓN') else max(int(u['pts_compra']), int(u['pts_venta'])))
         filas_resumen.append({
-            'Ticker': tk, 'Señal': u['estado'], 'Puntaje': f'{pts}/100', 'Precio': fmt_precio(u['precio']),
+            'Ticker': tk, 'Señal': u['estado'], 'Precio': fmt_precio(u['precio']),
             'Última vela': df_bot.index[-1].strftime('%Y-%m-%d %H:%M'),
             'RSI': round(u['rsi'], 1),
             'MACD Hist': round(u['macd_hist'], 4),
-            'EMA20': fmt_precio(u['ema20']), 'SMA50': fmt_precio(u['sma50']),
-            'SMA200': fmt_precio(u['sma200']), 'SMA300': fmt_precio(u['sma300']),
+            'EMA9': fmt_precio(u['ema9']), 'EMA20': fmt_precio(u['ema20']), 'EMA50': fmt_precio(u['ema50']),
+            'EMA200': fmt_precio(u['ema200']),
             'Track record': f'{n_ok}✅ {n_bad}❌ {n_open}⏳' + (f' · {n_no_tomadas_tk}⛔' if n_no_tomadas_tk else ''),
             'Win rate': winrate,
         })
     df_resumen = pd.DataFrame(filas_resumen)
-    orden_prioridad = {'COMPRA FUERTE': 0, 'VENTA INMEDIATA': 0, 'COMPRA MODERADA': 1, 'REDUCIR POSICIÓN': 1, '—': 2}
+    orden_prioridad = {'COMPRA': 0, 'VENTA': 1, '—': 2}
     df_resumen['_orden'] = df_resumen['Señal'].map(orden_prioridad)
     df_resumen = df_resumen.sort_values('_orden').drop(columns=['_orden'])
 
@@ -847,14 +832,15 @@ def modulo_bot_inversion(
     estado_actual = ultimo['estado']
     color_estado = _color_estado(estado_actual)
 
+    pila_corta_txt = 'EMA9>EMA20>EMA50 ✅' if ultimo['pila_alcista'] else ('EMA9<EMA20<EMA50 ❌' if ultimo['pila_bajista'] else 'Mixta')
+    pila_larga_txt = 'EMA50>200>300>400>500 ✅' if ultimo['alineacion_larga_alcista'] else ('Invertida ❌' if ultimo['alineacion_larga_bajista'] else 'Mixta')
     kpi_cards_4([
         ('Señal Actual', estado_actual, f'{ticker_detalle} · {horizonte_bot}', color_estado),
         ('Precio', fmt_precio(ultimo['precio']),
-         f"EMA20: {fmt_precio(ultimo['ema20'])} · SMA50: {fmt_precio(ultimo['sma50'])}", '#3a7bd5'),
+         f"EMA20: {fmt_precio(ultimo['ema20'])} · EMA50: {fmt_precio(ultimo['ema50'])}", '#3a7bd5'),
         ('RSI / MACD Hist', f"{ultimo['rsi']:.1f} / {ultimo['macd_hist']:+.4f}",
          'Sobrecompra/sobreventa · momentum', score_color_hex(ultimo['rsi'])),
-        ('Puntaje', f"{int(ultimo['pts_compra'])}/100 🟢 · {int(ultimo['pts_venta'])}/100 🔴",
-         'Compra · Venta', '#e3b341'),
+        ('Pila de EMAs', pila_corta_txt, f'Largas: {pila_larga_txt}', '#e3b341'),
     ])
 
     st.plotly_chart(_fig_bot_señales(ticker_detalle, df_bot_sel, PLOTLY_LAYOUT_BASE),
@@ -888,18 +874,15 @@ def modulo_bot_inversion(
         def _resultado_si_no_tomada(row):
             return '—' if row['tomada'] else (row['resultado_teorico'] or '—')
 
-        def _puntaje_col(row):
-            return f"{int(row['pts_compra'])}/100" if 'COMPRA' in row['estado'] else f"{int(row['pts_venta'])}/100"
-
         df_hist_show = pd.DataFrame({
             'Fecha/Hora': df_hist.index.strftime('%Y-%m-%d %H:%M'),
             'Señal': df_hist['estado'],
-            'Puntaje': df_hist.apply(_puntaje_col, axis=1),
             'Tomada': df_hist['tomada'].apply(lambda v: 'Sí' if v else 'No'),
             'Resultado': df_hist['resultado'].apply(lambda v: 'No tomada' if v == '⛔' else v),
             'Si no se tomó': df_hist.apply(_resultado_si_no_tomada, axis=1),
             'Fecha cierre': df_hist['fecha_cierre'].apply(_fecha_fmt),
             'Motivo cierre': df_hist['motivo_cierre'],
+            'Nivel alcanzado': df_hist['nivel_alcanzado'],
             'Ganancia/Pérdida (USD)': [_ganancia_perdida_usd(ts, df_hist.loc[ts]) for ts in df_hist.index],
             'Retorno %': df_hist['retorno_pct'].apply(lambda v: f'{v:+.2f}%' if pd.notna(v) else '—'),
             'Precio entrada': df_hist['precio'].apply(fmt_precio),
@@ -907,7 +890,6 @@ def modulo_bot_inversion(
             'Stop final': df_hist['stop_final'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
             'RSI': df_hist['rsi'].round(1),
             'MACD Hist': df_hist['macd_hist'].round(4),
-            'ATR': df_hist['atr'].round(4),
         })
         _color_tomada = lambda v: 'color:#8b949e' if v == 'No' else 'color:#3fb950;font-weight:700'
         styled_hist = (df_hist_show.style
@@ -977,27 +959,33 @@ def modulo_bot_inversion(
 
     with st.expander('❓ Cómo funciona esta estrategia'):
         st.markdown("""
-        **📈 COMPRA** — se necesita EMA20 &gt; SMA50 &gt; SMA200 &gt; SMA300, precio sobre la EMA20 con
-        pendiente positiva, RSI entre 55-70 (se veta si supera 75) y volumen sobre su promedio de 20
-        ruedas. Tampoco se compra si el precio ya está demasiado estirado sobre la EMA20. El puntaje
-        (EMA20&gt;SMA50 +20, SMA50&gt;SMA200 +20, SMA200&gt;SMA300 +20, RSI 55-70 +15, cruce alcista MACD +15,
-        histograma positivo +10) define **COMPRA FUERTE** (80-100) o **COMPRA MODERADA** (65-79).
+        **📈 COMPRA** — se necesita, en este orden: (1) cruce alcista reciente de EMA9 sobre EMA20;
+        (2) pila EMA9 &gt; EMA20 &gt; EMA50; (3) precio sobre la EMA50; (4) RSI(14) &gt; 55 (se veta si
+        supera 75, demasiado extendido); (5) MACD alcista (cruce reciente + histograma positivo). Si
+        activaste el filtro opcional, además exige EMA50 &gt; EMA200 &gt; EMA300 &gt; EMA400 &gt; EMA500.
 
-        **📉 VENTA** — con EMA9 &lt; EMA20 &lt; SMA50 &lt; SMA200 y precio bajo la EMA20. Puntaje (EMA9&lt;EMA20
-        +25, EMA20&lt;SMA50 +20, precio&lt;SMA200 +20, RSI&lt;45 +15, cruce bajista MACD +20) define
-        **VENTA INMEDIATA** (80-100) o **REDUCIR POSICIÓN** (60-79).
+        **🎯 Objetivo y Stop progresivos** (nunca bajan, solo suben):
+        - Al comprar: Stop = EMA50 · Objetivo = EMA200. Mientras el precio no cierre sobre la EMA200,
+          no se vende — se mantiene la posición.
+        - Cierra sobre EMA200 → Stop sube a EMA200 · nuevo Objetivo = EMA300.
+        - Cierra sobre EMA300 → Stop sube a EMA300 · nuevo Objetivo = EMA400.
+        - Cierra sobre EMA400 → Stop sube a EMA400 · nuevo Objetivo = EMA500.
+        - Cierra sobre EMA500 → Stop sube a EMA500 · ya no hay objetivo fijo: acá empieza la
+          verdadera tendencia y se sigue comprado mientras el precio no toque la EMA500.
+        - En cada tramo el Stop sigue el valor actual de su EMA (trailing), pero nunca se afloja
+          hacia abajo.
 
-        **🛑 Stop dinámico**: arranca en 2×ATR(14) en contra de la entrada. Al ganar 5% pasa a
-        breakeven. Al ganar 10% empieza el trailing: el Stop sigue al mayor entre la EMA20 actual y
-        2×ATR actual (nunca se afloja). Además, si el precio cierra en contra de la EMA20 Y el
-        histograma del MACD confirma el giro, se sale ahí mismo sin esperar al Stop.
+        **📉 VENTA (pérdida de fuerza)** — se cierra la posición si EMA9 cruza por debajo de EMA20 Y
+        además EMA9 &lt; EMA50 Y EMA20 &lt; EMA50 (la pila se invierte por completo). Esto puede cerrar
+        la operación aunque el Stop todavía no se haya tocado — es la salida por "se acabó el
+        impulso", no por precio.
 
         **🚫 Sin solapamiento**: si aparece una señal nueva mientras hay una operación abierta del
         mismo activo, no se toma (⛔) — pero igual se calcula qué hubiera pasado, de forma hipotética,
         en "Si no se tomó" y "Ganancia/Pérdida (USD)".
 
-        **⚠️ Nota sobre el rebalanceo**: esta versión ya NO promedia en pérdida — es una estrategia de
-        tendencia con Stop, no de promediar. Si el precio toca el Stop, la operación se cierra.
+        **Long-only**: esta versión solo simula compras. La señal de VENTA es un aviso de salida /
+        pérdida de fuerza, no una posición corta.
 
         Usalo como medida de calidad de la señal, no como tu resultado real de trading.
         """)
