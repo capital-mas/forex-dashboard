@@ -8,3 +8,4 @@ supabase
 streamlit-cookies-controller
 deep-translator
 scipy
+streamlit-autorefresh
