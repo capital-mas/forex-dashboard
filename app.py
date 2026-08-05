@@ -3989,6 +3989,14 @@ def modulo_comparador():
     if sin_precio:
         st.warning(f"⚠️ No se pudo descargar precio para: {', '.join(sin_precio)}. Probá tocar \"↺ Actualizar\" en unos minutos.")
 
+        # ── Perfiles de cada empresa comparada ─────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🏢 Perfiles de las empresas')
+    tabs_perfil = st.tabs([f'🏢 {tk}' for tk in tickers_cmp])
+    for tab_p, tk_p in zip(tabs_perfil, tickers_cmp):
+        with tab_p:
+            render_perfil_empresa(tk_p, key_suffix=f'comp_{tk_p}')
+
     st.plotly_chart(fig_comparador_precio(series), use_container_width=True, config=PLOTLY_CONFIG, key='comp_precio_fig')
 
     if resultados_l:
@@ -4020,14 +4028,6 @@ def modulo_comparador():
         """, unsafe_allow_html=True)
     else:
         st.info('No hay suficiente historial (2 años) para calcular el análisis cuantitativo de estos activos. Aun así, podés ver el gráfico de rendimiento comparado arriba.')
-
-    # ── Perfiles de cada empresa comparada ─────────────────────────────
-    st.markdown('---')
-    st.markdown('### 🏢 Perfiles de las empresas')
-    tabs_perfil = st.tabs([f'🏢 {tk}' for tk in tickers_cmp])
-    for tab_p, tk_p in zip(tabs_perfil, tickers_cmp):
-        with tab_p:
-            render_perfil_empresa(tk_p, key_suffix=f'comp_{tk_p}')
 
     # ── COMPARACIÓN FUNDAMENTAL ───────────────────────────────────────────
     st.markdown('---')
