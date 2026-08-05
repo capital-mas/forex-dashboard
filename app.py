@@ -2025,11 +2025,11 @@ def chips_navegacion(items, key_prefix, max_chips=18):
 
 
 TICKER_TAPE_SIMBOLOS = [
-    ('S&P 500', 'SPY'), ('NASDAQ', 'QQQ'),
+    ('S&P 500', '^GSPC'), ('Nasdaq', '^NDX'),('Dow Jones', '^DJI'), ('Rusell', '^RUT'),
     ('Bitcoin', 'BTC-USD'), ('Ethereum', 'ETH-USD'),
-    ('EUR/USD', 'EURUSD=X'), ('USD/ARS', 'USDARS=X'), ('USD/BRL', 'USDBRL=X'),
-    ('Oro', 'GC=F'), ('Petróleo WTI', 'CL=F'),
-    ('NVDA', 'NVDA'), ('AAPL', 'AAPL'), ('TSLA', 'TSLA'), ('MSFT', 'MSFT'),
+    ('EUR/USD', 'EURUSD=X'), ('EUR/GBP', 'EURGBP=X'), ('USD/JPY', 'USDJPY=X'), ('GBP/USD', 'GBPUSD=X'),
+    ('Oro', 'GC=F'), ('Petróleo WTI', 'CL=F'), ('Plata', 'SI=F'), ('Platino', 'PL=F'),
+    ('NVDA', 'NVDA'), ('AAPL', 'AAPL'), ('TSLA', 'TSLA'), ('MSFT', 'MSFT'), ('GOOGL', 'GOOGL'), ('AMZN', 'AMZN'), ('META', 'META'),
 ]
 
 
