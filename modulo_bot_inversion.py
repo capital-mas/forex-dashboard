@@ -140,13 +140,29 @@ ACCIONES_POR_INDUSTRIA = {
 C_COMPRA        = '#3fb950'
 C_VENTA         = '#f85149'
 C_EN_POSICION   = '#2dd4bf'
+C_ALCISTA       = '#3fb950'
+C_BAJISTA       = '#f85149'
+C_LATERAL       = '#e3b341'
 
-# Niveles de objetivo/Stop progresivos, en orden. El índice 0 es el
-# tramo inicial (Stop=EMA50, Objetivo=EMA200); al superar el objetivo
-# de un tramo se pasa al siguiente. El último tramo (EMA500) no tiene
-# objetivo: se mantiene la posición sin techo fijo.
-NIVELES_STOP     = ['ema50', 'ema200', 'ema300', 'ema400', 'ema500']
-NIVELES_OBJETIVO = ['ema200', 'ema300', 'ema400', 'ema500', None]
+STOP_INICIAL_PCT_DEFAULT = 1.5  # % de distancia del Stop inicial respecto al precio de entrada
+
+ESPERA_PULLBACK_MAX_BARRAS_DEFAULT = 10  # si no volvió a la EMA50 en N velas pero la tendencia
+                                          # sigue intacta (ej: balances, gap sin retroceso), se
+                                          # entra igual a precio de mercado en esa vela
+
+# Niveles de objetivo/Stop PROGRESIVOS, a partir de que se supera el
+# primer objetivo (EMA200). Antes de eso el Stop es fijo (± X% desde
+# la EMA50 de entrada, ver STOP_INICIAL_PCT_DEFAULT). Al romper cada
+# objetivo el Stop pasa a esa misma EMA (trailing) y el objetivo
+# avanza al siguiente. El último tramo (EMA500) no tiene objetivo:
+# se mantiene la posición sin techo/piso fijo.
+NIVELES_STOP_TRAS_INICIAL     = ['ema200', 'ema300', 'ema400', 'ema500']
+NIVELES_OBJETIVO_TRAS_INICIAL = ['ema300', 'ema400', 'ema500', None]
+
+# Régimen de mercado (informativo): compara EMA50 vs EMA200 y la
+# pendiente de la EMA200 en las últimas N barras.
+REGIMEN_PENDIENTE_BARRAS = 10
+REGIMEN_DIST_MIN_PCT = 1.0  # si EMA50 y EMA200 están a menos de esto (%), se considera lateral
 
 MIN_BARRAS_NECESARIAS = 520  # EMA500 + margen de calentamiento
 
@@ -257,6 +273,15 @@ def _calcular_bot_dataframe_ma(close, high, low, volume,
     # se le exige RSI/MACD para no demorar una salida de riesgo.
     senal_venta = cross_down_9_20_reciente & pila_bajista & precio_bajo_ema50
 
+    # ── Régimen de mercado (informativo) ──
+    pendiente_ema200 = ema200 - ema200.shift(REGIMEN_PENDIENTE_BARRAS)
+    distancia_ema_pct = (ema50 - ema200) / ema200 * 100
+    regimen_alcista = (ema50 > ema200) & (pendiente_ema200 > 0) & (distancia_ema_pct.abs() >= REGIMEN_DIST_MIN_PCT)
+    regimen_bajista = (ema50 < ema200) & (pendiente_ema200 < 0) & (distancia_ema_pct.abs() >= REGIMEN_DIST_MIN_PCT)
+    regimen_mercado = pd.Series('LATERAL', index=cl.index)
+    regimen_mercado[regimen_alcista] = 'ALCISTA'
+    regimen_mercado[regimen_bajista] = 'BAJISTA'
+
     estado = pd.Series('—', index=cl.index)
     estado[entrada_compra] = 'COMPRA'
     estado[senal_venta] = 'VENTA'
@@ -272,24 +297,37 @@ def _calcular_bot_dataframe_ma(close, high, low, volume,
         'alineacion_larga_bajista': alineacion_larga_bajista,
         'rsi_veto_compra': rsi_veto_compra,
         'macd_alcista': macd_alcista, 'macd_bajista': macd_bajista,
-        'senal_venta': senal_venta,
+        'senal_compra': entrada_compra, 'senal_venta': senal_venta,
+        'regimen_mercado': regimen_mercado,
         'estado': estado, 'disparo': disparo,
     })
     return df
 
 
-# ── Simulación de operaciones — Objetivo y Stop progresivos ──────
-#  Compra → Stop=EMA50, Objetivo=EMA200
-#  Cierra sobre EMA200 → Stop=EMA200, Objetivo=EMA300
-#  Cierra sobre EMA300 → Stop=EMA300, Objetivo=EMA400
-#  Cierra sobre EMA400 → Stop=EMA400, Objetivo=EMA500
-#  Cierra sobre EMA500 → Stop=EMA500, sin objetivo (se mantiene)
-#  El Stop de cada tramo sigue el valor actual de su EMA (trailing)
-#  pero JAMÁS se afloja hacia abajo. La posición se cierra si el
-#  precio toca el Stop vigente, o si aparece la señal de venta
-#  (pérdida de fuerza: EMA9<EMA20<EMA50), lo que ocurra primero.
+# ── Simulación de operaciones — entrada en pullback a EMA50 ──────
+#  1) La señal (COMPRA o VENTA) habilita una ORDEN PENDIENTE: se
+#     espera a que el precio vuelva a tocar la EMA50 (long: la
+#     toca bajando: low<=EMA50; short: la toca subiendo: high>=EMA50)
+#     para recién ahí entrar, al precio de la EMA50 en ese momento.
+#     Si aparece la señal opuesta antes de que el precio vuelva a la
+#     EMA50, la orden pendiente se cancela (no se llegó a operar).
+#     Si pasan `espera_pullback_barras` velas sin pullback PERO la
+#     tendencia sigue intacta (la pila EMA9/20/50 no se rompió, solo
+#     no volvió a tocar la EMA50 — típico en gaps de temporada de
+#     balances), se entra igual a precio de mercado en esa vela.
+#  2) Stop inicial FIJO: ±STOP_INICIAL_PCT% desde el precio de
+#     entrada. No es trailing todavía.
+#  3) Primer objetivo: EMA200. Al cerrar más allá de la EMA200 (long:
+#     por encima; short: por debajo), el Stop pasa a ser la EMA200
+#     (trailing desde ahí) y el objetivo avanza a EMA300, luego
+#     EMA400, luego EMA500. El Stop nunca se afloja (long: solo sube;
+#     short: solo baja).
+#  4) Salida por pérdida de fuerza: si la posición es larga y aparece
+#     la señal de VENTA (pila bajista), se cierra; si es corta y
+#     aparece la señal de COMPRA (pila alcista), se cubre.
 
-def _simular_operaciones_ma(df):
+def _simular_operaciones_ma(df, stop_inicial_pct=STOP_INICIAL_PCT_DEFAULT,
+                              espera_pullback_barras=ESPERA_PULLBACK_MAX_BARRAS_DEFAULT):
     df = df.copy()
     n = len(df)
     idx = df.index
@@ -298,7 +336,10 @@ def _simular_operaciones_ma(df):
     low_arr = df['low'].values
     estado_arr = df['estado'].values
     disparo_arr = df['disparo'].values
+    senal_compra_arr = df['senal_compra'].values
     senal_venta_arr = df['senal_venta'].values
+    pila_alcista_arr = df['pila_alcista'].values
+    pila_bajista_arr = df['pila_bajista'].values
 
     arr_por_nombre = {
         'ema50': df['ema50'].values, 'ema200': df['ema200'].values,
@@ -309,67 +350,123 @@ def _simular_operaciones_ma(df):
     resultado = [''] * n
     resultado_teorico = [''] * n
     fecha_cierre = [pd.NaT] * n
+    fecha_entrada = [pd.NaT] * n
+    precio_entrada_arr = [np.nan] * n
     retorno_pct = [np.nan] * n
     tomada = [False] * n
     motivo_cierre = [''] * n
     stop_final_arr = [np.nan] * n
     nivel_alcanzado_arr = [''] * n
+    direccion_arr = [''] * n
+    tipo_entrada_arr = [''] * n
 
     ocupado_hasta = -1
 
     for i in range(n):
-        if not disparo_arr[i] or estado_arr[i] != 'COMPRA':
+        if not disparo_arr[i] or estado_arr[i] not in ('COMPRA', 'VENTA'):
             continue
-        if pd.isna(arr_por_nombre['ema50'][i]):
+        ema50_i = arr_por_nombre['ema50'][i]
+        if pd.isna(ema50_i):
             continue
 
-        fue_tomada = i > ocupado_hasta
-        tomada[i] = fue_tomada
+        es_largo = estado_arr[i] == 'COMPRA'
+        direccion_arr[i] = 'compra' if es_largo else 'venta'
+        fue_elegible = i > ocupado_hasta
 
-        entry = precio_arr[i]
-        nivel_idx = 0
-        stop_col = NIVELES_STOP[nivel_idx]        # 'ema50'
-        objetivo_col = NIVELES_OBJETIVO[nivel_idx]  # 'ema200'
-        stop = arr_por_nombre[stop_col][i]
-        nivel_texto = 'Inicial (Stop EMA50 · Objetivo EMA200)'
+        # ── Fase 1: esperar el pullback del precio a la EMA50 ──
+        #  Si no llega a tocarla en `espera_pullback_barras` velas pero la
+        #  pila sigue intacta (ej: gap de balances sin retroceso), se
+        #  entra igual a precio de mercado en esa vela.
+        j_fill = None
+        cancelado = False
+        entrada_forzada = False
+        for j in range(i + 1, n):
+            ema50_j = arr_por_nombre['ema50'][j]
+            if pd.isna(ema50_j):
+                continue
+            hi_j, lo_j = high_arr[j], low_arr[j]
+            tocó_ema50 = lo_j <= ema50_j <= hi_j
+            if tocó_ema50:
+                j_fill = j
+                break
+            if es_largo and senal_venta_arr[j]:
+                cancelado = True
+                break
+            if (not es_largo) and senal_compra_arr[j]:
+                cancelado = True
+                break
+            tendencia_intacta = pila_alcista_arr[j] if es_largo else pila_bajista_arr[j]
+            if (j - i) >= espera_pullback_barras and tendencia_intacta:
+                j_fill = j
+                entrada_forzada = True
+                break
+
+        if j_fill is None:
+            resultado_val = '🚫' if cancelado else '⌛'
+            motivo = 'Señal opuesta antes del pullback a EMA50' if cancelado else 'Fin de datos sin pullback a EMA50'
+            if fue_elegible:
+                resultado[i] = resultado_val
+                motivo_cierre[i] = motivo
+            else:
+                resultado[i] = '⛔'
+                resultado_teorico[i] = resultado_val
+                motivo_cierre[i] = motivo
+            continue
+
+        # ── Fase 2: entrada — en la EMA50 (pullback) o a mercado (forzada) ──
+        entry = precio_arr[j_fill] if entrada_forzada else arr_por_nombre['ema50'][j_fill]
+        tipo_entrada_val = ('Sin pullback (tendencia intacta tras '
+                             f'{espera_pullback_barras} velas)') if entrada_forzada else 'Pullback a EMA50'
+        fecha_entrada_val = idx[j_fill]
+        stop = entry * (1 - stop_inicial_pct / 100.0) if es_largo else entry * (1 + stop_inicial_pct / 100.0)
+        nivel_idx = -1  # -1 = tramo de Stop fijo inicial; 0..3 = tramos EMA200/300/400/500
+        objetivo_col = 'ema200'
+        stop_col = None
+        nivel_texto = f'Inicial (Stop fijo {stop_inicial_pct:.1f}% desde EMA50 · Objetivo EMA200)'
 
         j_exit = n - 1
         precio_exit = precio_arr[n - 1]
         motivo = 'Fin de datos (operación en curso)'
 
-        for j in range(i + 1, n):
+        for j in range(j_fill + 1, n):
             hi_j, lo_j, cl_j = high_arr[j], low_arr[j], precio_arr[j]
 
-            # 1) Actualizar el Stop del tramo vigente (trailing, solo sube)
-            candidato_stop = arr_por_nombre[stop_col][j]
-            if not pd.isna(candidato_stop):
-                stop = max(stop, candidato_stop)
+            # 1) Trailing del Stop solo una vez que se pasó el tramo inicial
+            if nivel_idx >= 0:
+                candidato_stop = arr_por_nombre[stop_col][j]
+                if not pd.isna(candidato_stop):
+                    stop = max(stop, candidato_stop) if es_largo else min(stop, candidato_stop)
 
             # 2) ¿Tocó el Stop?
-            if lo_j <= stop:
-                precio_exit, j_exit, motivo = stop, j, f'Tocó Stop ({stop_col.upper()})'
+            if (es_largo and lo_j <= stop) or ((not es_largo) and hi_j >= stop):
+                precio_exit, j_exit, motivo = stop, j, f'Tocó Stop ({"fijo " + f"{stop_inicial_pct:.1f}%" if nivel_idx < 0 else stop_col.upper()})'
                 break
 
-            # 3) ¿Señal de venta por pérdida de fuerza?
-            if senal_venta_arr[j]:
+            # 3) ¿Señal opuesta (pérdida de fuerza / se cubre el corto)?
+            if es_largo and senal_venta_arr[j]:
                 precio_exit, j_exit, motivo = cl_j, j, 'Señal de venta (EMA9<EMA20<EMA50)'
                 break
+            if (not es_largo) and senal_compra_arr[j]:
+                precio_exit, j_exit, motivo = cl_j, j, 'Señal de compra (EMA9>EMA20>EMA50) — se cubre el corto'
+                break
 
-            # 4) ¿Rompió el objetivo vigente? → sube de tramo
+            # 4) ¿Rompió el objetivo vigente? → sube de tramo (trailing desde ahí)
             if objetivo_col is not None:
                 objetivo_val = arr_por_nombre[objetivo_col][j]
-                if not pd.isna(objetivo_val) and cl_j > objetivo_val:
-                    nivel_idx += 1
-                    stop_col = NIVELES_STOP[nivel_idx]
-                    objetivo_col = NIVELES_OBJETIVO[nivel_idx]
-                    nuevo_stop_val = arr_por_nombre[stop_col][j]
-                    if not pd.isna(nuevo_stop_val):
-                        stop = max(stop, nuevo_stop_val)
-                    nivel_texto = (f'Rompió {stop_col.upper()} · Objetivo {objetivo_col.upper()}'
-                                   if objetivo_col else f'Rompió {stop_col.upper()} · sin objetivo fijo (tendencia)')
+                if not pd.isna(objetivo_val):
+                    rompio = (cl_j > objetivo_val) if es_largo else (cl_j < objetivo_val)
+                    if rompio:
+                        nivel_idx += 1
+                        stop_col = NIVELES_STOP_TRAS_INICIAL[nivel_idx]
+                        objetivo_col = NIVELES_OBJETIVO_TRAS_INICIAL[nivel_idx]
+                        nuevo_stop_val = arr_por_nombre[stop_col][j]
+                        if not pd.isna(nuevo_stop_val):
+                            stop = max(stop, nuevo_stop_val) if es_largo else min(stop, nuevo_stop_val)
+                        nivel_texto = (f'Rompió {stop_col.upper()} · Objetivo {objetivo_col.upper()}'
+                                       if objetivo_col else f'Rompió {stop_col.upper()} · sin objetivo fijo (tendencia)')
 
         if motivo != 'Fin de datos (operación en curso)':
-            ret = (precio_exit - entry) / entry * 100
+            ret = (precio_exit - entry) / entry * 100 if es_largo else (entry - precio_exit) / entry * 100
             res = '✅' if ret > 0 else ('❌' if ret < 0 else '➖')
             fecha_cierre_val = idx[j_exit]
         else:
@@ -377,34 +474,42 @@ def _simular_operaciones_ma(df):
             res = '⏳'
             fecha_cierre_val = pd.NaT
 
-        if fue_tomada:
+        if fue_elegible:
             resultado[i] = res
+            tomada[i] = True
             ocupado_hasta = j_exit if motivo != 'Fin de datos (operación en curso)' else ocupado_hasta
         else:
             resultado[i] = '⛔'
             resultado_teorico[i] = res
 
+        fecha_entrada[i] = fecha_entrada_val
+        precio_entrada_arr[i] = entry
+        tipo_entrada_arr[i] = tipo_entrada_val
         retorno_pct[i] = ret
         fecha_cierre[i] = fecha_cierre_val
         motivo_cierre[i] = motivo
         stop_final_arr[i] = stop
         nivel_alcanzado_arr[i] = nivel_texto
 
-    df['direccion'] = ['compra' if e == 'COMPRA' else '' for e in estado_arr]
+    df['direccion'] = direccion_arr
     df['resultado'] = resultado
     df['resultado_teorico'] = resultado_teorico
+    df['fecha_entrada'] = fecha_entrada
+    df['precio_entrada'] = precio_entrada_arr
     df['fecha_cierre'] = fecha_cierre
     df['retorno_pct'] = retorno_pct
     df['tomada'] = tomada
     df['motivo_cierre'] = motivo_cierre
     df['stop_final'] = stop_final_arr
     df['nivel_alcanzado'] = nivel_alcanzado_arr
+    df['tipo_entrada'] = tipo_entrada_arr
     return df
 
 
 def _color_resultado(val):
     return {'✅': 'color:#3fb950;font-weight:700', '❌': 'color:#f85149;font-weight:700',
-            '⏳': 'color:#e3b341;font-weight:600', '➖': 'color:#8b949e;font-weight:600'}.get(val, '')
+            '⏳': 'color:#e3b341;font-weight:600', '➖': 'color:#8b949e;font-weight:600',
+            '🚫': 'color:#8b949e;font-weight:600', '⌛': 'color:#58a6ff;font-weight:600'}.get(val, '')
 
 
 # ── Persistencia en Supabase: configuración del usuario ─────────
@@ -547,8 +652,15 @@ def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
         if sub.empty:
             continue
         fig.add_trace(go.Scatter(
-            x=sub.index, y=sub['precio'], mode='markers', name=tipo,
-            marker=dict(size=12, color=color, symbol=symbol, line=dict(width=1, color='#0d1117')),
+            x=sub.index, y=sub['precio'], mode='markers', name=f'Señal {tipo}',
+            marker=dict(size=10, color=color, symbol=symbol, line=dict(width=1, color='#0d1117'), opacity=0.55),
+        ))
+    entradas_reales = df[df['tomada'] == True]
+    if not entradas_reales.empty:
+        fig.add_trace(go.Scatter(
+            x=entradas_reales['fecha_entrada'], y=entradas_reales['precio_entrada'], mode='markers',
+            name='Entrada real (EMA50)',
+            marker=dict(size=11, color='#e6edf3', symbol='circle', line=dict(width=2, color='#a371f7')),
         ))
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
@@ -570,6 +682,11 @@ def _color_señal_bot(val):
     return f'color:{c};font-weight:700'
 
 
+def _color_regimen_bot(val):
+    c = {'ALCISTA': C_ALCISTA, 'BAJISTA': C_BAJISTA, 'LATERAL': C_LATERAL}.get(val, '#e6edf3')
+    return f'color:{c};font-weight:700'
+
+
 # ── Módulo principal ────────────────────────────────────────────
 
 def modulo_bot_inversion(
@@ -583,17 +700,20 @@ def modulo_bot_inversion(
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
       <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Pila de EMAs (9/20/50/200/300/400/500)</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Estrategia de <b style="color:#e3b341">tendencia pura (long-only)</b>. <b style="color:#e3b341">COMPRA</b>
-        cuando hay cruce alcista EMA9/EMA20, se forma la pila EMA9 &gt; EMA20 &gt; EMA50, el precio está
-        sobre la EMA50, el RSI supera 55 (se veta si supera 75) y el MACD confirma al alza.
-        El <b style="color:#a371f7">objetivo y el Stop son progresivos</b>: arranca con Stop en EMA50 y
-        objetivo en EMA200; al cerrar por encima de cada objetivo, el Stop sube a esa misma EMA y el
-        objetivo pasa a la siguiente (EMA200 → EMA300 → EMA400 → EMA500) — el Stop nunca baja. Al superar
-        la EMA500 ya no hay objetivo fijo: se mantiene la posición mientras el precio siga arriba.
-        <b style="color:#e3b341">VENTA</b> (pérdida de fuerza) cuando la pila se invierte: EMA9 cruza
-        debajo de EMA20 y ambas quedan debajo de EMA50. Analizá hasta <b style="color:#e3b341">10
-        activos</b> en <b style="color:#e3b341">15, 30, 45 min, 1h, 4h o 1 día</b> — comparar la
-        tendencia diaria con la entrada en 4h suele dar más probabilidad.
+        Estrategia de <b style="color:#e3b341">tendencia, largo y corto</b>. La señal (pila EMA9/20/50 +
+        RSI + MACD) habilita una <b style="color:#a371f7">orden pendiente</b>: no se entra al precio de
+        mercado del cruce, se espera a que el precio vuelva a tocar la <b style="color:#a371f7">EMA50</b>
+        (suele volver ahí antes de seguir el recorrido) y recién ahí se entra, con Stop fijo a
+        <b style="color:#a371f7">1.5%</b> de esa entrada (configurable). Si aparece la señal opuesta
+        antes de que el precio vuelva a la EMA50, la orden se cancela — y si pasan varias velas sin
+        pullback pero la tendencia sigue intacta (ej: un salto fuerte en temporada de balances que nunca
+        retrocede), se entra igual a precio de mercado. A partir de superar la EMA200 el Objetivo y el
+        Stop pasan a ser <b style="color:#a371f7">progresivos</b> (EMA200 → EMA300 → EMA400 → EMA500, el
+        Stop nunca se afloja). Para posiciones <b style="color:#e3b341">cortas</b> es todo simétrico
+        hacia abajo. Además, cada activo muestra si el mercado está <b style="color:#3fb950">ALCISTA</b>,
+        <b style="color:#f85149">BAJISTA</b> o <b style="color:#e3b341">LATERAL</b> (EMA50 vs EMA200 y su
+        pendiente). Analizá hasta <b style="color:#e3b341">10 activos</b> en
+        <b style="color:#e3b341">15, 30, 45 min, 1h, 4h o 1 día</b>.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -672,7 +792,7 @@ def modulo_bot_inversion(
                 help='Da un poco de margen para que el resto de las condiciones (medias, RSI) alcancen al cruce.',
             )
 
-        p4, = st.columns(1)
+        p4, p5 = st.columns(2)
         with p4:
             st.markdown('**Filtro de calidad (opcional)**')
             exigir_alineacion_larga = st.checkbox(
@@ -680,9 +800,27 @@ def modulo_bot_inversion(
                 value=False, key='bot_exigir_alineacion',
                 help='Reduce señales falsas en mercados laterales, a costa de entrar más tarde en la tendencia.',
             )
+        with p5:
+            st.markdown('**Entrada y Stop inicial**')
+            stop_inicial_pct = st.number_input(
+                'Stop inicial (% desde el precio de entrada)', value=STOP_INICIAL_PCT_DEFAULT,
+                min_value=0.1, max_value=10.0, step=0.1, key='bot_stop_inicial_pct',
+                help='La entrada NO es al precio de mercado del cruce: se espera a que el precio '
+                     'vuelva a tocar la EMA50 (long) o la vuelva a tocar desde abajo (short), y se '
+                     'entra ahí. El Stop arranca a esta distancia fija desde el precio de entrada.',
+            )
+            espera_pullback_barras = st.number_input(
+                'Si no hay pullback en N velas, entrar igual (si la tendencia sigue intacta)',
+                value=ESPERA_PULLBACK_MAX_BARRAS_DEFAULT, min_value=1, max_value=100, step=1,
+                key='bot_espera_pullback_barras',
+                help='Para no perderse movimientos sin retroceso (ej: gaps de temporada de balances). '
+                     'Si pasan estas velas sin que el precio vuelva a la EMA50 pero la pila EMA9/20/50 '
+                     'sigue intacta, se entra a precio de mercado en esa vela en lugar de seguir esperando.',
+            )
         st.caption(
-            'El Stop y el objetivo NO se configuran acá: son progresivos por diseño de la estrategia '
-            '(Stop inicial en EMA50, objetivo EMA200 → EMA300 → EMA400 → EMA500, el Stop nunca baja).'
+            'Objetivo y Stop, a partir de superar la EMA200, son progresivos por diseño de la '
+            'estrategia (Objetivo EMA200 → EMA300 → EMA400 → EMA500; el Stop en esos tramos sigue '
+            'a la EMA correspondiente y nunca se afloja).'
         )
 
     analizar_bot = st.button('▶ Analizar', key='bot_run', type='primary')
@@ -759,7 +897,7 @@ def modulo_bot_inversion(
             int(rsi_periodo), int(macd_fast), int(macd_slow), int(macd_signal),
             int(cruce_lookback_barras), exigir_alineacion_larga,
         )
-        df_bot = _simular_operaciones_ma(df_bot)
+        df_bot = _simular_operaciones_ma(df_bot, stop_inicial_pct, espera_pullback_barras)
         resultados_bot[tk] = df_bot
 
     if fallidos:
@@ -789,7 +927,7 @@ def modulo_bot_inversion(
         cerradas = n_ok + n_bad
         winrate = f'{n_ok / cerradas * 100:.0f}%' if cerradas > 0 else 'N/D'
         filas_resumen.append({
-            'Ticker': tk, 'Señal': u['estado'], 'Precio': fmt_precio(u['precio']),
+            'Ticker': tk, 'Señal': u['estado'], 'Régimen': u['regimen_mercado'], 'Precio': fmt_precio(u['precio']),
             'Última vela': df_bot.index[-1].strftime('%Y-%m-%d %H:%M'),
             'RSI': round(u['rsi'], 1),
             'MACD Hist': round(u['macd_hist'], 4),
@@ -806,6 +944,7 @@ def modulo_bot_inversion(
     _map = 'map' if hasattr(df_resumen.style, 'map') else 'applymap'
     styled_resumen = (df_resumen.style
         .pipe(lambda s: getattr(s, _map)(_color_señal_bot, subset=['Señal']))
+        .pipe(lambda s: getattr(s, _map)(_color_regimen_bot, subset=['Régimen']))
         .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
         .set_table_styles([
             {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
@@ -832,15 +971,16 @@ def modulo_bot_inversion(
     estado_actual = ultimo['estado']
     color_estado = _color_estado(estado_actual)
 
-    pila_corta_txt = 'EMA9>EMA20>EMA50 ✅' if ultimo['pila_alcista'] else ('EMA9<EMA20<EMA50 ❌' if ultimo['pila_bajista'] else 'Mixta')
-    pila_larga_txt = 'EMA50>200>300>400>500 ✅' if ultimo['alineacion_larga_alcista'] else ('Invertida ❌' if ultimo['alineacion_larga_bajista'] else 'Mixta')
+    pila_corta_txt = 'EMA9>EMA20>EMA50' if ultimo['pila_alcista'] else ('EMA9<EMA20<EMA50' if ultimo['pila_bajista'] else 'Pila mixta')
+    regimen_actual = ultimo['regimen_mercado']
+    color_regimen = {'ALCISTA': C_ALCISTA, 'BAJISTA': C_BAJISTA, 'LATERAL': C_LATERAL}.get(regimen_actual, '#8b949e')
     kpi_cards_4([
         ('Señal Actual', estado_actual, f'{ticker_detalle} · {horizonte_bot}', color_estado),
         ('Precio', fmt_precio(ultimo['precio']),
          f"EMA20: {fmt_precio(ultimo['ema20'])} · EMA50: {fmt_precio(ultimo['ema50'])}", '#3a7bd5'),
         ('RSI / MACD Hist', f"{ultimo['rsi']:.1f} / {ultimo['macd_hist']:+.4f}",
          'Sobrecompra/sobreventa · momentum', score_color_hex(ultimo['rsi'])),
-        ('Pila de EMAs', pila_corta_txt, f'Largas: {pila_larga_txt}', '#e3b341'),
+        ('Régimen de mercado', regimen_actual, f'Pila corta: {pila_corta_txt}', color_regimen),
     ])
 
     st.plotly_chart(_fig_bot_señales(ticker_detalle, df_bot_sel, PLOTLY_LAYOUT_BASE),
@@ -874,18 +1014,25 @@ def modulo_bot_inversion(
         def _resultado_si_no_tomada(row):
             return '—' if row['tomada'] else (row['resultado_teorico'] or '—')
 
+        def _precio_entrada_fmt(v):
+            return fmt_precio(v) if pd.notna(v) else '—'
+
         df_hist_show = pd.DataFrame({
-            'Fecha/Hora': df_hist.index.strftime('%Y-%m-%d %H:%M'),
+            'Fecha/Hora señal': df_hist.index.strftime('%Y-%m-%d %H:%M'),
             'Señal': df_hist['estado'],
+            'Dirección': df_hist['direccion'].map({'compra': 'Largo', 'venta': 'Corto'}).fillna('—'),
             'Tomada': df_hist['tomada'].apply(lambda v: 'Sí' if v else 'No'),
             'Resultado': df_hist['resultado'].apply(lambda v: 'No tomada' if v == '⛔' else v),
             'Si no se tomó': df_hist.apply(_resultado_si_no_tomada, axis=1),
+            'Precio señal': df_hist['precio'].apply(fmt_precio),
+            'Tipo de entrada': df_hist['tipo_entrada'].replace('', '—'),
+            'Fecha entrada': df_hist['fecha_entrada'].apply(_fecha_fmt),
+            'Precio entrada': df_hist['precio_entrada'].apply(_precio_entrada_fmt),
             'Fecha cierre': df_hist['fecha_cierre'].apply(_fecha_fmt),
             'Motivo cierre': df_hist['motivo_cierre'],
             'Nivel alcanzado': df_hist['nivel_alcanzado'],
             'Ganancia/Pérdida (USD)': [_ganancia_perdida_usd(ts, df_hist.loc[ts]) for ts in df_hist.index],
             'Retorno %': df_hist['retorno_pct'].apply(lambda v: f'{v:+.2f}%' if pd.notna(v) else '—'),
-            'Precio entrada': df_hist['precio'].apply(fmt_precio),
             'Monto operado': [_monto(ts) for ts in df_hist.index],
             'Stop final': df_hist['stop_final'].apply(lambda v: fmt_precio(v) if pd.notna(v) else '—'),
             'RSI': df_hist['rsi'].round(1),
@@ -905,12 +1052,16 @@ def modulo_bot_inversion(
                 {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
             ]))
         st.dataframe(styled_hist, use_container_width=True, height=min(500, len(df_hist_show) * 38 + 45))
-        n_no_tomadas = int((~df_hist['tomada']).sum())
+        n_bloqueadas = int((df_hist['resultado'] == '⛔').sum())
+        n_canceladas = int(((df_hist['resultado'] == '🚫') | (df_hist['resultado_teorico'] == '🚫')).sum())
+        n_pendientes = int(((df_hist['resultado'] == '⌛') | (df_hist['resultado_teorico'] == '⌛')).sum())
         st.caption(
             f'{len(df_hist_show)} señales disparadas en el historial analizado ({cfg["periodo_descarga"]} · '
-            f'{horizonte_bot}) · {n_no_tomadas} no tomadas por tener otra operación abierta en ese momento '
-            '(para esas se muestra igual, en "Si no se tomó" y "Ganancia/Pérdida (USD)", qué hubiera pasado '
-            'de forma hipotética).'
+            f'{horizonte_bot}) · {n_bloqueadas} ⛔ no tomadas por tener otra operación abierta · '
+            f'{n_canceladas} 🚫 canceladas (apareció la señal opuesta antes de que el precio volviera a '
+            f'tocar la EMA50) · {n_pendientes} ⌛ todavía esperando el pullback a la EMA50. Para las '
+            'bloqueadas se muestra igual, en "Si no se tomó" y "Ganancia/Pérdida (USD)", qué hubiera '
+            'pasado de forma hipotética.'
         )
 
     st.markdown('---')
@@ -958,34 +1109,49 @@ def modulo_bot_inversion(
         st.dataframe(df_comp, use_container_width=True, height=min(260, len(df_comp) * 38 + 45), hide_index=True)
 
     with st.expander('❓ Cómo funciona esta estrategia'):
-        st.markdown("""
-        **📈 COMPRA** — se necesita, en este orden: (1) cruce alcista reciente de EMA9 sobre EMA20;
-        (2) pila EMA9 &gt; EMA20 &gt; EMA50; (3) precio sobre la EMA50; (4) RSI(14) &gt; 55 (se veta si
-        supera 75, demasiado extendido); (5) MACD alcista (cruce reciente + histograma positivo). Si
-        activaste el filtro opcional, además exige EMA50 &gt; EMA200 &gt; EMA300 &gt; EMA400 &gt; EMA500.
+        st.markdown(f"""
+        **1) Señal (habilita una orden pendiente, no una entrada inmediata)**
+        - **COMPRA** (candidata a largo): cruce alcista reciente EMA9 sobre EMA20, pila EMA9 &gt; EMA20 &gt;
+          EMA50, precio sobre la EMA50, RSI(14) &gt; 55 (se veta si supera 75) y MACD alcista (cruce
+          reciente + histograma positivo). Con el filtro opcional activado, además exige
+          EMA50 &gt; EMA200 &gt; EMA300 &gt; EMA400 &gt; EMA500.
+        - **VENTA** (candidata a corto / pérdida de fuerza en un largo): lo mismo pero espejado —
+          cruce bajista EMA9/EMA20 y pila EMA9 &lt; EMA20 &lt; EMA50 con precio bajo la EMA50.
 
-        **🎯 Objetivo y Stop progresivos** (nunca bajan, solo suben):
-        - Al comprar: Stop = EMA50 · Objetivo = EMA200. Mientras el precio no cierre sobre la EMA200,
-          no se vende — se mantiene la posición.
-        - Cierra sobre EMA200 → Stop sube a EMA200 · nuevo Objetivo = EMA300.
-        - Cierra sobre EMA300 → Stop sube a EMA300 · nuevo Objetivo = EMA400.
-        - Cierra sobre EMA400 → Stop sube a EMA400 · nuevo Objetivo = EMA500.
-        - Cierra sobre EMA500 → Stop sube a EMA500 · ya no hay objetivo fijo: acá empieza la
-          verdadera tendencia y se sigue comprado mientras el precio no toque la EMA500.
-        - En cada tramo el Stop sigue el valor actual de su EMA (trailing), pero nunca se afloja
-          hacia abajo.
+        **2) Entrada real: pullback a la EMA50 (o entrada forzada si no llega a tiempo)**
+        No se entra al precio de mercado del momento de la señal. Se espera a que el precio **vuelva a
+        tocar la EMA50** — en un largo, bajando hasta tocarla; en un corto, subiendo hasta tocarla — y
+        ahí se entra, al valor de la EMA50 en ese instante. Si antes de que eso pase aparece la señal
+        opuesta, la orden se cancela (🚫) sin haber operado nada. Pero si pasan
+        **{espera_pullback_barras}** velas sin pullback y la pila EMA9/20/50 **sigue intacta** (no se
+        rompió, simplemente no hubo retroceso — típico de un salto fuerte en temporada de balances), se
+        entra igual, a precio de mercado en esa vela.
 
-        **📉 VENTA (pérdida de fuerza)** — se cierra la posición si EMA9 cruza por debajo de EMA20 Y
-        además EMA9 &lt; EMA50 Y EMA20 &lt; EMA50 (la pila se invierte por completo). Esto puede cerrar
-        la operación aunque el Stop todavía no se haya tocado — es la salida por "se acabó el
-        impulso", no por precio.
+        **3) Stop inicial fijo**
+        Apenas se entra, el Stop queda fijo a **{STOP_INICIAL_PCT_DEFAULT:.1f}%** (configurable) de
+        distancia del precio de entrada: por debajo en un largo, por encima en un corto.
 
-        **🚫 Sin solapamiento**: si aparece una señal nueva mientras hay una operación abierta del
-        mismo activo, no se toma (⛔) — pero igual se calcula qué hubiera pasado, de forma hipotética,
-        en "Si no se tomó" y "Ganancia/Pérdida (USD)".
+        **4) Objetivo y Stop progresivos** (a partir de superar la EMA200; nunca se aflojan):
+        - Cierra más allá de EMA200 → Stop pasa a EMA200 (trailing) · nuevo objetivo EMA300.
+        - Cierra más allá de EMA300 → Stop pasa a EMA300 · nuevo objetivo EMA400.
+        - Cierra más allá de EMA400 → Stop pasa a EMA400 · nuevo objetivo EMA500.
+        - Cierra más allá de EMA500 → Stop pasa a EMA500 · ya no hay objetivo fijo, se mantiene la
+          posición mientras el precio no vuelva a tocar la EMA500.
 
-        **Long-only**: esta versión solo simula compras. La señal de VENTA es un aviso de salida /
-        pérdida de fuerza, no una posición corta.
+        **5) Salida por pérdida de fuerza**
+        Si es un largo y aparece la señal de VENTA (pila EMA9&lt;EMA20&lt;EMA50), se cierra. Si es un
+        corto y aparece la señal de COMPRA (pila EMA9&gt;EMA20&gt;EMA50), se cubre. Esto puede cerrar la
+        operación aunque el Stop todavía no se haya tocado.
+
+        **📊 Régimen de mercado** (informativo, no filtra señales): compara la EMA50 contra la EMA200 y
+        la pendiente de la EMA200 en las últimas {REGIMEN_PENDIENTE_BARRAS} barras. **ALCISTA** si
+        EMA50 &gt; EMA200 con pendiente positiva, **BAJISTA** si es al revés, **LATERAL** en cualquier
+        otro caso (medias pegadas o sin pendiente clara).
+
+        **🚫 / ⌛ / ⛔** en la tabla de historial: 🚫 = señal cancelada porque apareció la opuesta antes
+        del pullback; ⌛ = todavía esperando que el precio vuelva a la EMA50; ⛔ = señal válida pero no
+        tomada porque ya había otra operación abierta en ese momento (igual se calcula qué hubiera
+        pasado, de forma hipotética).
 
         Usalo como medida de calidad de la señal, no como tu resultado real de trading.
         """)
