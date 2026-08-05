@@ -551,7 +551,7 @@ def pantalla_landing():
       </div>
       <div class="landing-step">
         <div class="landing-step-num">2</div>
-        <div class="landing-step-title">Probá 3 días gratis</div>
+        <div class="landing-step-title">Probá 7 días gratis</div>
         <div class="landing-step-desc">Acceso completo a todos los módulos, sin restricciones.</div>
       </div>
       <div class="landing-step">
