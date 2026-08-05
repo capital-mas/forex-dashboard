@@ -709,6 +709,8 @@ tiene_acceso = pantalla_suscripcion(supabase, USER_ID, st.session_state["usuario
 if not tiene_acceso:
     st.stop()
 
+from streamlit_autorefresh import st_autorefresh
+st_autorefresh(interval=60000, key="reloj_autorefresh")
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _contar_alertas_finanzas(_client, user_id):
