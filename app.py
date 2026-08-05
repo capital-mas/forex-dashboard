@@ -625,7 +625,7 @@ def pantalla_landing():
         <div class="pricing-price">$15.000<br><small>o U$S10</small></div>
         <div class="pricing-permes">U$S10 / mes</div>
         <div class="pricing-sub">Acceso completo a todos los módulos</div>
-        <div class="pricing-trial">🎁 3 días gratis</div>
+        <div class="pricing-trial">🎁 7 días gratis</div>
         <div class="pricing-cancel">Cancelás cuando quieras</div>
       </div>
       <div class="pricing-card">
@@ -634,7 +634,7 @@ def pantalla_landing():
         <div class="pricing-price">$40.000<br><small>o U$S27</small></div>
         <div class="pricing-permes">U$S9 / mes</div>
         <div class="pricing-sub">Acceso completo a todos los módulos</div>
-        <div class="pricing-trial">🎁 3 días gratis</div>
+        <div class="pricing-trial">🎁 7 días gratis</div>
         <div class="pricing-cancel">Cancelás cuando quieras</div>
       </div>
       <div class="pricing-card">
@@ -642,7 +642,7 @@ def pantalla_landing():
         <div class="pricing-price">$75.000<br><small>o U$S50</small></div>
         <div class="pricing-permes">U$S8,33 / mes</div>
         <div class="pricing-sub">Acceso completo a todos los módulos</div>
-        <div class="pricing-trial">🎁 3 días gratis</div>
+        <div class="pricing-trial">🎁 7 días gratis</div>
         <div class="pricing-cancel">Cancelás cuando quieras</div>
       </div>
       <div class="pricing-card featured">
@@ -651,7 +651,7 @@ def pantalla_landing():
         <div class="pricing-price">$135.000<br><small>o U$S90</small></div>
         <div class="pricing-permes">U$S7,50 / mes</div>
         <div class="pricing-sub">Acceso completo a todos los módulos</div>
-        <div class="pricing-trial">🎁 3 días gratis</div>
+        <div class="pricing-trial">🎁 7 días gratis</div>
         <div class="pricing-cancel">Cancelás cuando quieras</div>
       </div>
     </div>
@@ -661,7 +661,7 @@ def pantalla_landing():
     _, col_faq, _ = st.columns([1, 3, 1])
     with col_faq:
         with st.expander("¿Necesito tarjeta para probarlo?"):
-            st.write("No. Te registrás con tu email y arrancás el trial de 3 días sin cargar ningún método de pago.")
+            st.write("No. Te registrás con tu email y arrancás el trial de 7 días sin cargar ningún método de pago.")
         with st.expander("¿Qué pasa cuando termina el trial?"):
             st.write("Te pedimos que te suscribas para seguir con acceso completo. Podés pagar con Mercado Pago o, próximamente, con criptomonedas.")
         with st.expander("¿Puedo cancelar cuando quiera?"):
