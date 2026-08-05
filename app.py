@@ -455,7 +455,7 @@ def pantalla_landing():
           forex, commodities y cripto.
         </div>
         <div class="landing-sub" style="margin-top:18px">
-          🎁 <b style="color:#e6edf3">3 días de prueba gratis</b>, sin tarjeta. Cancelás cuando quieras.
+          🎁 <b style="color:#e6edf3">7 días de prueba gratis</b>, sin tarjeta. Cancelás cuando quieras.
         </div>
         """, unsafe_allow_html=True)
 
