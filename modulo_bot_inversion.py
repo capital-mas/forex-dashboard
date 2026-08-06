@@ -1,84 +1,71 @@
 # ==============================================================
-#  MÓDULO BOT DE INVERSIÓN — v9: Motor de BANDAS DE BOLLINGER +
-#  VWAP con BANDAS DE DESVÍO ESTÁNDAR (5 niveles). Reemplaza por
-#  completo el motor anterior de pila de EMAs (9/20/50/200/300/
-#  400/500). Estrategia de REVERSIÓN A LA MEDIA en zonas de
-#  sobreventa/sobrecompra confirmadas por DOS indicadores de
-#  volatilidad independientes (confluencia), pensada para
-#  maximizar el win rate: se entra recién cuando el precio ya dio
-#  señales de reversión, no cuando "cae el cuchillo".
+#  MÓDULO BOT DE INVERSIÓN — v10: Motor de DOBLE BANDA DE BOLLINGER
+#  (una "rápida" y una "estructural", más larga y más ancha) con
+#  objetivo y Stop PROGRESIVOS. Reemplaza el motor anterior de
+#  Bollinger + VWAP (el VWAP se sacó por completo: en varios activos
+#  no traía volumen fiable de Yahoo Finance y quedaba en N/D).
+#  Estrategia de REVERSIÓN A LA MEDIA en zonas de sobreventa/
+#  sobrecompra confirmadas por DOS bandas de Bollinger de distinto
+#  período/ancho (confluencia de corto y largo plazo dentro del
+#  mismo timeframe), pensada para maximizar el win rate: se entra
+#  recién cuando el precio ya dio señales de reversión, no cuando
+#  "cae el cuchillo".
 #
 #  Indicadores usados:
-#    · Bandas de Bollinger (SMA de `bb_length` ± `bb_std` desvíos).
-#    · VWAP con bandas de desvío estándar (media ponderada por
-#      volumen sobre una ventana móvil de `vwap_length` velas,
-#      ± 1σ, 2σ, 3σ, 4σ y 5σ — 5 bandas a cada lado).
+#    · Banda de Bollinger 1 ("rápida"): SMA(bb1_length) ± bb1_std
+#      desvíos. Por defecto 20 y 2.0 — la banda "de gatillo".
+#    · Banda de Bollinger 2 ("estructural"): SMA(bb2_length) ±
+#      bb2_std desvíos. Por defecto 50 y 2.5 — más lenta y más
+#      ancha, confirma que la sobreventa/sobrecompra no es solo
+#      ruido de corto plazo.
 #    · RSI(14) como confirmación de que el precio venía de un
-#      extremo y está girando (no como filtro de tendencia).
-#
-#  ⚠️ Nota técnica sobre el VWAP: yfinance no entrega un intradía
-#  "puro" con volumen fiable para todos los símbolos/timeframes, y
-#  un VWAP de sesión (que resetea cada día) no tiene sentido en la
-#  temporalidad "1 día". Por eso acá el VWAP es una MEDIA MÓVIL
-#  PONDERADA POR VOLUMEN sobre una ventana de `vwap_length` velas
-#  (no un VWAP de sesión clásico). Es la forma estándar de que el
-#  indicador funcione igual en 15m, 1h, 4h o 1 día. Si el activo no
-#  trae volumen (algunos índices/forex), el bot lo detecta y usa
-#  automáticamente el precio típico sin ponderar (equivalente a que
-#  todas las velas pesen igual).
+#      extremo y está girando.
 #
 #  📈 ENTRADA EN LARGO (COMPRA) — confluencia de sobreventa:
-#     1) El precio tocó la banda inferior de Bollinger en las
-#        últimas N velas (`cruce_lookback_barras`).
-#     2) El precio TAMBIÉN tocó la banda VWAP -2σ en esas mismas
-#        últimas N velas (dos indicadores de volatilidad distintos
-#        de acuerdo → la sobreventa es más confiable que con uno
-#        solo).
+#     1) El precio tocó la banda inferior de la Bollinger 1 (rápida)
+#        en las últimas N velas (`cruce_lookback_barras`).
+#     2) El precio TAMBIÉN tocó la banda inferior de la Bollinger 2
+#        (estructural) en esas mismas últimas N velas — dos bandas
+#        de distinto período de acuerdo → la sobreventa es más
+#        confiable que con una sola.
 #     3) RECLAMO: la vela actual cierra de nuevo POR ENCIMA de la
-#        banda inferior de Bollinger, habiendo cerrado en/bajo esa
-#        banda la vela anterior. Este es el gatillo real — recién
-#        acá se dispara la señal, no en el toque de la banda.
+#        banda inferior de la Bollinger 1, habiendo cerrado en/bajo
+#        esa banda la vela anterior. Este es el gatillo real.
 #     4) El RSI(14) venía de zona de sobreventa (&lt;30) en esas
-#        últimas N velas y ya volvió por encima de 30 pero sigue
-#        por debajo de 65 (está girando, no ya extendido de nuevo).
+#        últimas N velas y ya volvió por encima de 30 pero sigue por
+#        debajo de 65 (está girando, no ya extendido de nuevo).
 #     Opcional: exigir volumen por encima de su promedio de 20
-#     velas en la vela de reclamo (confirma que hay compradores
-#     reales, no solo un rebote sin fuerza).
-#     Opcional: no comprar si el régimen de mercado es BAJISTA
-#     (evita comprar sobreventas dentro de una tendencia bajista
-#     fuerte, donde el precio puede seguir "caminando" la banda).
+#     velas en la vela de reclamo.
+#     Opcional: no comprar si el régimen de mercado es BAJISTA.
 #
-#  📉 ENTRADA EN CORTO (VENTA) — exactamente lo simétrico arriba:
-#     toque reciente de banda superior de Bollinger + banda
-#     VWAP +2σ, reclamo bajista (cierre vuelve a meterse bajo la
-#     banda superior de Bollinger) y RSI viniendo de sobrecompra
-#     (&gt;70) y ya por debajo de 70 pero por encima de 35.
+#  📉 ENTRADA EN CORTO (VENTA) — exactamente lo simétrico arriba,
+#     usando las bandas superiores de ambas Bollinger.
 #
 #  🎯 OBJETIVO Y STOP PROGRESIVOS (nunca aflojan, solo mejoran)
-#     Al entrar:             Stop = % fijo desde la entrada
-#                             (configurable) · Objetivo = VWAP.
-#     Cierra más allá del VWAP →     Stop = VWAP (trailing)
-#                                     · Objetivo = VWAP ±1σ.
-#     Cierra más allá de VWAP±1σ →   Stop = VWAP±1σ
-#                                     · Objetivo = VWAP±2σ.
-#     Cierra más allá de VWAP±2σ →   Stop = VWAP±2σ
-#                                     · Objetivo = VWAP±3σ.
-#     Cierra más allá de VWAP±3σ →   Stop = VWAP±3σ
-#                                     · Objetivo = VWAP±4σ.
-#     Cierra más allá de VWAP±4σ →   Stop = VWAP±4σ
-#                                     · Objetivo = VWAP±5σ.
-#     Cierra más allá de VWAP±5σ →   Stop = VWAP±5σ · sin objetivo
-#                                     fijo: se deja correr la
-#                                     posición (movimiento extremo,
-#                                     podría seguir mucho más).
+#     Al entrar:                  Stop = % fijo desde la entrada
+#                                  (configurable) · Objetivo = Media
+#                                  de la Bollinger 1 (SMA rápida).
+#     Cierra más allá de Media BB1 →   Stop = Media BB1 (trailing)
+#                                       · Objetivo = Media BB2.
+#     Cierra más allá de Media BB2 →   Stop = Media BB2
+#                                       · Objetivo = Banda extrema
+#                                         BB1 (superior en largo,
+#                                         inferior en corto).
+#     Cierra más allá de Banda BB1 →   Stop = Banda BB1
+#                                       · Objetivo = Banda extrema
+#                                         BB2.
+#     Cierra más allá de Banda BB2 →   Stop = Banda BB2 · sin
+#                                       objetivo fijo: se deja correr
+#                                       la posición (movimiento
+#                                       extremo, podría seguir mucho
+#                                       más).
 #     El Stop de cada tramo sigue el valor vigente de esa banda
 #     (trailing), pero jamás se afloja hacia el lado de la pérdida.
 #
 #  📉 SALIDA (pérdida de fuerza / señal opuesta): si estando en
-#     largo aparece una señal de VENTA (reclamo bajista en zona de
-#     sobrecompra), se cierra la posición aunque el Stop todavía no
-#     se haya tocado. Si estando en corto aparece una señal de
-#     COMPRA, se cubre.
+#     largo aparece una señal de VENTA, se cierra la posición aunque
+#     el Stop todavía no se haya tocado. Si estando en corto aparece
+#     una señal de COMPRA, se cubre.
 #
 #  Entrada real: al precio de APERTURA de la vela siguiente a la
 #  señal (no al cierre de la vela de la señal), para no incurrir en
@@ -188,23 +175,24 @@ C_BAJISTA       = '#f85149'
 C_LATERAL       = '#e3b341'
 
 # ── Parámetros de la estrategia (defaults) ──────────────────────
-BB_LENGTH_DEFAULT = 20
-BB_STD_DEFAULT = 2.0
-VWAP_LENGTH_DEFAULT = 20
-VWAP_MAX_MULT = 5  # 5 bandas de desvío estándar a cada lado del VWAP
+BB1_LENGTH_DEFAULT = 20   # Bollinger "rápida" (banda de gatillo)
+BB1_STD_DEFAULT = 2.0
+BB2_LENGTH_DEFAULT = 50   # Bollinger "estructural" (confirmación de largo plazo)
+BB2_STD_DEFAULT = 2.5
 RSI_PERIODO_DEFAULT = 14
 CRUCE_LOOKBACK_DEFAULT = 5  # ventana para "toque reciente de banda" y "venía de sobreventa/sobrecompra"
 STOP_INICIAL_PCT_DEFAULT = 1.5  # % de distancia del Stop inicial respecto al precio de entrada
-REGIMEN_PENDIENTE_BARRAS = 10  # barras para medir la pendiente del VWAP (régimen de mercado)
+REGIMEN_PENDIENTE_BARRAS = 10  # barras para medir la pendiente de la media estructural (régimen de mercado)
 
-# Escalera de Stop/Objetivo progresivos, por dirección. El nivel -1
-# (antes de romper el VWAP) usa el Stop fijo (STOP_INICIAL_PCT). A
-# partir de ahí, cada ruptura de objetivo mueve el Stop a la banda
-# recién superada y el objetivo avanza a la siguiente banda.
-NIVELES_STOP_LARGO = ['vwap', 'vwap_up1', 'vwap_up2', 'vwap_up3', 'vwap_up4', 'vwap_up5']
-NIVELES_OBJ_LARGO  = ['vwap_up1', 'vwap_up2', 'vwap_up3', 'vwap_up4', 'vwap_up5', None]
-NIVELES_STOP_CORTO = ['vwap', 'vwap_dn1', 'vwap_dn2', 'vwap_dn3', 'vwap_dn4', 'vwap_dn5']
-NIVELES_OBJ_CORTO  = ['vwap_dn1', 'vwap_dn2', 'vwap_dn3', 'vwap_dn4', 'vwap_dn5', None]
+# Escalera de Stop/Objetivo progresivos, por dirección, usando solo
+# las dos Bollinger (medias y bandas extremas). El nivel -1 (antes de
+# romper la media de la BB1) usa el Stop fijo (STOP_INICIAL_PCT). A
+# partir de ahí, cada ruptura de objetivo mueve el Stop al nivel
+# recién superado y el objetivo avanza al siguiente.
+NIVELES_STOP_LARGO = ['bb1_basis', 'bb2_basis', 'bb1_upper', 'bb2_upper']
+NIVELES_OBJ_LARGO  = ['bb2_basis', 'bb1_upper', 'bb2_upper', None]
+NIVELES_STOP_CORTO = ['bb1_basis', 'bb2_basis', 'bb1_lower', 'bb2_lower']
+NIVELES_OBJ_CORTO  = ['bb2_basis', 'bb1_lower', 'bb2_lower', None]
 
 
 # ── Indicadores ─────────────────────────────────────────────────
@@ -220,7 +208,7 @@ def _rsi_wilder(close, length=14):
     return rsi.fillna(50)
 
 
-def _bollinger(close, length=20, num_std=2.0):
+def _bollinger(close, length, num_std):
     """Bandas de Bollinger clásicas: SMA(length) ± num_std desvíos
     estándar (población, ddof=0). Devuelve también el ancho de banda
     en % (usado para detectar "squeeze" ≈ mercado lateral)."""
@@ -232,54 +220,23 @@ def _bollinger(close, length=20, num_std=2.0):
     return basis, upper, lower, bandwidth
 
 
-def _vwap_rolling_bands(tp, volume, length, max_mult=VWAP_MAX_MULT):
-    """VWAP con bandas de desvío estándar sobre una ventana móvil de
-    `length` velas (no un VWAP de sesión clásico — ver nota técnica
-    al inicio del archivo). Si no hay volumen disponible, cae de
-    forma automática a un promedio simple del precio típico (todas
-    las velas pesan igual) para no romper el cálculo."""
-    if volume is None or volume.fillna(0).sum() == 0:
-        vol = pd.Series(1.0, index=tp.index)
-    else:
-        vol = volume.fillna(0).clip(lower=0)
-        if vol.sum() == 0:
-            vol = pd.Series(1.0, index=tp.index)
+# ── Motor de señales (doble Bollinger) ───────────────────────────
 
-    pv = tp * vol
-    sum_vol = vol.rolling(length, min_periods=length).sum()
-    sum_pv = pv.rolling(length, min_periods=length).sum()
-    vwap = sum_pv / sum_vol.replace(0, np.nan)
-
-    # Varianza ponderada por volumen (aproximada: usa el VWAP vigente
-    # en cada barra como referencia antes de sumar en la ventana —
-    # es el enfoque práctico estándar de los indicadores "VWAP bands").
-    dif2_vol = ((tp - vwap) ** 2) * vol
-    sum_dif2 = dif2_vol.rolling(length, min_periods=length).sum()
-    varianza = sum_dif2 / sum_vol.replace(0, np.nan)
-    stdev = np.sqrt(varianza.clip(lower=0))
-
-    bandas = {'vwap': vwap, 'stdev': stdev}
-    for m in range(1, max_mult + 1):
-        bandas[f'up{m}'] = vwap + m * stdev
-        bandas[f'dn{m}'] = vwap - m * stdev
-    return bandas
-
-
-# ── Motor de señales (Bollinger + VWAP con bandas de desvío) ────
-
-def _calcular_bot_dataframe_bb_vwap(close, high, low, volume, opens,
-                                      bb_length, bb_std, vwap_length, rsi_periodo,
-                                      cruce_lookback_barras, exigir_volumen, exigir_filtro_regimen):
+def _calcular_bot_dataframe_bb(close, high, low, volume, opens,
+                                 bb1_length, bb1_std, bb2_length, bb2_std, rsi_periodo,
+                                 cruce_lookback_barras, exigir_volumen, exigir_filtro_regimen):
     """Calcula todos los indicadores y las señales de COMPRA/VENTA
-    para cada barra según la estrategia de confluencia Bollinger +
-    VWAP. No mira hacia adelante: todo se calcula con datos
-    disponibles hasta la barra actual.
+    para cada barra según la estrategia de confluencia de dos Bandas
+    de Bollinger (una rápida y una estructural). No mira hacia
+    adelante: todo se calcula con datos disponibles hasta la barra
+    actual.
 
     COMPRA (reversión desde sobreventa): toque reciente de banda
-    inferior de Bollinger Y de banda VWAP-2σ, reclamo alcista (cierre
-    vuelve sobre la banda inferior de Bollinger) y RSI viniendo de
-    sobreventa y ya girando al alza. Si `exigir_volumen`, pide volumen
-    por encima de su promedio de 20 velas en la vela de reclamo. Si
+    inferior de la Bollinger 1 (rápida) Y de la Bollinger 2
+    (estructural), reclamo alcista (cierre vuelve sobre la banda
+    inferior de la Bollinger 1) y RSI viniendo de sobreventa y ya
+    girando al alza. Si `exigir_volumen`, pide volumen por encima de
+    su promedio de 20 velas en la vela de reclamo. Si
     `exigir_filtro_regimen`, no compra si el régimen es BAJISTA.
 
     VENTA: exactamente lo simétrico, en la zona superior.
@@ -290,10 +247,8 @@ def _calcular_bot_dataframe_bb_vwap(close, high, low, volume, opens,
     op = opens.reindex(cl.index) if opens is not None else cl
     vol = volume.reindex(cl.index) if volume is not None else None
 
-    tp = (hi + lo + cl) / 3.0
-    bb_basis, bb_upper, bb_lower, bb_bandwidth = _bollinger(cl, bb_length, bb_std)
-    bandas_vwap = _vwap_rolling_bands(tp, vol, vwap_length, VWAP_MAX_MULT)
-    vwap = bandas_vwap['vwap']
+    bb1_basis, bb1_upper, bb1_lower, bb1_bandwidth = _bollinger(cl, bb1_length, bb1_std)
+    bb2_basis, bb2_upper, bb2_lower, bb2_bandwidth = _bollinger(cl, bb2_length, bb2_std)
     rsi_valor = _rsi_wilder(cl, rsi_periodo)
 
     if vol is not None and vol.fillna(0).sum() > 0:
@@ -302,15 +257,15 @@ def _calcular_bot_dataframe_bb_vwap(close, high, low, volume, opens,
     else:
         volumen_alto = pd.Series(True, index=cl.index)  # sin datos de volumen: no se usa como filtro
 
-    # ── Toques recientes a las bandas extremas (confluencia) ──
-    toco_bb_inf_reciente = (lo <= bb_lower).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
-    toco_vwap_inf_reciente = (lo <= bandas_vwap['dn2']).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
-    toco_bb_sup_reciente = (hi >= bb_upper).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
-    toco_vwap_sup_reciente = (hi >= bandas_vwap['up2']).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
+    # ── Toques recientes a las bandas extremas de AMBAS Bollinger (confluencia) ──
+    toco_bb1_inf_reciente = (lo <= bb1_lower).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
+    toco_bb2_inf_reciente = (lo <= bb2_lower).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
+    toco_bb1_sup_reciente = (hi >= bb1_upper).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
+    toco_bb2_sup_reciente = (hi >= bb2_upper).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
 
-    # ── Reclamo: el precio vuelve a cerrar dentro de la banda de Bollinger (gatillo real) ──
-    reclamo_alcista = (cl > bb_lower) & (cl.shift(1) <= bb_lower.shift(1))
-    reclamo_bajista = (cl < bb_upper) & (cl.shift(1) >= bb_upper.shift(1))
+    # ── Reclamo: el precio vuelve a cerrar dentro de la banda rápida (gatillo real) ──
+    reclamo_alcista = (cl > bb1_lower) & (cl.shift(1) <= bb1_lower.shift(1))
+    reclamo_bajista = (cl < bb1_upper) & (cl.shift(1) >= bb1_upper.shift(1))
 
     # ── RSI: confirma que venía de un extremo y está girando ──
     estuvo_sobrevendido = (rsi_valor < 30).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
@@ -318,23 +273,24 @@ def _calcular_bot_dataframe_bb_vwap(close, high, low, volume, opens,
     rsi_ok_compra = estuvo_sobrevendido & (rsi_valor > 30) & (rsi_valor < 65)
     rsi_ok_venta = estuvo_sobrecomprado & (rsi_valor < 70) & (rsi_valor > 35)
 
-    # ── Régimen de mercado (informativo + filtro opcional) ──
-    pendiente_vwap = vwap - vwap.shift(REGIMEN_PENDIENTE_BARRAS)
-    bandwidth_pctl = bb_bandwidth.rolling(100, min_periods=20).rank(pct=True)
-    en_squeeze = bandwidth_pctl < 0.20  # Bollinger muy angosta → mercado lateral/comprimido
-    regimen_alcista = (cl > vwap) & (pendiente_vwap > 0) & (~en_squeeze)
-    regimen_bajista = (cl < vwap) & (pendiente_vwap < 0) & (~en_squeeze)
+    # ── Régimen de mercado (informativo + filtro opcional): media rápida vs
+    #    media estructural y pendiente de la estructural, con squeeze = LATERAL ──
+    pendiente_bb2_basis = bb2_basis - bb2_basis.shift(REGIMEN_PENDIENTE_BARRAS)
+    bandwidth_pctl = bb1_bandwidth.rolling(100, min_periods=20).rank(pct=True)
+    en_squeeze = bandwidth_pctl < 0.20  # Bollinger rápida muy angosta → mercado comprimido/lateral
+    regimen_alcista = (bb1_basis > bb2_basis) & (pendiente_bb2_basis > 0) & (~en_squeeze)
+    regimen_bajista = (bb1_basis < bb2_basis) & (pendiente_bb2_basis < 0) & (~en_squeeze)
     regimen_mercado = pd.Series('LATERAL', index=cl.index)
     regimen_mercado[regimen_alcista.fillna(False)] = 'ALCISTA'
     regimen_mercado[regimen_bajista.fillna(False)] = 'BAJISTA'
 
-    entrada_compra = reclamo_alcista & toco_bb_inf_reciente & toco_vwap_inf_reciente & rsi_ok_compra
+    entrada_compra = reclamo_alcista & toco_bb1_inf_reciente & toco_bb2_inf_reciente & rsi_ok_compra
     if exigir_volumen:
         entrada_compra = entrada_compra & volumen_alto
     if exigir_filtro_regimen:
         entrada_compra = entrada_compra & (regimen_mercado != 'BAJISTA')
 
-    entrada_venta = reclamo_bajista & toco_bb_sup_reciente & toco_vwap_sup_reciente & rsi_ok_venta
+    entrada_venta = reclamo_bajista & toco_bb1_sup_reciente & toco_bb2_sup_reciente & rsi_ok_venta
     if exigir_volumen:
         entrada_venta = entrada_venta & volumen_alto
     if exigir_filtro_regimen:
@@ -347,19 +303,12 @@ def _calcular_bot_dataframe_bb_vwap(close, high, low, volume, opens,
 
     df = pd.DataFrame({
         'precio': cl, 'high': hi, 'low': lo, 'open': op,
-        'bb_basis': bb_basis, 'bb_upper': bb_upper, 'bb_lower': bb_lower, 'bb_bandwidth': bb_bandwidth,
-        'vwap': vwap, 'vwap_stdev': bandas_vwap['stdev'],
+        'bb1_basis': bb1_basis, 'bb1_upper': bb1_upper, 'bb1_lower': bb1_lower, 'bb1_bandwidth': bb1_bandwidth,
+        'bb2_basis': bb2_basis, 'bb2_upper': bb2_upper, 'bb2_lower': bb2_lower, 'bb2_bandwidth': bb2_bandwidth,
+        'rsi': rsi_valor, 'volumen_alto': volumen_alto, 'regimen_mercado': regimen_mercado,
+        'senal_compra': entrada_compra, 'senal_venta': entrada_venta,
+        'estado': estado, 'disparo': disparo,
     })
-    for m in range(1, VWAP_MAX_MULT + 1):
-        df[f'vwap_up{m}'] = bandas_vwap[f'up{m}']
-        df[f'vwap_dn{m}'] = bandas_vwap[f'dn{m}']
-    df['rsi'] = rsi_valor
-    df['volumen_alto'] = volumen_alto
-    df['regimen_mercado'] = regimen_mercado
-    df['senal_compra'] = entrada_compra
-    df['senal_venta'] = entrada_venta
-    df['estado'] = estado
-    df['disparo'] = disparo
     return df
 
 
@@ -369,16 +318,16 @@ def _calcular_bot_dataframe_bb_vwap(close, high, low, volume, opens,
 #     precio de APERTURA de la vela siguiente.
 #  2) Stop inicial FIJO: ±STOP_INICIAL_PCT% desde el precio de
 #     entrada. No es trailing todavía.
-#  3) Primer objetivo: VWAP. Al cerrar más allá del VWAP (long: por
-#     encima; short: por debajo), el Stop pasa a ser el VWAP
-#     (trailing desde ahí) y el objetivo avanza a VWAP±1σ, luego
-#     ±2σ, ±3σ, ±4σ y ±5σ. El Stop nunca se afloja (long: solo sube;
-#     short: solo baja).
+#  3) Primer objetivo: Media de la Bollinger 1. Al cerrar más allá de
+#     esa media, el Stop pasa a ser esa media (trailing) y el
+#     objetivo avanza a la Media de la Bollinger 2, luego a la banda
+#     extrema de la Bollinger 1, luego a la banda extrema de la
+#     Bollinger 2. El Stop nunca se afloja.
 #  4) Salida por pérdida de fuerza: si la posición es larga y aparece
-#     la señal de VENTA (reclamo bajista en zona de sobrecompra), se
-#     cierra; si es corta y aparece la señal de COMPRA, se cubre.
+#     la señal de VENTA, se cierra; si es corta y aparece la señal de
+#     COMPRA, se cubre.
 
-def _simular_operaciones_bb_vwap(df, stop_inicial_pct=STOP_INICIAL_PCT_DEFAULT):
+def _simular_operaciones_bb(df, stop_inicial_pct=STOP_INICIAL_PCT_DEFAULT):
     df = df.copy()
     n = len(df)
     idx = df.index
@@ -391,8 +340,7 @@ def _simular_operaciones_bb_vwap(df, stop_inicial_pct=STOP_INICIAL_PCT_DEFAULT):
     senal_compra_arr = df['senal_compra'].values
     senal_venta_arr = df['senal_venta'].values
 
-    columnas_necesarias = ['vwap'] + [f'vwap_up{m}' for m in range(1, VWAP_MAX_MULT + 1)] + \
-                           [f'vwap_dn{m}' for m in range(1, VWAP_MAX_MULT + 1)]
+    columnas_necesarias = ['bb1_basis', 'bb1_upper', 'bb1_lower', 'bb2_basis', 'bb2_upper', 'bb2_lower']
     arr_por_nombre = {c: df[c].values for c in columnas_necesarias}
 
     resultado = [''] * n
@@ -436,10 +384,10 @@ def _simular_operaciones_bb_vwap(df, stop_inicial_pct=STOP_INICIAL_PCT_DEFAULT):
 
         niveles_stop = NIVELES_STOP_LARGO if es_largo else NIVELES_STOP_CORTO
         niveles_obj = NIVELES_OBJ_LARGO if es_largo else NIVELES_OBJ_CORTO
-        nivel_idx = -1  # -1 = tramo de Stop fijo inicial; 0..5 = tramos VWAP/±1σ.../±5σ
-        objetivo_col = 'vwap'
+        nivel_idx = -1  # -1 = tramo de Stop fijo inicial; 0..3 = tramos Media BB1/Media BB2/Banda BB1/Banda BB2
+        objetivo_col = 'bb1_basis'
         stop_col = None
-        nivel_texto = f'Inicial (Stop fijo {stop_inicial_pct:.1f}% desde la entrada · Objetivo VWAP)'
+        nivel_texto = f'Inicial (Stop fijo {stop_inicial_pct:.1f}% desde la entrada · Objetivo Media BB1)'
 
         j_exit = n - 1
         precio_exit = precio_arr[n - 1]
@@ -462,10 +410,10 @@ def _simular_operaciones_bb_vwap(df, stop_inicial_pct=STOP_INICIAL_PCT_DEFAULT):
 
             # 3) ¿Señal opuesta (pérdida de fuerza / se cubre el corto)?
             if es_largo and senal_venta_arr[j]:
-                precio_exit, j_exit, motivo = cl_j, j, 'Señal de venta (reclamo bajista BB/VWAP en sobrecompra)'
+                precio_exit, j_exit, motivo = cl_j, j, 'Señal de venta (reclamo bajista en sobrecompra)'
                 break
             if (not es_largo) and senal_compra_arr[j]:
-                precio_exit, j_exit, motivo = cl_j, j, 'Señal de compra (reclamo alcista BB/VWAP en sobreventa) — se cubre el corto'
+                precio_exit, j_exit, motivo = cl_j, j, 'Señal de compra (reclamo alcista en sobreventa) — se cubre el corto'
                 break
 
             # 4) ¿Rompió el objetivo vigente? → sube de tramo (trailing desde ahí)
@@ -654,21 +602,15 @@ def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df.index, y=df['precio'], line=dict(color='#3a7bd5', width=1.4), name='Precio'))
 
-    # Bollinger
-    fig.add_trace(go.Scatter(x=df.index, y=df['bb_upper'], line=dict(color='#e3b341', width=1, dash='dot'), name='BB Superior'))
-    fig.add_trace(go.Scatter(x=df.index, y=df['bb_basis'], line=dict(color='#8b949e', width=1, dash='dot'), name='BB Media (SMA)'))
-    fig.add_trace(go.Scatter(x=df.index, y=df['bb_lower'], line=dict(color='#e3b341', width=1, dash='dot'), name='BB Inferior'))
+    # Bollinger 1 (rápida)
+    fig.add_trace(go.Scatter(x=df.index, y=df['bb1_upper'], line=dict(color='#e3b341', width=1, dash='dot'), name='BB1 Superior'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['bb1_basis'], line=dict(color='#e3b341', width=1.3), name='BB1 Media'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['bb1_lower'], line=dict(color='#e3b341', width=1, dash='dot'), name='BB1 Inferior'))
 
-    # VWAP + 5 bandas de desvío a cada lado (opacidad decreciente hacia afuera)
-    fig.add_trace(go.Scatter(x=df.index, y=df['vwap'], line=dict(color='#a371f7', width=1.6), name='VWAP'))
-    opacidades = [0.85, 0.65, 0.5, 0.35, 0.22]
-    for m, op in zip(range(1, VWAP_MAX_MULT + 1), opacidades):
-        color_up = f'rgba(63,185,80,{op})'
-        color_dn = f'rgba(248,81,73,{op})'
-        fig.add_trace(go.Scatter(x=df.index, y=df[f'vwap_up{m}'], line=dict(color=color_up, width=1, dash='dash'),
-                                  name=f'VWAP +{m}σ'))
-        fig.add_trace(go.Scatter(x=df.index, y=df[f'vwap_dn{m}'], line=dict(color=color_dn, width=1, dash='dash'),
-                                  name=f'VWAP -{m}σ'))
+    # Bollinger 2 (estructural)
+    fig.add_trace(go.Scatter(x=df.index, y=df['bb2_upper'], line=dict(color='#a371f7', width=1, dash='dash'), name='BB2 Superior'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['bb2_basis'], line=dict(color='#a371f7', width=1.3, dash='dash'), name='BB2 Media'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['bb2_lower'], line=dict(color='#a371f7', width=1, dash='dash'), name='BB2 Inferior'))
 
     for tipo, color, symbol in [
         ('COMPRA', C_COMPRA, 'triangle-up'),
@@ -686,13 +628,13 @@ def _fig_bot_señales(ticker, df, PLOTLY_LAYOUT_BASE):
         fig.add_trace(go.Scatter(
             x=entradas_reales['fecha_entrada'], y=entradas_reales['precio_entrada'], mode='markers',
             name='Entrada real (apertura sig.)',
-            marker=dict(size=11, color='#e6edf3', symbol='circle', line=dict(width=2, color='#a371f7')),
+            marker=dict(size=11, color='#e6edf3', symbol='circle', line=dict(width=2, color='#3a7bd5')),
         ))
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text=f'{ticker} — Señales del Bot de Inversión (Bollinger + VWAP con bandas σ)', font=dict(size=14)),
-        height=520, hovermode='x unified',
-        legend=dict(orientation='h', y=1.12, font=dict(size=9)),
+        title=dict(text=f'{ticker} — Señales del Bot de Inversión (doble Bollinger)', font=dict(size=14)),
+        height=500, hovermode='x unified',
+        legend=dict(orientation='h', y=1.1, font=dict(size=10)),
         xaxis=dict(gridcolor='#21262d'), yaxis=dict(gridcolor='#21262d'),
         margin=dict(l=10, r=10, t=50, b=10),
     )
@@ -724,19 +666,19 @@ def modulo_bot_inversion(
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d; border-top:2px solid #6CC24A;
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Bollinger + VWAP con bandas σ (5 niveles)</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Doble Banda de Bollinger</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
         Estrategia de <b style="color:#e3b341">reversión a la media</b>, pensada para maximizar el
-        <b style="color:#3fb950">win rate</b>: solo entra cuando <b style="color:#a371f7">dos indicadores
-        de volatilidad independientes</b> (Bandas de Bollinger y VWAP con bandas de desvío estándar)
-        coinciden en marcar una zona extrema, Y el precio ya dio señales de estar revirtiendo (RSI
-        girando + reclamo de la banda), no apenas la toca. La entrada real es a la apertura de la vela
-        siguiente a la señal (sin look-ahead), con Stop fijo inicial de
-        <b style="color:#a371f7">1.5%</b> (configurable). A partir de superar el VWAP, el Objetivo y el
-        Stop pasan a ser <b style="color:#a371f7">progresivos</b> por las 5 bandas
-        (VWAP → ±1σ → ±2σ → ±3σ → ±4σ → ±5σ), el Stop nunca se afloja. Para posiciones
-        <b style="color:#e3b341">cortas</b> es todo simétrico hacia arriba. Cada activo muestra además si
-        el mercado está <b style="color:#3fb950">ALCISTA</b>, <b style="color:#f85149">BAJISTA</b> o
+        <b style="color:#3fb950">win rate</b>: solo entra cuando <b style="color:#a371f7">dos Bandas de
+        Bollinger de distinto período</b> (una rápida y una estructural, más larga) coinciden en marcar
+        una zona extrema, Y el precio ya dio señales de estar revirtiendo (RSI girando + reclamo de la
+        banda rápida), no apenas la toca. La entrada real es a la apertura de la vela siguiente a la
+        señal (sin look-ahead), con Stop fijo inicial de <b style="color:#a371f7">1.5%</b> (configurable).
+        A partir de superar la media de la banda rápida, el Objetivo y el Stop pasan a ser
+        <b style="color:#a371f7">progresivos</b> (Media BB1 → Media BB2 → Banda extrema BB1 → Banda
+        extrema BB2), el Stop nunca se afloja. Para posiciones <b style="color:#e3b341">cortas</b> es
+        todo simétrico hacia arriba. Cada activo muestra además si el mercado está
+        <b style="color:#3fb950">ALCISTA</b>, <b style="color:#f85149">BAJISTA</b> o
         <b style="color:#e3b341">LATERAL</b>. Analizá hasta <b style="color:#e3b341">10 activos</b> en
         <b style="color:#e3b341">15, 30, 45 min, 1h, 4h o 1 día</b>.
       </div>
@@ -802,13 +744,13 @@ def modulo_bot_inversion(
     with st.expander('⚙️ Parámetros de la estrategia (opcional, aplican a todos los activos)', expanded=False):
         p1, p2, p3 = st.columns(3)
         with p1:
-            st.markdown('**Bandas de Bollinger**')
-            bb_length = st.number_input('Longitud (SMA)', value=BB_LENGTH_DEFAULT, min_value=5, key='bot_bb_length')
-            bb_std = st.number_input('Desvíos estándar', value=BB_STD_DEFAULT, min_value=0.5, max_value=4.0, step=0.1, key='bot_bb_std')
+            st.markdown('**Bollinger 1 (rápida — banda de gatillo)**')
+            bb1_length = st.number_input('Longitud (SMA)', value=BB1_LENGTH_DEFAULT, min_value=5, key='bot_bb1_length')
+            bb1_std = st.number_input('Desvíos estándar', value=BB1_STD_DEFAULT, min_value=0.5, max_value=4.0, step=0.1, key='bot_bb1_std')
         with p2:
-            st.markdown('**VWAP (ventana móvil) + bandas σ**')
-            vwap_length = st.number_input('Longitud de la ventana', value=VWAP_LENGTH_DEFAULT, min_value=5, key='bot_vwap_length')
-            st.caption(f'Se calculan {VWAP_MAX_MULT} bandas de desvío estándar a cada lado (±1σ a ±{VWAP_MAX_MULT}σ).')
+            st.markdown('**Bollinger 2 (estructural — confirmación)**')
+            bb2_length = st.number_input('Longitud (SMA)', value=BB2_LENGTH_DEFAULT, min_value=10, key='bot_bb2_length')
+            bb2_std = st.number_input('Desvíos estándar ', value=BB2_STD_DEFAULT, min_value=0.5, max_value=4.0, step=0.1, key='bot_bb2_std')
         with p3:
             st.markdown('**RSI y confirmación**')
             rsi_periodo = st.number_input('Período RSI', value=RSI_PERIODO_DEFAULT, min_value=2, key='bot_rsi_periodo')
@@ -842,9 +784,9 @@ def modulo_bot_inversion(
                      'esta distancia fija desde ese precio de entrada.',
             )
         st.caption(
-            'Objetivo y Stop, a partir de superar el VWAP, son progresivos por diseño de la estrategia '
-            '(Objetivo VWAP → ±1σ → ±2σ → ±3σ → ±4σ → ±5σ; el Stop en esos tramos sigue a la banda '
-            'correspondiente y nunca se afloja).'
+            'Objetivo y Stop, a partir de superar la Media de la Bollinger 1, son progresivos por diseño '
+            'de la estrategia (Objetivo Media BB1 → Media BB2 → Banda extrema BB1 → Banda extrema BB2; '
+            'el Stop en esos tramos sigue al nivel correspondiente y nunca se afloja).'
         )
 
     analizar_bot = st.button('▶ Analizar', key='bot_run', type='primary')
@@ -893,7 +835,7 @@ def modulo_bot_inversion(
         return
 
     cfg = HORIZONTES_BOT[horizonte_bot]
-    min_barras_necesarias = max(int(bb_length), int(vwap_length)) * 3 + 50
+    min_barras_necesarias = max(int(bb1_length), int(bb2_length)) * 3 + 50
 
     with st.spinner(f'Descargando velas de {horizonte_bot} para {len(tickers_bot)} activo(s)...'):
         precios_raw = _fetch_paralelo_bot(tickers_bot, cfg)
@@ -918,12 +860,12 @@ def modulo_bot_inversion(
         lo = df_raw['Low'] if 'Low' in df_raw.columns else cl
         op = df_raw['Open'] if 'Open' in df_raw.columns else cl
         vol = df_raw['Volume'] if 'Volume' in df_raw.columns else None
-        df_bot = _calcular_bot_dataframe_bb_vwap(
+        df_bot = _calcular_bot_dataframe_bb(
             cl, hi, lo, vol, op,
-            int(bb_length), float(bb_std), int(vwap_length), int(rsi_periodo),
+            int(bb1_length), float(bb1_std), int(bb2_length), float(bb2_std), int(rsi_periodo),
             int(cruce_lookback_barras), exigir_volumen, exigir_filtro_regimen,
         )
-        df_bot = _simular_operaciones_bb_vwap(df_bot, stop_inicial_pct)
+        df_bot = _simular_operaciones_bb(df_bot, stop_inicial_pct)
         resultados_bot[tk] = df_bot
 
     if fallidos:
@@ -952,14 +894,13 @@ def modulo_bot_inversion(
         n_open = int((disparos_tk['resultado'] == '⏳').sum())
         cerradas = n_ok + n_bad
         winrate = f'{n_ok / cerradas * 100:.0f}%' if cerradas > 0 else 'N/D'
-        dist_vwap_pct = (u['precio'] - u['vwap']) / u['vwap'] * 100 if pd.notna(u['vwap']) and u['vwap'] != 0 else np.nan
         filas_resumen.append({
             'Ticker': tk, 'Señal': u['estado'], 'Régimen': u['regimen_mercado'], 'Precio': fmt_precio(u['precio']),
             'Última vela': df_bot.index[-1].strftime('%Y-%m-%d %H:%M'),
             'RSI': round(u['rsi'], 1),
-            'BB Ancho %': round(u['bb_bandwidth'], 2) if pd.notna(u['bb_bandwidth']) else None,
-            'VWAP': fmt_precio(u['vwap']),
-            'Dist. a VWAP %': f"{dist_vwap_pct:+.2f}%" if pd.notna(dist_vwap_pct) else '—',
+            'BB1 Ancho %': round(u['bb1_bandwidth'], 2) if pd.notna(u['bb1_bandwidth']) else None,
+            'BB1 Media': fmt_precio(u['bb1_basis']),
+            'BB2 Media': fmt_precio(u['bb2_basis']),
             'Track record': f'{n_ok}✅ {n_bad}❌ {n_open}⏳' + (f' · {n_no_tomadas_tk}⛔' if n_no_tomadas_tk else ''),
             'Win rate': winrate,
         })
@@ -1003,10 +944,10 @@ def modulo_bot_inversion(
     kpi_cards_4([
         ('Señal Actual', estado_actual, f'{ticker_detalle} · {horizonte_bot}', color_estado),
         ('Precio', fmt_precio(ultimo['precio']),
-         f"VWAP: {fmt_precio(ultimo['vwap'])} · BB Media: {fmt_precio(ultimo['bb_basis'])}", '#3a7bd5'),
-        ('RSI / Ancho BB', f"{ultimo['rsi']:.1f} / {ultimo['bb_bandwidth']:.2f}%" if pd.notna(ultimo['bb_bandwidth']) else f"{ultimo['rsi']:.1f} / N/D",
-         'Sobrecompra/sobreventa · compresión de bandas', score_color_hex(ultimo['rsi'])),
-        ('Régimen de mercado', regimen_actual, f"BB Sup: {fmt_precio(ultimo['bb_upper'])} · BB Inf: {fmt_precio(ultimo['bb_lower'])}", color_regimen),
+         f"BB1 Media: {fmt_precio(ultimo['bb1_basis'])} · BB2 Media: {fmt_precio(ultimo['bb2_basis'])}", '#3a7bd5'),
+        ('RSI / Ancho BB1', f"{ultimo['rsi']:.1f} / {ultimo['bb1_bandwidth']:.2f}%" if pd.notna(ultimo['bb1_bandwidth']) else f"{ultimo['rsi']:.1f} / N/D",
+         'Sobrecompra/sobreventa · compresión de banda', score_color_hex(ultimo['rsi'])),
+        ('Régimen de mercado', regimen_actual, f"BB1 Sup: {fmt_precio(ultimo['bb1_upper'])} · BB1 Inf: {fmt_precio(ultimo['bb1_lower'])}", color_regimen),
     ])
 
     st.plotly_chart(_fig_bot_señales(ticker_detalle, df_bot_sel, PLOTLY_LAYOUT_BASE),
@@ -1134,14 +1075,15 @@ def modulo_bot_inversion(
     with st.expander('❓ Cómo funciona esta estrategia'):
         st.markdown(f"""
         **1) Señal (se conoce al cierre de la vela, no dispara la entrada de inmediato)**
-        - **COMPRA** (candidata a largo): el precio tocó la banda inferior de Bollinger Y también la
-          banda VWAP -2σ dentro de las últimas {cruce_lookback_barras} velas (confluencia de dos
-          indicadores de volatilidad distintos). Además el RSI({rsi_periodo}) venía de zona de
-          sobreventa (&lt;30) y ya volvió por encima de 30 sin estar todavía extendido (&lt;65). El
-          gatillo real es el **reclamo**: la vela actual cierra de nuevo por encima de la banda inferior
-          de Bollinger, habiendo cerrado en/bajo esa banda la vela anterior.
+        - **COMPRA** (candidata a largo): el precio tocó la banda inferior de la Bollinger 1 (rápida) Y
+          también la banda inferior de la Bollinger 2 (estructural) dentro de las últimas
+          {cruce_lookback_barras} velas (confluencia de corto y largo plazo). Además el
+          RSI({rsi_periodo}) venía de zona de sobreventa (&lt;30) y ya volvió por encima de 30 sin estar
+          todavía extendido (&lt;65). El gatillo real es el **reclamo**: la vela actual cierra de nuevo
+          por encima de la banda inferior de la Bollinger 1, habiendo cerrado en/bajo esa banda la vela
+          anterior.
         - **VENTA** (candidata a corto / pérdida de fuerza en un largo): exactamente lo simétrico en la
-          zona superior (banda superior de Bollinger + VWAP +2σ + RSI viniendo de sobrecompra).
+          zona superior (bandas superiores de ambas Bollinger + RSI viniendo de sobrecompra).
         - Filtros opcionales activos por defecto: exigir volumen sobre su promedio de 20 velas en la
           vela de reclamo, y no operar en contra del régimen de mercado de fondo.
 
@@ -1153,28 +1095,30 @@ def modulo_bot_inversion(
         Apenas se entra, el Stop queda fijo a **{stop_inicial_pct:.1f}%** de distancia del precio de
         entrada: por debajo en un largo, por encima en un corto.
 
-        **4) Objetivo y Stop progresivos** (a partir de superar el VWAP; nunca se aflojan):
-        - Cierra más allá del VWAP → Stop pasa a VWAP (trailing) · nuevo objetivo VWAP ±1σ.
-        - Cierra más allá de VWAP ±1σ → Stop pasa a esa banda · nuevo objetivo VWAP ±2σ.
-        - Y así sucesivamente hasta VWAP ±5σ, donde ya no hay objetivo fijo y se deja correr la posición
-          mientras el precio no vuelva a cruzar esa banda.
+        **4) Objetivo y Stop progresivos** (a partir de superar la Media de la Bollinger 1; nunca se
+        aflojan):
+        - Cierra más allá de la Media BB1 → Stop pasa a Media BB1 (trailing) · nuevo objetivo Media BB2.
+        - Cierra más allá de la Media BB2 → Stop pasa a Media BB2 · nuevo objetivo Banda extrema BB1.
+        - Cierra más allá de la Banda BB1 → Stop pasa a Banda BB1 · nuevo objetivo Banda extrema BB2.
+        - Cierra más allá de la Banda BB2 → Stop pasa a Banda BB2 · ya no hay objetivo fijo, se deja
+          correr la posición mientras el precio no vuelva a cruzar esa banda.
 
         **5) Salida por pérdida de fuerza**
-        Si es un largo y aparece la señal de VENTA (reclamo bajista en zona de sobrecompra), se cierra.
-        Si es un corto y aparece la señal de COMPRA, se cubre. Esto puede cerrar la operación aunque el
-        Stop todavía no se haya tocado.
+        Si es un largo y aparece la señal de VENTA, se cierra. Si es un corto y aparece la señal de
+        COMPRA, se cubre. Esto puede cerrar la operación aunque el Stop todavía no se haya tocado.
 
-        **📊 Régimen de mercado** (informativo + filtro opcional): compara el precio contra el VWAP y su
-        pendiente en las últimas {REGIMEN_PENDIENTE_BARRAS} barras, y descarta como LATERAL los momentos
-        de compresión fuerte de Bollinger (squeeze). **ALCISTA** si el precio está sobre el VWAP con
-        pendiente positiva y sin squeeze, **BAJISTA** si es al revés, **LATERAL** en cualquier otro caso.
+        **📊 Régimen de mercado** (informativo + filtro opcional): compara la media de la Bollinger 1
+        contra la media de la Bollinger 2 y su pendiente en las últimas {REGIMEN_PENDIENTE_BARRAS}
+        barras, y descarta como LATERAL los momentos de compresión fuerte de la Bollinger 1 (squeeze).
+        **ALCISTA** si la media rápida está sobre la estructural con pendiente positiva y sin squeeze,
+        **BAJISTA** si es al revés, **LATERAL** en cualquier otro caso.
 
-        **🚫 Por qué esta lógica busca mejor win rate:** exigir que DOS bandas de volatilidad distintas
-        coincidan (en vez de una sola) reduce falsas señales de mercados donde una banda se mueve sola
-        por ruido; y esperar el **reclamo** (no el simple toque) evita entrar mientras el precio todavía
-        está cayendo/subiendo con fuerza. El costo de esto es que se opera con menos frecuencia y se
-        entra un poco más tarde que si se comprara apenas se toca la banda — es el trade-off clásico
-        entre frecuencia y precisión.
+        **🚫 Por qué esta lógica busca mejor win rate:** exigir que DOS Bollinger de distinto período
+        coincidan (en vez de una sola) reduce falsas señales de mercados donde una sola banda se mueve
+        por ruido de corto plazo; y esperar el **reclamo** (no el simple toque) evita entrar mientras el
+        precio todavía está cayendo/subiendo con fuerza. El costo de esto es que se opera con menos
+        frecuencia y se entra un poco más tarde que si se comprara apenas se toca la banda — es el
+        trade-off clásico entre frecuencia y precisión.
 
         **⌛ / ⛔** en la tabla de historial: ⌛ = la señal se disparó en la última vela disponible, sin
         vela siguiente todavía para entrar; ⛔ = señal válida pero no tomada porque ya había otra
