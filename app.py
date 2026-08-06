@@ -2651,21 +2651,34 @@ def _apply_score_style(df, score_cols, ret_cols=None):
     return styled
 
 
+def _color_regimen_hmm(val):
+    return {'ALCISTA':'color:#3fb950;font-weight:700',
+            'NEUTRAL':'color:#e3b341;font-weight:700',
+            'BAJISTA':'color:#f85149;font-weight:700'}.get(val, 'color:#6b7d9a')
+
+
 def tabla_corto(filas_dict, key_suffix=''):
     filas = []
     for nombre, d in sorted(filas_dict.items(), key=lambda x: x[1]['sa'], reverse=True):
+        hmm_d = d.get('hmm') or {}
         filas.append({'Nombre': nombre, 'Acum': round(d['sa'],1), 'Antic': round(d['sn'],1),
             'Sent': round(d['ss'],1), 'RSI': round(d.get('rsi',0),1),
             'Ret 5d %': round(d.get('ret_5d',0),2), 'Ret 10d %': round(d.get('ret_10d',0),2),
-            'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion']})
+            'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion'],
+            'Régimen HMM': hmm_d.get('regimen', 'N/D'),
+            'Prob HMM %': hmm_d.get('prob', None),
+            'Duración (ruedas)': hmm_d.get('duracion', None)})
     df = pd.DataFrame(filas)
 
 
-    fc1, fc2 = st.columns([2,2])
+    fc1, fc2, fc3 = st.columns([2,2,2])
     with fc1:
         señales_u = ['Todas'] + sorted(df['Señal'].unique().tolist())
         f_señal = st.selectbox('Señal', señales_u, key=f'tc_señal_{key_suffix}')
     with fc2:
+        regs_u = ['Todos'] + sorted([r for r in df['Régimen HMM'].unique() if r != 'N/D'])
+        f_regimen = st.selectbox('Régimen HMM', regs_u, key=f'tc_regimen_{key_suffix}')
+    with fc3:
         st.write('')
 
 
@@ -2689,12 +2702,15 @@ def tabla_corto(filas_dict, key_suffix=''):
 
     df_f = df.copy()
     if f_señal != 'Todas': df_f = df_f[df_f['Señal']==f_señal]
+    if f_regimen != 'Todos': df_f = df_f[df_f['Régimen HMM']==f_regimen]
     df_f = df_f[df_f['Acum'].between(*f_acum) & df_f['Antic'].between(*f_antic)
                 & df_f['Sent'].between(*f_sent) & df_f['RSI'].between(*f_rsi)
                 & df_f['Ret 5d %'].between(*f_ret5) & df_f['Ret 10d %'].between(*f_ret10)]
 
 
-    styled = _apply_score_style(df_f, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %'])
+    _map_tc = 'map' if hasattr(df_f.style,'map') else 'applymap'
+    styled = (_apply_score_style(df_f, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %'])
+              .pipe(lambda s: getattr(s,_map_tc)(_color_regimen_hmm, subset=['Régimen HMM'])))
     st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
     st.caption(f'{len(df_f)} activos mostrados de {len(df)} totales')
 
