@@ -1,6 +1,9 @@
 from .cointegration_engine import (
     PairStats,
     test_cointegration,
+    adf_test,
+    johansen_test,
+    hurst_exponent,
     calculate_hedge_ratio,
     calculate_spread,
     calculate_half_life,
@@ -14,6 +17,9 @@ from .cointegration_engine import (
 __all__ = [
     "PairStats",
     "test_cointegration",
+    "adf_test",
+    "johansen_test",
+    "hurst_exponent",
     "calculate_hedge_ratio",
     "calculate_spread",
     "calculate_half_life",
