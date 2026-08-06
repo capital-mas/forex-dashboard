@@ -46,6 +46,12 @@ try:
 except ImportError:
     HURST_OK = False
 
+try:
+    from hmmlearn.hmm import GaussianHMM
+    HMM_OK = True
+except ImportError:
+    HMM_OK = False
+
 from supabase import create_client, Client
 
 # ==============================================================
