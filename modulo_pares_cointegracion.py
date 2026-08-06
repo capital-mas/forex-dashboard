@@ -24,6 +24,497 @@ from engine.cointegration_engine import (
     hurst_exponent,
 )
 
+# TODO: ajustá este import al path real donde vive el dict en tu repo
+PARES_SECTORES = {
+    # ============================================================
+    #  GRUPOS ORIGINALES (sin cambios)
+    # ============================================================
+    "Metales Preciosos": {
+        "benchmark": "GLD",
+        "empresas": ["B", "AEM", "KGC", "CDE", "NG", "HL", "HMY", "PAAS"],
+        "tickers": {
+            "GLD": "GLD", "SLV": "SLV", "GDX": "GDX",
+            "B": "GOLD", "AEM": "AEM", "KGC": "KGC", "CDE": "CDE",
+            "NG": "NG", "HL": "HL", "HMY": "HMY", "PAAS": "PAAS",
+        },
+    },
+    "Tecnología": {
+        "benchmark": "XLK",
+        "empresas": ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "ORCL", "CRM", "ADBE", "AMD"],
+        "tickers": {
+            "XLK": "XLK", "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL",
+            "META": "META", "NVDA": "NVDA", "ORCL": "ORCL", "CRM": "CRM",
+            "ADBE": "ADBE", "AMD": "AMD",
+        },
+    },
+    "Semiconductores": {
+        "benchmark": "SOXX",
+        "empresas": ["NVDA", "AMD", "INTC", "TSM", "QCOM", "AVGO", "MU", "TXN", "ASML"],
+        "tickers": {
+            "SOXX": "SOXX", "NVDA": "NVDA", "AMD": "AMD", "INTC": "INTC",
+            "TSM": "TSM", "QCOM": "QCOM", "AVGO": "AVGO", "MU": "MU",
+            "TXN": "TXN", "ASML": "ASML",
+        },
+    },
+    "Financieras": {
+        "benchmark": "XLF",
+        "empresas": ["JPM", "BAC", "WFC", "C", "GS", "MS", "USB", "PNC", "TFC"],
+        "tickers": {
+            "XLF": "XLF", "JPM": "JPM", "BAC": "BAC", "WFC": "WFC", "C": "C",
+            "GS": "GS", "MS": "MS", "USB": "USB", "PNC": "PNC", "TFC": "TFC",
+        },
+    },
+    "Energía": {
+        "benchmark": "XLE",
+        "empresas": ["XOM", "CVX", "COP", "SLB", "EOG", "PSX", "MPC", "OXY", "HAL"],
+        "tickers": {
+            "XLE": "XLE", "XOM": "XOM", "CVX": "CVX", "COP": "COP", "SLB": "SLB",
+            "EOG": "EOG", "PSX": "PSX", "MPC": "MPC", "OXY": "OXY", "HAL": "HAL",
+        },
+    },
+    "Salud": {
+        "benchmark": "XLV",
+        "empresas": ["JNJ", "PFE", "MRK", "ABBV", "LLY", "UNH", "BMY", "GILD", "AMGN"],
+        "tickers": {
+            "XLV": "XLV", "JNJ": "JNJ", "PFE": "PFE", "MRK": "MRK", "ABBV": "ABBV",
+            "LLY": "LLY", "UNH": "UNH", "BMY": "BMY", "GILD": "GILD", "AMGN": "AMGN",
+        },
+    },
+    "Consumo Discrecional": {
+        "benchmark": "XLY",
+        "empresas": ["AMZN", "TSLA", "HD", "MCD", "NKE", "SBUX", "LOW", "TJX", "BKNG"],
+        "tickers": {
+            "XLY": "XLY", "AMZN": "AMZN", "TSLA": "TSLA", "HD": "HD", "MCD": "MCD",
+            "NKE": "NKE", "SBUX": "SBUX", "LOW": "LOW", "TJX": "TJX", "BKNG": "BKNG",
+        },
+    },
+    "Consumo Básico": {
+        "benchmark": "XLP",
+        "empresas": ["PG", "KO", "PEP", "WMT", "COST", "PM", "MO", "CL", "KMB"],
+        "tickers": {
+            "XLP": "XLP", "PG": "PG", "KO": "KO", "PEP": "PEP", "WMT": "WMT",
+            "COST": "COST", "PM": "PM", "MO": "MO", "CL": "CL", "KMB": "KMB",
+        },
+    },
+    "Industriales": {
+        "benchmark": "XLI",
+        "empresas": ["BA", "CAT", "GE", "HON", "UPS", "RTX", "LMT", "DE", "MMM"],
+        "tickers": {
+            "XLI": "XLI", "BA": "BA", "CAT": "CAT", "GE": "GE", "HON": "HON",
+            "UPS": "UPS", "RTX": "RTX", "LMT": "LMT", "DE": "DE", "MMM": "MMM",
+        },
+    },
+    "Utilities": {
+        "benchmark": "XLU",
+        "empresas": ["NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "XEL", "ED"],
+        "tickers": {
+            "XLU": "XLU", "NEE": "NEE", "DUK": "DUK", "SO": "SO", "D": "D",
+            "AEP": "AEP", "EXC": "EXC", "SRE": "SRE", "XEL": "XEL", "ED": "ED",
+        },
+    },
+    "Real Estate": {
+        "benchmark": "XLRE",
+        "empresas": ["AMT", "PLD", "CCI", "EQIX", "PSA", "O", "SPG", "DLR", "WELL"],
+        "tickers": {
+            "XLRE": "XLRE", "AMT": "AMT", "PLD": "PLD", "CCI": "CCI", "EQIX": "EQIX",
+            "PSA": "PSA", "O": "O", "SPG": "SPG", "DLR": "DLR", "WELL": "WELL",
+        },
+    },
+    "Comunicaciones": {
+        "benchmark": "XLC",
+        "empresas": ["GOOGL", "META", "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS", "EA"],
+        "tickers": {
+            "XLC": "XLC", "GOOGL": "GOOGL", "META": "META", "NFLX": "NFLX",
+            "DIS": "DIS", "CMCSA": "CMCSA", "T": "T", "VZ": "VZ", "TMUS": "TMUS", "EA": "EA",
+        },
+    },
+    "Materiales": {
+        "benchmark": "XLB",
+        "empresas": ["LIN", "APD", "SHW", "ECL", "FCX", "NEM", "DOW", "DD", "PPG"],
+        "tickers": {
+            "XLB": "XLB", "LIN": "LIN", "APD": "APD", "SHW": "SHW", "ECL": "ECL",
+            "FCX": "FCX", "NEM": "NEM", "DOW": "DOW", "DD": "DD", "PPG": "PPG",
+        },
+    },
+    "Argentina": {
+        "benchmark": "ARGT",
+        "empresas": ["GGAL", "YPF", "PAM", "BMA", "CRESY", "IRS", "LOMA", "EDN", "SUPV", "CEPU", "TGS"],
+        "tickers": {
+            "ARGT": "ARGT", "GGAL": "GGAL", "YPF": "YPF", "PAM": "PAM", "BMA": "BMA",
+            "CRESY": "CRESY", "IRS": "IRSA", "LOMA": "LOMA", "EDN": "EDN",
+            "SUPV": "SUPV", "CEPU": "CEPU", "TGS": "TGS",
+        },
+    },
+    "Brasil": {
+        "benchmark": "EWZ",
+        "empresas": ["VALE", "PBR", "ITUB", "BBD", "ABEV", "SBS", "UGP", "BSBR", "ERJ", "GGB", "CIG", "VIV"],
+        "tickers": {
+            "EWZ": "EWZ", "VALE": "VALE", "PBR": "PBR", "ITUB": "ITUB", "BBD": "BBD",
+            "ABEV": "ABEV", "SBS": "SBS", "UGP": "UGP", "BSBR": "BSBR", "ERJ": "ERJ",
+            "GGB": "GGB", "CIG": "CIG", "VIV": "VIV",
+        },
+    },
+    "Criptomonedas": {
+        "benchmark": "BTC",
+        "empresas": ["ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "DOT", "LINK", "LTC",
+                     "ATOM", "ETC", "XLM", "FIL", "ICP", "HBAR", "NEAR", "ARB"],
+        "tickers": {
+            "BTC": "BTC-USD", "ETH": "ETH-USD", "SOL": "SOL-USD", "BNB": "BNB-USD",
+            "XRP": "XRP-USD", "ADA": "ADA-USD", "DOGE": "DOGE-USD", "AVAX": "AVAX-USD",
+            "DOT": "DOT-USD", "LINK": "LINK-USD", "LTC": "LTC-USD",
+            "ATOM": "ATOM-USD", "ETC": "ETC-USD", "XLM": "XLM-USD", "FIL": "FIL-USD",
+            "ICP": "ICP-USD", "HBAR": "HBAR-USD", "NEAR": "NEAR-USD", "ARB": "ARB-USD",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — sub-sectores tecnológicos
+    # ============================================================
+    "Cloud/AI": {
+        "benchmark": "SKYY",
+        "empresas": ["PLTR", "SNOW", "DDOG", "NET", "MDB", "ESTC", "CFLT", "DOCN", "APP"],
+        "tickers": {
+            "SKYY": "SKYY", "PLTR": "PLTR", "SNOW": "SNOW", "DDOG": "DDOG", "NET": "NET",
+            "MDB": "MDB", "ESTC": "ESTC", "CFLT": "CFLT", "DOCN": "DOCN", "APP": "APP",
+        },
+    },
+    "Software": {
+        "benchmark": "IGV",
+        "empresas": ["ORCL", "CRM", "ADBE", "NOW", "INTU", "WDAY", "SNOW", "PLTR", "TEAM"],
+        "tickers": {
+            "IGV": "IGV", "ORCL": "ORCL", "CRM": "CRM", "ADBE": "ADBE", "NOW": "NOW",
+            "INTU": "INTU", "WDAY": "WDAY", "SNOW": "SNOW", "PLTR": "PLTR", "TEAM": "TEAM",
+        },
+    },
+    "Ciberseguridad": {
+        "benchmark": "CIBR",
+        "empresas": ["CRWD", "PANW", "ZS", "FTNT", "OKTA", "QLYS", "TENB", "RPD", "VRNS"],
+        "tickers": {
+            "CIBR": "CIBR", "CRWD": "CRWD", "PANW": "PANW", "ZS": "ZS", "FTNT": "FTNT",
+            "OKTA": "OKTA", "QLYS": "QLYS", "TENB": "TENB", "RPD": "RPD", "VRNS": "VRNS",
+        },
+    },
+    "Fintech": {
+        "benchmark": "FINX",
+        "empresas": ["PYPL", "AFRM", "SOFI", "UPST", "LC", "NU", "COIN", "HOOD", "BILL"],
+        "tickers": {
+            "FINX": "FINX", "PYPL": "PYPL", "AFRM": "AFRM", "SOFI": "SOFI", "UPST": "UPST",
+            "LC": "LC", "NU": "NU", "COIN": "COIN", "HOOD": "HOOD", "BILL": "BILL",
+        },
+    },
+    "Internet": {
+        "benchmark": "FDN",
+        "empresas": ["GOOGL", "META", "NFLX", "SNAP", "PINS", "RDDT", "SPOT", "ROKU", "DASH"],
+        "tickers": {
+            "FDN": "FDN", "GOOGL": "GOOGL", "META": "META", "NFLX": "NFLX", "SNAP": "SNAP",
+            "PINS": "PINS", "RDDT": "RDDT", "SPOT": "SPOT", "ROKU": "ROKU", "DASH": "DASH",
+        },
+    },
+    "E-commerce": {
+        "benchmark": "IBUY",
+        "empresas": ["AMZN", "SHOP", "ETSY", "EBAY", "MELI", "SE", "PDD", "BABA", "JD"],
+        "tickers": {
+            "IBUY": "IBUY", "AMZN": "AMZN", "SHOP": "SHOP", "ETSY": "ETSY", "EBAY": "EBAY",
+            "MELI": "MELI", "SE": "SE", "PDD": "PDD", "BABA": "BABA", "JD": "JD",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — salud
+    # ============================================================
+    "Biotecnología": {
+        "benchmark": "XBI",
+        "empresas": ["AMGN", "REGN", "VRTX", "GILD", "BIIB", "MRNA", "ALNY", "CRSP", "BEAM"],
+        "tickers": {
+            "XBI": "XBI", "AMGN": "AMGN", "REGN": "REGN", "VRTX": "VRTX", "GILD": "GILD",
+            "BIIB": "BIIB", "MRNA": "MRNA", "ALNY": "ALNY", "CRSP": "CRSP", "BEAM": "BEAM",
+        },
+    },
+    "Farmacéuticas": {
+        "benchmark": "PPH",
+        "empresas": ["LLY", "JNJ", "PFE", "MRK", "ABBV", "BMY", "AZN", "NVO", "SNY"],
+        "tickers": {
+            "PPH": "PPH", "LLY": "LLY", "JNJ": "JNJ", "PFE": "PFE", "MRK": "MRK",
+            "ABBV": "ABBV", "BMY": "BMY", "AZN": "AZN", "NVO": "NVO", "SNY": "SNY",
+        },
+    },
+    "Equipos Médicos": {
+        "benchmark": "IHI",
+        "empresas": ["ISRG", "ABT", "SYK", "BSX", "MDT", "EW", "ZBH", "BDX", "DXCM"],
+        "tickers": {
+            "IHI": "IHI", "ISRG": "ISRG", "ABT": "ABT", "SYK": "SYK", "BSX": "BSX",
+            "MDT": "MDT", "EW": "EW", "ZBH": "ZBH", "BDX": "BDX", "DXCM": "DXCM",
+        },
+    },
+    "Servicios de Salud": {
+        "benchmark": "IHF",
+        "empresas": ["UNH", "ELV", "CI", "HUM", "CVS", "CNC", "MOH", "DVA", "HCA"],
+        "tickers": {
+            "IHF": "IHF", "UNH": "UNH", "ELV": "ELV", "CI": "CI", "HUM": "HUM",
+            "CVS": "CVS", "CNC": "CNC", "MOH": "MOH", "DVA": "DVA", "HCA": "HCA",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — financieras granulares
+    # ============================================================
+    "Seguros": {
+        "benchmark": "KIE",
+        "empresas": ["PGR", "CB", "TRV", "ALL", "AFL", "MET", "PRU", "AIG", "HIG"],
+        "tickers": {
+            "KIE": "KIE", "PGR": "PGR", "CB": "CB", "TRV": "TRV", "ALL": "ALL",
+            "AFL": "AFL", "MET": "MET", "PRU": "PRU", "AIG": "AIG", "HIG": "HIG",
+        },
+    },
+    "Mercados Capitales": {
+        "benchmark": "KCE",
+        "empresas": ["SCHW", "CME", "ICE", "NDAQ", "MS", "GS", "IBKR", "HOOD", "COIN"],
+        "tickers": {
+            "KCE": "KCE", "SCHW": "SCHW", "CME": "CME", "ICE": "ICE", "NDAQ": "NDAQ",
+            "MS": "MS", "GS": "GS", "IBKR": "IBKR", "HOOD": "HOOD", "COIN": "COIN",
+        },
+    },
+    "Bancos Regionales": {
+        "benchmark": "KRE",
+        "empresas": ["FITB", "HBAN", "RF", "CFG", "ZION", "KEY", "CMA", "MTB", "WAL"],
+        "tickers": {
+            "KRE": "KRE", "FITB": "FITB", "HBAN": "HBAN", "RF": "RF", "CFG": "CFG",
+            "ZION": "ZION", "KEY": "KEY", "CMA": "CMA", "MTB": "MTB", "WAL": "WAL",
+        },
+    },
+    "Finanzas Diversif.": {
+        "benchmark": "IYG",
+        "empresas": ["V", "MA", "AXP", "DFS", "SYF", "ALLY", "COF", "FI", "PYPL"],
+        "tickers": {
+            "IYG": "IYG", "V": "V", "MA": "MA", "AXP": "AXP", "DFS": "DFS",
+            "SYF": "SYF", "ALLY": "ALLY", "COF": "COF", "FI": "FI", "PYPL": "PYPL",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — energía granular
+    # ============================================================
+    "Petróleo Integrado": {
+        "benchmark": "XOP",
+        "empresas": ["XOM", "CVX", "COP", "EOG", "OXY", "DVN", "MRO", "APA", "PXD"],
+        "tickers": {
+            "XOP": "XOP", "XOM": "XOM", "CVX": "CVX", "COP": "COP", "EOG": "EOG",
+            "OXY": "OXY", "DVN": "DVN", "MRO": "MRO", "APA": "APA", "PXD": "PXD",
+        },
+    },
+    "Gas Natural": {
+        "benchmark": "FCG",
+        "empresas": ["LNG", "EQT", "AR", "RRC", "CNX", "KMI", "WMB", "OKE", "TRGP"],
+        "tickers": {
+            "FCG": "FCG", "LNG": "LNG", "EQT": "EQT", "AR": "AR", "RRC": "RRC",
+            "CNX": "CNX", "KMI": "KMI", "WMB": "WMB", "OKE": "OKE", "TRGP": "TRGP",
+        },
+    },
+    "Energía Renovable": {
+        "benchmark": "ICLN",
+        "empresas": ["NEE", "BEP", "BEPC", "AES", "ORA", "PLUG", "BE", "GEV", "RUN"],
+        "tickers": {
+            "ICLN": "ICLN", "NEE": "NEE", "BEP": "BEP", "BEPC": "BEPC", "AES": "AES",
+            "ORA": "ORA", "PLUG": "PLUG", "BE": "BE", "GEV": "GEV", "RUN": "RUN",
+        },
+    },
+    "Energía Solar": {
+        "benchmark": "TAN",
+        "empresas": ["FSLR", "ENPH", "SEDG", "RUN", "ARRY", "SHLS", "CSIQ", "JKS", "NOVA"],
+        "tickers": {
+            "TAN": "TAN", "FSLR": "FSLR", "ENPH": "ENPH", "SEDG": "SEDG", "RUN": "RUN",
+            "ARRY": "ARRY", "SHLS": "SHLS", "CSIQ": "CSIQ", "JKS": "JKS", "NOVA": "NOVA",
+        },
+    },
+    "Litio/Baterías": {
+        "benchmark": "LIT",
+        "empresas": ["ALB", "LAC", "PLL", "SES", "QS", "MVST", "LICY", "ALTM", "ENVX"],
+        "tickers": {
+            "LIT": "LIT", "ALB": "ALB", "LAC": "LAC", "PLL": "PLL", "SES": "SES",
+            "QS": "QS", "MVST": "MVST", "LICY": "LICY", "ALTM": "ALTM", "ENVX": "ENVX",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — industriales / defensa / transporte
+    # ============================================================
+    "Aeroespacial": {
+        "benchmark": "ITA",
+        "empresas": ["BA", "RTX", "LMT", "NOC", "GD", "HII", "TDG", "HEI", "LHX"],
+        "tickers": {
+            "ITA": "ITA", "BA": "BA", "RTX": "RTX", "LMT": "LMT", "NOC": "NOC",
+            "GD": "GD", "HII": "HII", "TDG": "TDG", "HEI": "HEI", "LHX": "LHX",
+        },
+    },
+    "Defensa": {
+        "benchmark": "XAR",
+        "empresas": ["LMT", "RTX", "NOC", "GD", "HII", "TDG", "KTOS", "AVAV", "LDOS"],
+        "tickers": {
+            "XAR": "XAR", "LMT": "LMT", "RTX": "RTX", "NOC": "NOC", "GD": "GD",
+            "HII": "HII", "TDG": "TDG", "KTOS": "KTOS", "AVAV": "AVAV", "LDOS": "LDOS",
+        },
+    },
+    "Transporte": {
+        "benchmark": "IYT",
+        "empresas": ["UPS", "FDX", "UNP", "CSX", "NSC", "JBHT", "ODFL", "XPO", "CHRW"],
+        "tickers": {
+            "IYT": "IYT", "UPS": "UPS", "FDX": "FDX", "UNP": "UNP", "CSX": "CSX",
+            "NSC": "NSC", "JBHT": "JBHT", "ODFL": "ODFL", "XPO": "XPO", "CHRW": "CHRW",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — consumo
+    # ============================================================
+    "Retail": {
+        "benchmark": "XRT",
+        "empresas": ["AMZN", "WMT", "TGT", "COST", "HD", "LOW", "TJX", "ROST", "DG"],
+        "tickers": {
+            "XRT": "XRT", "AMZN": "AMZN", "WMT": "WMT", "TGT": "TGT", "COST": "COST",
+            "HD": "HD", "LOW": "LOW", "TJX": "TJX", "ROST": "ROST", "DG": "DG",
+        },
+    },
+    "Autos": {
+        "benchmark": "CARZ",
+        "empresas": ["TSLA", "GM", "F", "TM", "HMC", "STLA", "RIVN", "LCID", "NIO"],
+        "tickers": {
+            "CARZ": "CARZ", "TSLA": "TSLA", "GM": "GM", "F": "F", "TM": "TM",
+            "HMC": "HMC", "STLA": "STLA", "RIVN": "RIVN", "LCID": "LCID", "NIO": "NIO",
+        },
+    },
+    "Hotelería/Viajes": {
+        "benchmark": "PEJ",
+        "empresas": ["MAR", "HLT", "ABNB", "BKNG", "EXPE", "RCL", "CCL", "NCLH", "MGM"],
+        "tickers": {
+            "PEJ": "PEJ", "MAR": "MAR", "HLT": "HLT", "ABNB": "ABNB", "BKNG": "BKNG",
+            "EXPE": "EXPE", "RCL": "RCL", "CCL": "CCL", "NCLH": "NCLH", "MGM": "MGM",
+        },
+    },
+    "Alimentos": {
+        "benchmark": "PBJ",
+        "empresas": ["KO", "PEP", "MDLZ", "KHC", "GIS", "CPB", "SJM", "K", "HSY"],
+        "tickers": {
+            "PBJ": "PBJ", "KO": "KO", "PEP": "PEP", "MDLZ": "MDLZ", "KHC": "KHC",
+            "GIS": "GIS", "CPB": "CPB", "SJM": "SJM", "K": "K", "HSY": "HSY",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — materiales / commodities
+    # ============================================================
+    "Cobre/Metales": {
+        "benchmark": "COPX",
+        "empresas": ["FCX", "SCCO", "TECK", "HBM", "NUE", "STLD", "CLF", "AA", "ERO"],
+        "tickers": {
+            "COPX": "COPX", "FCX": "FCX", "SCCO": "SCCO", "TECK": "TECK", "HBM": "HBM",
+            "NUE": "NUE", "STLD": "STLD", "CLF": "CLF", "AA": "AA", "ERO": "ERO",
+        },
+    },
+    "Acero": {
+        "benchmark": "SLX",
+        "empresas": ["NUE", "STLD", "CLF", "X", "MT", "RS", "CMC", "PKX", "ATI"],
+        "tickers": {
+            "SLX": "SLX", "NUE": "NUE", "STLD": "STLD", "CLF": "CLF", "X": "X",
+            "MT": "MT", "RS": "RS", "CMC": "CMC", "PKX": "PKX", "ATI": "ATI",
+        },
+    },
+    "Agua": {
+        "benchmark": "PHO",
+        "empresas": ["AWK", "WTRG", "AWR", "YORW", "MSEX", "SJW", "CWCO", "GWRS", "ARTNA"],
+        "tickers": {
+            "PHO": "PHO", "AWK": "AWK", "WTRG": "WTRG", "AWR": "AWR", "YORW": "YORW",
+            "MSEX": "MSEX", "SJW": "SJW", "CWCO": "CWCO", "GWRS": "GWRS", "ARTNA": "ARTNA",
+        },
+    },
+    "Agro/Fertilizantes": {
+        "benchmark": "MOS",
+        "empresas": ["NTR", "CF", "ADM", "BG", "FMC", "CTVA"],
+        "tickers": {
+            "MOS": "MOS", "NTR": "NTR", "CF": "CF", "ADM": "ADM",
+            "BG": "BG", "FMC": "FMC", "CTVA": "CTVA",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — REITs granulares
+    # ============================================================
+    "REIT Industrial": {
+        "benchmark": "INDS",
+        "empresas": ["PLD", "AMT", "CCI", "DLR", "EQIX", "STAG", "EGP", "FR", "REXR"],
+        "tickers": {
+            "INDS": "INDS", "PLD": "PLD", "AMT": "AMT", "CCI": "CCI", "DLR": "DLR",
+            "EQIX": "EQIX", "STAG": "STAG", "EGP": "EGP", "FR": "FR", "REXR": "REXR",
+        },
+    },
+    "REIT Residencial": {
+        "benchmark": "REZ",
+        "empresas": ["EQR", "AVB", "ESS", "MAA", "UDR", "CPT", "ELS", "INVH", "AMH"],
+        "tickers": {
+            "REZ": "REZ", "EQR": "EQR", "AVB": "AVB", "ESS": "ESS", "MAA": "MAA",
+            "UDR": "UDR", "CPT": "CPT", "ELS": "ELS", "INVH": "INVH", "AMH": "AMH",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — telecom
+    # ============================================================
+    "Telecomunicaciones": {
+        "benchmark": "IYZ",
+        "empresas": ["T", "VZ", "TMUS", "S", "CHTR", "CMCSA", "LUMN", "VOD", "BT"],
+        "tickers": {
+            "IYZ": "IYZ", "T": "T", "VZ": "VZ", "TMUS": "TMUS", "S": "S",
+            "CHTR": "CHTR", "CMCSA": "CMCSA", "LUMN": "LUMN", "VOD": "VOD", "BT": "BT",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — países / regiones
+    # ============================================================
+    "China": {
+        "benchmark": "FXI",
+        "empresas": ["BABA", "TCEHY", "BIDU", "JD", "NIO", "LI", "XPEV", "PDD", "NTES"],
+        "tickers": {
+            "FXI": "FXI", "BABA": "BABA", "TCEHY": "TCEHY", "BIDU": "BIDU", "JD": "JD",
+            "NIO": "NIO", "LI": "LI", "XPEV": "XPEV", "PDD": "PDD", "NTES": "NTES",
+        },
+    },
+    "India": {
+        "benchmark": "INDA",
+        "empresas": ["INFY", "WIT", "HDB", "IBN", "VEDL", "RDY", "TTM"],
+        "tickers": {
+            "INDA": "INDA", "INFY": "INFY", "WIT": "WIT", "HDB": "HDB", "IBN": "IBN",
+            "VEDL": "VEDL", "RDY": "RDY", "TTM": "TTM",
+        },
+    },
+    "Europa Tecnología": {
+        "benchmark": "VGK",
+        "empresas": ["SAP", "ASML", "NXPI"],
+        "tickers": {
+            "VGK": "VGK", "SAP": "SAP", "ASML": "ASML", "NXPI": "NXPI",
+        },
+    },
+    "Europa Finanzas": {
+        "benchmark": "VGK",
+        "empresas": ["HSBC", "BBVA", "SAN", "UBS", "ING"],
+        "tickers": {
+            "VGK": "VGK", "HSBC": "HSBC", "BBVA": "BBVA", "SAN": "SAN",
+            "UBS": "UBS", "ING": "ING",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — cripto mineras
+    # ============================================================
+    "Cripto Mineras": {
+        "benchmark": "COIN",
+        "empresas": ["MARA", "RIOT", "CLSK", "HUT", "BTDR", "IREN", "CAN", "WULF"],
+        "tickers": {
+            "COIN": "COIN", "MARA": "MARA", "RIOT": "RIOT", "CLSK": "CLSK", "HUT": "HUT",
+            "BTDR": "BTDR", "IREN": "IREN", "CAN": "CAN", "WULF": "WULF",
+        },
+    },
+}
+
 
 def _fig_spread_zscore(nombre_a, nombre_b, spread, zscore, entry_z, exit_z, palette):
     fig = make_subplots(
@@ -62,39 +553,25 @@ def _norm_cdf(v):
     return 0.5 * (1 + erf(v / sqrt(2)))
 
 
-def _ou_extended_stats(spread, current_zscore, half_life):
-    """Estima parámetros extendidos del proceso Ornstein-Uhlenbeck a partir
-    del spread histórico y el half-life ya calculado por el engine:
-
-    - theta: velocidad de reversión (consistente con half_life = ln(2)/theta)
-    - sigma_eq: dispersión de equilibrio del spread, vía AR(1) sobre el spread
-    - t50/t75/t95: ruedas esperadas para recorrer 50/75/95% del camino hacia
-      el equilibrio (decaimiento exponencial de la media condicional)
-    - p20/p40/p80: probabilidad *aproximada* (no first-passage-time exacta)
-      de que el z-score haya cruzado cero en ese horizonte, asumiendo
-      varianza estacionaria del z-score ≈ 1.
-
-    Devuelve None si no hay suficiente información para estimar.
-    """
-    if half_life is None or half_life <= 0 or current_zscore is None:
-        return None
-
+def _ar1_sigma_eq(spread):
+    """Ajusta un AR(1) sobre el spread y devuelve sigma de equilibrio
+    (dispersión estacionaria). None si no hay suficiente historial."""
     s = spread.dropna().values
     if len(s) < 30:
         return None
-
     x, y = s[:-1], s[1:]
     b, a = np.polyfit(x, y, 1)
     resid = y - (a + b * x)
     sigma_eps = float(np.std(resid, ddof=2)) if len(resid) > 2 else float(np.std(resid))
-
     if 0 < b < 1:
-        sigma_eq = sigma_eps / np.sqrt(1 - b ** 2)
-    else:
-        sigma_eq = float(np.std(s))
+        return sigma_eps / np.sqrt(1 - b ** 2)
+    return float(np.std(s))
 
-    theta = np.log(2) / half_life  # consistente con el half-life ya mostrado en pantalla
 
+def _ou_time_and_prob(theta, current_zscore):
+    """Percentiles de tiempo de convergencia (50/75/95%) y probabilidad
+    aproximada de cruce de cero del z-score en 20/40/80 ruedas. Solo
+    necesita theta y el z-score actual — no requiere el spread completo."""
     def _t_percentil(p):
         return np.log(1 / (1 - p)) / theta
 
@@ -104,10 +581,23 @@ def _ou_extended_stats(spread, current_zscore, half_life):
         return _norm_cdf(-abs(media_t) / np.sqrt(var_t))
 
     return dict(
-        theta=theta, sigma_eq=sigma_eq,
         t50=_t_percentil(0.5), t75=_t_percentil(0.75), t95=_t_percentil(0.95),
         p20=_prob_cruce(20), p40=_prob_cruce(40), p80=_prob_cruce(80),
     )
+
+
+def _ou_extended_stats(spread, current_zscore, half_life):
+    """Combina sigma_eq (necesita el spread) + theta/percentiles/probabilidad
+    (no lo necesitan) en un solo dict. None si falta algún insumo."""
+    if half_life is None or half_life <= 0 or current_zscore is None:
+        return None
+    sigma_eq = _ar1_sigma_eq(spread)
+    if sigma_eq is None:
+        return None
+    theta = np.log(2) / half_life  # consistente con el half-life ya mostrado
+    out = dict(theta=theta, sigma_eq=sigma_eq)
+    out.update(_ou_time_and_prob(theta, current_zscore))
+    return out
 
 
 def modulo_pares_cointegracion(
@@ -229,6 +719,11 @@ tendencia/persistencia. Para pairs trading conviene un Hurst bien por debajo de 
 **ADF (Augmented Dickey-Fuller):** test de raíz unitaria aplicado directamente sobre el
 spread. Un resultado "estacionario" respalda al Engle-Granger — en un par bien cointegrado,
 ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la señal con cautela.
+
+**θ, σ, percentiles y probabilidad de cruce (más abajo):** ver la sección "Dinámica de
+reversión" — θ es la velocidad de reversión (deriva del half-life), σ es cuánto ruido tiene
+el spread alrededor de su equilibrio, y los percentiles/probabilidades traducen todo eso a
+"cuánto tiempo puede tardar" y "qué tan probable es" la convergencia.
             """)
 
         c4, c5 = st.columns(2)
@@ -326,15 +821,34 @@ ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la se
         chips_navegacion([(ticker_a, ticker_a), (ticker_b, ticker_b)], 'coint_par')
 
     # ══════════════════════════════════════════════════════════════
-    #  TAB 2 — Escaneo de universo: todas las combinaciones
+    #  TAB 2 — Escaneo de universo: sectores predefinidos + métricas OU
     # ══════════════════════════════════════════════════════════════
     with tab_universo:
         st.caption(
-            'Ingresá una lista de tickers (separados por coma) y el motor testea TODAS las '
-            'combinaciones de a pares, ordenando por p-value de Engle-Granger (más cointegrados primero).'
+            'Elegí un sector/grupo predefinido para autocompletar los tickers, o cargalos a mano. '
+            'El motor testea TODAS las combinaciones de a pares, ordenando por p-value de '
+            'Engle-Granger (más cointegrados primero).'
         )
+
+        cs1, cs2 = st.columns([3, 1])
+        with cs1:
+            sector_sel = st.selectbox(
+                'Cargar desde sector/grupo',
+                ['— Selección manual —'] + sorted(PARES_SECTORES.keys()),
+                key='coint_u_sector_sel',
+            )
+        with cs2:
+            st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+            cargar_sector = st.button('⬇ Cargar tickers', key='coint_u_cargar_sector')
+
+        if cargar_sector and sector_sel != '— Selección manual —':
+            tickers_del_sector = sorted(set(PARES_SECTORES[sector_sel]['tickers'].values()))
+            st.session_state['coint_universo_txt'] = ', '.join(tickers_del_sector)
+            st.rerun()
+
         tickers_txt = st.text_area(
-            'Tickers (separados por coma)', value='GGAL, BMA, SUPV, BBAR',
+            'Tickers (separados por coma)',
+            value=st.session_state.get('coint_universo_txt', 'GGAL, BMA, SUPV, BBAR'),
             key='coint_universo_txt', height=70,
         )
         cu1, cu2, cu3 = st.columns(3)
@@ -349,7 +863,7 @@ ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la se
         n_combos = len(list(combinations(tickers_lista, 2))) if len(tickers_lista) >= 2 else 0
 
         if len(tickers_lista) < 2:
-            st.info('Ingresá al menos 2 tickers.')
+            st.info('Ingresá al menos 2 tickers o cargá un sector.')
             return
         if n_combos > 45:
             st.warning(f'⚠️ {n_combos} combinaciones — puede tardar. Con muchos tickers considerá menos activos.')
@@ -388,6 +902,24 @@ ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la se
             st.error('No se pudo calcular ningún par (verificá el historial común entre activos).')
             return
 
+        # ── Métricas OU extendidas por par (θ, σ, percentiles, probabilidad) ──
+        def _fila_ou(row):
+            vacio = pd.Series({k: np.nan for k in
+                                ['theta', 'sigma_eq', 't50', 't75', 't95', 'p20', 'p40', 'p80']})
+            hedge, half_life, current_z = row['hedge_ratio'], row['half_life'], row['current_zscore']
+            if pd.isna(hedge) or pd.isna(half_life) or half_life <= 0 or pd.isna(current_z):
+                return vacio
+            a, b = row['asset_a'], row['asset_b']
+            cl_a, cl_b = price_df[a], price_df[b]
+            intercept = float(cl_a.mean() - hedge * cl_b.mean())  # exacto si hedge_ratio es la pendiente OLS
+            spread_par = calculate_spread(cl_a, cl_b, hedge, intercept)
+            ou = _ou_extended_stats(spread_par, current_z, half_life)
+            return pd.Series(ou) if ou is not None else vacio
+
+        with st.spinner('Calculando dinámica de reversión (θ, σ, convergencia) por par...'):
+            ou_cols = df_scan.apply(_fila_ou, axis=1)
+        df_scan = pd.concat([df_scan, ou_cols], axis=1)
+
         n_coint = int(df_scan['is_cointegrated'].sum())
         kpi_cards_4([
             ('Pares testeados', str(len(df_scan)), f'{len(price_df.columns)} activos', '#3a7bd5'),
@@ -399,17 +931,47 @@ ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la se
              'H<0.5 = mean-reverting', '#7ee787'),
         ])
 
+        with st.expander('📖 ¿Cómo se interpreta cada columna?', expanded=False):
+            st.markdown("""
+**p-value EG / Cointegrado / ADF Estac.:** ver test de Engle-Granger y ADF — un par sólido
+debería tener p-value bajo y ADF estacionario a la vez.
+
+**Hedge Ratio / Half-Life / Hurst:** ver explicación en la pestaña "Par puntual".
+
+**θ (theta):** velocidad de reversión del spread, derivada del half-life (θ = ln(2)/half-life).
+
+**σ eq.:** dispersión del spread alrededor de su equilibrio (AR(1) sobre el spread histórico
+del par). A igual half-life, un σ más alto implica un spread más ruidoso/volátil.
+
+**T 50%/75%/95%:** ruedas esperadas para recorrer ese % del camino hacia el equilibrio.
+
+**Prob. 20/40/80r:** probabilidad *aproximada* (no first-passage-time exacta) de que el
+z-score del par haya cruzado cero en ese horizonte. No es asesoramiento financiero.
+            """)
+
         df_show = df_scan.copy()
         df_show['pvalue'] = df_show['pvalue'].round(4)
         df_show['hedge_ratio'] = df_show['hedge_ratio'].round(4)
         df_show['half_life'] = df_show['half_life'].round(1)
         df_show['hurst'] = df_show['hurst'].round(3)
         df_show['current_zscore'] = df_show['current_zscore'].round(2)
+        df_show['theta'] = df_show['theta'].round(4)
+        df_show['sigma_eq'] = df_show['sigma_eq'].round(4)
+        df_show['t50'] = df_show['t50'].round(0)
+        df_show['t75'] = df_show['t75'].round(0)
+        df_show['t95'] = df_show['t95'].round(0)
+        df_show['p20'] = (df_show['p20'] * 100).round(0)
+        df_show['p40'] = (df_show['p40'] * 100).round(0)
+        df_show['p80'] = (df_show['p80'] * 100).round(0)
+
         cols_mostrar = ['asset_a', 'asset_b', 'pvalue', 'is_cointegrated', 'hedge_ratio',
-                         'half_life', 'hurst', 'adf_is_stationary', 'current_zscore']
+                         'half_life', 'hurst', 'adf_is_stationary', 'current_zscore',
+                         'theta', 'sigma_eq', 't50', 't75', 't95', 'p20', 'p40', 'p80']
         df_show = df_show[cols_mostrar]
         df_show.columns = ['Activo A', 'Activo B', 'p-value EG', 'Cointegrado', 'Hedge Ratio',
-                            'Half-Life', 'Hurst', 'ADF Estac.', 'Z actual']
+                            'Half-Life', 'Hurst', 'ADF Estac.', 'Z actual',
+                            'θ', 'σ eq.', 'T 50%', 'T 75%', 'T 95%',
+                            'Prob. 20r', 'Prob. 40r', 'Prob. 80r']
 
         def _color_coint(val):
             return 'color:#3fb950;font-weight:700' if val else 'color:#f85149'
@@ -427,5 +989,5 @@ ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la se
         st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_show) * 35 + 45)))
         st.caption(
             '💡 Elegí un par de la tabla y andá a la pestaña "Par puntual" para ver el gráfico '
-            'completo y la dinámica de reversión.'
+            'completo y el detalle de la dinámica de reversión.'
         )
