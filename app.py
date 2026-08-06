@@ -32,6 +32,7 @@ from modulo_pago_manual import pantalla_suscripcion, panel_admin_pagos, panel_ge
 from modulo_promediador import modulo_promediador
 from modulo_bot_inversion import modulo_bot_inversion
 from modulo_rotacion import modulo_portfolio_rotation, modulo_sector_rotation
+from modulo_pares_cointegracion import modulo_pares_cointegracion
 
 ZONA_AR = ZoneInfo("America/Argentina/Buenos_Aires")
 
