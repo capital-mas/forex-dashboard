@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from itertools import combinations
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from math import erf, sqrt
 
 from engine.cointegration_engine import (
     analyze_pair,
@@ -18,7 +19,6 @@ from engine.cointegration_engine import (
     calculate_spread,
     calculate_zscore,
     generate_signals,
-    compute_strategy_returns,
     adf_test,
     johansen_test,
     hurst_exponent,
@@ -57,41 +57,57 @@ def _fig_spread_zscore(nombre_a, nombre_b, spread, zscore, entry_z, exit_z, pale
     return fig
 
 
-def _fig_equity_backtest(strat_ret, palette, ticker_a, ticker_b):
-    equity = (1 + strat_ret).cumprod()
-    dd = equity / equity.cummax() - 1
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-                         row_heights=[0.65, 0.35],
-                         subplot_titles=(f'Equity — Long/Short {ticker_a}/{ticker_b}', 'Drawdown'))
-    fig.add_trace(go.Scatter(x=equity.index, y=equity, line=dict(color=palette['monster'], width=2),
-                              name='Equity (base 1.0)'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=dd.index, y=dd * 100, fill='tozeroy', line=dict(color=palette['red'], width=1.2),
-                              fillcolor='rgba(248,81,73,0.3)', name='Drawdown %'), row=2, col=1)
-    fig.update_yaxes(gridcolor=palette['grid'], row=1, col=1)
-    fig.update_yaxes(gridcolor=palette['grid'], title='%', row=2, col=1)
-    fig.update_xaxes(gridcolor=palette['grid'])
-    fig.update_layout(
-        plot_bgcolor=palette['bg1'], paper_bgcolor=palette['bg2'],
-        font=dict(color='#b0bcd0', family='Inter, sans-serif'), dragmode=False,
-        height=460, hovermode='x unified', margin=dict(l=10, r=10, t=45, b=10),
-    )
-    fig.update_annotations(font=dict(color=palette['text'], size=12))
-    return fig, equity, dd
+def _norm_cdf(v):
+    """CDF de la normal estándar sin depender de scipy."""
+    return 0.5 * (1 + erf(v / sqrt(2)))
 
 
-def _metricas_backtest(strat_ret):
-    ret = strat_ret.dropna()
-    if len(ret) < 20 or ret.std() == 0:
+def _ou_extended_stats(spread, current_zscore, half_life):
+    """Estima parámetros extendidos del proceso Ornstein-Uhlenbeck a partir
+    del spread histórico y el half-life ya calculado por el engine:
+
+    - theta: velocidad de reversión (consistente con half_life = ln(2)/theta)
+    - sigma_eq: dispersión de equilibrio del spread, vía AR(1) sobre el spread
+    - t50/t75/t95: ruedas esperadas para recorrer 50/75/95% del camino hacia
+      el equilibrio (decaimiento exponencial de la media condicional)
+    - p20/p40/p80: probabilidad *aproximada* (no first-passage-time exacta)
+      de que el z-score haya cruzado cero en ese horizonte, asumiendo
+      varianza estacionaria del z-score ≈ 1.
+
+    Devuelve None si no hay suficiente información para estimar.
+    """
+    if half_life is None or half_life <= 0 or current_zscore is None:
         return None
-    equity = (1 + ret).cumprod()
-    anios = len(ret) / 252
-    cagr = equity.iloc[-1] ** (1 / anios) - 1 if anios > 0 else np.nan
-    vol = ret.std() * np.sqrt(252)
-    sharpe = cagr / vol if vol != 0 else np.nan
-    dd = (equity / equity.cummax() - 1).min()
-    win_rate = (ret[ret != 0] > 0).mean() if (ret != 0).any() else np.nan
-    return dict(cagr=cagr, vol=vol, sharpe=sharpe, max_dd=dd, win_rate=win_rate,
-                capital_final=float(equity.iloc[-1]))
+
+    s = spread.dropna().values
+    if len(s) < 30:
+        return None
+
+    x, y = s[:-1], s[1:]
+    b, a = np.polyfit(x, y, 1)
+    resid = y - (a + b * x)
+    sigma_eps = float(np.std(resid, ddof=2)) if len(resid) > 2 else float(np.std(resid))
+
+    if 0 < b < 1:
+        sigma_eq = sigma_eps / np.sqrt(1 - b ** 2)
+    else:
+        sigma_eq = float(np.std(s))
+
+    theta = np.log(2) / half_life  # consistente con el half-life ya mostrado en pantalla
+
+    def _t_percentil(p):
+        return np.log(1 / (1 - p)) / theta
+
+    def _prob_cruce(t):
+        var_t = max(1 - np.exp(-2 * theta * t), 1e-6)
+        media_t = current_zscore * np.exp(-theta * t)
+        return _norm_cdf(-abs(media_t) / np.sqrt(var_t))
+
+    return dict(
+        theta=theta, sigma_eq=sigma_eq,
+        t50=_t_percentil(0.5), t75=_t_percentil(0.75), t95=_t_percentil(0.95),
+        p20=_prob_cruce(20), p40=_prob_cruce(40), p80=_prob_cruce(80),
+    )
 
 
 def modulo_pares_cointegracion(
@@ -117,7 +133,7 @@ def modulo_pares_cointegracion(
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
         Test de Engle-Granger (y Johansen para 3+ activos), hedge ratio por OLS, half-life de
-        reversión (Ornstein-Uhlenbeck), exponente de Hurst y backtest simplificado del spread.
+        reversión (Ornstein-Uhlenbeck), exponente de Hurst y dinámica de reversión del spread.
         Motor separado y testeado (<code>engine/cointegration_engine.py</code>), distinto del
         scanner rápido de ratio+Z-score de la otra pestaña.
       </div>
@@ -127,7 +143,7 @@ def modulo_pares_cointegracion(
     tab_par, tab_universo = st.tabs(['🔎 Par puntual', '🌐 Escaneo de universo'])
 
     # ══════════════════════════════════════════════════════════════
-    #  TAB 1 — Par puntual: cointegración + backtest completo
+    #  TAB 1 — Par puntual: cointegración + dinámica de reversión
     # ══════════════════════════════════════════════════════════════
     with tab_par:
         c1, c2, c3 = st.columns(3)
@@ -189,6 +205,32 @@ def modulo_pares_cointegracion(
              '#7ee787' if (stats.hurst or 0.5) < 0.5 else '#f0883e'),
         ])
 
+        with st.expander('📖 ¿Cómo se interpreta cada indicador?', expanded=False):
+            st.markdown("""
+**Engle-Granger (p-value):** testea si existe una combinación lineal estacionaria entre los
+dos precios (el spread). Un p-value por debajo del umbral de significancia elegido (ej. 0.05)
+rechaza la hipótesis nula de "no cointegración" — sugiere que el spread revierte a la media en
+el largo plazo. Un p-value alto **no prueba** que no cointegren, solo que no hay evidencia
+suficiente con este historial y ventana.
+
+**Hedge Ratio (β):** cuánto del Activo B hay que tener (en la dirección opuesta al Activo A)
+por cada unidad del Activo A para que el spread quede neutral a movimientos direccionales
+conjuntos del mercado. Sale de una regresión OLS: A = β·B + intercepto.
+
+**Half-Life:** cuántas ruedas tarda, en promedio, el spread en recorrer la mitad de la
+distancia hacia su valor de equilibrio, asumiendo un proceso Ornstein-Uhlenbeck. Half-life
+corto implica reversión rápida (más apto para horizontes cortos); muy largo o indefinido
+implica que la fuerza de reversión es débil.
+
+**Hurst:** mide la "memoria" de la serie del spread. H < 0.5 indica comportamiento
+mean-reverting (anti-persistente); H ≈ 0.5 se parece a un random walk; H > 0.5 indica
+tendencia/persistencia. Para pairs trading conviene un Hurst bien por debajo de 0.5.
+
+**ADF (Augmented Dickey-Fuller):** test de raíz unitaria aplicado directamente sobre el
+spread. Un resultado "estacionario" respalda al Engle-Granger — en un par bien cointegrado,
+ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la señal con cautela.
+            """)
+
         c4, c5 = st.columns(2)
         with c4:
             st.metric('ADF sobre el spread', 'Estacionario ✓' if stats.adf_is_stationary else 'No estacionario ✗',
@@ -212,45 +254,74 @@ def modulo_pares_cointegracion(
             use_container_width=True, config=PLOTLY_CONFIG, key='coint_fig_spread',
         )
 
+        # ── Dinámica de reversión (Ornstein-Uhlenbeck) ──────────────
         st.markdown('---')
-        st.markdown('### 📊 Backtest simplificado (sin costos/slippage)')
-        strat_ret = compute_strategy_returns(cl_a, cl_b, stats.hedge_ratio, signal)
-        metricas_bt = _metricas_backtest(strat_ret)
+        st.markdown('### 🌀 Dinámica de reversión (Ornstein-Uhlenbeck)')
 
-        if metricas_bt is None:
-            st.info('No hubo suficientes señales de entrada/salida en este historial para backtestear.')
+        ou = _ou_extended_stats(spread, stats.current_zscore, stats.half_life)
+        if ou is None:
+            st.info('No se pudo estimar el proceso de reversión (half-life no disponible o historial insuficiente).')
         else:
-            kpi_cards_4([
-                ('CAGR estrategia', f"{metricas_bt['cagr']*100:+.1f}%", 'Long/Short spread', '#3fb950'),
-                ('Sharpe (aprox)', f"{metricas_bt['sharpe']:.2f}", 'Sin tasa libre de riesgo', '#3a7bd5'),
-                ('Max Drawdown', f"{metricas_bt['max_dd']*100:.1f}%", '', '#f85149'),
-                ('Capital final', f"{metricas_bt['capital_final']:.2f}x", 'Base 1.0 = capital inicial', '#e3b341'),
-            ])
-            fig_bt, _, _ = _fig_equity_backtest(strat_ret, palette, ticker_a, ticker_b)
-            st.plotly_chart(fig_bt, use_container_width=True, config=PLOTLY_CONFIG, key='coint_fig_bt')
+            co1, co2 = st.columns(2)
+            with co1:
+                st.metric('Velocidad de reversión (θ)', f"{ou['theta']:.4f}",
+                           'Por rueda — mayor = revierte más rápido')
+            with co2:
+                st.metric('σ de equilibrio', f"{ou['sigma_eq']:.4f}",
+                           'Dispersión del spread en torno a la media')
+
+            st.markdown('**Tiempo esperado para recorrer % del camino hacia el equilibrio:**')
+            ct1, ct2, ct3 = st.columns(3)
+            ct1.metric('50% del recorrido', f"{ou['t50']:.0f} ruedas")
+            ct2.metric('75% del recorrido', f"{ou['t75']:.0f} ruedas")
+            ct3.metric('95% del recorrido', f"{ou['t95']:.0f} ruedas")
+
+            st.markdown('**Probabilidad aproximada de que el z-score haya cruzado cero:**')
+            cp1b, cp2b, cp3b = st.columns(3)
+            cp1b.metric('En 20 ruedas', f"{ou['p20']*100:.0f}%")
+            cp2b.metric('En 40 ruedas', f"{ou['p40']*100:.0f}%")
+            cp3b.metric('En 80 ruedas', f"{ou['p80']*100:.0f}%")
+
             st.caption(
-                '⚠️ Backtest educativo: no incluye comisiones, slippage, ni costo de financiamiento '
-                'de la posición corta. Los resultados históricos no garantizan resultados futuros.'
+                '⚠️ Estimación basada en un ajuste Ornstein-Uhlenbeck sobre el spread histórico '
+                '(θ derivado del half-life, σ vía AR(1) sobre el spread). La probabilidad de cruce es '
+                'una aproximación direccional por horizonte, no una probabilidad exacta de primer '
+                'cruce (first-passage time). No es asesoramiento financiero.'
             )
 
-        señal_actual = signal.iloc[-1] if len(signal) else 0
-        if señal_actual == 1:
-            txt_señal = f'🟢 LONG SPREAD — Comprar {ticker_a}, Vender {ticker_b} (β={stats.hedge_ratio:.3f})'
-        elif señal_actual == -1:
-            txt_señal = f'🔴 SHORT SPREAD — Vender {ticker_a}, Comprar {ticker_b} (β={stats.hedge_ratio:.3f})'
+        # ── Señal actual ─────────────────────────────────────────────
+        if not stats.is_cointegrated or not stats.adf_is_stationary:
+            st.markdown(f"""
+            <div class="interp-card">
+              <div class="interp-header">📍 Señal actual — {ticker_a}/{ticker_b}</div>
+              ❌ Sin señal<br>
+              <span style="color:#6b7d9a;font-size:11px">
+                Motivo: el spread no cumple los requisitos estadísticos mínimos (Engle-Granger
+                y/o ADF) con este historial y significancia — no es estacionario, por lo que no
+                hay base para asumir que va a revertir a la media.<br>
+                No es asesoramiento financiero.
+              </span>
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            txt_señal = '⚪ Sin posición — Z-Score dentro de rango neutral'
+            señal_actual = signal.iloc[-1] if len(signal) else 0
+            if señal_actual == 1:
+                txt_señal = f'🟢 LONG SPREAD — Comprar {ticker_a}, Vender {ticker_b} (β={stats.hedge_ratio:.3f})'
+            elif señal_actual == -1:
+                txt_señal = f'🔴 SHORT SPREAD — Vender {ticker_a}, Comprar {ticker_b} (β={stats.hedge_ratio:.3f})'
+            else:
+                txt_señal = '⚪ Sin posición — Z-Score dentro de rango neutral'
 
-        st.markdown(f"""
-        <div class="interp-card">
-          <div class="interp-header">📍 Señal actual — {ticker_a}/{ticker_b}</div>
-          {txt_señal}<br>
-          <span style="color:#6b7d9a;font-size:11px">
-            Half-life: {f'{stats.half_life:.1f} ruedas' if stats.half_life else 'no estimable'} ·
-            No es asesoramiento financiero.
-          </span>
-        </div>
-        """, unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class="interp-card">
+              <div class="interp-header">📍 Señal actual — {ticker_a}/{ticker_b}</div>
+              {txt_señal}<br>
+              <span style="color:#6b7d9a;font-size:11px">
+                Half-life: {f'{stats.half_life:.1f} ruedas' if stats.half_life else 'no estimable'} ·
+                No es asesoramiento financiero.
+              </span>
+            </div>
+            """, unsafe_allow_html=True)
 
         chips_navegacion([(ticker_a, ticker_a), (ticker_b, ticker_b)], 'coint_par')
 
@@ -356,5 +427,5 @@ def modulo_pares_cointegracion(
         st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_show) * 35 + 45)))
         st.caption(
             '💡 Elegí un par de la tabla y andá a la pestaña "Par puntual" para ver el gráfico '
-            'completo, el backtest y la señal actual.'
+            'completo y la dinámica de reversión.'
         )
