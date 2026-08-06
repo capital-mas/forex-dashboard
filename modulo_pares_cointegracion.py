@@ -24,6 +24,9 @@ from engine.cointegration_engine import (
     hurst_exponent,
 )
 
+# TODO: ajustá este import al path real donde vive el dict en tu repo
+from sectores import PARES_SECTORES
+
 
 def _fig_spread_zscore(nombre_a, nombre_b, spread, zscore, entry_z, exit_z, palette):
     fig = make_subplots(
@@ -62,39 +65,25 @@ def _norm_cdf(v):
     return 0.5 * (1 + erf(v / sqrt(2)))
 
 
-def _ou_extended_stats(spread, current_zscore, half_life):
-    """Estima parámetros extendidos del proceso Ornstein-Uhlenbeck a partir
-    del spread histórico y el half-life ya calculado por el engine:
-
-    - theta: velocidad de reversión (consistente con half_life = ln(2)/theta)
-    - sigma_eq: dispersión de equilibrio del spread, vía AR(1) sobre el spread
-    - t50/t75/t95: ruedas esperadas para recorrer 50/75/95% del camino hacia
-      el equilibrio (decaimiento exponencial de la media condicional)
-    - p20/p40/p80: probabilidad *aproximada* (no first-passage-time exacta)
-      de que el z-score haya cruzado cero en ese horizonte, asumiendo
-      varianza estacionaria del z-score ≈ 1.
-
-    Devuelve None si no hay suficiente información para estimar.
-    """
-    if half_life is None or half_life <= 0 or current_zscore is None:
-        return None
-
+def _ar1_sigma_eq(spread):
+    """Ajusta un AR(1) sobre el spread y devuelve sigma de equilibrio
+    (dispersión estacionaria). None si no hay suficiente historial."""
     s = spread.dropna().values
     if len(s) < 30:
         return None
-
     x, y = s[:-1], s[1:]
     b, a = np.polyfit(x, y, 1)
     resid = y - (a + b * x)
     sigma_eps = float(np.std(resid, ddof=2)) if len(resid) > 2 else float(np.std(resid))
-
     if 0 < b < 1:
-        sigma_eq = sigma_eps / np.sqrt(1 - b ** 2)
-    else:
-        sigma_eq = float(np.std(s))
+        return sigma_eps / np.sqrt(1 - b ** 2)
+    return float(np.std(s))
 
-    theta = np.log(2) / half_life  # consistente con el half-life ya mostrado en pantalla
 
+def _ou_time_and_prob(theta, current_zscore):
+    """Percentiles de tiempo de convergencia (50/75/95%) y probabilidad
+    aproximada de cruce de cero del z-score en 20/40/80 ruedas. Solo
+    necesita theta y el z-score actual — no requiere el spread completo."""
     def _t_percentil(p):
         return np.log(1 / (1 - p)) / theta
 
@@ -104,10 +93,23 @@ def _ou_extended_stats(spread, current_zscore, half_life):
         return _norm_cdf(-abs(media_t) / np.sqrt(var_t))
 
     return dict(
-        theta=theta, sigma_eq=sigma_eq,
         t50=_t_percentil(0.5), t75=_t_percentil(0.75), t95=_t_percentil(0.95),
         p20=_prob_cruce(20), p40=_prob_cruce(40), p80=_prob_cruce(80),
     )
+
+
+def _ou_extended_stats(spread, current_zscore, half_life):
+    """Combina sigma_eq (necesita el spread) + theta/percentiles/probabilidad
+    (no lo necesitan) en un solo dict. None si falta algún insumo."""
+    if half_life is None or half_life <= 0 or current_zscore is None:
+        return None
+    sigma_eq = _ar1_sigma_eq(spread)
+    if sigma_eq is None:
+        return None
+    theta = np.log(2) / half_life  # consistente con el half-life ya mostrado
+    out = dict(theta=theta, sigma_eq=sigma_eq)
+    out.update(_ou_time_and_prob(theta, current_zscore))
+    return out
 
 
 def modulo_pares_cointegracion(
@@ -229,6 +231,11 @@ tendencia/persistencia. Para pairs trading conviene un Hurst bien por debajo de 
 **ADF (Augmented Dickey-Fuller):** test de raíz unitaria aplicado directamente sobre el
 spread. Un resultado "estacionario" respalda al Engle-Granger — en un par bien cointegrado,
 ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la señal con cautela.
+
+**θ, σ, percentiles y probabilidad de cruce (más abajo):** ver la sección "Dinámica de
+reversión" — θ es la velocidad de reversión (deriva del half-life), σ es cuánto ruido tiene
+el spread alrededor de su equilibrio, y los percentiles/probabilidades traducen todo eso a
+"cuánto tiempo puede tardar" y "qué tan probable es" la convergencia.
             """)
 
         c4, c5 = st.columns(2)
@@ -326,15 +333,34 @@ ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la se
         chips_navegacion([(ticker_a, ticker_a), (ticker_b, ticker_b)], 'coint_par')
 
     # ══════════════════════════════════════════════════════════════
-    #  TAB 2 — Escaneo de universo: todas las combinaciones
+    #  TAB 2 — Escaneo de universo: sectores predefinidos + métricas OU
     # ══════════════════════════════════════════════════════════════
     with tab_universo:
         st.caption(
-            'Ingresá una lista de tickers (separados por coma) y el motor testea TODAS las '
-            'combinaciones de a pares, ordenando por p-value de Engle-Granger (más cointegrados primero).'
+            'Elegí un sector/grupo predefinido para autocompletar los tickers, o cargalos a mano. '
+            'El motor testea TODAS las combinaciones de a pares, ordenando por p-value de '
+            'Engle-Granger (más cointegrados primero).'
         )
+
+        cs1, cs2 = st.columns([3, 1])
+        with cs1:
+            sector_sel = st.selectbox(
+                'Cargar desde sector/grupo',
+                ['— Selección manual —'] + sorted(PARES_SECTORES.keys()),
+                key='coint_u_sector_sel',
+            )
+        with cs2:
+            st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+            cargar_sector = st.button('⬇ Cargar tickers', key='coint_u_cargar_sector')
+
+        if cargar_sector and sector_sel != '— Selección manual —':
+            tickers_del_sector = sorted(set(PARES_SECTORES[sector_sel]['tickers'].values()))
+            st.session_state['coint_universo_txt'] = ', '.join(tickers_del_sector)
+            st.rerun()
+
         tickers_txt = st.text_area(
-            'Tickers (separados por coma)', value='GGAL, BMA, SUPV, BBAR',
+            'Tickers (separados por coma)',
+            value=st.session_state.get('coint_universo_txt', 'GGAL, BMA, SUPV, BBAR'),
             key='coint_universo_txt', height=70,
         )
         cu1, cu2, cu3 = st.columns(3)
@@ -349,7 +375,7 @@ ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la se
         n_combos = len(list(combinations(tickers_lista, 2))) if len(tickers_lista) >= 2 else 0
 
         if len(tickers_lista) < 2:
-            st.info('Ingresá al menos 2 tickers.')
+            st.info('Ingresá al menos 2 tickers o cargá un sector.')
             return
         if n_combos > 45:
             st.warning(f'⚠️ {n_combos} combinaciones — puede tardar. Con muchos tickers considerá menos activos.')
@@ -388,6 +414,24 @@ ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la se
             st.error('No se pudo calcular ningún par (verificá el historial común entre activos).')
             return
 
+        # ── Métricas OU extendidas por par (θ, σ, percentiles, probabilidad) ──
+        def _fila_ou(row):
+            vacio = pd.Series({k: np.nan for k in
+                                ['theta', 'sigma_eq', 't50', 't75', 't95', 'p20', 'p40', 'p80']})
+            hedge, half_life, current_z = row['hedge_ratio'], row['half_life'], row['current_zscore']
+            if pd.isna(hedge) or pd.isna(half_life) or half_life <= 0 or pd.isna(current_z):
+                return vacio
+            a, b = row['asset_a'], row['asset_b']
+            cl_a, cl_b = price_df[a], price_df[b]
+            intercept = float(cl_a.mean() - hedge * cl_b.mean())  # exacto si hedge_ratio es la pendiente OLS
+            spread_par = calculate_spread(cl_a, cl_b, hedge, intercept)
+            ou = _ou_extended_stats(spread_par, current_z, half_life)
+            return pd.Series(ou) if ou is not None else vacio
+
+        with st.spinner('Calculando dinámica de reversión (θ, σ, convergencia) por par...'):
+            ou_cols = df_scan.apply(_fila_ou, axis=1)
+        df_scan = pd.concat([df_scan, ou_cols], axis=1)
+
         n_coint = int(df_scan['is_cointegrated'].sum())
         kpi_cards_4([
             ('Pares testeados', str(len(df_scan)), f'{len(price_df.columns)} activos', '#3a7bd5'),
@@ -399,17 +443,47 @@ ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la se
              'H<0.5 = mean-reverting', '#7ee787'),
         ])
 
+        with st.expander('📖 ¿Cómo se interpreta cada columna?', expanded=False):
+            st.markdown("""
+**p-value EG / Cointegrado / ADF Estac.:** ver test de Engle-Granger y ADF — un par sólido
+debería tener p-value bajo y ADF estacionario a la vez.
+
+**Hedge Ratio / Half-Life / Hurst:** ver explicación en la pestaña "Par puntual".
+
+**θ (theta):** velocidad de reversión del spread, derivada del half-life (θ = ln(2)/half-life).
+
+**σ eq.:** dispersión del spread alrededor de su equilibrio (AR(1) sobre el spread histórico
+del par). A igual half-life, un σ más alto implica un spread más ruidoso/volátil.
+
+**T 50%/75%/95%:** ruedas esperadas para recorrer ese % del camino hacia el equilibrio.
+
+**Prob. 20/40/80r:** probabilidad *aproximada* (no first-passage-time exacta) de que el
+z-score del par haya cruzado cero en ese horizonte. No es asesoramiento financiero.
+            """)
+
         df_show = df_scan.copy()
         df_show['pvalue'] = df_show['pvalue'].round(4)
         df_show['hedge_ratio'] = df_show['hedge_ratio'].round(4)
         df_show['half_life'] = df_show['half_life'].round(1)
         df_show['hurst'] = df_show['hurst'].round(3)
         df_show['current_zscore'] = df_show['current_zscore'].round(2)
+        df_show['theta'] = df_show['theta'].round(4)
+        df_show['sigma_eq'] = df_show['sigma_eq'].round(4)
+        df_show['t50'] = df_show['t50'].round(0)
+        df_show['t75'] = df_show['t75'].round(0)
+        df_show['t95'] = df_show['t95'].round(0)
+        df_show['p20'] = (df_show['p20'] * 100).round(0)
+        df_show['p40'] = (df_show['p40'] * 100).round(0)
+        df_show['p80'] = (df_show['p80'] * 100).round(0)
+
         cols_mostrar = ['asset_a', 'asset_b', 'pvalue', 'is_cointegrated', 'hedge_ratio',
-                         'half_life', 'hurst', 'adf_is_stationary', 'current_zscore']
+                         'half_life', 'hurst', 'adf_is_stationary', 'current_zscore',
+                         'theta', 'sigma_eq', 't50', 't75', 't95', 'p20', 'p40', 'p80']
         df_show = df_show[cols_mostrar]
         df_show.columns = ['Activo A', 'Activo B', 'p-value EG', 'Cointegrado', 'Hedge Ratio',
-                            'Half-Life', 'Hurst', 'ADF Estac.', 'Z actual']
+                            'Half-Life', 'Hurst', 'ADF Estac.', 'Z actual',
+                            'θ', 'σ eq.', 'T 50%', 'T 75%', 'T 95%',
+                            'Prob. 20r', 'Prob. 40r', 'Prob. 80r']
 
         def _color_coint(val):
             return 'color:#3fb950;font-weight:700' if val else 'color:#f85149'
@@ -427,5 +501,5 @@ ambos tests deberían coincidir. Si dan resultados contradictorios, tratá la se
         st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_show) * 35 + 45)))
         st.caption(
             '💡 Elegí un par de la tabla y andá a la pestaña "Par puntual" para ver el gráfico '
-            'completo y la dinámica de reversión.'
+            'completo y el detalle de la dinámica de reversión.'
         )
