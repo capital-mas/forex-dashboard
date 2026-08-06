@@ -1,0 +1,25 @@
+from .cointegration_engine import (
+    PairStats,
+    test_cointegration,
+    calculate_hedge_ratio,
+    calculate_spread,
+    calculate_half_life,
+    calculate_zscore,
+    generate_signals,
+    analyze_pair,
+    scan_universe,
+    compute_strategy_returns,
+)
+
+__all__ = [
+    "PairStats",
+    "test_cointegration",
+    "calculate_hedge_ratio",
+    "calculate_spread",
+    "calculate_half_life",
+    "calculate_zscore",
+    "generate_signals",
+    "analyze_pair",
+    "scan_universe",
+    "compute_strategy_returns",
+]
