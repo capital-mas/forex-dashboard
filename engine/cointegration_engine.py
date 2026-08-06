@@ -19,18 +19,22 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
-from statsmodels.tsa.stattools import coint
+from statsmodels.tsa.stattools import coint, adfuller
+from statsmodels.tsa.vector_ar.vecm import coint_johansen
 
 
 @dataclass
 class PairStats:
     asset_a: str
     asset_b: str
-    pvalue: float
+    pvalue: float                 # p-value del test de Engle-Granger
     is_cointegrated: bool
     hedge_ratio: float
     intercept: float
     half_life: Optional[float]
+    adf_pvalue: Optional[float] = None     # ADF aplicado directo al spread
+    adf_is_stationary: Optional[bool] = None
+    hurst: Optional[float] = None          # Hurst exponent del spread
     current_zscore: Optional[float] = None
 
 
@@ -46,6 +50,76 @@ def test_cointegration(series_a: pd.Series, series_b: pd.Series, significance: f
     series_a, series_b = series_a.align(series_b, join="inner")
     _, pvalue, _ = coint(series_a, series_b)
     return float(pvalue), pvalue < significance
+
+
+def adf_test(series: pd.Series, significance: float = 0.05) -> dict:
+    """Test de Dickey-Fuller Aumentado (ADF) de estacionariedad, aplicado
+    directamente sobre una serie (típicamente el spread de un par).
+
+    H0: la serie tiene raíz unitaria (NO es estacionaria / no revierte a la media)
+    Si pvalue < significance -> se rechaza H0 -> la serie ES estacionaria.
+    """
+    series = series.dropna()
+    stat, pvalue, _, _, crit_values, _ = adfuller(series, autolag="AIC")
+    return {
+        "adf_statistic": float(stat),
+        "pvalue": float(pvalue),
+        "critical_values": {k: float(v) for k, v in crit_values.items()},
+        "is_stationary": pvalue < significance,
+    }
+
+
+def johansen_test(price_df: pd.DataFrame, significance: float = 0.05,
+                   det_order: int = 0, k_ar_diff: int = 1) -> dict:
+    """Test de Johansen: cointegración multivariada (2 o más series a la vez).
+
+    A diferencia de Engle-Granger (que solo compara 2 series y depende de
+    cuál se usa como variable dependiente), Johansen evalúa TODAS las
+    combinaciones lineales posibles entre N series simultáneamente y es
+    la herramienta correcta para canastas de 3+ activos (ej. arbitraje
+    de ETF vs. sus componentes, o cestas sectoriales).
+
+    Devuelve cuántas relaciones de cointegración existen (trace test) y
+    los vectores de cointegración (pesos) de cada una.
+    """
+    df = price_df.dropna()
+    result = coint_johansen(df, det_order, k_ar_diff)
+
+    sig_col = {0.10: 0, 0.05: 1, 0.01: 2}.get(significance, 1)
+    trace_stat = result.lr1
+    crit_values = result.cvt[:, sig_col]
+    n_relations = int(np.sum(trace_stat > crit_values))
+
+    return {
+        "columns": list(df.columns),
+        "trace_statistic": trace_stat.tolist(),
+        "critical_values": crit_values.tolist(),
+        "n_cointegrating_relations": n_relations,
+        "is_cointegrated": n_relations > 0,
+        "eigenvectors": result.evec.tolist(),  # pesos de cada combinación lineal
+    }
+
+
+def hurst_exponent(series: pd.Series, max_lag: int = 100) -> Optional[float]:
+    """Exponente de Hurst de una serie (ej. el spread), vía método de rango
+    reescalado aproximado sobre diferencias.
+
+    H < 0.5  -> mean-reverting (anti-persistente, ideal para pairs trading)
+    H = 0.5  -> random walk (sin estructura explotable)
+    H > 0.5  -> trending / persistente (no apto para mean reversion)
+    """
+    series = series.dropna().values
+    n = len(series)
+    max_lag = min(max_lag, n // 2)
+    if max_lag < 5:
+        return None
+    lags = range(2, max_lag)
+    tau = [np.std(series[lag:] - series[:-lag]) for lag in lags]
+    tau = [t if t > 1e-12 else 1e-12 for t in tau]
+    # Para un random walk, std(diff) ~ sqrt(lag) * sigma, así que la pendiente
+    # de log(tau) vs log(lag) ES el exponente de Hurst directamente (H=0.5 para RW).
+    poly = np.polyfit(np.log(list(lags)), np.log(tau), 1)
+    return float(poly[0])
 
 
 def calculate_hedge_ratio(series_a: pd.Series, series_b: pd.Series):
@@ -141,13 +215,16 @@ def analyze_pair(price_a: pd.Series, price_b: pd.Series, name_a: str, name_b: st
     hedge_ratio, intercept = calculate_hedge_ratio(price_a, price_b)
     spread = calculate_spread(price_a, price_b, hedge_ratio, intercept)
     hl = calculate_half_life(spread)
+    adf_result = adf_test(spread, significance)
+    hurst = hurst_exponent(spread)
     zscore = calculate_zscore(spread, zscore_window)
     valid_z = zscore.dropna()
     current_z = float(valid_z.iloc[-1]) if len(valid_z) else None
     return PairStats(
         asset_a=name_a, asset_b=name_b, pvalue=pvalue, is_cointegrated=is_coint,
         hedge_ratio=hedge_ratio, intercept=intercept, half_life=hl,
-        current_zscore=current_z,
+        adf_pvalue=adf_result["pvalue"], adf_is_stationary=adf_result["is_stationary"],
+        hurst=hurst, current_zscore=current_z,
     )
 
 
