@@ -746,8 +746,8 @@ def modulo_pares_cointegracion(
     </div>
     """, unsafe_allow_html=True)
 
-    tab_par, tab_universo, tab_hmm = st.tabs(
-        ['🔎 Par puntual', '🌐 Escaneo de universo', '🔮 Regímenes HMM']
+    tab_par, tab_universo = st.tabs(
+        ['🔎 Par puntual', '🌐 Escaneo de universo + Regímenes HMM']
     )
 
     # ══════════════════════════════════════════════════════════════
@@ -902,6 +902,80 @@ el spread alrededor de su equilibrio, y los percentiles/probabilidades traducen 
                 'cruce (first-passage time). No es asesoramiento financiero.'
             )
 
+        # ── Régimen HMM (Hidden Markov Model) ───────────────────────
+        st.markdown('---')
+        st.markdown('### 🔮 Régimen (Hidden Markov Model)')
+        st.caption(
+            'Infiere en qué "estado oculto" está el spread — calmo/mean-reverting vs '
+            'volátil/de ruptura — para saber cuánto confiar en la señal de cointegración de arriba.'
+        )
+
+        regimen_hmm_actual = None
+        if not _HMM_DISPONIBLE:
+            st.info(
+                'Falta instalar **hmmlearn** para esta sección (`pip install hmmlearn`). '
+                'El resto del análisis funciona igual.'
+            )
+        else:
+            chp1, chp2 = st.columns(2)
+            with chp1:
+                n_states_p = st.selectbox('Cantidad de regímenes', [2, 3], index=0, key='coint_hmm_p_nstates')
+            with chp2:
+                feature_sel_p = st.selectbox(
+                    'Serie sobre la que corre el HMM',
+                    ['Z-Score del spread', 'Variación diaria del spread'],
+                    index=0, key='coint_hmm_p_feature',
+                )
+
+            feature_series_p = zscore if feature_sel_p == 'Z-Score del spread' else spread.diff()
+            feature_label_p = feature_sel_p
+
+            hmm_res_p = _fit_hmm_regimenes(feature_series_p, n_states=n_states_p)
+
+            if hmm_res_p is None:
+                st.info('Historial insuficiente para ajustar el HMM con esta serie.')
+            else:
+                etiquetas_p = _etiquetas_regimen(hmm_res_p['means'], hmm_res_p['stds'])
+                regimen_hmm_actual = etiquetas_p.get(hmm_res_p['current_state'],
+                                                       f"Régimen {hmm_res_p['current_state']}")
+                es_regimen_calmo = hmm_res_p['current_state'] == int(
+                    np.argmin(np.abs(hmm_res_p['means']) + hmm_res_p['stds'])
+                )
+                duracion_p = hmm_res_p['expected_duration'][hmm_res_p['current_state']]
+
+                kpi_cards_4([
+                    ('Régimen actual', regimen_hmm_actual, f'{ticker_a}/{ticker_b}', '#3a7bd5'),
+                    ('Confianza del régimen', f"{hmm_res_p['current_state_prob']*100:.0f}%",
+                     'Probabilidad posterior', '#3fb950'),
+                    ('Duración esperada', f'{duracion_p:.1f} ruedas',
+                     'De permanencia en este régimen', '#e3b341'),
+                    ('Prob. de quedarse', f"{hmm_res_p['stay_prob'][hmm_res_p['current_state']]*100:.0f}%",
+                     'Por rueda (diagonal transición)', '#7ee787'),
+                ])
+
+                st.plotly_chart(
+                    _fig_hmm_regimenes(feature_series_p, hmm_res_p, etiquetas_p, palette, feature_label_p),
+                    use_container_width=True, config=PLOTLY_CONFIG, key='coint_hmm_p_fig',
+                )
+
+                if es_regimen_calmo:
+                    st.success('✅ Régimen calmo — mayor confianza en la señal de cointegración/OU de arriba.')
+                else:
+                    st.warning(
+                        '⚠️ Régimen disperso/volátil — tratá con cautela la señal de reversión hasta '
+                        'que el HMM marque vuelta al régimen calmo.'
+                    )
+
+                with st.expander('📖 ¿Cómo se calcula el régimen?', expanded=False):
+                    st.markdown("""
+Se ajusta un **Gaussian HMM** (vía `hmmlearn`) sobre la serie elegida. El modelo estima, para
+cada régimen, una media y desvío (qué tan disperso es el spread en ese estado) y una matriz de
+transición (probabilidad de pasar de un régimen a otro rueda a rueda). El régimen de cada rueda
+sale del algoritmo de Viterbi, y su probabilidad posterior del forward-backward. Los regímenes
+se etiquetan de "más calmo" a "más volátil" según |media| + desvío — es una interpretación
+posterior, el modelo no sabe de antemano cuál es cuál. No es asesoramiento financiero.
+                    """)
+
         # ── Señal actual ─────────────────────────────────────────────
         if not stats.is_cointegrated or not stats.adf_is_stationary:
             st.markdown(f"""
@@ -939,7 +1013,7 @@ el spread alrededor de su equilibrio, y los percentiles/probabilidades traducen 
         chips_navegacion([(ticker_a, ticker_a), (ticker_b, ticker_b)], 'coint_par')
 
     # ══════════════════════════════════════════════════════════════
-    #  TAB 2 — Escaneo de universo: sectores predefinidos + métricas OU
+    #  TAB 2 — Escaneo de universo: cointegración + OU + señal + HMM
     # ══════════════════════════════════════════════════════════════
     with tab_universo:
         st.caption(
@@ -976,6 +1050,22 @@ el spread alrededor de su equilibrio, y los percentiles/probabilidades traducen 
             sig_u = st.selectbox('Significancia', [0.01, 0.05, 0.10], index=1, key='coint_u_sig')
         with cu3:
             z_win_u = st.slider('Ventana Z-Score', 10, 100, 30, 5, key='coint_u_zwin')
+
+        cu4, cu5, cu6 = st.columns(3)
+        with cu4:
+            entry_z_u = st.slider('Z de entrada (señal)', 0.5, 3.5, 2.0, 0.1, key='coint_u_entry')
+        with cu5:
+            exit_z_u = st.slider('Z de salida (señal)', 0.1, 1.5, 0.5, 0.1, key='coint_u_exit')
+        with cu6:
+            n_states_u = st.selectbox('Regímenes HMM', [2, 3], index=0, key='coint_u_nstates',
+                                       disabled=not _HMM_DISPONIBLE,
+                                       help='Cantidad de estados ocultos que busca el HMM por par.')
+
+        if not _HMM_DISPONIBLE:
+            st.info(
+                'Falta instalar **hmmlearn** (`pip install hmmlearn`) para calcular los regímenes '
+                'HMM por par — el resto del escaneo (cointegración, OU, señal) funciona igual.'
+            )
 
         tickers_lista = sorted(set(t.strip().upper() for t in tickers_txt.split(',') if t.strip()))
         n_combos = len(list(combinations(tickers_lista, 2))) if len(tickers_lista) >= 2 else 0
@@ -1020,10 +1110,12 @@ el spread alrededor de su equilibrio, y los percentiles/probabilidades traducen 
             st.error('No se pudo calcular ningún par (verificá el historial común entre activos).')
             return
 
-        # ── Métricas OU extendidas por par (θ, σ, percentiles, probabilidad) ──
-        def _fila_ou(row):
-            vacio = pd.Series({k: np.nan for k in
-                                ['theta', 'sigma_eq', 't50', 't75', 't95', 'p20', 'p40', 'p80']})
+        # ── Métricas OU + Señal + Régimen HMM extendidas por par ──────
+        _campos_vacios = ['theta', 'sigma_eq', 't50', 't75', 't95', 'p20', 'p40', 'p80',
+                           'señal', 'regimen_hmm', 'regimen_hmm_conf']
+
+        def _fila_extendida(row):
+            vacio = pd.Series({k: np.nan for k in _campos_vacios})
             hedge, half_life, current_z = row['hedge_ratio'], row['half_life'], row['current_zscore']
             if pd.isna(hedge) or pd.isna(half_life) or half_life <= 0 or pd.isna(current_z):
                 return vacio
@@ -1031,12 +1123,42 @@ el spread alrededor de su equilibrio, y los percentiles/probabilidades traducen 
             cl_a, cl_b = price_df[a], price_df[b]
             intercept = float(cl_a.mean() - hedge * cl_b.mean())  # exacto si hedge_ratio es la pendiente OLS
             spread_par = calculate_spread(cl_a, cl_b, hedge, intercept)
-            ou = _ou_extended_stats(spread_par, current_z, half_life)
-            return pd.Series(ou) if ou is not None else vacio
+            zscore_par = calculate_zscore(spread_par, window=z_win_u)
 
-        with st.spinner('Calculando dinámica de reversión (θ, σ, convergencia) por par...'):
-            ou_cols = df_scan.apply(_fila_ou, axis=1)
-        df_scan = pd.concat([df_scan, ou_cols], axis=1)
+            ou = _ou_extended_stats(spread_par, current_z, half_life)
+            out = dict(ou) if ou is not None else {k: np.nan for k in
+                        ['theta', 'sigma_eq', 't50', 't75', 't95', 'p20', 'p40', 'p80']}
+
+            # Señal de compra/venta (igual criterio que la pestaña "Par puntual")
+            señal_serie = generate_signals(zscore_par, entry_z=entry_z_u, exit_z=exit_z_u)
+            señal_val = int(señal_serie.iloc[-1]) if len(señal_serie) and row['is_cointegrated'] else 0
+            if not row['is_cointegrated'] or not row.get('adf_is_stationary', True):
+                out['señal'] = 'Sin señal'
+            elif señal_val == 1:
+                out['señal'] = f'🟢 LONG ({a})'
+            elif señal_val == -1:
+                out['señal'] = f'🔴 SHORT ({a})'
+            else:
+                out['señal'] = 'Neutral'
+
+            # Régimen HMM sobre el Z-Score del par
+            if _HMM_DISPONIBLE:
+                hmm_par = _fit_hmm_regimenes(zscore_par, n_states=n_states_u)
+                if hmm_par is not None:
+                    etiquetas_par = _etiquetas_regimen(hmm_par['means'], hmm_par['stds'])
+                    out['regimen_hmm'] = etiquetas_par.get(hmm_par['current_state'],
+                                                            f"Régimen {hmm_par['current_state']}")
+                    out['regimen_hmm_conf'] = round(hmm_par['current_state_prob'] * 100, 0)
+                else:
+                    out['regimen_hmm'], out['regimen_hmm_conf'] = 'N/D', np.nan
+            else:
+                out['regimen_hmm'], out['regimen_hmm_conf'] = 'N/D', np.nan
+
+            return pd.Series(out)
+
+        with st.spinner('Calculando dinámica de reversión, señal y regímenes HMM por par...'):
+            extra_cols = df_scan.apply(_fila_extendida, axis=1)
+        df_scan = pd.concat([df_scan, extra_cols], axis=1)
 
         n_coint = int(df_scan['is_cointegrated'].sum())
         kpi_cards_4([
@@ -1064,7 +1186,16 @@ del par). A igual half-life, un σ más alto implica un spread más ruidoso/vol�
 **T 50%/75%/95%:** ruedas esperadas para recorrer ese % del camino hacia el equilibrio.
 
 **Prob. 20/40/80r:** probabilidad *aproximada* (no first-passage-time exacta) de que el
-z-score del par haya cruzado cero en ese horizonte. No es asesoramiento financiero.
+z-score del par haya cruzado cero en ese horizonte.
+
+**Señal:** 🟢 LONG = comprar Activo A / vender Activo B; 🔴 SHORT = vender Activo A / comprar
+Activo B; sale del mismo criterio (Z de entrada/salida) que la pestaña "Par puntual". "Sin
+señal" significa que el par no pasó los tests estadísticos mínimos.
+
+**Régimen HMM / Confianza HMM:** régimen oculto vigente del par (🟢 calmo, 🟡 intermedio,
+🔴 volátil) según el Hidden Markov Model ajustado sobre su Z-Score, y la probabilidad
+posterior de ese régimen. Sirve para saber cuánto confiar en la señal de esa fila. No es
+asesoramiento financiero.
             """)
 
         df_show = df_scan.copy()
@@ -1081,22 +1212,48 @@ z-score del par haya cruzado cero en ese horizonte. No es asesoramiento financie
         df_show['p20'] = (df_show['p20'] * 100).round(0)
         df_show['p40'] = (df_show['p40'] * 100).round(0)
         df_show['p80'] = (df_show['p80'] * 100).round(0)
+        df_show['señal'] = df_show['señal'].fillna('Sin señal')
+        df_show['regimen_hmm'] = df_show['regimen_hmm'].fillna('N/D')
+        df_show['regimen_hmm_conf'] = df_show['regimen_hmm_conf'].apply(
+            lambda v: f'{v:.0f}%' if pd.notna(v) else 'N/D'
+        )
 
         cols_mostrar = ['asset_a', 'asset_b', 'pvalue', 'is_cointegrated', 'hedge_ratio',
-                         'half_life', 'hurst', 'adf_is_stationary', 'current_zscore',
+                         'half_life', 'hurst', 'adf_is_stationary', 'current_zscore', 'señal',
+                         'regimen_hmm', 'regimen_hmm_conf',
                          'theta', 'sigma_eq', 't50', 't75', 't95', 'p20', 'p40', 'p80']
         df_show = df_show[cols_mostrar]
         df_show.columns = ['Activo A', 'Activo B', 'p-value EG', 'Cointegrado', 'Hedge Ratio',
-                            'Half-Life', 'Hurst', 'ADF Estac.', 'Z actual',
+                            'Half-Life', 'Hurst', 'ADF Estac.', 'Z actual', 'Señal',
+                            'Régimen HMM', 'Confianza HMM',
                             'θ', 'σ eq.', 'T 50%', 'T 75%', 'T 95%',
                             'Prob. 20r', 'Prob. 40r', 'Prob. 80r']
 
         def _color_coint(val):
             return 'color:#3fb950;font-weight:700' if val else 'color:#f85149'
 
+        def _color_señal(val):
+            if isinstance(val, str) and 'LONG' in val:
+                return 'color:#3fb950;font-weight:700;background-color:rgba(63,185,80,0.15)'
+            if isinstance(val, str) and 'SHORT' in val:
+                return 'color:#f85149;font-weight:700;background-color:rgba(248,81,73,0.15)'
+            return 'color:#6b7d9a'
+
+        def _color_regimen(val):
+            if isinstance(val, str):
+                if val.startswith('🟢'):
+                    return 'color:#3fb950;font-weight:600'
+                if val.startswith('🔴'):
+                    return 'color:#f85149;font-weight:600'
+                if val.startswith('🟡'):
+                    return 'color:#e3b341;font-weight:600'
+            return ''
+
         _map = 'map' if hasattr(df_show.style, 'map') else 'applymap'
         styled = (df_show.style
                   .pipe(lambda s: getattr(s, _map)(_color_coint, subset=['Cointegrado', 'ADF Estac.']))
+                  .pipe(lambda s: getattr(s, _map)(_color_señal, subset=['Señal']))
+                  .pipe(lambda s: getattr(s, _map)(_color_regimen, subset=['Régimen HMM']))
                   .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
                   .set_table_styles([
                       {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
@@ -1106,174 +1263,7 @@ z-score del par haya cruzado cero en ese horizonte. No es asesoramiento financie
                   ]))
         st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_show) * 35 + 45)))
         st.caption(
-            '💡 Elegí un par de la tabla y andá a la pestaña "Par puntual" para ver el gráfico '
-            'completo y el detalle de la dinámica de reversión.'
+            '💡 Verde = señal de compra (LONG) o régimen calmo · Rojo = señal de venta (SHORT) o '
+            'régimen volátil. Elegí un par y andá a "Par puntual" para el detalle completo. '
+            'No es asesoramiento financiero.'
         )
-
-    # ══════════════════════════════════════════════════════════════
-    #  TAB 3 — Regímenes con Hidden Markov Model
-    # ══════════════════════════════════════════════════════════════
-    with tab_hmm:
-        st.markdown("""
-        <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid #bc8cff;
-             border-radius:8px;padding:16px 20px;margin-bottom:18px;font-size:12px;
-             color:#b0bcd0;line-height:1.7">
-        <b style="color:#e6edf3">¿Qué es esto?</b> Un Hidden Markov Model (HMM) es un modelo
-        estadístico que asume que el spread del par se mueve entre unos pocos "estados ocultos"
-        (regímenes) — por ejemplo un régimen <b>calmo</b>, donde el spread revierte a la media
-        de forma predecible, y un régimen <b>volátil/de ruptura</b>, donde se aleja y el modelo
-        de reversión (Engle-Granger, OU) deja de ser confiable. El modelo no ve directamente en
-        qué régimen estás — lo infiere a partir de cómo se comporta la serie — y te devuelve,
-        para cada rueda, la probabilidad de estar en cada régimen. Es un motor separado y
-        adicional a la cointegración: te sirve para saber <i>cuándo confiar</i> en la señal de
-        pairs trading y cuándo no.
-        </div>
-        """, unsafe_allow_html=True)
-
-        if not _HMM_DISPONIBLE:
-            st.error(
-                '⚠️ Falta instalar la librería **hmmlearn** para usar esta pestaña. '
-                'Agregá `hmmlearn` a tu requirements.txt (`pip install hmmlearn`) y redeployá.'
-            )
-            return
-
-        # Precarga (una sola vez) los tickers elegidos en "Par puntual", si existen
-        if 'coint_hmm_a' not in st.session_state and st.session_state.get('coint_a'):
-            st.session_state['coint_hmm_a'] = st.session_state['coint_a']
-        if 'coint_hmm_b' not in st.session_state and st.session_state.get('coint_b'):
-            st.session_state['coint_hmm_b'] = st.session_state['coint_b']
-
-        ch1, ch2, ch3 = st.columns(3)
-        with ch1:
-            ticker_a_h = selector_ticker_autocomplete('coint_hmm_a', label='Activo A')
-        with ch2:
-            ticker_b_h = selector_ticker_autocomplete('coint_hmm_b', label='Activo B')
-        with ch3:
-            periodo_h = st.selectbox('Historial', ['1y', '2y', '5y'], index=1, key='coint_hmm_periodo')
-
-        ch4, ch5, ch6 = st.columns(3)
-        with ch4:
-            n_states = st.selectbox('Cantidad de regímenes', [2, 3], index=0, key='coint_hmm_nstates')
-        with ch5:
-            feature_sel = st.selectbox(
-                'Sobre qué serie corre el HMM',
-                ['Z-Score del spread', 'Variación diaria del spread'],
-                index=0, key='coint_hmm_feature',
-            )
-        with ch6:
-            z_window_h = st.slider('Ventana Z-Score', 10, 100, 30, 5, key='coint_hmm_zwin')
-
-        if not ticker_a_h or not ticker_b_h or ticker_a_h == ticker_b_h:
-            st.info('Elegí dos activos distintos (o corré primero "Par puntual" para autocompletar).')
-            return
-
-        if st.button('▶ Detectar regímenes', key='coint_hmm_run', type='primary'):
-            st.session_state['coint_hmm_run_flag'] = True
-
-        if not st.session_state.get('coint_hmm_run_flag'):
-            return
-
-        with st.spinner(f'Descargando {ticker_a_h} / {ticker_b_h}...'):
-            df_a_h = descargar_datos(ticker_a_h, periodo_h)
-            df_b_h = descargar_datos(ticker_b_h, periodo_h)
-
-        if df_a_h is None or df_b_h is None:
-            st.error('No se pudieron descargar precios para uno o ambos activos.')
-            return
-
-        cl_a_h = get_close_series(df_a_h)
-        cl_b_h = get_close_series(df_b_h)
-        if cl_a_h is None or cl_b_h is None or len(cl_a_h) < 80 or len(cl_b_h) < 80:
-            st.error('Historial insuficiente (mínimo ~80 ruedas) para ajustar el HMM.')
-            return
-
-        stats_h = analyze_pair(cl_a_h, cl_b_h, ticker_a_h, ticker_b_h,
-                                zscore_window=z_window_h, significance=0.05)
-        spread_h = calculate_spread(cl_a_h, cl_b_h, stats_h.hedge_ratio, stats_h.intercept)
-        zscore_h = calculate_zscore(spread_h, window=z_window_h)
-
-        if feature_sel == 'Z-Score del spread':
-            feature_series = zscore_h
-            feature_label = 'Z-Score del spread'
-        else:
-            feature_series = spread_h.diff()
-            feature_label = 'Δ Spread diario'
-
-        with st.spinner(f'Ajustando HMM de {n_states} regímenes...'):
-            hmm_res = _fit_hmm_regimenes(feature_series, n_states=n_states)
-
-        if hmm_res is None:
-            st.error('No se pudo ajustar el HMM (historial insuficiente tras descartar NaNs).')
-            return
-
-        etiquetas = _etiquetas_regimen(hmm_res['means'], hmm_res['stds'])
-        regimen_actual = etiquetas.get(hmm_res['current_state'], f"Régimen {hmm_res['current_state']}")
-        duracion_actual = hmm_res['expected_duration'][hmm_res['current_state']]
-
-        kpi_cards_4([
-            ('Régimen actual', regimen_actual, f"{ticker_a_h}/{ticker_b_h}", '#3a7bd5'),
-            ('Confianza del régimen', f"{hmm_res['current_state_prob']*100:.0f}%",
-             'Probabilidad posterior', '#3fb950'),
-            ('Duración esperada', f"{duracion_actual:.1f} ruedas",
-             'De permanencia en este régimen', '#e3b341'),
-            ('Prob. de quedarse', f"{hmm_res['stay_prob'][hmm_res['current_state']]*100:.0f}%",
-             'Por rueda (diagonal transición)', '#7ee787'),
-        ])
-
-        st.plotly_chart(
-            _fig_hmm_regimenes(feature_series, hmm_res, etiquetas, palette, feature_label),
-            use_container_width=True, config=PLOTLY_CONFIG, key='coint_hmm_fig',
-        )
-
-        st.markdown('#### 📊 Caracterización de cada régimen')
-        filas_reg = []
-        for idx in range(n_states):
-            filas_reg.append({
-                'Régimen': etiquetas.get(idx, f'Régimen {idx}'),
-                f'Media ({feature_label})': round(float(hmm_res['means'][idx]), 4),
-                'Desvío': round(float(hmm_res['stds'][idx]), 4),
-                'Prob. de quedarse (por rueda)': f"{hmm_res['stay_prob'][idx]*100:.1f}%",
-                'Duración esperada (ruedas)': round(float(hmm_res['expected_duration'][idx]), 1),
-            })
-        df_regimenes = pd.DataFrame(filas_reg)
-        st.dataframe(df_regimenes, use_container_width=True, hide_index=True)
-
-        st.markdown('#### 🔀 Matriz de transición')
-        df_trans = pd.DataFrame(
-            hmm_res['trans_mat'],
-            index=[etiquetas.get(i, f'Régimen {i}') for i in range(n_states)],
-            columns=[etiquetas.get(i, f'Régimen {i}') for i in range(n_states)],
-        ).round(3)
-        st.dataframe(df_trans, use_container_width=True)
-        st.caption(
-            'Fila = régimen actual, columna = régimen siguiente. Cada valor es la probabilidad '
-            'de pasar de un régimen a otro en la próxima rueda.'
-        )
-
-        if hmm_res['current_state'] == int(np.argmin(np.abs(hmm_res['means']) + hmm_res['stds'])):
-            st.success(
-                f'✅ El par está en el régimen más calmo — mayor confianza en las señales de '
-                f'cointegración/OU de las otras pestañas.'
-            )
-        else:
-            st.warning(
-                '⚠️ El par está en un régimen más disperso/volátil — tratá con cautela las '
-                'señales de reversión a la media hasta que el HMM marque vuelta al régimen calmo. '
-                'No es asesoramiento financiero.'
-            )
-
-        with st.expander('📖 ¿Cómo se calcula esto?', expanded=False):
-            st.markdown("""
-Se ajusta un **Gaussian HMM** (vía `hmmlearn`) sobre la serie elegida (Z-Score del spread o su
-variación diaria). El modelo estima, para `n_states` regímenes:
-
-- Una **media** y **desvío** por régimen (qué tan disperso es el spread en ese estado).
-- Una **matriz de transición**: probabilidad de pasar de un régimen a otro rueda a rueda.
-- El **régimen más probable en cada rueda** (algoritmo de Viterbi) y su **probabilidad posterior**
-  (algoritmo forward-backward).
-
-Los regímenes se etiquetan automáticamente de "más calmo" a "más volátil" según |media| + desvío
-— el modelo en sí no sabe qué régimen es cuál, eso es una interpretación posterior. Con pocos
-datos o series muy ruidosas el ajuste puede ser inestable; usalo como complemento de la
-cointegración y la dinámica OU, no como señal aislada. No es asesoramiento financiero.
-            """)
