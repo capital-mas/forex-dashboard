@@ -1786,9 +1786,15 @@ def _fetch_corto_ticker(tk, extra=None):
         ret_5d  = float(cl_m.pct_change(5).iloc[-1]*100) if len(cl_m) >= 6 else 0
         ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m) >= 11 else 0
         precio  = float(cl_m.iloc[-1])
+
+        # HMM necesita al menos 6 meses de historial (más que la ventana de 3 meses del resto del scoring)
+        df_hmm = descargar_datos(tk, '6mo')
+        cl_hmm = get_close_series(df_hmm) if df_hmm is not None else None
+        hmm_r = calcular_regimen_hmm(cl_hmm) if cl_hmm is not None else None
+
         out = dict(sa=sa, sn=sn, ss=ss, sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi,
                    ret_5d=ret_5d, ret_10d=ret_10d, precio=precio,
-                   accion=señal_accion_corto(sa, sn, ss))
+                   accion=señal_accion_corto(sa, sn, ss), hmm=hmm_r)
         if extra:
             out.update(extra)
         return out
