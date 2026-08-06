@@ -6691,8 +6691,9 @@ elif MODULO == 'optimizador':
 
 
 elif MODULO == 'pares':
-    tab_rot_port, tab_rot_sec, tab_rot_pares = st.tabs([
-        '📊 Portfolio Rotation', '🔄 Sector Rotation', '🔗 Pares (Mean Reversion)',
+    tab_rot_port, tab_rot_sec, tab_rot_pares, tab_coint = st.tabs([
+        '📊 Portfolio Rotation', '🔄 Sector Rotation',
+        '🔗 Pares (Mean Reversion)', '📐 Cointegración (Engle-Granger)',
     ])
     with tab_rot_port:
         modulo_portfolio_rotation(
@@ -6710,7 +6711,16 @@ elif MODULO == 'pares':
         )
     with tab_rot_pares:
         modulo_scanner_pares()
-
+    with tab_coint:
+        modulo_pares_cointegracion(
+            descargar_datos=descargar_datos,
+            get_close_series=get_close_series,
+            fmt_precio=fmt_precio,
+            kpi_cards_4=kpi_cards_4,
+            chips_navegacion=chips_navegacion,
+            PLOTLY_CONFIG=PLOTLY_CONFIG,
+            selector_ticker_autocomplete=selector_ticker_autocomplete,
+        )
 elif MODULO == 'opciones':
     modulo_opciones()
 
