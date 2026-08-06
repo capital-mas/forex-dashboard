@@ -10,3 +10,4 @@ deep-translator
 scipy
 streamlit-autorefresh
 statsmodels
+hmmlearn
