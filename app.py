@@ -1571,6 +1571,58 @@ def señal_accion_corto(sa, sn, ss):
     else:                              return '⏸️ ESPERAR'
 
 
+def calcular_regimen_hmm(cl, n_states=3, min_obs=120):
+    """Ajusta un Hidden Markov Model Gaussiano sobre los retornos logarítmicos
+    y determina el régimen actual (bajista/neutral/alcista) del activo, junto
+    con la probabilidad (confianza) de ese estado. Requiere mínimo 6 meses
+    de historial (min_obs=120 ruedas ≈ 6 meses hábiles)."""
+    if not HMM_OK:
+        return None
+    try:
+        s = pd.Series(cl).dropna().astype(float)
+        if len(s) < min_obs:
+            return None
+        log_ret = np.log(s / s.shift(1)).dropna()
+        if len(log_ret) < min_obs:
+            return None
+        X = log_ret.values.reshape(-1, 1)
+        modelo = GaussianHMM(n_components=n_states, covariance_type='diag',
+                              n_iter=200, random_state=42)
+        modelo.fit(X)
+        estados = modelo.predict(X)
+        probs = modelo.predict_proba(X)
+
+        medias = modelo.means_.flatten()
+        orden = np.argsort(medias)  # de menor a mayor retorno medio
+        if n_states == 3:
+            etiquetas = {orden[0]: 'BAJISTA', orden[1]: 'NEUTRAL', orden[2]: 'ALCISTA'}
+        elif n_states == 2:
+            etiquetas = {orden[0]: 'BAJISTA', orden[1]: 'ALCISTA'}
+        else:
+            etiquetas = {idx: f'ESTADO {rank+1}' for rank, idx in enumerate(orden)}
+
+        estado_actual = int(estados[-1])
+        prob_actual = float(probs[-1, estado_actual])
+        vol_estado = float(np.sqrt(modelo.covars_[estado_actual]).flatten()[0]) * np.sqrt(252) * 100
+        ret_anual_estado = float(medias[estado_actual]) * 252 * 100
+
+        duracion = 1
+        for e in estados[-2::-1]:
+            if e == estado_actual:
+                duracion += 1
+            else:
+                break
+
+        return dict(
+            regimen=etiquetas.get(estado_actual, f'ESTADO {estado_actual}'),
+            prob=round(prob_actual * 100, 1),
+            ret_anual_regimen=round(ret_anual_estado, 1),
+            vol_regimen=round(vol_estado, 1),
+            duracion=duracion,
+        )
+    except Exception:
+        return None
+        
 # ==============================================================
 #  INDICADORES — LARGO PLAZO
 # ==============================================================
