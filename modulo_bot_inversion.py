@@ -21,46 +21,28 @@
 #    · RSI(14) como confirmación de que el precio venía de un
 #      extremo y está girando.
 #
-#  📈 ENTRADA EN LARGO (COMPRA) — confluencia de sobreventa:
-#     1) El precio tocó la banda inferior de la Bollinger 1 (rápida)
-#        en las últimas N velas (`cruce_lookback_barras`).
-#     2) El precio TAMBIÉN tocó la banda inferior de la Bollinger 2
-#        (estructural) en esas mismas últimas N velas — dos bandas
-#        de distinto período de acuerdo → la sobreventa es más
-#        confiable que con una sola.
-#     3) RECLAMO: la vela actual cierra de nuevo POR ENCIMA de la
-#        banda inferior de la Bollinger 1, habiendo cerrado en/bajo
-#        esa banda la vela anterior. Este es el gatillo real.
-#     4) El RSI(14) venía de zona de sobreventa (&lt;30) en esas
-#        últimas N velas y ya volvió por encima de 30 pero sigue por
-#        debajo de 65 (está girando, no ya extendido de nuevo).
-#     Opcional: exigir volumen por encima de su promedio de 20
-#     velas en la vela de reclamo.
-#     Opcional: no comprar si el régimen de mercado es BAJISTA.
+#  📈 ENTRADA EN LARGO (COMPRA):
+#     El precio toca (mínimo de la vela) la banda INFERIOR de la
+#     Bollinger 2 (estructural) — dispara apenas toca, sin esperar
+#     reclamo/cierre de vuelta. Confirmaciones que se mantienen:
+#     el RSI(14) venía de zona de sobreventa (<30) en las últimas N
+#     velas (`cruce_lookback_barras`), y opcionalmente no se compra
+#     si el régimen de mercado es BAJISTA.
 #
-#  📉 ENTRADA EN CORTO (VENTA) — exactamente lo simétrico arriba,
-#     usando las bandas superiores de ambas Bollinger.
+#  📉 ENTRADA EN CORTO (VENTA):
+#     El precio toca (máximo de la vela) la banda SUPERIOR de la
+#     Bollinger 2 (estructural) — dispara apenas toca. RSI(14) venía
+#     de zona de sobrecompra (>70) en esas últimas N velas, y
+#     opcionalmente no se vende en corto si el régimen es ALCISTA.
 #
-#  🎯 OBJETIVO Y STOP PROGRESIVOS (nunca aflojan, solo mejoran)
-#     Al entrar:                  Stop = % fijo desde la entrada
-#                                  (configurable) · Objetivo = Media
-#                                  de la Bollinger 1 (SMA rápida).
-#     Cierra más allá de Media BB1 →   Stop = Media BB1 (trailing)
-#                                       · Objetivo = Media BB2.
-#     Cierra más allá de Media BB2 →   Stop = Media BB2
-#                                       · Objetivo = Banda extrema
-#                                         BB1 (superior en largo,
-#                                         inferior en corto).
-#     Cierra más allá de Banda BB1 →   Stop = Banda BB1
-#                                       · Objetivo = Banda extrema
-#                                         BB2.
-#     Cierra más allá de Banda BB2 →   Stop = Banda BB2 · sin
-#                                       objetivo fijo: se deja correr
-#                                       la posición (movimiento
-#                                       extremo, podría seguir mucho
-#                                       más).
-#     El Stop de cada tramo sigue el valor vigente de esa banda
-#     (trailing), pero jamás se afloja hacia el lado de la pérdida.
+#  🎯 OBJETIVO (Take Profit) FIJO
+#     Largo:  Objetivo = banda SUPERIOR de la Bollinger 1 (rápida).
+#     Corto:  Objetivo = banda INFERIOR de la Bollinger 1 (rápida).
+#     Al llegar el precio a ese nivel, se cierra la operación ahí
+#     mismo (no hay escalera progresiva).
+#
+#  🛑 STOP inicial fijo: ±STOP_INICIAL_PCT% desde el precio de
+#     entrada (no es trailing).
 #
 #  📉 SALIDA (pérdida de fuerza / señal opuesta): si estando en
 #     largo aparece una señal de VENTA, se cierra la posición aunque
@@ -184,16 +166,6 @@ CRUCE_LOOKBACK_DEFAULT = 5  # ventana para "toque reciente de banda" y "venía d
 STOP_INICIAL_PCT_DEFAULT = 1.5  # % de distancia del Stop inicial respecto al precio de entrada
 REGIMEN_PENDIENTE_BARRAS = 10  # barras para medir la pendiente de la media estructural (régimen de mercado)
 
-# Escalera de Stop/Objetivo progresivos, por dirección, usando solo
-# las dos Bollinger (medias y bandas extremas). El nivel -1 (antes de
-# romper la media de la BB1) usa el Stop fijo (STOP_INICIAL_PCT). A
-# partir de ahí, cada ruptura de objetivo mueve el Stop al nivel
-# recién superado y el objetivo avanza al siguiente.
-NIVELES_STOP_LARGO = ['bb1_basis', 'bb2_basis', 'bb1_upper', 'bb2_upper']
-NIVELES_OBJ_LARGO  = ['bb2_basis', 'bb1_upper', 'bb2_upper', None]
-NIVELES_STOP_CORTO = ['bb1_basis', 'bb2_basis', 'bb1_lower', 'bb2_lower']
-NIVELES_OBJ_CORTO  = ['bb2_basis', 'bb1_lower', 'bb2_lower', None]
-
 
 # ── Indicadores ─────────────────────────────────────────────────
 
@@ -224,22 +196,20 @@ def _bollinger(close, length, num_std):
 
 def _calcular_bot_dataframe_bb(close, high, low, volume, opens,
                                  bb1_length, bb1_std, bb2_length, bb2_std, rsi_periodo,
-                                 cruce_lookback_barras, exigir_volumen, exigir_filtro_regimen):
+                                 cruce_lookback_barras, exigir_filtro_regimen):
     """Calcula todos los indicadores y las señales de COMPRA/VENTA
-    para cada barra según la estrategia de confluencia de dos Bandas
-    de Bollinger (una rápida y una estructural). No mira hacia
-    adelante: todo se calcula con datos disponibles hasta la barra
-    actual.
+    para cada barra según la estrategia de doble Banda de Bollinger.
+    No mira hacia adelante: todo se calcula con datos disponibles
+    hasta la barra actual.
 
-    COMPRA (reversión desde sobreventa): toque reciente de banda
-    inferior de la Bollinger 1 (rápida) Y de la Bollinger 2
-    (estructural), reclamo alcista (cierre vuelve sobre la banda
-    inferior de la Bollinger 1) y RSI viniendo de sobreventa y ya
-    girando al alza. Si `exigir_volumen`, pide volumen por encima de
-    su promedio de 20 velas en la vela de reclamo. Si
+    COMPRA: la vela toca (mínimo <=) la banda INFERIOR de la
+    Bollinger 2 (estructural) — dispara apenas toca, sin esperar
+    reclamo. Confirma el RSI(14): venía de zona de sobreventa (<30)
+    dentro de las últimas `cruce_lookback_barras` velas. Si
     `exigir_filtro_regimen`, no compra si el régimen es BAJISTA.
 
-    VENTA: exactamente lo simétrico, en la zona superior.
+    VENTA: exactamente lo simétrico, tocando la banda SUPERIOR de la
+    Bollinger 2 con RSI viniendo de sobrecompra (>70).
     """
     cl = close.dropna()
     hi = high.reindex(cl.index)
@@ -255,23 +225,15 @@ def _calcular_bot_dataframe_bb(close, high, low, volume, opens,
         vol_prom20 = vol.rolling(20, min_periods=5).mean()
         volumen_alto = vol > vol_prom20
     else:
-        volumen_alto = pd.Series(True, index=cl.index)  # sin datos de volumen: no se usa como filtro
+        volumen_alto = pd.Series(True, index=cl.index)  # sin datos de volumen: solo informativo
 
-    # ── Toques recientes a las bandas extremas de AMBAS Bollinger (confluencia) ──
-    toco_bb1_inf_reciente = (lo <= bb1_lower).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
-    toco_bb2_inf_reciente = (lo <= bb2_lower).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
-    toco_bb1_sup_reciente = (hi >= bb1_upper).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
-    toco_bb2_sup_reciente = (hi >= bb2_upper).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
+    # ── Toque de la banda estructural (BB2) en la vela actual — gatillo directo ──
+    toco_bb2_inferior = lo <= bb2_lower
+    toco_bb2_superior = hi >= bb2_upper
 
-    # ── Reclamo: el precio vuelve a cerrar dentro de la banda rápida (gatillo real) ──
-    reclamo_alcista = (cl > bb1_lower) & (cl.shift(1) <= bb1_lower.shift(1))
-    reclamo_bajista = (cl < bb1_upper) & (cl.shift(1) >= bb1_upper.shift(1))
-
-    # ── RSI: confirma que venía de un extremo y está girando ──
-    estuvo_sobrevendido = (rsi_valor < 30).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
-    estuvo_sobrecomprado = (rsi_valor > 70).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
-    rsi_ok_compra = estuvo_sobrevendido & (rsi_valor > 30) & (rsi_valor < 65)
-    rsi_ok_venta = estuvo_sobrecomprado & (rsi_valor < 70) & (rsi_valor > 35)
+    # ── RSI: confirma que venía de un extremo dentro de la ventana de lookback ──
+    rsi_ok_compra = (rsi_valor < 30).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
+    rsi_ok_venta = (rsi_valor > 70).rolling(cruce_lookback_barras, min_periods=1).max().astype(bool)
 
     # ── Régimen de mercado (informativo + filtro opcional): media rápida vs
     #    media estructural y pendiente de la estructural, con squeeze = LATERAL ──
@@ -284,15 +246,11 @@ def _calcular_bot_dataframe_bb(close, high, low, volume, opens,
     regimen_mercado[regimen_alcista.fillna(False)] = 'ALCISTA'
     regimen_mercado[regimen_bajista.fillna(False)] = 'BAJISTA'
 
-    entrada_compra = reclamo_alcista & toco_bb1_inf_reciente & toco_bb2_inf_reciente & rsi_ok_compra
-    if exigir_volumen:
-        entrada_compra = entrada_compra & volumen_alto
+    entrada_compra = toco_bb2_inferior & rsi_ok_compra
     if exigir_filtro_regimen:
         entrada_compra = entrada_compra & (regimen_mercado != 'BAJISTA')
 
-    entrada_venta = reclamo_bajista & toco_bb1_sup_reciente & toco_bb2_sup_reciente & rsi_ok_venta
-    if exigir_volumen:
-        entrada_venta = entrada_venta & volumen_alto
+    entrada_venta = toco_bb2_superior & rsi_ok_venta
     if exigir_filtro_regimen:
         entrada_venta = entrada_venta & (regimen_mercado != 'ALCISTA')
 
@@ -314,15 +272,14 @@ def _calcular_bot_dataframe_bb(close, high, low, volume, opens,
 
 # ── Simulación de operaciones — entrada al abrir la vela siguiente ──
 #  1) La señal (COMPRA o VENTA) se conoce al CIERRE de la vela que la
-#     dispara. Para no incurrir en look-ahead, la entrada real es al
-#     precio de APERTURA de la vela siguiente.
-#  2) Stop inicial FIJO: ±STOP_INICIAL_PCT% desde el precio de
-#     entrada. No es trailing todavía.
-#  3) Primer objetivo: Media de la Bollinger 1. Al cerrar más allá de
-#     esa media, el Stop pasa a ser esa media (trailing) y el
-#     objetivo avanza a la Media de la Bollinger 2, luego a la banda
-#     extrema de la Bollinger 1, luego a la banda extrema de la
-#     Bollinger 2. El Stop nunca se afloja.
+#     dispara (toque de la banda estructural BB2). Para no incurrir
+#     en look-ahead, la entrada real es al precio de APERTURA de la
+#     vela siguiente.
+#  2) Stop FIJO: ±STOP_INICIAL_PCT% desde el precio de entrada
+#     (no es trailing).
+#  3) Objetivo (Take Profit) FIJO: banda opuesta de la Bollinger 1
+#     (rápida) — superior en un largo, inferior en un corto. Al
+#     llegar el precio a ese nivel se cierra la operación ahí mismo.
 #  4) Salida por pérdida de fuerza: si la posición es larga y aparece
 #     la señal de VENTA, se cierra; si es corta y aparece la señal de
 #     COMPRA, se cubre.
@@ -339,9 +296,8 @@ def _simular_operaciones_bb(df, stop_inicial_pct=STOP_INICIAL_PCT_DEFAULT):
     disparo_arr = df['disparo'].values
     senal_compra_arr = df['senal_compra'].values
     senal_venta_arr = df['senal_venta'].values
-
-    columnas_necesarias = ['bb1_basis', 'bb1_upper', 'bb1_lower', 'bb2_basis', 'bb2_upper', 'bb2_lower']
-    arr_por_nombre = {c: df[c].values for c in columnas_necesarias}
+    bb1_upper_arr = df['bb1_upper'].values
+    bb1_lower_arr = df['bb1_lower'].values
 
     resultado = [''] * n
     resultado_teorico = [''] * n
@@ -381,13 +337,8 @@ def _simular_operaciones_bb(df, stop_inicial_pct=STOP_INICIAL_PCT_DEFAULT):
         entry = open_arr[j_fill]
         fecha_entrada_val = idx[j_fill]
         stop = entry * (1 - stop_inicial_pct / 100.0) if es_largo else entry * (1 + stop_inicial_pct / 100.0)
-
-        niveles_stop = NIVELES_STOP_LARGO if es_largo else NIVELES_STOP_CORTO
-        niveles_obj = NIVELES_OBJ_LARGO if es_largo else NIVELES_OBJ_CORTO
-        nivel_idx = -1  # -1 = tramo de Stop fijo inicial; 0..3 = tramos Media BB1/Media BB2/Banda BB1/Banda BB2
-        objetivo_col = 'bb1_basis'
-        stop_col = None
-        nivel_texto = f'Inicial (Stop fijo {stop_inicial_pct:.1f}% desde la entrada · Objetivo Media BB1)'
+        nivel_texto = (f'Stop fijo {stop_inicial_pct:.1f}% desde la entrada · '
+                       f'Objetivo Banda {"Superior" if es_largo else "Inferior"} BB1')
 
         j_exit = n - 1
         precio_exit = precio_arr[n - 1]
@@ -395,41 +346,28 @@ def _simular_operaciones_bb(df, stop_inicial_pct=STOP_INICIAL_PCT_DEFAULT):
 
         for j in range(j_fill + 1, n):
             hi_j, lo_j, cl_j = high_arr[j], low_arr[j], precio_arr[j]
+            objetivo_val = bb1_upper_arr[j] if es_largo else bb1_lower_arr[j]
 
-            # 1) Trailing del Stop solo una vez que se pasó el tramo inicial
-            if nivel_idx >= 0:
-                candidato_stop = arr_por_nombre[stop_col][j]
-                if not pd.isna(candidato_stop):
-                    stop = max(stop, candidato_stop) if es_largo else min(stop, candidato_stop)
-
-            # 2) ¿Tocó el Stop?
+            # 1) ¿Tocó el Stop fijo?
             if (es_largo and lo_j <= stop) or ((not es_largo) and hi_j >= stop):
-                etiqueta_stop = f'fijo {stop_inicial_pct:.1f}%' if nivel_idx < 0 else stop_col.upper()
-                precio_exit, j_exit, motivo = stop, j, f'Tocó Stop ({etiqueta_stop})'
+                precio_exit, j_exit, motivo = stop, j, f'Tocó Stop (fijo {stop_inicial_pct:.1f}%)'
                 break
+
+            # 2) ¿Llegó al Objetivo (banda opuesta de BB1)?
+            if not pd.isna(objetivo_val):
+                alcanzo_objetivo = (hi_j >= objetivo_val) if es_largo else (lo_j <= objetivo_val)
+                if alcanzo_objetivo:
+                    precio_exit, j_exit, motivo = objetivo_val, j, 'Alcanzó Objetivo (Banda opuesta BB1)'
+                    nivel_texto = f'Objetivo alcanzado: Banda {"Superior" if es_largo else "Inferior"} BB1'
+                    break
 
             # 3) ¿Señal opuesta (pérdida de fuerza / se cubre el corto)?
             if es_largo and senal_venta_arr[j]:
-                precio_exit, j_exit, motivo = cl_j, j, 'Señal de venta (reclamo bajista en sobrecompra)'
+                precio_exit, j_exit, motivo = cl_j, j, 'Señal de venta (toque de BB2 superior) — se cierra el largo'
                 break
             if (not es_largo) and senal_compra_arr[j]:
-                precio_exit, j_exit, motivo = cl_j, j, 'Señal de compra (reclamo alcista en sobreventa) — se cubre el corto'
+                precio_exit, j_exit, motivo = cl_j, j, 'Señal de compra (toque de BB2 inferior) — se cubre el corto'
                 break
-
-            # 4) ¿Rompió el objetivo vigente? → sube de tramo (trailing desde ahí)
-            if objetivo_col is not None:
-                objetivo_val = arr_por_nombre[objetivo_col][j]
-                if not pd.isna(objetivo_val):
-                    rompio = (cl_j > objetivo_val) if es_largo else (cl_j < objetivo_val)
-                    if rompio:
-                        nivel_idx += 1
-                        stop_col = niveles_stop[nivel_idx]
-                        objetivo_col = niveles_obj[nivel_idx]
-                        nuevo_stop_val = arr_por_nombre[stop_col][j]
-                        if not pd.isna(nuevo_stop_val):
-                            stop = max(stop, nuevo_stop_val) if es_largo else min(stop, nuevo_stop_val)
-                        nivel_texto = (f'Rompió {stop_col.upper()} · Objetivo {objetivo_col.upper()}'
-                                       if objetivo_col else f'Rompió {stop_col.upper()} · sin objetivo fijo (se deja correr)')
 
         if motivo != 'Fin de datos (operación en curso)':
             ret = (precio_exit - entry) / entry * 100 if es_largo else (entry - precio_exit) / entry * 100
@@ -668,18 +606,17 @@ def modulo_bot_inversion(
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
       <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🤖 Bot de Inversión — Doble Banda de Bollinger</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Estrategia de <b style="color:#e3b341">reversión a la media</b>, pensada para maximizar el
-        <b style="color:#3fb950">win rate</b>: solo entra cuando <b style="color:#a371f7">dos Bandas de
-        Bollinger de distinto período</b> (una rápida y una estructural, más larga) coinciden en marcar
-        una zona extrema, Y el precio ya dio señales de estar revirtiendo (RSI girando + reclamo de la
-        banda rápida), no apenas la toca. La entrada real es a la apertura de la vela siguiente a la
-        señal (sin look-ahead), con Stop fijo inicial de <b style="color:#a371f7">1.5%</b> (configurable).
-        A partir de superar la media de la banda rápida, el Objetivo y el Stop pasan a ser
-        <b style="color:#a371f7">progresivos</b> (Media BB1 → Media BB2 → Banda extrema BB1 → Banda
-        extrema BB2), el Stop nunca se afloja. Para posiciones <b style="color:#e3b341">cortas</b> es
-        todo simétrico hacia arriba. Cada activo muestra además si el mercado está
-        <b style="color:#3fb950">ALCISTA</b>, <b style="color:#f85149">BAJISTA</b> o
-        <b style="color:#e3b341">LATERAL</b>. Analizá hasta <b style="color:#e3b341">10 activos</b> en
+        Estrategia de <b style="color:#e3b341">reversión a la media</b> con
+        <b style="color:#a371f7">dos Bandas de Bollinger de distinto período</b> (una rápida y una
+        estructural, más larga). Entra en <b style="color:#3fb950">largo</b> apenas el precio toca la
+        banda <b style="color:#a371f7">inferior de la Bollinger estructural (BB2)</b>, confirmado por
+        RSI; entra en <b style="color:#f85149">corto</b> apenas toca la banda superior de la BB2. La
+        entrada real es a la apertura de la vela siguiente a la señal (sin look-ahead), con Stop fijo
+        inicial de <b style="color:#a371f7">1.5%</b> (configurable) y Objetivo (Take Profit) fijo en la
+        banda opuesta de la Bollinger rápida (BB1): superior en un largo, inferior en un corto. Cada
+        activo muestra además si el mercado está <b style="color:#3fb950">ALCISTA</b>,
+        <b style="color:#f85149">BAJISTA</b> o <b style="color:#e3b341">LATERAL</b>. Analizá hasta
+        <b style="color:#e3b341">10 activos</b> en
         <b style="color:#e3b341">15, 30, 45 min, 1h, 4h o 1 día</b>.
       </div>
     </div>
@@ -757,18 +694,14 @@ def modulo_bot_inversion(
             cruce_lookback_barras = st.number_input(
                 'Ventana de "toque reciente" (barras)', value=CRUCE_LOOKBACK_DEFAULT, min_value=1,
                 key='bot_lookback',
-                help='Cuántas barras hacia atrás se admite el toque de banda / la sobreventa-sobrecompra '
-                     'de RSI antes del reclamo, para no perder señales por un desfasaje de 1-2 velas.',
+                help='Cuántas barras hacia atrás se admite que el RSI haya estado en sobreventa/'
+                     'sobrecompra antes del toque de la banda, para no perder señales por un '
+                     'desfasaje de 1-2 velas.',
             )
 
         p4, p5 = st.columns(2)
         with p4:
-            st.markdown('**Filtros de calidad (opcionales, suben el win rate)**')
-            exigir_volumen = st.checkbox(
-                'Exigir volumen por encima del promedio en la vela de reclamo',
-                value=True, key='bot_exigir_volumen',
-                help='Confirma que hay compradores/vendedores reales detrás del rebote, no solo ruido.',
-            )
+            st.markdown('**Filtros de calidad (opcional, sube el win rate)**')
             exigir_filtro_regimen = st.checkbox(
                 'No comprar en régimen BAJISTA / no vender en corto en régimen ALCISTA',
                 value=True, key='bot_exigir_regimen',
@@ -781,12 +714,12 @@ def modulo_bot_inversion(
                 'Stop inicial (% desde el precio de entrada)', value=STOP_INICIAL_PCT_DEFAULT,
                 min_value=0.1, max_value=10.0, step=0.1, key='bot_stop_inicial_pct',
                 help='La entrada es a la apertura de la vela siguiente a la señal. El Stop arranca a '
-                     'esta distancia fija desde ese precio de entrada.',
+                     'esta distancia fija desde ese precio de entrada y no se mueve.',
             )
         st.caption(
-            'Objetivo y Stop, a partir de superar la Media de la Bollinger 1, son progresivos por diseño '
-            'de la estrategia (Objetivo Media BB1 → Media BB2 → Banda extrema BB1 → Banda extrema BB2; '
-            'el Stop en esos tramos sigue al nivel correspondiente y nunca se afloja).'
+            'Entrada: toque de la banda estructural BB2 (inferior para largo, superior para corto), '
+            'confirmado por RSI. Objetivo (Take Profit) fijo en la banda opuesta de la Bollinger 1 '
+            '(rápida): superior en un largo, inferior en un corto.'
         )
 
     analizar_bot = st.button('▶ Analizar', key='bot_run', type='primary')
@@ -863,7 +796,7 @@ def modulo_bot_inversion(
         df_bot = _calcular_bot_dataframe_bb(
             cl, hi, lo, vol, op,
             int(bb1_length), float(bb1_std), int(bb2_length), float(bb2_std), int(rsi_periodo),
-            int(cruce_lookback_barras), exigir_volumen, exigir_filtro_regimen,
+            int(cruce_lookback_barras), exigir_filtro_regimen,
         )
         df_bot = _simular_operaciones_bb(df_bot, stop_inicial_pct)
         resultados_bot[tk] = df_bot
@@ -1074,51 +1007,37 @@ def modulo_bot_inversion(
 
     with st.expander('❓ Cómo funciona esta estrategia'):
         st.markdown(f"""
-        **1) Señal (se conoce al cierre de la vela, no dispara la entrada de inmediato)**
-        - **COMPRA** (candidata a largo): el precio tocó la banda inferior de la Bollinger 1 (rápida) Y
-          también la banda inferior de la Bollinger 2 (estructural) dentro de las últimas
-          {cruce_lookback_barras} velas (confluencia de corto y largo plazo). Además el
-          RSI({rsi_periodo}) venía de zona de sobreventa (&lt;30) y ya volvió por encima de 30 sin estar
-          todavía extendido (&lt;65). El gatillo real es el **reclamo**: la vela actual cierra de nuevo
-          por encima de la banda inferior de la Bollinger 1, habiendo cerrado en/bajo esa banda la vela
-          anterior.
-        - **VENTA** (candidata a corto / pérdida de fuerza en un largo): exactamente lo simétrico en la
-          zona superior (bandas superiores de ambas Bollinger + RSI viniendo de sobrecompra).
-        - Filtros opcionales activos por defecto: exigir volumen sobre su promedio de 20 velas en la
-          vela de reclamo, y no operar en contra del régimen de mercado de fondo.
+        **1) Señal (dispara apenas toca la banda, en la misma vela)**
+        - **COMPRA** (largo): el precio toca (mínimo de la vela ≤) la banda **inferior de la Bollinger 2
+          (estructural)**. Confirma el RSI({rsi_periodo}): venía de zona de sobreventa (<30) dentro de
+          las últimas {cruce_lookback_barras} velas.
+        - **VENTA** (corto / pérdida de fuerza en un largo): exactamente lo simétrico — toca la banda
+          **superior de la Bollinger 2**, con RSI viniendo de sobrecompra (>70).
+        - Filtro opcional activo por defecto: no operar en contra del régimen de mercado de fondo.
 
         **2) Entrada real: apertura de la siguiente vela**
-        La señal se confirma recién al cierre de su vela, así que para no adelantarse a datos que
+        La señal se conoce recién al cierre de su vela, así que para no adelantarse a datos que
         todavía no existían, la entrada real es a la **apertura de la vela siguiente**.
 
         **3) Stop inicial fijo**
         Apenas se entra, el Stop queda fijo a **{stop_inicial_pct:.1f}%** de distancia del precio de
-        entrada: por debajo en un largo, por encima en un corto.
+        entrada (por debajo en un largo, por encima en un corto) y no se mueve.
 
-        **4) Objetivo y Stop progresivos** (a partir de superar la Media de la Bollinger 1; nunca se
-        aflojan):
-        - Cierra más allá de la Media BB1 → Stop pasa a Media BB1 (trailing) · nuevo objetivo Media BB2.
-        - Cierra más allá de la Media BB2 → Stop pasa a Media BB2 · nuevo objetivo Banda extrema BB1.
-        - Cierra más allá de la Banda BB1 → Stop pasa a Banda BB1 · nuevo objetivo Banda extrema BB2.
-        - Cierra más allá de la Banda BB2 → Stop pasa a Banda BB2 · ya no hay objetivo fijo, se deja
-          correr la posición mientras el precio no vuelva a cruzar esa banda.
+        **4) Objetivo (Take Profit) fijo**
+        - Largo → Objetivo = banda **superior de la Bollinger 1 (rápida)**.
+        - Corto → Objetivo = banda **inferior de la Bollinger 1 (rápida)**.
+        Al llegar el precio a ese nivel, se cierra la operación ahí mismo.
 
         **5) Salida por pérdida de fuerza**
-        Si es un largo y aparece la señal de VENTA, se cierra. Si es un corto y aparece la señal de
-        COMPRA, se cubre. Esto puede cerrar la operación aunque el Stop todavía no se haya tocado.
+        Si es un largo y aparece la señal de VENTA (toque de BB2 superior), se cierra. Si es un corto y
+        aparece la señal de COMPRA (toque de BB2 inferior), se cubre. Esto puede cerrar la operación
+        aunque no se haya tocado el Stop ni el Objetivo.
 
         **📊 Régimen de mercado** (informativo + filtro opcional): compara la media de la Bollinger 1
         contra la media de la Bollinger 2 y su pendiente en las últimas {REGIMEN_PENDIENTE_BARRAS}
         barras, y descarta como LATERAL los momentos de compresión fuerte de la Bollinger 1 (squeeze).
         **ALCISTA** si la media rápida está sobre la estructural con pendiente positiva y sin squeeze,
         **BAJISTA** si es al revés, **LATERAL** en cualquier otro caso.
-
-        **🚫 Por qué esta lógica busca mejor win rate:** exigir que DOS Bollinger de distinto período
-        coincidan (en vez de una sola) reduce falsas señales de mercados donde una sola banda se mueve
-        por ruido de corto plazo; y esperar el **reclamo** (no el simple toque) evita entrar mientras el
-        precio todavía está cayendo/subiendo con fuerza. El costo de esto es que se opera con menos
-        frecuencia y se entra un poco más tarde que si se comprara apenas se toca la banda — es el
-        trade-off clásico entre frecuencia y precisión.
 
         **⌛ / ⛔** en la tabla de historial: ⌛ = la señal se disparó en la última vela disponible, sin
         vela siguiente todavía para entrar; ⛔ = señal válida pero no tomada porque ya había otra
