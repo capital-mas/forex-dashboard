@@ -6451,14 +6451,6 @@ with st.container(key='nav_pills_wrap'):
                     st.session_state['nav_horizonte'] = 'finanzas'
                     st.session_state['nav_modulo'] = 'finanzas'
                     st.rerun()
-                if st.button('📐 Promediador + Stop Loss', use_container_width=True, key='menu_promediador'):
-                    st.session_state['nav_horizonte'] = 'promediador'
-                    st.session_state['nav_modulo'] = 'promediador'
-                    st.rerun()
-                if st.button('🤖 Bot de Inversión', use_container_width=True, key='menu_bot_inversion'):
-                    st.session_state['nav_horizonte'] = 'bot_inversion'
-                    st.session_state['nav_modulo'] = 'bot_inversion'
-                    st.rerun()
                 if st.button('📊 Calendario Económico', use_container_width=True, key='menu_calendario'):
                     st.session_state['nav_horizonte'] = 'calendario'
                     st.session_state['nav_modulo'] = 'calendario'
@@ -6579,7 +6571,6 @@ with st.container(key='nav_mobile_wrap'):
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
         '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares', '🎲 Opciones': 'opciones',
         '📐 Promediador': 'promediador',
-        '🤖 Bot de Inversión': 'bot_inversion',
         '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
     }
     if ES_ADMIN:
@@ -6707,7 +6698,6 @@ titulos = {
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
     'promediador': ('Promediador + Stop Loss', '📐', 'Precio promedio, tendencia y gestión de riesgo con apalancamiento'),
-    'bot_inversion': ('Bot de Inversión', '🤖', 'Fractal + Sentimiento + Z-Score + RSI, con conteo 4/4 y 3/4'),
     'calendario': ('Calendario Económico', '📆', 'Eventos económicos relevantes y su impacto en mercados'),
     'noticias': ('Noticias', '📰', 'Noticias y análisis de mercado'),
     'admin_pagos': ('Panel de Aprobación de Pagos', '🛠️', 'Revisión y aprobación de solicitudes de pago manual'),
@@ -6727,7 +6717,6 @@ badge_map = {
     'opciones': ('#bc5cff', 'rgba(188,92,255,0.12)', 'OPCIONES'),
     'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
     'promediador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'PROMEDIADOR'),
-    'bot_inversion': ('#6CC24A', 'rgba(108,194,74,0.12)', 'BOT'),
     'calendario': ('#79c0ff', 'rgba(121,192,255,0.12)', 'CALENDARIO'),
     'noticias': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'NOTICIAS'),
     'admin_pagos': ('#f0883e', 'rgba(240,136,62,0.12)', 'ADMIN'),
@@ -6838,21 +6827,6 @@ elif MODULO == 'promediador':                 # ← agregar
         calcular_atr=calcular_atr,
         scores_corto=scores_corto,
         señal_accion_corto=señal_accion_corto,
-    )
-
-elif MODULO == 'bot_inversion':
-    modulo_bot_inversion(
-        get_close_series=get_close_series,
-        fmt_precio=fmt_precio,
-        score_color_hex=score_color_hex,
-        kpi_cards_4=kpi_cards_4,
-        chips_navegacion=chips_navegacion,
-        PLOTLY_LAYOUT_BASE=PLOTLY_LAYOUT_BASE,
-        PLOTLY_CONFIG=PLOTLY_CONFIG,
-        universo_opciones=UNIVERSO_OPCIONES,
-        universo_mapa=UNIVERSO_MAPA,
-        supabase=supabase,
-        user_id=USER_ID,
     )
     
 elif MODULO == 'admin_pagos':
