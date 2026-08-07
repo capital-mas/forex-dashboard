@@ -30,7 +30,6 @@ from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
 from modulo_pago_manual import pantalla_suscripcion, panel_admin_pagos, panel_gestion_cuentas, es_admin_usuario
 from modulo_promediador import modulo_promediador
-from modulo_bot_inversion import modulo_bot_inversion
 from modulo_rotacion import (
     modulo_sector_rotation,
     modulo_commodities_rotation,
