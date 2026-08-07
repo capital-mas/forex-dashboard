@@ -6776,20 +6776,31 @@ elif MODULO == 'optimizador':
 
 
 elif MODULO == 'pares':
-    tab_rot_port, tab_rot_sec, tab_rot_pares, tab_coint = st.tabs([
-        '📊 Portfolio Rotation', '🔄 Sector Rotation',
-        '🔗 Pares (Mean Reversion)', '📐 Cointegración (Engle-Granger)',
+    tab_rot_sec, tab_rot_com, tab_rot_cri, tab_rot_ind, tab_rot_pares, tab_coint = st.tabs([
+        '🔄 Sector Rotation', '🪙 Commodities Rotation', '₿ Cripto Rotation',
+        '🌐 Índices Rotation', '🔗 Pares (Mean Reversion)', '📐 Cointegración (Engle-Granger)',
     ])
-    with tab_rot_port:
-        modulo_portfolio_rotation(
-            acciones_por_industria=ACCIONES_POR_INDUSTRIA,
+    with tab_rot_sec:
+        modulo_sector_rotation(
+            sectores_gics=SECTORES_GICS,
             supabase=supabase, user_id=USER_ID,
             fmt_precio=fmt_precio, kpi_cards_4=kpi_cards_4,
             chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
         )
-    with tab_rot_sec:
-        modulo_sector_rotation(
-            sectores_gics=SECTORES_GICS,
+    with tab_rot_com:
+        modulo_commodities_rotation(
+            supabase=supabase, user_id=USER_ID,
+            fmt_precio=fmt_precio, kpi_cards_4=kpi_cards_4,
+            chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
+        )
+    with tab_rot_cri:
+        modulo_cripto_rotation(
+            supabase=supabase, user_id=USER_ID,
+            fmt_precio=fmt_precio, kpi_cards_4=kpi_cards_4,
+            chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
+        )
+    with tab_rot_ind:
+        modulo_indices_rotation(
             supabase=supabase, user_id=USER_ID,
             fmt_precio=fmt_precio, kpi_cards_4=kpi_cards_4,
             chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
