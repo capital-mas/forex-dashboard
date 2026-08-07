@@ -626,7 +626,7 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                                     index=0 if tipo_op == 'Comprar' else 1, key='prom_direccion')
         direccion = 'long' if direccion_label.startswith('Long') else 'short'
     with o3:
-        apalancamiento = st.number_input('Apalancamiento (x)', min_value=1.0, max_value=125.0,
+        apalancamiento = st.number_input('Apalancamiento (x)', min_value=1.0, max_value=1000.0,
                                           value=1.0, step=1.0, key='prom_apalancamiento',
                                           help='Dejalo en 1 si comprás con tu propia plata, sin margen ni futuros.')
 
