@@ -6420,9 +6420,11 @@ with st.container(key='nav_pills_wrap'):
              HORIZONTE=='comparador', None, 'comparador', 'comparador')
     _nav_btn(_c[5], '🧮 Optimizar', 'nav_optimizador',
              HORIZONTE=='optimizador', None, 'optimizador', 'optimizador')
-    _nav_btn(_c[6], '🔄 Rotación', 'nav_pares',
+    _nav_btn(_c[6], '📐 Promediador', 'nav_promediador',
+             HORIZONTE=='promediador', None, 'promediador', 'promediador')
+    _nav_btn(_c[7], '🔄 Rotación', 'nav_pares',
              HORIZONTE=='pares', None, 'pares', 'pares')
-    _nav_btn(_c[7], '🎲 Opciones', 'nav_opciones',
+    _nav_btn(_c[8], '🎲 Opciones', 'nav_opciones',
              HORIZONTE=='opciones', None, 'opciones', 'opciones')
 
     n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
