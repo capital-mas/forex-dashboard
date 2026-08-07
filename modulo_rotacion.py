@@ -1,9 +1,14 @@
 # ==============================================================
-#  MÓDULO ROTACIÓN — Portfolio Rotation + Sector Rotation
-#  v2: scoring multi-factor (momentum + tendencia + fuerza relativa
-#  + salud de RSI + volatilidad) con explicación en texto de por qué
-#  cada activo entra/sale, y clasificación de fase para sectores
-#  (Liderando / Emergiendo / Perdiendo potencial / Rezagado).
+#  MÓDULO ROTACIÓN — Sector / Commodities / Cripto / Índices Rotation
+#  v4: un solo motor genérico (mismo scoring multi-factor: momentum +
+#  tendencia + fuerza relativa + salud de RSI + volatilidad) reutilizado
+#  para los 4 universos, todos con mapa de fases
+#  (🟢 Liderando / 🟠 Perdiendo fuerza / 🟡 Emergiendo / 🔴 Rezagado),
+#  explicación en texto de por qué cada activo entra/sale, cálculo y
+#  guardado automático de la semana actual (sin apretar nada), y
+#  BACKTESTING / HISTORIAL de hasta 5 años calculado semana por semana.
+#  (Se sacó Portfolio Rotation de acciones individuales — universo
+#  demasiado grande para este enfoque de rotación por fases.)
 # ==============================================================
 
 import numpy as np
@@ -27,6 +32,14 @@ def _rot_semana_actual():
     rebalanceo es 'semanal' de verdad y no 'cada vez que tocás el botón'."""
     hoy = _rot_ahora_ar()
     y, w, _ = hoy.isocalendar()
+    return f'{y}-W{w:02d}'
+
+
+def _rot_semana_de_fecha(fecha):
+    """Igual que _rot_semana_actual pero para una fecha arbitraria — se usa
+    para etiquetar los rebalanceos históricos calculados en el backtesting."""
+    ts = pd.Timestamp(fecha)
+    y, w, _ = ts.isocalendar()
     return f'{y}-W{w:02d}'
 
 
@@ -158,6 +171,38 @@ def _rot_score_rsi_salud(rsi):
     return max(0.0, 100 - abs(rsi - 55) * 2.4)
 
 
+def _rot_construir_ranking_desde_filas(filas):
+    """Toma la lista de dicts que devuelve _rot_analizar_activo por cada
+    ticker y arma el DataFrame de ranking con percentiles + score compuesto.
+    Está separado de _rot_calcular_ranking para poder reutilizarlo tanto en
+    el ranking 'en vivo' como en cada punto del backtesting histórico."""
+    if not filas:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(filas)
+
+    df['perc_momentum'] = df['score_momentum'].rank(pct=True) * 100
+    df['perc_riesgo'] = (1 / df['vol_anual'].clip(lower=0.5)).rank(pct=True) * 100
+    df['perc_tendencia'] = df.apply(lambda r: _rot_score_tendencia(r['golden_cross'], r['macd_bull']), axis=1)
+    df['perc_rsi_salud'] = df['rsi'].apply(_rot_score_rsi_salud)
+    if df['alpha_medio'].notna().any():
+        df['perc_fuerza_relativa'] = df['alpha_medio'].rank(pct=True) * 100
+    else:
+        df['perc_fuerza_relativa'] = 50.0
+
+    df['score_pct'] = (
+        df['perc_momentum'] * 0.40 +
+        df['perc_tendencia'] * 0.20 +
+        df['perc_fuerza_relativa'] * 0.20 +
+        df['perc_rsi_salud'] * 0.10 +
+        df['perc_riesgo'] * 0.10
+    ).round(1)
+
+    df = df.sort_values('score_pct', ascending=False).reset_index(drop=True)
+    df['rank'] = df.index + 1
+    return df
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _rot_calcular_ranking(tickers_tuple, benchmark=BENCHMARK_DEFAULT, periodo='2y'):
     universo = tuple(sorted(set(tickers_tuple) | {benchmark}))
@@ -175,33 +220,34 @@ def _rot_calcular_ranking(tickers_tuple, benchmark=BENCHMARK_DEFAULT, periodo='2
         r = _rot_analizar_activo(precios, tk, ret_bench_medio)
         if r:
             filas.append(r)
-    if not filas:
-        return pd.DataFrame(), precios
 
-    df = pd.DataFrame(filas)
-
-    # ── Percentiles de cada condición dentro del universo analizado ──────
-    df['perc_momentum'] = df['score_momentum'].rank(pct=True) * 100
-    df['perc_riesgo'] = (1 / df['vol_anual'].clip(lower=0.5)).rank(pct=True) * 100
-    df['perc_tendencia'] = df.apply(lambda r: _rot_score_tendencia(r['golden_cross'], r['macd_bull']), axis=1)
-    df['perc_rsi_salud'] = df['rsi'].apply(_rot_score_rsi_salud)
-    if df['alpha_medio'].notna().any():
-        df['perc_fuerza_relativa'] = df['alpha_medio'].rank(pct=True) * 100
-    else:
-        df['perc_fuerza_relativa'] = 50.0
-
-    # ── Score compuesto de calidad — pondera las 5 condiciones ────────────
-    df['score_pct'] = (
-        df['perc_momentum'] * 0.40 +
-        df['perc_tendencia'] * 0.20 +
-        df['perc_fuerza_relativa'] * 0.20 +
-        df['perc_rsi_salud'] * 0.10 +
-        df['perc_riesgo'] * 0.10
-    ).round(1)
-
-    df = df.sort_values('score_pct', ascending=False).reset_index(drop=True)
-    df['rank'] = df.index + 1
+    df = _rot_construir_ranking_desde_filas(filas)
     return df, precios
+
+
+def _rot_calcular_ranking_en_fecha(precios_completo, tickers, benchmark, fecha_corte):
+    """Igual que _rot_calcular_ranking, pero recalculado usando SOLO los
+    precios disponibles hasta 'fecha_corte' (inclusive). Esto es lo que
+    permite reconstruir, sin look-ahead bias, qué hubiera dado el ranking
+    en cualquier semana pasada — la base del backtesting de 5 años."""
+    precios = precios_completo.loc[:fecha_corte]
+    if precios.empty or benchmark not in precios.columns:
+        return pd.DataFrame()
+
+    s_bench = precios[benchmark].dropna()
+    if s_bench.empty:
+        return pd.DataFrame()
+    ret_bench_medio = float(s_bench.pct_change(60).iloc[-1]) if len(s_bench) >= 65 else None
+
+    filas = []
+    for tk in tickers:
+        if tk == benchmark or tk not in precios.columns:
+            continue
+        r = _rot_analizar_activo(precios, tk, ret_bench_medio)
+        if r:
+            filas.append(r)
+
+    return _rot_construir_ranking_desde_filas(filas)
 
 
 # ==============================================================
@@ -306,6 +352,97 @@ def _rot_leer_historial(supabase, user_id, tipo, limite=12):
         return []
 
 
+def _rot_obtener_semanas_existentes(supabase, user_id, tipo):
+    """Trae solo las etiquetas de semana ya guardadas para este usuario/tipo.
+    Se usa antes de correr el backtesting para no recalcular ni volver a
+    escribir semanas que ya están en la base."""
+    try:
+        res = (supabase.table('rotacion_estado')
+               .select('semana')
+               .eq('user_id', user_id).eq('tipo', tipo)
+               .execute())
+        return set(x['semana'] for x in (res.data or []))
+    except Exception:
+        return set()
+
+
+# ==============================================================
+#  BACKTESTING / HISTORIAL DE 5 AÑOS
+#  Descarga varios años de precios una sola vez y recalcula el ranking
+#  multi-factor semana por semana (viernes a viernes), usando en cada
+#  punto SOLO los precios disponibles hasta esa fecha. Así se reconstruye
+#  el historial completo aunque el módulo se use por primera vez hoy,
+#  en vez de arrancar el historial vacío desde la semana actual.
+# ==============================================================
+
+def _rot_generar_historial_backfill(supabase, user_id, tipo_clave, universo_tickers, benchmark,
+                                     top_n_guardar, años=5):
+    universo_completo = tuple(sorted(set(universo_tickers) | {benchmark}))
+    # Se descarga con buffer extra (+2 años) para que incluso la semana más
+    # antigua del backtesting tenga los ~200 días hábiles que necesita la
+    # MA200 (Golden Cross) y las 26 semanas del momentum de largo plazo.
+    periodo_descarga = f'{años + 2}y'
+
+    with st.spinner(f'Descargando {periodo_descarga} de precios históricos (se cachea, no se vuelve a bajar)...'):
+        precios = _rot_descargar_precios(universo_completo, periodo_descarga)
+
+    if precios is None or precios.empty or benchmark not in precios.columns:
+        st.error('No se pudo descargar suficiente historial de precios para el backtesting de 5 años '
+                 '(verificá conexión a Yahoo Finance).')
+        return 0
+
+    semanas_existentes = _rot_obtener_semanas_existentes(supabase, user_id, tipo_clave)
+
+    hoy = pd.Timestamp(_rot_ahora_ar().date())
+    fecha_inicio = hoy - pd.DateOffset(years=años)
+    fechas_viernes = pd.date_range(start=fecha_inicio, end=hoy, freq='W-FRI')
+
+    if len(fechas_viernes) == 0:
+        st.warning('No se generaron fechas para el backtesting.')
+        return 0
+
+    total = len(fechas_viernes)
+    barra = st.progress(0.0, text=f'Calculando ranking histórico semana a semana (0/{total})...')
+
+    registros_nuevos = []
+    for i, fecha in enumerate(fechas_viernes):
+        semana_lbl = _rot_semana_de_fecha(fecha)
+        if semana_lbl not in semanas_existentes:
+            df_hist = _rot_calcular_ranking_en_fecha(precios, universo_tickers, benchmark, fecha)
+            if not df_hist.empty:
+                top_n_real_hist = min(top_n_guardar, len(df_hist))
+                ranking_completo = [
+                    {'ticker': r['ticker'], 'score_pct': round(float(r['score_pct']), 2), 'rank': int(r['rank'])}
+                    for _, r in df_hist.iterrows()
+                ]
+                registros_nuevos.append({
+                    'user_id': user_id, 'tipo': tipo_clave, 'semana': semana_lbl,
+                    'ranking': ranking_completo, 'top_n': top_n_real_hist,
+                    'actualizado_en': _rot_ahora_ar().isoformat(),
+                })
+                semanas_existentes.add(semana_lbl)
+        if i % 4 == 0 or i == total - 1:
+            barra.progress((i + 1) / total, text=f'Calculando ranking histórico semana a semana ({i + 1}/{total})...')
+
+    barra.empty()
+
+    guardadas = 0
+    if registros_nuevos:
+        try:
+            # Se guarda en tandas de 50 registros por llamada, en vez de una
+            # llamada a Supabase por semana, para que no tarde una eternidad.
+            for j in range(0, len(registros_nuevos), 50):
+                lote = registros_nuevos[j:j + 50]
+                supabase.table('rotacion_estado').upsert(lote, on_conflict='user_id,tipo,semana').execute()
+                guardadas += len(lote)
+        except Exception as e:
+            st.warning(f'Se calcularon {len(registros_nuevos)} semanas nuevas, pero hubo un error guardando '
+                       f'algunas en la base: {e}')
+            return guardadas
+
+    return guardadas
+
+
 # ==============================================================
 #  UI COMPARTIDA
 # ==============================================================
@@ -329,6 +466,26 @@ def _rot_fig_ranking(df, top_n, titulo, C_MONSTER='#6CC24A', C_MUTED='#6b7d9a', 
                    range=[0, 110], gridcolor=C_GRID),
         yaxis=dict(autorange='reversed'),
         height=max(320, len(df) * 26 + 90), margin=dict(l=10, r=30, t=45, b=30),
+    )
+    return fig
+
+
+def _rot_fig_historial(df_hist_evol, titulo):
+    """Línea de tiempo con la evolución del score de los tickers que más
+    aparecieron en el Top N a lo largo del historial guardado."""
+    fig = go.Figure()
+    paleta = ['#6CC24A', '#3a7bd5', '#e3b341', '#f0883e', '#a371f7', '#f85149', '#39c5cf', '#8b949e']
+    for i, tk in enumerate(df_hist_evol.columns):
+        fig.add_trace(go.Scatter(
+            x=df_hist_evol.index, y=df_hist_evol[tk], mode='lines', name=tk,
+            line=dict(color=paleta[i % len(paleta)], width=2),
+        ))
+    fig.update_layout(
+        plot_bgcolor='#0d1117', paper_bgcolor='#07090f', font=dict(color='#b0bcd0', family='Inter, sans-serif'),
+        title=dict(text=titulo, font=dict(color='#e6edf3', size=14)),
+        xaxis=dict(title='Semana', gridcolor='#21262d'),
+        yaxis=dict(title='Score', range=[0, 105], gridcolor='#21262d'),
+        height=380, margin=dict(l=10, r=10, t=45, b=30), legend=dict(orientation='h', y=-0.2),
     )
     return fig
 
@@ -371,7 +528,7 @@ def _rot_tarjeta_activo(row, delta, mostrar_clasificacion=True):
 def _rot_render_motor(
     universo_tickers, universo_nombre, tipo_clave, top_n_default, min_top_n, max_top_n,
     supabase, user_id, fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
-    benchmark=BENCHMARK_DEFAULT, mostrar_panel_fases=False,
+    benchmark=BENCHMARK_DEFAULT, mostrar_panel_fases=False, años_historial=5,
 ):
     fmt_precio = fmt_precio or (lambda p: f'${p:,.2f}' if p else 'S/D')
 
@@ -381,19 +538,51 @@ def _rot_render_motor(
     )
 
     semana_actual = _rot_semana_actual()
+    n_semanas_guardadas = len(_rot_obtener_semanas_existentes(supabase, user_id, tipo_clave))
     st.caption(f'📅 Semana de rebalanceo: **{semana_actual}** · Universo: {len(universo_tickers)} '
-               f'{universo_nombre.lower()} · Benchmark de referencia: **{benchmark}**')
+               f'{universo_nombre.lower()} · Benchmark de referencia: **{benchmark}** · '
+               f'📚 Semanas de historial guardadas: **{n_semanas_guardadas}**')
 
-    correr = st.button('▶ Calcular ranking y rebalanceo', key=f'rot_run_{tipo_clave}', type='primary')
+    col_btn1, col_btn2 = st.columns([1, 1.3])
+    with col_btn1:
+        forzar_recalculo = st.button(
+            '🔄 Recalcular ahora', key=f'rot_run_{tipo_clave}',
+            help='El ranking ya se calcula y guarda solo al abrir esta pantalla (se cachea 1 hora). '
+                 'Usá este botón solo si querés forzar un recálculo inmediato con precios más frescos.',
+        )
+    with col_btn2:
+        generar_historial = st.button(
+            f'📚 Generar historial de {años_historial} años (backtesting)',
+            key=f'rot_backfill_{tipo_clave}',
+            help='Reconstruye el ranking semana a semana usando solo los precios disponibles hasta cada '
+                 'fecha (sin mirar al futuro) y lo guarda. Solo calcula las semanas que todavía no están '
+                 'en la base — se puede volver a apretar sin duplicar trabajo. Esto es aparte del cálculo '
+                 'automático semanal: es para traer historia pasada una sola vez.',
+        )
 
-    if not correr and not st.session_state.get(f'rot_run_flag_{tipo_clave}'):
-        st.info(f'Presioná el botón para calcular el ranking multi-factor (momentum, tendencia, fuerza '
-                f'relativa vs. {benchmark}, RSI y volatilidad) de los {len(universo_tickers)} '
-                f'{universo_nombre.lower()} del sistema.')
-        return
-    if correr:
-        st.session_state[f'rot_run_flag_{tipo_clave}'] = True
+    if generar_historial:
+        n_nuevas = _rot_generar_historial_backfill(
+            supabase, user_id, tipo_clave, universo_tickers, benchmark,
+            top_n_guardar=top_n, años=años_historial,
+        )
+        if n_nuevas > 0:
+            st.success(f'✅ Se calcularon y guardaron {n_nuevas} semanas nuevas de historial '
+                       f'(backtesting de {años_historial} años).')
+        else:
+            st.info(f'El historial de {años_historial} años ya estaba completo para este universo — '
+                    f'no había semanas nuevas para calcular.')
 
+    if forzar_recalculo:
+        # Limpia el caché de esta función puntualmente para traer precios frescos
+        # en vez de esperar a que expire el TTL de 1 hora.
+        _rot_calcular_ranking.clear()
+
+    # El ranking de la semana actual se calcula y guarda SOLO, sin necesidad de
+    # apretar ningún botón: cada vez que se abre esta pantalla (o Streamlit
+    # vuelve a correr el script), se recalcula y se guarda el estado de la
+    # semana ISO actual (upsert por 'user_id,tipo,semana', así que entrar
+    # varias veces en la misma semana no genera duplicados, solo actualiza
+    # esa fila con el precio más reciente disponible).
     with st.spinner(f'Descargando precios y calculando el score multi-factor de {len(universo_tickers)} activos...'):
         df_rank, _precios = _rot_calcular_ranking(tuple(sorted(set(universo_tickers))), benchmark=benchmark)
 
@@ -440,7 +629,8 @@ def _rot_render_motor(
     if semana_previa:
         st.caption(f'📊 Comparando contra el rebalanceo de la semana {semana_previa}.')
     else:
-        st.caption('📊 Primer rebalanceo registrado para este universo — todavía no hay semana previa para comparar tendencia.')
+        st.caption('📊 Primer rebalanceo registrado para este universo — todavía no hay semana previa para comparar tendencia. '
+                   'Tip: usá "Generar historial" para traer semanas pasadas y que esta comparación funcione desde ya.')
 
     tabs_labels = ['🧾 Por qué se elige cada activo', '📋 Ranking completo', '📈 Historial']
     if mostrar_panel_fases:
@@ -552,10 +742,38 @@ def _rot_render_motor(
 
     # ── TAB: historial ────────────────────────────────────────────────────
     with tab_hist:
-        historial = _rot_leer_historial(supabase, user_id, tipo_clave, limite=12)
+        limite_historial = st.selectbox(
+            'Ver últimas...', options=[12, 26, 52, 104, 260], index=2,
+            format_func=lambda x: f'{x} semanas' + (' (~5 años)' if x == 260 else ''),
+            key=f'rot_hist_limite_{tipo_clave}',
+        )
+        historial = _rot_leer_historial(supabase, user_id, tipo_clave, limite=limite_historial)
         if not historial:
-            st.info('Todavía no hay historial de rebalanceos guardado para este universo.')
+            st.info(f'Todavía no hay historial guardado para este universo. Usá el botón '
+                    f'"📚 Generar historial de {años_historial} años" para reconstruirlo con backtesting.')
         else:
+            historial_asc = list(reversed(historial))  # de más vieja a más nueva, para el gráfico
+
+            # Evolución del score de los tickers que más aparecieron en el Top N
+            conteo = {}
+            for h in historial_asc:
+                tn = h.get('top_n') or 10
+                top_h = sorted(h['ranking'], key=lambda x: x['score_pct'], reverse=True)[:tn]
+                for x in top_h:
+                    conteo[x['ticker']] = conteo.get(x['ticker'], 0) + 1
+            top_tickers_evol = [tk for tk, _c in sorted(conteo.items(), key=lambda x: x[1], reverse=True)[:8]]
+
+            if top_tickers_evol:
+                filas_evol = {}
+                for h in historial_asc:
+                    scores_semana = {x['ticker']: x['score_pct'] for x in h['ranking']}
+                    filas_evol[h['semana']] = {tk: scores_semana.get(tk, np.nan) for tk in top_tickers_evol}
+                df_evol = pd.DataFrame.from_dict(filas_evol, orient='index')
+                st.plotly_chart(
+                    _rot_fig_historial(df_evol, f'Evolución del score — {universo_nombre} (más presentes en el Top)'),
+                    use_container_width=True, config=PLOTLY_CONFIG,
+                )
+
             filas_hist = []
             for h in historial:
                 tn = h.get('top_n') or 10
@@ -564,76 +782,204 @@ def _rot_render_motor(
                 filas_hist.append({'Semana': h['semana'], 'Top N': tn, 'Cartera': tickers_h})
             df_hist = pd.DataFrame(filas_hist)
             st.dataframe(df_hist, use_container_width=True, hide_index=True,
-                         height=min(400, len(df_hist) * 40 + 45))
+                         height=min(500, len(df_hist) * 40 + 45))
+
+
+# ==============================================================
+#  UNIVERSOS POR DEFECTO — Commodities / Cripto / Índices
+#  Mismo formato que 'sectores_gics' de tu app: dict {nombre: (ticker, color)}.
+#  Podés pasar tu propio dict a cada función si querés otro universo o
+#  colores distintos; si no pasás nada, usa estos.
+# ==============================================================
+
+COMMODITIES_DEFAULT = {
+    'Oro':                  ('GLD',  '#FFD700'),
+    'Plata':                ('SLV',  '#C0C0C0'),
+    'Petróleo (WTI)':       ('USO',  '#3a3a3a'),
+    'Gas Natural':          ('UNG',  '#4FC3F7'),
+    'Cobre':                ('CPER', '#B87333'),
+    'Platino':              ('PPLT', '#7C7C7C'),
+    'Paladio':              ('PALL', '#9E9E9E'),
+    'Agricultura':          ('DBA',  '#8BC34A'),
+    'Metales Industriales': ('DBB',  '#546E7A'),
+    'Materias Primas (amplio)': ('DBC', '#795548'),
+}
+
+CRIPTOS_DEFAULT = {
+    'Bitcoin':    ('BTC-USD',  '#F7931A'),
+    'Ethereum':   ('ETH-USD',  '#627EEA'),
+    'BNB':        ('BNB-USD',  '#F3BA2F'),
+    'Solana':     ('SOL-USD',  '#14F195'),
+    'XRP':        ('XRP-USD',  '#00A3E0'),
+    'Cardano':    ('ADA-USD',  '#0033AD'),
+    'Dogecoin':   ('DOGE-USD', '#C2A633'),
+    'Avalanche':  ('AVAX-USD', '#E84142'),
+    'Polkadot':   ('DOT-USD',  '#E6007A'),
+    'Chainlink':  ('LINK-USD', '#2A5ADA'),
+    'Litecoin':   ('LTC-USD',  '#345D9D'),
+    'Polygon':    ('MATIC-USD','#8247E5'),
+}
+
+INDICES_DEFAULT = {
+    'S&P 500 (EE.UU.)':          ('SPY',  '#3a7bd5'),
+    'Nasdaq 100':                ('QQQ',  '#6CC24A'),
+    'Russell 2000 (Small Caps)': ('IWM',  '#E3B341'),
+    'EAFE Desarrollados':        ('EFA',  '#F0883E'),
+    'Mercados Emergentes':       ('EEM',  '#F85149'),
+    'China':                     ('FXI',  '#D32F2F'),
+    'Japón':                     ('EWJ',  '#EF5350'),
+    'India':                     ('INDA', '#FF9800'),
+    'Brasil':                    ('EWZ',  '#4CAF50'),
+    'Alemania':                  ('EWG',  '#FFC107'),
+    'Reino Unido':               ('EWU',  '#5C6BC0'),
+    'Todo el mundo':             ('ACWI', '#9CCC65'),
+}
+
+
+# ==============================================================
+#  MOTOR GENÉRICO DE UN MÓDULO DE ROTACIÓN
+#  Renderiza el encabezado + llama a _rot_render_motor con
+#  mostrar_panel_fases=True siempre (Liderando/Emergiendo/Rezagado),
+#  igual que Sector Rotation. Todas las rotaciones (sectores,
+#  commodities, cripto, índices) se arman llamando a esto.
+# ==============================================================
+
+def _rot_modulo_generico(
+    universo_dict, titulo, emoji, descripcion_html, color_barra, tipo_clave,
+    top_n_default, min_top_n, max_top_n,
+    supabase, user_id, fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
+    benchmark=BENCHMARK_DEFAULT, años_historial=5,
+):
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid {color_barra};
+         border-radius:14px; padding:26px 30px; margin-bottom:22px;">
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">{emoji} {titulo}</div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">{descripcion_html}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    universo = sorted(set(tk for tk, _color in universo_dict.values()))
+    _rot_render_motor(
+        universo_tickers=universo, universo_nombre=titulo, tipo_clave=tipo_clave,
+        top_n_default=top_n_default, min_top_n=min_top_n, max_top_n=max_top_n,
+        supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
+        kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
+        benchmark=benchmark, mostrar_panel_fases=True, años_historial=años_historial,
+    )
 
 
 # ==============================================================
 #  ENTRY POINTS — llamar estos desde el archivo principal
 # ==============================================================
 
-def modulo_portfolio_rotation(
-    acciones_por_industria, supabase, user_id,
-    fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
-    benchmark=BENCHMARK_DEFAULT,
-):
-    """Portfolio Rotation: analiza TODAS las acciones del sistema (todas las
-    industrias de ACCIONES_POR_INDUSTRIA). Cada activo se evalúa con 5
-    condiciones (momentum multi-plazo, tendencia Golden Cross/MACD, fuerza
-    relativa vs. benchmark, salud del RSI y control de volatilidad) y el
-    módulo explica en texto por qué cada uno entra, se mantiene o sale."""
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#0d1c14 0%,#0a2818 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid #6CC24A;
-         border-radius:14px; padding:26px 30px; margin-bottom:22px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📊 Portfolio Rotation</div>
-      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Analiza todas las acciones del sistema y arma un score de calidad con 5 condiciones:
-        <b style="color:#e6edf3">momentum multi-plazo</b> (4/12/26 semanas), <b style="color:#e6edf3">tendencia</b>
-        (Golden Cross + MACD), <b style="color:#e6edf3">fuerza relativa</b> vs. benchmark, <b style="color:#e6edf3">salud del RSI</b>
-        y <b style="color:#e6edf3">control de volatilidad</b>. Cada semana explica en texto por qué compra, mantiene o vende cada activo.
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    universo = sorted(set(t for lst in acciones_por_industria.values() for t in lst))
-    _rot_render_motor(
-        universo_tickers=universo, universo_nombre='Acciones', tipo_clave='portfolio',
-        top_n_default=10, min_top_n=3, max_top_n=25,
-        supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
-        kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
-        benchmark=benchmark, mostrar_panel_fases=False,
-    )
-
-
 def modulo_sector_rotation(
     sectores_gics, supabase, user_id,
     fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
-    benchmark=BENCHMARK_DEFAULT,
+    benchmark=BENCHMARK_DEFAULT, años_historial=5,
 ):
-    """Sector Rotation: rota entre los 11 sectores GICS (ETFs SPDR). Mismo
-    motor de 5 condiciones que Portfolio Rotation, más un mapa de fases que
-    clasifica TODOS los sectores (no solo los que están en cartera) en
-    Liderando / Emergiendo / Perdiendo potencial / Rezagado, comparando el
-    score de esta semana contra el de la semana anterior."""
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid #3a7bd5;
-         border-radius:14px; padding:26px 30px; margin-bottom:22px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🔄 Sector Rotation</div>
-      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        En vez de elegir acciones individuales, rota entre los 11 sectores GICS del S&amp;P500.
-        Además del ranking, clasifica cada sector en su <b style="color:#e6edf3">fase de ciclo</b>:
-        🟢 liderando y acelerando, 🟠 liderando pero perdiendo fuerza, 🟡 emergiendo, 🔴 rezagado — comparando
-        el score de esta semana contra el de la semana anterior.
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    universo = sorted(set(tk for tk, _color in sectores_gics.values()))
-    _rot_render_motor(
-        universo_tickers=universo, universo_nombre='Sectores', tipo_clave='sector',
+    """Sector Rotation: rota entre los 11 sectores GICS (ETFs SPDR). Clasifica
+    TODOS los sectores (no solo los que están en cartera) en Liderando /
+    Emergiendo / Perdiendo potencial / Rezagado, comparando el score de esta
+    semana contra el de la semana anterior. El ranking de la semana se
+    calcula y guarda solo al abrir la pantalla. Incluye backtesting de hasta
+    'años_historial' años vía el botón "Generar historial"."""
+    descripcion = (
+        'En vez de elegir acciones individuales, rota entre los 11 sectores GICS del S&amp;P500. '
+        'Además del ranking, clasifica cada sector en su <b style="color:#e6edf3">fase de ciclo</b>: '
+        '🟢 liderando y acelerando, 🟠 liderando pero perdiendo fuerza, 🟡 emergiendo, 🔴 rezagado — comparando '
+        'el score de esta semana contra el de la semana anterior. Con el botón de historial se puede '
+        'reconstruir hasta 5 años de rotaciones pasadas entre sectores.'
+    )
+    _rot_modulo_generico(
+        sectores_gics, 'Sector Rotation', '🔄', descripcion, '#3a7bd5', 'sector',
         top_n_default=3, min_top_n=1, max_top_n=6,
         supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
         kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
-        benchmark=benchmark, mostrar_panel_fases=True,
+        benchmark=benchmark, años_historial=años_historial,
+    )
+
+
+def modulo_commodities_rotation(
+    supabase, user_id, commodities=None,
+    fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
+    benchmark=BENCHMARK_DEFAULT, años_historial=5,
+):
+    """Commodities Rotation: mismo motor que Sector Rotation pero rotando
+    entre las principales materias primas (oro, plata, petróleo, gas natural,
+    cobre, metales, agro) vía ETFs líquidos. Si no se pasa 'commodities',
+    usa COMMODITIES_DEFAULT — pasá tu propio dict {nombre: (ticker, color)}
+    si querés otro universo."""
+    commodities = commodities or COMMODITIES_DEFAULT
+    descripcion = (
+        'Rota entre las principales materias primas — oro, plata, petróleo, gas natural, cobre, '
+        'platino, paladio, agro y metales industriales — usando ETFs líquidos. Clasifica cada '
+        'commodity en su <b style="color:#e6edf3">fase de ciclo</b>: 🟢 liderando y acelerando, '
+        '🟠 liderando pero perdiendo fuerza, 🟡 emergiendo, 🔴 rezagado. Con el botón de historial se '
+        'puede reconstruir hasta 5 años de rotaciones pasadas.'
+    )
+    _rot_modulo_generico(
+        commodities, 'Commodities Rotation', '🪙', descripcion, '#C9972B', 'commodities',
+        top_n_default=3, min_top_n=1, max_top_n=6,
+        supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
+        kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
+        benchmark=benchmark, años_historial=años_historial,
+    )
+
+
+def modulo_cripto_rotation(
+    supabase, user_id, criptos=None,
+    fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
+    benchmark=BENCHMARK_DEFAULT, años_historial=5,
+):
+    """Cripto Rotation: mismo motor que Sector Rotation pero rotando entre
+    las principales criptomonedas por capitalización (BTC, ETH, BNB, SOL,
+    XRP, ADA, DOGE, AVAX, DOT, LINK, LTC, MATIC vía tickers -USD de Yahoo
+    Finance). Si no se pasa 'criptos', usa CRIPTOS_DEFAULT.
+
+    Ojo: la volatilidad de cripto es mucho mayor a la de acciones/sectores,
+    así que el score de 'control de volatilidad' penaliza fuerte a todo el
+    universo por igual — lo relevante para elegir entre criptos sigue
+    siendo el ranking relativo dentro de ese universo, no el score en
+    términos absolutos comparado con otras rotaciones."""
+    criptos = criptos or CRIPTOS_DEFAULT
+    descripcion = (
+        'Rota entre las principales criptomonedas por capitalización de mercado (Bitcoin, Ethereum, '
+        'BNB, Solana, XRP, Cardano, Dogecoin, Avalanche, Polkadot, Chainlink, Litecoin, Polygon). '
+        'Clasifica cada cripto en su <b style="color:#e6edf3">fase de ciclo</b>: 🟢 liderando y acelerando, '
+        '🟠 liderando pero perdiendo fuerza, 🟡 emergiendo, 🔴 rezagado. Cotiza y opera 24/7, así que el '
+        'ranking se recalcula solo cada vez que se abre esta pantalla, no solo los días hábiles.'
+    )
+    _rot_modulo_generico(
+        criptos, 'Cripto Rotation', '₿', descripcion, '#F7931A', 'cripto',
+        top_n_default=3, min_top_n=1, max_top_n=6,
+        supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
+        kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
+        benchmark=benchmark, años_historial=años_historial,
+    )
+
+
+def modulo_indices_rotation(
+    supabase, user_id, indices=None,
+    fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
+    benchmark=BENCHMARK_DEFAULT, años_historial=5,
+):
+    """Índices Rotation: mismo motor que Sector Rotation pero rotando entre
+    índices/regiones globales vía ETFs (S&P 500, Nasdaq 100, Small Caps,
+    Desarrollados, Emergentes, China, Japón, India, Brasil, Alemania, Reino
+    Unido, Todo el mundo). Si no se pasa 'indices', usa INDICES_DEFAULT."""
+    indices = indices or INDICES_DEFAULT
+    descripcion = (
+        'Rota entre índices y regiones globales — EE.UU., Nasdaq, small caps, mercados desarrollados '
+        'y emergentes, China, Japón, India, Brasil, Alemania, Reino Unido — vía ETFs líquidos. '
+        'Clasifica cada índice en su <b style="color:#e6edf3">fase de ciclo</b>: 🟢 liderando y acelerando, '
+        '🟠 liderando pero perdiendo fuerza, 🟡 emergiendo, 🔴 rezagado. Con el botón de historial se puede '
+        'reconstruir hasta 5 años de rotaciones pasadas entre regiones.'
+    )
+    _rot_modulo_generico(
+        indices, 'Índices Rotation', '🌐', descripcion, '#8A2BE2', 'indices',
+        top_n_default=3, min_top_n=1, max_top_n=6,
+        supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
+        kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
+        benchmark=benchmark, años_historial=años_historial,
     )
