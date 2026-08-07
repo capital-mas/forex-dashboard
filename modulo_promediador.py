@@ -584,7 +584,7 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
     with cc2:
         pct_riesgo_max = st.number_input(
             '% de tu cuenta que estás dispuesto a perder en ESTA operación',
-            min_value=0.1, max_value=20.0, value=2.0, step=0.5, key='prom_pct_riesgo_max',
+            min_value=0.1, max_value=100.0, value=2.0, step=0.5, key='prom_pct_riesgo_max',
             help='Regla clásica: 1-2%. Así, aunque tengas varias operaciones perdedoras seguidas, no te vaciás la cuenta.',
         )
     st.caption(f'👉 Con estos datos, estás dispuesto a perder hasta **${capital_cuenta * pct_riesgo_max / 100:,.2f}** en esta operación si te toca el stop.')
