@@ -6406,7 +6406,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
 
 
 with st.container(key='nav_pills_wrap'):
-    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.15, 1.1, 0.95, 1.0, 0.25, 1.1, 0.15, 1.3])
+    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.15, 1.1, 1.15, 0.95, 1.0, 0.25, 1.1, 0.15, 1.3])
 
     _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
              HORIZONTE=='inicio', None, 'inicio', 'inicio')
