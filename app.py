@@ -6434,12 +6434,12 @@ with st.container(key='nav_pills_wrap'):
         if n_alertas_fin > 0 else '💰 Finanzas'
     )
 
-    with _c[9]:
+    with _c[10]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 _refrescar_cotizaciones()
 
-    with _c[11]:
+    with _c[12]:
         with st.container(key='nav_cuenta_cont'):
             with st.popover(_label_cuenta, use_container_width=True):
                 st.markdown(
