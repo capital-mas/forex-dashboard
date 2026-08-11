@@ -5771,7 +5771,7 @@ def _kpi_resumen_seccion(datos_dict, etiqueta_extra=''):
     kpi_cards_4([
         ('Subiendo hoy', str(n_sub), f'de {len(todos_pct)}{sufijo}', '#3fb950'),
         ('Bajando hoy',  str(n_baj), f'de {len(todos_pct)}{sufijo}', '#f85149'),
-        ('Neutros',      str(n_neu), 'variación < ±0.2%', '#e3b341'),
+        ('Neutros',      str(n_neu), 'variación < ±0.05%', '#e3b341'),
         ('Mejor del día', mejor[0] or '-',
          f"{mejor[1]['cambio_pct']:+.2f}%" if mejor[0] else '', '#3fb950'),
     ])
