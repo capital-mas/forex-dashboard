@@ -9,6 +9,23 @@
 #  Esto resuelve el problema de operar cantidades como 0.0001 o
 #  precios como 0.00000012 (típico de criptos chicas), que con un
 #  step/format fijo en 2 decimales se truncaban en el panel.
+#
+#  NOVEDAD v2:
+#  - "Capital total de tu cuenta" ahora tiene una explicación clara
+#    (no es lo que vas a poner en ESTA operación, es todo tu dinero
+#    operable) y el lenguaje se adapta según sea un TRADE (corto
+#    plazo, con apalancamiento) o una INVERSIÓN para conservar
+#    (largo plazo, normalmente sin apalancar).
+#  - Tope de sensatez al "% que estás dispuesto a perder": arriba de
+#    5% avisa, arriba de 25% no deja avanzar. Antes, si cargabas un
+#    % de riesgo absurdo (ej. 100%), el semáforo podía decirte "✅
+#    dentro de lo que dijiste" aunque estuvieras perdiendo el 96% de
+#    toda la cuenta — el chequeo comparaba SOLO contra tu propio
+#    número, nunca contra un límite absoluto de sensatez.
+#  - Chequeo de stop "disparatado": si el precio del stop queda a
+#    una distancia absurda del precio actual (típico error de
+#    tipeo, ej. stop en $0.01 con el activo en $65,000), te avisa
+#    ANTES de mostrarte el resto de los cálculos.
 # ==============================================================
 """
 Se integra al Analizador Cuantitativo Unificado como un módulo más.
@@ -169,22 +186,37 @@ def calcular_stop_loss(precio_entrada, precio_stop, cantidad, apalancamiento=1.0
     )
 
 
+# Techo absoluto de sensatez: por más que el usuario "acepte" perder más que
+# esto de TODA la cuenta en una sola operación, siempre se marca como ALTO.
+# Antes el semáforo solo comparaba contra el % que el propio usuario cargó,
+# así que si alguien ponía "estoy dispuesto a perder 100%", una pérdida del
+# 96% de la cuenta salía como "✅ dentro de lo que dijiste".
+PERDIDA_PCT_CUENTA_ALTO_ABSOLUTO = 15.0
+
+
 def evaluar_riesgo_stop(stop_info, horizonte='largo', pct_riesgo_max_cuenta=2.0):
     """Traduce los números del stop-loss a avisos en criollo + nivel de riesgo (OK/MEDIO/ALTO)."""
     avisos, nivel = [], 'OK'
 
     if stop_info['perdida_pct_cuenta'] is not None:
-        if stop_info['perdida_pct_cuenta'] > pct_riesgo_max_cuenta * 2:
+        perdida_pct_cuenta = stop_info['perdida_pct_cuenta']
+        if perdida_pct_cuenta > PERDIDA_PCT_CUENTA_ALTO_ABSOLUTO:
             nivel = 'ALTO'
-            avisos.append(f"Si te toca el stop, perdés {stop_info['perdida_pct_cuenta']:.1f}% de TODA tu cuenta "
+            avisos.append(f"🚨 Si te toca el stop, perdés {perdida_pct_cuenta:.1f}% de TODA tu cuenta. "
+                           f"Sin importar qué % de riesgo hayas definido vos, esto es una pérdida enorme "
+                           f"para una sola operación — casi nadie se recupera de perder esta proporción "
+                           f"de su capital de una vez.")
+        elif perdida_pct_cuenta > pct_riesgo_max_cuenta * 2:
+            nivel = 'ALTO'
+            avisos.append(f"Si te toca el stop, perdés {perdida_pct_cuenta:.1f}% de TODA tu cuenta "
                            f"— muy por encima del {pct_riesgo_max_cuenta:.0f}% que dijiste que ibas a arriesgar. "
                            f"La posición es demasiado grande para tu capital.")
-        elif stop_info['perdida_pct_cuenta'] > pct_riesgo_max_cuenta:
+        elif perdida_pct_cuenta > pct_riesgo_max_cuenta:
             nivel = 'MEDIO' if nivel == 'OK' else nivel
-            avisos.append(f"Si te toca el stop, perdés {stop_info['perdida_pct_cuenta']:.1f}% de tu cuenta, "
+            avisos.append(f"Si te toca el stop, perdés {perdida_pct_cuenta:.1f}% de tu cuenta, "
                            f"un poco por encima del {pct_riesgo_max_cuenta:.0f}% que te propusiste.")
         else:
-            avisos.append(f"Si te toca el stop, perdés {stop_info['perdida_pct_cuenta']:.1f}% de tu cuenta — "
+            avisos.append(f"Si te toca el stop, perdés {perdida_pct_cuenta:.1f}% de tu cuenta — "
                            f"dentro de lo que dijiste que estabas dispuesto a arriesgar. ✅")
 
     if not stop_info['stop_antes_de_liquidar']:
@@ -228,7 +260,7 @@ def _sesgo_a_tendencia(sesgo):
 
 
 # ==============================================================
-#  1-bis) PRECISIÓN NUMÉRICA POR TIPO DE ACTIVO (NUEVO)
+#  1-bis) PRECISIÓN NUMÉRICA POR TIPO DE ACTIVO
 # ==============================================================
 
 def sugerir_decimales(ticker):
@@ -240,12 +272,9 @@ def sugerir_decimales(ticker):
     """
     t = (ticker or '').upper().strip()
 
-    # Forex (yfinance usa el sufijo =X, ej EURUSD=X)
     if '=X' in t:
         return dict(cantidad=2, precio=5)
 
-    # Cripto: tickers de yfinance suelen terminar en -USD, -USDT, -EUR, -BTC, etc.
-    # o directamente ser el símbolo cripto seguido de USDT (formato exchange).
     sufijos_cripto = ('-USD', '-USDT', '-USDC', '-EUR', '-BTC', '-ETH')
     simbolos_cripto_conocidos = (
         'BTC', 'ETH', 'SOL', 'XRP', 'DOGE', 'ADA', 'BNB', 'AVAX', 'MATIC',
@@ -256,13 +285,8 @@ def sugerir_decimales(ticker):
         for s in simbolos_cripto_conocidos
     )
     if es_cripto:
-        # Las "grandes" (BTC, ETH) mueven pocos decimales de cantidad pero el
-        # precio es alto; las chicas al revés. 6/6 es un piso razonable para
-        # ambos casos y el usuario lo ajusta si su activo es más extremo
-        # (ej. una memecoin con precio 0.00000012 necesita 8-10).
         return dict(cantidad=6, precio=6)
 
-    # Default: acciones, ETFs, CEDEARs, bonos, etc.
     return dict(cantidad=4, precio=2)
 
 
@@ -515,17 +539,25 @@ GLOSARIO_PROM = [
      'pero solo tiene sentido si creés que el activo va a recuperarse — si sigue el motivo de la baja, perdés más.'),
     ('Tendencia', 'Hacia dónde se está moviendo el precio en general: ALCISTA (sube), BAJISTA (baja) '
      'o LATERAL (sin dirección clara, se mueve para los costados).'),
-    ('% que arriesgo por operación', 'Cuánto de tu cuenta total estás dispuesto a perder si la operación sale mal. '
-     'La regla clásica de trading dice no arriesgar más del 1-2% de tu cuenta en una sola operación.'),
+    ('Capital total de tu cuenta', 'TODO el dinero que tenés disponible para invertir u operar en general — '
+     'no solo lo que vas a poner en esta operación puntual. Se usa como referencia para calcular qué '
+     'porción de tu plata total estarías arriesgando si esta operación sale mal. No es un monto que la '
+     'herramienta te va a descontar ni reservar, es solo la base del cálculo.'),
+    ('% que arriesgo por operación', 'Cuánto de tu cuenta TOTAL estás dispuesto a perder si esta operación puntual '
+     'sale mal (no el % de esta operación en sí). La regla clásica de trading dice no arriesgar más del 1-2% '
+     'de tu cuenta en una sola operación, aunque uses todo tu apalancamiento o toda tu convicción en ella.'),
     ('Stop Loss', 'El precio al que vas a vender (o cerrar la posición) automáticamente si el precio va en tu contra, '
-     'para cortar la pérdida antes de que sea mayor.'),
+     'para cortar la pérdida antes de que sea mayor. En una inversión de largo plazo suele pensarse más '
+     'como "el precio al que la razón por la que compré dejó de ser válida", no como un stop ajustado día a día.'),
     ('ATR', 'Mide cuánto se mueve el precio de un activo en un día normal (su volatilidad). '
      'Un stop basado en ATR se adapta a cada activo, en vez de usar el mismo % para todos.'),
     ('Apalancamiento', 'Operar con más dinero del que tenés, pedido "prestado" por el bróker/exchange. '
      'Multiplica tanto las ganancias como las pérdidas — con 10x, un movimiento de 10% en tu contra puede '
-     'liquidar toda tu posición.'),
+     'liquidar toda tu posición. Si estás comprando un activo para conservarlo en el tiempo, lo normal es '
+     'dejarlo en 1x (sin apalancar).'),
     ('Precio de liquidación', 'El precio al que el bróker/exchange te cierra la posición por la fuerza porque '
-     'perdiste todo el margen que pusiste. Cuanto más apalancamiento, más cerca está de tu precio de entrada.'),
+     'perdiste todo el margen que pusiste. Cuanto más apalancamiento, más cerca está de tu precio de entrada. '
+     'Con apalancamiento 1x no aplica: nadie te puede liquidar, en el peor caso el activo vale $0.'),
     ('Cantidad recomendada', 'Cuánto podés comprar/vender sin superar el % de tu cuenta que dijiste que ibas '
      'a arriesgar, dado dónde pusiste el stop. Es el "tamaño correcto" de la operación.'),
     ('Ratio Riesgo/Beneficio', 'Compara cuánto podés perder contra cuánto podés ganar. Un ratio de 2:1 significa '
@@ -554,42 +586,61 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
         📐 Promediador + Riesgo (versión simple)
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.8">
-        Cómo funciona en 4 pasos: <b style="color:#e6edf3">1)</b> Decís cuánta plata tenés y cuánto estás
-        dispuesto a arriesgar. <b style="color:#e6edf3">2)</b> Cargás la operación (con la precisión numérica
-        que necesite tu activo). <b style="color:#e6edf3">3)</b>
-        Elegís tu stop loss. <b style="color:#e6edf3">4)</b> La herramienta te dice el <u>tamaño correcto</u>
-        de la operación, si la tendencia acompaña, y si el riesgo es razonable.
+        Cómo funciona en 4 pasos: <b style="color:#e6edf3">1)</b> Decís qué tipo de operación es, cuánta plata
+        tenés en total y cuánto estás dispuesto a arriesgar. <b style="color:#e6edf3">2)</b> Cargás la operación
+        (con la precisión numérica que necesite tu activo). <b style="color:#e6edf3">3)</b>
+        Elegís tu stop loss / precio de salida. <b style="color:#e6edf3">4)</b> La herramienta te dice el
+        <u>tamaño correcto</u> de la operación, si la tendencia acompaña, y si el riesgo es razonable.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Paso 1: activo y capital ────────────────────────────────────────
-    st.markdown('#### 1️⃣ Activo, horizonte y tu capital')
+    # ── Paso 1: activo, tipo de operación y capital ─────────────────────
+    st.markdown('#### 1️⃣ Activo, tipo de operación y tu capital')
     c1, c2 = st.columns([2, 1])
     with c1:
         ticker = st.text_input('Ticker', value='', placeholder='Ej: NVDA, GGAL, BTC-USD, EURUSD=X, DOGE-USD',
                                 key='prom_ticker').strip().upper()
     with c2:
-        horizonte_label = st.radio('Horizonte', ['📈 Largo Plazo', '⚡ Corto Plazo'],
-                                    horizontal=True, key='prom_horizonte')
-        horizonte = 'largo' if 'Largo' in horizonte_label else 'corto'
+        horizonte_label = st.radio(
+            '¿Qué tipo de operación es?',
+            ['📈 Inversión (comprar y conservar en el tiempo)', '⚡ Trade (operación acotada, corto plazo)'],
+            horizontal=True, key='prom_horizonte',
+            help='Cambia el análisis de tendencia que se usa y el lenguaje de los resultados. '
+                 'Elegí "Inversión" si tu plan es sostener el activo por meses/años; elegí "Trade" '
+                 'si es una operación puntual que pensás cerrar en días o semanas.',
+        )
+        horizonte = 'largo' if 'Inversión' in horizonte_label else 'corto'
+    es_inversion = (horizonte == 'largo')
 
     cc1, cc2 = st.columns(2)
     with cc1:
         capital_cuenta = st.number_input(
-            'Capital total de tu cuenta (USD)', min_value=1.0, value=1000.0, step=100.0,
+            '💰 Capital total que tenés para invertir/operar (USD)' if es_inversion
+            else '💰 Capital total de tu cuenta de trading (USD)',
+            min_value=1.0, value=1000.0, step=100.0,
             key='prom_capital_cuenta',
-            help='Todo tu dinero disponible para operar, no solo lo que vas a poner en esta operación.',
+            help='OJO: esto NO es lo que vas a poner en esta operación puntual. Es todo el dinero que '
+                 'tenés disponible en total para invertir u operar. Sirve solo como base de cálculo: '
+                 'a partir de esto la herramienta te dice qué tamaño de operación es razonable para no '
+                 'arriesgar más de la cuenta de lo que estás dispuesto a perder. No se descuenta ni se reserva nada.',
         )
     with cc2:
         pct_riesgo_max = st.number_input(
-            '% de tu cuenta que estás dispuesto a perder en ESTA operación',
-            min_value=0.1, max_value=100.0, value=2.0, step=0.5, key='prom_pct_riesgo_max',
-            help='Regla clásica: 1-2%. Así, aunque tengas varias operaciones perdedoras seguidas, no te vaciás la cuenta.',
+            '% de tu capital TOTAL que estás dispuesto a perder en ESTA operación puntual',
+            min_value=0.1, max_value=25.0, value=2.0, step=0.5, key='prom_pct_riesgo_max',
+            help='Regla clásica: 1-2%. Así, aunque tengas varias operaciones perdedoras seguidas, no te '
+                 'vaciás la cuenta. El tope de este campo está en 25% a propósito: arriesgar más que eso '
+                 'en una sola operación ya no es "gestión de riesgo", es apostar el capital.',
         )
-    st.caption(f'👉 Con estos datos, estás dispuesto a perder hasta **${capital_cuenta * pct_riesgo_max / 100:,.2f}** en esta operación si te toca el stop.')
+    if pct_riesgo_max > 5:
+        st.warning(f'⚠️ {pct_riesgo_max:.0f}% es mucho para arriesgar en una sola operación — la mayoría de las '
+                   f'guías de gestión de riesgo recomiendan quedarse entre 1% y 2%. Lo dejamos porque vos lo '
+                   f'elegiste, pero tené en cuenta que varias operaciones así seguidas te pueden vaciar la cuenta.')
+    st.caption(f'👉 Con estos datos, estás dispuesto a perder hasta **${capital_cuenta * pct_riesgo_max / 100:,.2f}** '
+               f'de tu capital total si te toca el stop en esta operación.')
 
-    # ── Precisión numérica (NUEVO) ──────────────────────────────────────
+    # ── Precisión numérica ──────────────────────────────────────────────
     _dec_sugeridos = sugerir_decimales(ticker)
     with st.expander('🔧 Precisión numérica del activo (tocá si operás cripto, lotes chicos, etc.)', expanded=False):
         st.caption(
@@ -626,9 +677,17 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                                     index=0 if tipo_op == 'Comprar' else 1, key='prom_direccion')
         direccion = 'long' if direccion_label.startswith('Long') else 'short'
     with o3:
-        apalancamiento = st.number_input('Apalancamiento (x)', min_value=1.0, max_value=1000.0,
-                                          value=1.0, step=1.0, key='prom_apalancamiento',
-                                          help='Dejalo en 1 si comprás con tu propia plata, sin margen ni futuros.')
+        apalancamiento = st.number_input(
+            'Apalancamiento (x)', min_value=1.0, max_value=1000.0,
+            value=1.0, step=1.0, key='prom_apalancamiento',
+            help='Dejalo en 1 si comprás con tu propia plata, sin margen ni futuros. '
+                 + ('Para una inversión de largo plazo, lo normal es dejarlo en 1x.' if es_inversion
+                    else 'En trading de corto plazo con margen/futuros, subilo según tu bróker/exchange.'),
+        )
+    if es_inversion and apalancamiento > 1:
+        st.info('ℹ️ Marcaste esto como "Inversión para conservar en el tiempo" pero usás apalancamiento. '
+                 'Tené en cuenta que con apalancamiento existe precio de liquidación: el bróker/exchange '
+                 'puede cerrarte la posición por la fuerza aunque tu plan sea sostenerla en el tiempo.')
 
     precio_nuevo = st.number_input(
         'Precio al que operás ahora (USD)', min_value=paso_precio, value=max(1.0, paso_precio),
@@ -654,8 +713,13 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
     )
     cant_nueva = cant_op if tipo_op == 'Comprar' else -cant_op
 
-    # ── Paso 3: stop loss ────────────────────────────────────────────────
-    st.markdown('#### 3️⃣ Tu Stop Loss (dónde cortás la pérdida)')
+    # ── Paso 3: stop loss / precio de salida ────────────────────────────
+    st.markdown('#### 3️⃣ Tu precio de salida por invalidación (dónde cortás la pérdida)' if es_inversion
+                else '#### 3️⃣ Tu Stop Loss (dónde cortás la pérdida)')
+    if es_inversion:
+        st.caption('Para una inversión de largo plazo, pensalo como: "¿a qué precio la razón por la que '
+                   'compré este activo dejaría de ser válida?" — no tiene que estar pegado al precio actual '
+                   'como en un trade de corto plazo.')
     modo_stop = st.selectbox(
         '¿Cómo lo definís?',
         ['Múltiplo de ATR (recomendado — se adapta a la volatilidad del activo)',
@@ -676,6 +740,8 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
             'Precio del stop loss', min_value=paso_precio,
             value=round(precio_nuevo * 0.95, decimales_precio),
             step=paso_precio, format=fmt_precio, key='prom_stop_manual',
+            help='Fijate que este número tenga sentido comparado con el precio de arriba: un error de '
+                 'tipeo acá (ej. poner 0.01 en vez de 61000) arruina todos los cálculos de más abajo.',
         )
         pct_stop = multiplo_atr = None
 
@@ -729,6 +795,23 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
         st.error(f'Error definiendo el stop: {e}')
         return
 
+    # ── Chequeo de stop "disparatado" ANTES de mostrar nada más ─────────
+    # Detecta el caso típico de error de tipeo: un stop a una distancia
+    # absurda del precio actual (ej. $0.01 con el activo en $65,000), que
+    # antes se dejaba pasar y producía resultados sin sentido más abajo.
+    if precio_stop and precio_stop > 0:
+        distancia_stop_pct_check = abs(precio_nuevo - precio_stop) / precio_nuevo * 100
+        limite_razonable = 60.0 if horizonte == 'corto' else 85.0
+        if distancia_stop_pct_check > limite_razonable:
+            st.error(
+                f"🚨 Tu stop está a un {distancia_stop_pct_check:.1f}% de distancia del precio de entrada "
+                f"(entrada ${precio_nuevo:,.{decimales_precio}f} vs. stop ${precio_stop:,.{decimales_precio}f}). "
+                f"Esto es tan grande que probablemente sea un error de tipeo (ej. faltó un dígito, o los "
+                f"decimales no son los correctos para este activo — revisá '🔧 Precisión numérica' arriba). "
+                f"Corregí el stop antes de seguir; con este valor los cálculos de riesgo no van a tener sentido."
+            )
+            return
+
     # ── Tamaño de posición recomendado (ANTES de mostrar el resto) ──────
     tam = calcular_tamano_posicion(capital_cuenta, pct_riesgo_max, precio_nuevo, precio_stop, apalancamiento)
     if tam:
@@ -752,7 +835,7 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
             st.info('🔵 Estás usando bastante menos de lo que tu riesgo permitiría — está bien si preferís ir con cautela.')
         else:
             st.success('🟢 El tamaño que cargaste está cerca de lo recomendado para tu nivel de riesgo.')
-        st.caption('Esta cantidad recomendada surge de: (capital × % de riesgo) ÷ (distancia en $ hasta tu stop).')
+        st.caption('Esta cantidad recomendada surge de: (capital total × % de riesgo) ÷ (distancia en $ hasta tu stop).')
 
     st.markdown('---')
 
@@ -796,7 +879,7 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
 
     # ── Stop loss final (con la cantidad que quedó cargada) ────────────
     st.markdown('---')
-    st.markdown('##### 🛡️ Tu Stop Loss, en números')
+    st.markdown('##### 🛡️ Tu precio de salida, en números' if es_inversion else '##### 🛡️ Tu Stop Loss, en números')
     try:
         stop_info = calcular_stop_loss(
             precio_entrada=precio_nuevo, precio_stop=precio_stop, cantidad=calc['cantidad_final'],
@@ -814,7 +897,7 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
     with sr2:
         st.metric('Si te toca el stop, perdés', f"${stop_info['perdida_dinero']:,.2f}")
     with sr3:
-        st.metric('Eso es, de tu cuenta total', f"{stop_info['perdida_pct_cuenta']:.1f}%" if stop_info['perdida_pct_cuenta'] is not None else 'N/D')
+        st.metric('Eso es, de tu capital total', f"{stop_info['perdida_pct_cuenta']:.1f}%" if stop_info['perdida_pct_cuenta'] is not None else 'N/D')
     with sr4:
         st.metric('Precio de liquidación aprox.', f"${stop_info['precio_liquidacion']:,.{decimales_precio}f}" if apalancamiento > 1 else 'No aplica (1x)')
 
