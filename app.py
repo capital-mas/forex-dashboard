@@ -1223,6 +1223,8 @@ PAISES = {
     'India':            ('^NSEI',  'Asia'),
     'Alemania':         ('^GDAXI', 'Europa'),
     'Europa general':   ('^STOXX50E', 'Europa'),
+    'Gran Bretaña':   ('^FTSE',  'Europa'),
+    'Francia':   ('^FCHI',  'Europa'),
 }
 
 # --- ETFs (Índices + Sectores, todo junto) ---
