@@ -5762,8 +5762,8 @@ def _kpi_resumen_seccion(datos_dict, etiqueta_extra=''):
         return
 
     todos_pct = [d['cambio_pct'] for d in datos_dict.values()]
-    n_sub = sum(1 for v in todos_pct if v > 0.2)
-    n_baj = sum(1 for v in todos_pct if v < -0.2)
+    n_sub = sum(1 for v in todos_pct if v > 0.05)
+    n_baj = sum(1 for v in todos_pct if v < -0.05)
     n_neu = len(todos_pct) - n_sub - n_baj
     mejor = max(datos_dict.items(), key=lambda x: x[1]['cambio_pct'], default=(None, {'cambio_pct': 0}))
 
