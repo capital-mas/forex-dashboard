@@ -21,6 +21,43 @@ import plotly.graph_objects as go
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+# Diccionarios de activos (industrias, forex, países, ETFs, mercados reales).
+# Deben vivir en un módulo aparte para evitar import circular con app.py.
+from config_activos import (
+    ACCIONES_POR_INDUSTRIA,
+    FOREX,
+    PAISES,
+    ETFS,
+    SECTORES_TOTAL,
+    MERCADOS_REALES,
+)
+
+# ==============================================================
+#  CONSTANTES DEL MÓDULO
+# ==============================================================
+
+# Benchmark de mercado usado por el método O'Neil para calcular el RS Rating
+BENCHMARK_DEFAULT = 'SPY'
+
+# Categorías que ofrece el selector de activo
+CATEGORIAS_ACTIVO = [
+    "Acción (por industria)",
+    "Forex",
+    "Índice / País",
+    "ETF de Índice",
+    "ETF Sector / Subsector",
+    "Mercado real (commodity / cripto)",
+    "Ticker manual",
+]
+
+# Métodos de análisis técnico disponibles (label visible -> clave interna)
+METODOS_DISPONIBLES = {
+    "Stan Weinstein (fases de mercado)": "weinstein",
+    "William O'Neil (CANSLIM técnico)": "oneil",
+    "Darvas Box": "darvas",
+    "Wyckoff (Acumulación/Distribución)": "wyckoff",
+}
+
 # ==============================================================
 #  SELECTOR DE ACTIVO (reemplaza al text_input libre)
 # ==============================================================
