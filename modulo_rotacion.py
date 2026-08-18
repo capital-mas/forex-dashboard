@@ -821,18 +821,20 @@ CRIPTOS_DEFAULT = {
 }
 
 INDICES_DEFAULT = {
-    'S&P 500 (EE.UU.)':          ('SPY',  '#3a7bd5'),
-    'Nasdaq 100':                ('QQQ',  '#6CC24A'),
-    'Russell 2000 (Small Caps)': ('IWM',  '#E3B341'),
-    'EAFE Desarrollados':        ('EFA',  '#F0883E'),
-    'Mercados Emergentes':       ('EEM',  '#F85149'),
-    'China':                     ('FXI',  '#D32F2F'),
-    'Japón':                     ('EWJ',  '#EF5350'),
-    'India':                     ('INDA', '#FF9800'),
-    'Brasil':                    ('EWZ',  '#4CAF50'),
-    'Alemania':                  ('EWG',  '#FFC107'),
-    'Reino Unido':               ('EWU',  '#5C6BC0'),
-    'Todo el mundo':             ('ACWI', '#9CCC65'),
+    'S&P 500 (EE.UU.)':          ('^GSPC',  '#3a7bd5'),
+    'Nasdaq 100':                ('^NDX',  '#6CC24A'),
+    'Russell 2000 (Small Caps)': ('^RUT',  '#E3B341'),
+    'DOW JONES':                 ('^DJI',  '#F0883E'),
+    'Argentina':                 ('^MERV',  '#F85149'),
+    'Brasil':                    ('^BVSP',  '#D32F2F'),
+    'Japón':                     ('^N225',  '#EF5350'),
+    'China':                     ('^HSI', '#FF9800'),
+    'Corea del Sur':             ('^KS11',  '#4CAF50'),
+    'India':                     ('^NSEI',  '#FFC107'),
+    'Alemania':                  ('^GDAXI',  '#5C6BC0'),
+    'Europa General':            ('^STOXX50E', '#9CCC65'),
+    'Gran Bretaña':              ('^FTSE',  '#3a7bd5'),
+    'Francia':                   ('^FCHI',  '#6CC24A'),
 }
 
 
