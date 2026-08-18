@@ -1,14 +1,17 @@
 # ==============================================================
-#  MÓDULO ROTACIÓN — Sector / Commodities / Cripto / Índices Rotation
-#  v4: un solo motor genérico (mismo scoring multi-factor: momentum +
-#  tendencia + fuerza relativa + salud de RSI + volatilidad) reutilizado
-#  para los 4 universos, todos con mapa de fases
-#  (🟢 Liderando / 🟠 Perdiendo fuerza / 🟡 Emergiendo / 🔴 Rezagado),
-#  explicación en texto de por qué cada activo entra/sale, cálculo y
-#  guardado automático de la semana actual (sin apretar nada), y
-#  BACKTESTING / HISTORIAL de hasta 5 años calculado semana por semana.
-#  (Se sacó Portfolio Rotation de acciones individuales — universo
-#  demasiado grande para este enfoque de rotación por fases.)
+#  MÓDULO ANÁLISIS TÉCNICO — Weinstein / O'Neil / Darvas Box / Wyckoff
+#  Reemplaza al módulo de Rotación (Sector/Commodities/Cripto/Índices).
+#
+#  Diferencia clave: acá NO hay un universo fijo de activos ni ranking
+#  entre varios — el usuario elige el activo desde las categorías ya
+#  definidas en tu archivo de configuración (acciones por industria,
+#  forex, índices/países, ETFs de sector/subsector, mercados reales),
+#  o tipea cualquier ticker manual soportado por Yahoo Finance.
+#  El ADX de Wilder se calcula siempre como dato/filtro transversal
+#  (se usa fuerte dentro de O'Neil).
+#
+#  Sin persistencia: no se guarda nada en Supabase. Cada análisis
+#  vive solo en la sesión actual.
 # ==============================================================
 
 import numpy as np
@@ -18,970 +21,945 @@ import plotly.graph_objects as go
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+# --------------------------------------------------------------
+# Ajustá este import al nombre real de tu archivo de configuración
+# de activos (el que contiene ACCIONES_POR_INDUSTRIA, FOREX, PAISES,
+# ETFS, SECTORES_TOTAL, MERCADOS_REALES, etc.)
+# --------------------------------------------------------------
+==========================================================
+
+ACCIONES_POR_INDUSTRIA = {
+    'Semiconductores':    ['NVDA','AMD','AVGO','TSM','ASML','QCOM','TXN','ADI','NXPI','MCHP', 'MRVL','ON','MU','INTC','ARM','GFS','STM','UMC','SNDK','MPWR', 'SYNA','QRVO','CRUS','LSCC','DIOD','RMBS','CEVA','AEHR','ALAB','ACLS', 'AMAT','LRCX','KLAC','TER','ONTO','UCTT','FORM','KLIC','CAMT','COHR', 'ENTG','SMTC','MTSI','POWI','VECO','HIMX','SIMO','INDI','ICHR'],
+    'Software':           ['MSFT','ORCL','CRM','ADBE','SAP','NOW','INTU','WDAY','SNOW','PLTR', 'TEAM','HUBS','DOCU','MDB','DDOG','ESTC','BOX','ASAN','SMAR','PATH', 'PAYC','PAYX','TYL','PTC','ADSK','GWRE','MANH','PEGA','APPF', 'NCNO','QTWO','SPSC','WK','FIVN','BILL','DUOL','GTLB','BL','CVLT','PD','DBX','PCOR','RELY','MNDY','TWLO','FRSH'],
+    'Ciberseguridad':     ['CRWD','PANW','ZS','FTNT','OKTA','QLYS','TENB','RPD','VRNS','NET', 'CHKP','GEN','AKAM','CSCO','FFIV','EXTR','RDWR','BB','OSIS','TLS','S','NABL','MSI','LDOS','LHX','SAIC','CACI', 'MRCY','ANET','VRSN','DOCN','BLZE','AI','IBM','ORCL','DDOG','NET'],
+    'Cloud/AI':           ['MSFT','AMZN','GOOGL','META','ORCL','IBM','SNOW','MDB','DDOG','NET', 'PLTR','AI','CFLT','ESTC','SMCI','DELL','NVDA','AMD','CRM','SAP', 'NOW','INTU','ADBE','PATH','AKAM','GTLB','APP','ANET','HPE','NTAP', 'PSTG','BOX','ASAN','ARM','TSM','AVGO','COHR','VRT','EQIX','DLR', 'CIEN','SNPS','CDNS','MU','SNDK','WDC','CRWV','DOCN','FSLY','RBRK'],
+    'Hardware/Equipos':   ['AAPL','DELL','HPE','HPQ','SMCI','CSCO','ANET','NTAP','PSTG','STX', 'WDC','SNDK','GLW','LOGI','JNPR','CIEN','KEYS','ZBRA','FLEX','SANM', 'ARW','JBL','APH','TEL','PLXS','FN','COMM','CRDO','LITE','COHR', 'IPGP','VSH','BELFA','TTMI','KLIC','CAMT','AEIS','MTSI','OLED','VRT', 'CDNS','SNPS','TER','ENTG','RMBS','SIMO','HIMX','AZTA','SMTC','FORM'],
+    'Fintech':            ['XYZ','PYPL','AFRM','SOFI','UPST','LC','ENVA','NU','STNE','PAGS', 'DLO','PAYO','MQ','FOUR','COIN','HOOD','GPN','FI','FIS','JKHY', 'EEFT','PAY','FLT','WU','RM','NVEI','PSFE','BILL','MARA','RIOT', 'CIFR','CLSK','IREN','BTDR','CORZ','GLXY','BMNR','HUT','BTM','ML'],
+    'Biotecnología':      ['AMGN','REGN','VRTX','GILD','BIIB','MRNA','BNTX','ALNY','INCY','EXEL', 'NBIX','HALO','IONS','LEGN','SRPT','CRSP','NTLA','BEAM','EDIT','RXRX', 'RNA','DNLI','ADPT','XENE','SANA','VERV','ARWR','FOLD','BMRN','TECH', 'ABCL','NTRA','GH','CDNA','PACB','TWST','ILMN','OMIC','RARE','ACAD', 'KYMR','CGON','IMVT','APLS','RVMD','MRUS','AUTL','BLUE','KROS','XNCR'],
+    'Farmacéuticas':      ['LLY','JNJ','PFE','MRK','ABBV','BMY','AZN','NVO','NVS','SNY', 'GSK','TAK','TEVA','VTRS','OGN','BHC','RDY','EYPT','ZTS','ELV', 'CVS','HIMS','PHR','SUPN','ITCI','ACAD','ARRY','CPRX','BCRX','AMRX', 'PRGO','EOLS','AMPH','ANIP','COLL','EGRX','KNSA','MYOV','NGM','TVTX', 'XERS','ZYME','SLNO','ADMA','PTGX','ARDX','CRNX','MNKD','HROW','ETON'],
+    'Equipos Médicos':    ['ISRG','ABT','SYK','BSX','MDT','EW','ZBH','BDX','BAX','HOLX', 'DXCM','PODD','MASI','RMD','STE','TFX','ICUI','HAE','OMCL','PEN', 'GKOS','INSP','NVCR','ALGN','XRAY','SEM','LIVN','IRTC','TMDX','PROF', 'LNTH','NEOG','OSUR','AXNX','SIBN','NARI','OFIX','AVNS','AORT','CVAC', 'PHG','SONVY','GEHC','SOLV','STER','MMSI','ENVX','ATRC','OM','SKTX'],
+    'Servicios de Salud': ['UNH','ELV','CI','HUM','CVS','CNC','MOH','OSCR','DVA','HCA', 'UHS','THC','EHC','ACHC','SEM','LFST','PGNY','DOCS','AMED','ENSG', 'CHE','PNTG','FMS','OPCH','ADUS','SGRY','BKD','PACS','GH','DGX', 'LH','NEO','MEDP','IQV','ICON','SYNH','CRL','CTLT','TDOC','VEEV', 'EVH','AGL','ALHC','PRVA','ACCD','ONEM','SHC','ARDT','HIMS','LFMD'],
+    'Bancos':             ['JPM','BAC','WFC','C','GS','MS','USB','PNC','TFC','COF', 'BK','STT','MTB','FITB','HBAN','RF','CFG','KEY','CMA','ZION', 'FHN','WTFC','EWBC','ONB','SNV','BPOP','FULT','FFIN','CADE','UBSI', 'ASB','OZK','PNFP','WBS','HOMB','BKU','SBSI','IBOC','TCBI','COLB', 'WAL','FIBK','FCNCA','CVBF','CATY','BANF','NBHC','GBCI','SFNC','FNB'],
+    'Seguros':            ['BRK-B','PGR','CB','TRV','ALL','AFL','MET','PRU','AIG','HIG', 'CINF','WRB','RGA','LNC','GL','UNM','EG','MKL','BRO','AON', 'MMC','AJG','WTW','ACGL','RLI','ORI','KNSL','THG','AXS','RE', 'PFG','VOYA','SLF','MFC','EQH','AMP','FNF','FAF','AIZ','CNO', 'PIPR','JRVR','UFCS','NMIH','ESNT','MTG','RDN','HCI','TRUP','ROOT'],
+    'Mercados Capitales': ['BX','KKR','APO','ARES','CG','OWL','BAM','BN','SCHW','IBKR', 'CME','ICE','NDAQ','MKTX','MS','GS','RJF','EVR','LAZ','PIPR', 'SF','LPLA','HOOD','COIN','SEIC','BEN','TROW','BLK','IVZ','AMG', 'JHG','PFG','CNS','MC','PJT','HLI','TREE','OPY','VIRT','XP', 'STNE','NMR','NOMD','DB','UBS','CS','RY','TD','BMO','BNS'],
+    'Bancos Regionales':  ['FITB','HBAN','RF','CFG','ZION','FHN','WTFC','KEY','CMA','MTB', 'EWBC','ONB','SNV','FULT','FFIN','CADE','UBSI','ASB','OZK','PNFP', 'WBS','HOMB','BKU','SBSI','IBOC','TCBI','COLB','WAL','FIBK','FCNCA', 'CVBF','BANF','NBHC','GBCI','SFNC','FNB','CATY','PACW','UCBI','INDB'],
+    'Finanzas Diversif.': ['V','MA','AXP','DFS','SYF','ALLY','COF','CACC','SLM','NAVI', 'RKT','OMF','WU','GPN','FI','FIS','JKHY','FLT','EEFT','PAY', 'PYPL','XYZ','AFRM','SOFI','UPST','LC','HOOD','COIN','NU','STNE', 'PAGS','DLO','PAYO','MQ','FOUR','TRU','EFX','EXPGY','SPGI','MCO', 'FICO','CINF','AMP','VOYA','EQH','BEN','TROW','BLK','IVZ','JHG'],
+    'Petróleo Integrado': ['XOM','CVX','COP','EOG','OXY','DVN','MRO','APA','FANG','HES', 'PXD','CTRA','EQT','AR','RRC','CNX','CIVI','SM','MTDR','PR', 'MPC','PSX','VLO','PBF','DK','SUN','MUSA','SLB','HAL','BKR', 'NOV','CHX','LBRT','NBR','PTEN','HP','WTTR','TDW','RIG','VAL', 'PBR','SHEL','BP','TTE','EQNR','ENI','REPYY','YPF','VIST','EC'],
+    'Energía Renovable':  ['NEE','BEP','BEPC','CWEN','CWEN-A','NEP','AES','ORA','AY', 'ENPH','FSLR','SEDG','RUN','ARRY','NXT','SHLS','FLNC','STEM', 'BE','PLUG','GEV','VRT','CSIQ','JKS','MAXN','NOVA','SPWR', 'AMRC','HASI','RNW','BLDP','HYLN','EVGO','CHPT','FREY', 'SES','EOSE','ENVX','SLDP','QS','MVST','LICY','LAC','ALTM','PLL'],
+    'Gas Natural':        ['LNG','EQT','AR','RRC','CNX','KMI','WMB','OKE','TRGP','ET', 'EPD','MPLX','PAA','AM','DTM','HESM','KGS','MGY','CRK','GPOR', 'CTRA','OVV','SM','CIVI','EXE','NFG','SWX','ATO','NWN','UGI', 'NI','OGS','POR','SJI','SR','CPK','MMP','ENLC','WES','PAGP', 'GLNG','FLNG','GLOP','TGS','TGNP','ENB','TRP','KEYUF','KNTK','HUN'],
+    'Energía Solar':      ['FSLR','ENPH','SEDG','RUN','ARRY','NXT','SHLS','CSIQ','JKS','MAXN', 'NOVA','SPWR','EMBK','BE','PLUG','FLNC','STEM','AMRC','ORA', 'NEE','CWEN','BEP','BEPC','NEP','AES','GEV','VRT','HASI','RNW', 'BLDP','CHPT','EVGO','EOSE','FREY','SES','SLDP','QS','ENVX','MVST'],
+    'Aeroespacial':       ['BA','RTX','LMT','NOC','GD','HII','TDG','HEI','HEI-A','CW','TXT','KTOS','AVAV','BWXT','LHX','LDOS','MRCY','OSIS','SPR','COL','HON','AER','AJRD','IRDM','MAXR','RKLB','SPCE','ASTS','DRS','NOC','LMT','RTX','GD','BA','HII','TDG','HEI','CW','VSEC','ATRO','HXL','CWST','KAMN','TGI','MOG-A','DCO','ESLT','ARL','AVX','HEI-A','AIM','JOBY','ACHR','EH','LILAK','NNDM','PL'],
+    'Transporte':         ['UPS','FDX','UNP','CSX','NSC','JBHT','ODFL','XPO','CHRW','EXPD', 'KEX','MATX','ZIM','DAC','SBLK','GOGL','PANL','GNK','TRTN','SFL', 'CAI','SINO','NM','DSX','LPG','STNG','INSW','TNK','EURN','FRO'],
+    'Construcción':       ['CAT','DE','EMR','ETN','HON','GE','ROK','PH','ITW','MMM', 'VMC','MLM','EXP','BLDR','NVR','DHI','LEN','PHM','KBH','TOL', 'JCI','TT','URI','PWR','FIX','MTZ','ACM','FLR','HUBG','MAS'],
+    'Defensa':            ['LMT','RTX','NOC','GD','HII','BA','TDG','HEI','CW','TXT', 'KTOS','AVAV','BWXT','LHX','LDOS','MRCY','OSIS','CACI','SAIC','NOC', 'GD','RTX','LMT','HII','BA','TDG','CW','HEI','TXT','KTOS'],
+    'Retail':             ['AMZN','WMT','TGT','COST','HD','LOW','TJX','ROST','DG','DLTR', 'BBY','KR','BJ','WBA','CVS','ULTA','M','KSS','JWN','GPS', 'BURL','FIVE','WSM','RH','ORLY','AZO','AAP','TSCO','Ollies','OLLI', 'FND','TPR','RL','NKE','DECK','CROX','LEVI','PVH','URBN','AEO'],
+    'Autos':              ['TSLA','GM','F','TM','HMC','STLA','RIVN','LCID','NIO','XPEV', 'LI','FCAU','MBGYY','BMWYY','VWAGY','RACE','GM','F','APTV','BWA', 'VC','GT','LEA','ALV','HOG','PII','THO','MBLY','ZK','XPEL'],
+    'Hotelería/Viajes':   ['MAR','HLT','H','IHG','ABNB','BKNG','EXPE','RCL','CCL','NCLH', 'TRIP','DESP','TCOM','LVS','MGM','WYNN','CZR','SIX','SIXF','PLAY', 'DKNG','BALY','WYNN','HLT','MAR','VAC','WH','HGV','SVC','PK'],
+    'E-commerce':         ['AMZN','SHOP','ETSY','EBAY','MELI','SE','PDD','BABA','JD','CPNG', 'W','CVNA','OSTK','WISH','BZUN','EXFY','REAL','GRPN','WIX','DOCN', 'FVRR','UPWK','RBLX','TTD','APP','NET','GTLB','FSLY','BIGC','BOX'],
+    'Alimentos':          ['KO','PEP','MDLZ','KHC','GIS','CPB','SJM','K','KDP','HSY', 'MDLZ','TSN','HRL','ADM','BG','CHD','CLX','CAG','POST','MKC', 'EL','PG','UL','NOMD','LANC','COKE','FLO','DAR','INGR','SMPL'],
+    'Bebidas':            ['KO','PEP','MNST','STZ','BUD','TAP','DEO','KDP','CELH','FIZZ', 'PRMW','CCEP','FMX','SAM','BFB','BUD','TAP','WULF','COKE','NAPA', 'VIV','BRBR','SPB','SOVO','REX','KOF','ABEV','CCU','AGRO','COTY'],
+    'Minería Oro':        ['NEM','GOLD','AEM','WPM','KGC','PAAS','AG','CDE','HL','SSRM', 'NGD','AUX','DRD','BTG','EGO','HMY','IAG','AU','SA','GFI', 'OR','FNV','RGLD','KNT','WDO','EQX','TGB','SILV','BVN','CGAU'],
+    'Cobre/Metales':      ['FCX','SCCO','TECK','HBM','NUE','STLD','CLF','NUE','AA','CDE', 'KGC','PAAS','AG','HL','WPM','AEM','NEM','GOLD','SSRM','NGD', 'ERO','LUNMF','LAC','ALB','PLL','MP','CRS','ATI','X','HBM','TECK'],
+    'Químicos':           ['LIN','APD','DD','DOW','LYB','EMN','CE','IFF','PPG','SHW', 'ECL','ALB','FMC','CF','MOS','NTR','OLN','ASH','AVNT','HUN', 'X','BC','RPM','WLK','TSE','SXT','SCL','NEU','IOSP','CBT'],
+    'Acero':              ['NUE','STLD','CLF','X','MT','RS','CMC','SID','GGB','TX', 'PKX','NWL','CRS','ATI','SCHN','ZEUS','NBR','X','STLD','CLF', 'CLF','NUE','STLD','CMC','MT','RS','X','PKX','SID','GGB'],
+    'Eléctricas':         ['NEE','DUK','SO','D','AEP','EXC','XEL','ED','ETR','PEG', 'PCG','PPL','FE','ES','EIX','AES','CNP','NI','ATO','LNT', 'WEC','CMS','DTE','SRE','XEL','EVRG','IDA','BEP','BEPC','NEP', 'ORA','PEGI','UGI','BIP','BIPC','AVA','PNW','NRG','NRZ','CVA'],
+    'Agua':               ['AWK','WTRG','WTR','AWR','YORW','MSEX','SJW','CWCO','GWRS','ARTNA', 'PNW','AWK','AWK','WTRG','SJW','CWT','CWT','SJW','AWR','YORW', 'WSO','AQUA','ECL','XYL','PUMP','GRC','MEG','H2O','CWCO','PRMW'],
+    'REIT Comercial':     ['SPG','O','VICI','NNN','BXP','KIM','REG','MAC','PEAK','FRT', 'SLG','EPR','WPC','ARE','HST','PK','VNO','CUZ','HIW','KRC', 'DEI','BRX','ADC','STAG','PLD','EQIX','DLR','CONE','COR','AMT', 'CCI','SBAC','WY','IRM','GOOD','LAND','SLG','BXP','O','SPG'],
+    'REIT Industrial':    ['PLD','AMT','CCI','DLR','EQIX','STAG','EGP','FR','REXR','TRNO', 'PLYM','LXP','COLD','ILPT','PSTL','STAG','IRM','CUBE','GOOD','O', 'PLD','EQIX','DLR','AMT','CCI','SBAC','CONE','COR','DLR','PLD'],
+    'REIT Residencial':   ['EQR','AVB','ESS','MAA','UDR','CPT','ELS','AIV','NXRT','INVH', 'IRT','AMH','BRG','SUI','NXRT','MHC','UMH','ESS','EQR','AVB', 'UDR','MAA','CPT','INVH','AMH','SUI','ELS','AIRC','CUBE','CPT'],
+    'Telecomunicaciones': ['T','VZ','TMUS','S','CHTR','CMCSA','LUMN','FYBR','VOD','BT', 'ORAN','TEF','TU','BCE','RCI','SKM','ZL','AMX','TIGO','TDS', 'ATUS','WOW','CNSL','QCOM','AMT','CCI','SBAC','WBD','NFLX','DIS', 'TMUS','VZ','T','CMCSA','CHTR','S','LUMN','VOD','BT','TEF'],
+    'Internet':           ['GOOGL','META','NFLX','SNAP','PINS','RDDT','SPOT','ROKU','IAC','MTCH', 'BMBL','YELP','DASH','UBER','LYFT','SHOP','SE','MELI','ETSY','EBAY', 'BABA','JD','PDD','BIDU','NTES','WB','IQ','TME','WIX','RBLX', 'DUOL','TTD','PUBM','APP','NET','AKAM','DOCN','GTLB','BOX','ZI', 'YEXT','COUR','CHGG','RUM','VKTX','CRWV','FSLY','CFLT','DBX','TASK'],
+    'Argentina':          ['GGAL', 'BMA', 'BBAR', 'SUPV', 'CEPU', 'YPF', 'PAM', 'TGS', 'CRESY', 'LOMA', 'VIST', 'IRCP', 'EDN', 'TRAN', 'IRS', 'DESP', 'GLOB', 'BIOX', 'MTR', 'AGRO', 'PGR', 'SBS'],
+    'Brasil':             ['VALE','ITUB','PBR','BBD','ABEV','NU'],
+    'China':              ['BABA','TCEHY','BIDU','JD','NIO','LI','XPEV','BYDDF','PDD','NTES'],
+    'India':              ['INFY','WIT','HDB','IBN','VEDL','RDY','TTM'],
+    'Europa Tecnología':  ['SAP','ASML','IFNNY','NXPI'],
+    'Europa Finanzas':    ['HSBC','BBVA','SAN','DBK.DE','LLOY.L','UBS','ING'],
+    'Agro/Fertilizantes': ['MOS','NTR','CF','ADM','BG','FMC','CTVA'],
+    'Cripto (ETF/Coin)':  ['BTC-USD','ETH-USD','SOL-USD','BNB-USD','XRP-USD','ADA-USD','DOGE-USD','AVAX-USD','DOT-USD','MATIC-USD', 'LINK-USD','LTC-USD','ATOM-USD','ETC-USD','XLM-USD','FIL-USD','ICP-USD','HBAR-USD','NEAR-USD','ARB-USD', 'COIN','MARA','RIOT','CLSK','HUT','BITF','BTDR','IREN','CAN','WULF'],
+}
+
+
+TICKER_INDUSTRY = {}
+for ind, lst in ACCIONES_POR_INDUSTRIA.items():
+    for t in lst:
+        if t not in TICKER_INDUSTRY:
+            TICKER_INDUSTRY[t] = ind
+
+
+ALL_TICKERS = sorted(set(t for lst in ACCIONES_POR_INDUSTRIA.values() for t in lst))
+
+
+FOREX = {
+    # --- Majors ---
+    'EUR/USD': ('EURUSD=X', 'Majors'),
+    'GBP/USD': ('GBPUSD=X', 'Majors'),
+    'USD/JPY': ('USDJPY=X', 'Majors'),
+    'USD/CHF': ('USDCHF=X', 'Majors'),
+    'USD/CAD': ('USDCAD=X', 'Majors'),
+    'AUD/USD': ('AUDUSD=X', 'Majors'),
+    'NZD/USD': ('NZDUSD=X', 'Majors'),
+    'USD/CNY': ('USDCNY=X', 'Majors'),
+
+    # --- Crosses EUR ---
+    'EUR/GBP': ('EURGBP=X', 'Crosses EUR'),
+    'EUR/JPY': ('EURJPY=X', 'Crosses EUR'),
+    'EUR/CHF': ('EURCHF=X', 'Crosses EUR'),
+    'EUR/AUD': ('EURAUD=X', 'Crosses EUR'),
+    'EUR/CAD': ('EURCAD=X', 'Crosses EUR'),
+
+    # --- Crosses GBP ---
+    'GBP/JPY': ('GBPJPY=X', 'Crosses GBP'),
+    'GBP/AUD': ('GBPAUD=X', 'Crosses GBP'),
+    'GBP/CAD': ('GBPCAD=X', 'Crosses GBP'),
+
+    # --- Crosses AUD/NZD ---
+    'AUD/JPY': ('AUDJPY=X', 'Crosses AUD'),
+    'AUD/CAD': ('AUDCAD=X', 'Crosses AUD'),
+    'AUD/NZD': ('AUDNZD=X', 'Crosses AUD'),
+    'NZD/JPY': ('NZDJPY=X', 'Crosses NZD'),
+
+    # --- Crosses JPY/CHF ---
+    'CAD/JPY': ('CADJPY=X', 'Crosses JPY'),
+    'CHF/JPY': ('CHFJPY=X', 'Crosses JPY'),
+
+    # --- LatAm ---
+    'USD/ARS': ('USDARS=X', 'LatAm'),
+    'USD/BRL': ('USDBRL=X', 'LatAm'),
+    'USD/MXN': ('USDMXN=X', 'LatAm'),
+    'USD/CLP': ('USDCLP=X', 'LatAm'),
+    'USD/COP': ('USDCOP=X', 'LatAm'),
+    'USD/PEN': ('USDPEN=X', 'LatAm'),
+    'USD/UYU': ('USDUYU=X', 'LatAm'),
+}
+
+
+PAISES = {
+    'EE.UU. S&P500':    ('^GSPC',  'América'),
+    'EE.UU. NASDAQ':    ('^NDX',   'América'),
+    'EE.UU. DOW':       ('^DJI',   'América'),
+    'EE.UU. Russell':   ('^RUT',   'América'),
+    'Argentina':        ('^MERV',  'América'),
+    'Brasil':           ('^BVSP',  'América'),
+    'Japón':            ('^N225',  'Asia'),
+    'China':            ('^HSI',   'Asia'),
+    'Corea del Sur':    ('^KS11',  'Asia'),
+    'India':            ('^NSEI',  'Asia'),
+    'Alemania':         ('^GDAXI', 'Europa'),
+    'Europa general':   ('^STOXX50E', 'Europa'),
+    'Gran Bretaña':   ('^FTSE',  'Europa'),
+    'Francia':   ('^FCHI',  'Europa'),
+}
+
+# --- ETFs (Índices + Sectores, todo junto) ---
+ETFS = {
+    # Índices (ETF que los replica)
+    'EE.UU. S&P500':    ('SPY',  'Índices', '#3a7bd5'),
+    'EE.UU. NASDAQ':    ('QQQ',  'Índices', '#79c0ff'),
+    'EE.UU. DOW':       ('DIA',  'Índices', '#8b949e'),
+    'EE.UU. Russell':   ('IWM',  'Índices', '#bc8cff'),
+    'Argentina':        ('ARGT', 'Índices', '#6cb6ff'),
+    'Brasil':           ('EWZ',  'Índices', '#3fb950'),
+    'Japón':            ('EWJ',  'Índices', '#f0883e'),
+    'China':            ('FXI',  'Índices', '#f85149'),
+    'Corea del Sur':    ('EWY',  'Índices', '#e3b341'),
+    'India':            ('INDA', 'Índices', '#ffa657'),
+    'Alemania':         ('EWG',  'Índices', '#d2a8ff'),
+    'Europa general':   ('VGK',  'Índices', '#3a7bd5'),
+    'Mercados Emerg.':  ('EEM',  'Índices', '#8b949e'),
+}
+
+SECTORES_TOTAL = {
+    # --- Sectores (SPDR, vista macro - 11 sectores GICS) ---
+    'Tecnología':     ('XLK',  'Sectores', '#3a7bd5'),
+    'Salud':          ('XLV',  'Sectores', '#3fb950'),
+    'Finanzas':       ('XLF',  'Sectores', '#e3b341'),
+    'Consumo Discr.': ('XLY',  'Sectores', '#f0883e'),
+    'Consumo Básico': ('XLP',  'Sectores', '#bc8cff'),
+    'Energía':        ('XLE',  'Sectores', '#ffa657'),
+    'Industriales':   ('XLI',  'Sectores', '#79c0ff'),
+    'Materiales':     ('XLB',  'Sectores', '#8b949e'),
+    'Utilities':      ('XLU',  'Sectores', '#3fb950'),
+    'Real Estate':    ('XLRE', 'Sectores', '#f85149'),
+    'Comunicaciones': ('XLC',  'Sectores', '#d2a8ff'),
+
+    # --- Sub-sectores (vista granular / temática) ---
+    'Semiconductores':    ('SMH',  'Sub-sectores', '#3a7bd5'),
+    'Software':           ('IGV',  'Sub-sectores', '#79c0ff'),
+    'Ciberseguridad':     ('CIBR', 'Sub-sectores', '#f85149'),
+    'Cloud/AI':           ('SKYY', 'Sub-sectores', '#bc8cff'),
+    'Fintech':            ('FINX', 'Sub-sectores', '#3fb950'),
+    'Biotecnología':      ('XBI',  'Sub-sectores', '#f0883e'),
+    'Farmacéuticas':      ('PPH',  'Sub-sectores', '#e3b341'),
+    'Equipos Médicos':    ('IHI',  'Sub-sectores', '#79c0ff'),
+    'Servicios de Salud': ('IHF',  'Sub-sectores', '#3fb950'),
+    'Bancos':             ('KBE',  'Sub-sectores', '#e3b341'),
+    'Seguros':            ('KIE',  'Sub-sectores', '#8b949e'),
+    'Mercados Capitales': ('KCE',  'Sub-sectores', '#d2a8ff'),
+    'Bancos Regionales':  ('KRE',  'Sub-sectores', '#f0883e'),
+    'Finanzas Diversif.': ('IYG',  'Sub-sectores', '#3a7bd5'),
+    'Petróleo Integrado': ('XOP',  'Sub-sectores', '#ffa657'),
+    'Energía Renovable':  ('ICLN', 'Sub-sectores', '#3fb950'),
+    'Gas Natural':        ('FCG',  'Sub-sectores', '#79c0ff'),
+    'Energía Solar':      ('TAN',  'Sub-sectores', '#e3b341'),
+    'Aeroespacial':       ('ITA',  'Sub-sectores', '#8b949e'),
+    'Transporte':         ('IYT',  'Sub-sectores', '#f0883e'),
+    'Defensa':            ('XAR',  'Sub-sectores', '#6c5ce7'),
+    'Retail':             ('XRT',  'Sub-sectores', '#f85149'),
+    'Autos':              ('CARZ', 'Sub-sectores', '#3a7bd5'),
+    'Hotelería/Viajes':   ('PEJ',  'Sub-sectores', '#ffa657'),
+    'E-commerce':         ('IBUY', 'Sub-sectores', '#bc8cff'),
+    'Alimentos':          ('PBJ',  'Sub-sectores', '#3fb950'),
+    'Minería Oro':        ('GDX',  'Sub-sectores', '#e3b341'),
+    'Cobre/Metales':      ('COPX', 'Sub-sectores', '#cd7f32'),
+    'Acero':              ('SLX',  'Sub-sectores', '#79c0ff'),
+    'Eléctricas':         ('XLU',  'Sub-sectores', '#3fb950'),
+    'Agua':               ('PHO',  'Sub-sectores', '#3a7bd5'),
+    'REIT Industrial':    ('INDS', 'Sub-sectores', '#8b949e'),
+    'REIT Residencial':   ('REZ',  'Sub-sectores', '#3fb950'),
+    'Telecomunicaciones': ('IYZ',  'Sub-sectores', '#d2a8ff'),
+    'Internet':           ('FDN',  'Sub-sectores', '#3a7bd5'),
+}
+
+# ← AGREGAR ESTA LÍNEA:
+SECTORES = {nombre: (tk, color) for nombre, (tk, cat, color) in SECTORES_TOTAL.items()}
+SECTORES_GICS = {nombre: (tk, color) for nombre, (tk, cat, color) in SECTORES_TOTAL.items() if cat == 'Sectores'}
+SUBSECTORES   = {nombre: (tk, color) for nombre, (tk, cat, color) in SECTORES_TOTAL.items() if cat == 'Sub-sectores'}
+
+SUBSECTOR_A_SECTOR = {
+    'Semiconductores': 'Tecnología', 'Software': 'Tecnología',
+    'Ciberseguridad': 'Tecnología', 'Cloud/AI': 'Tecnología',
+    'Fintech': 'Finanzas', 'Bancos': 'Finanzas', 'Seguros': 'Finanzas',
+    'Mercados Capitales': 'Finanzas', 'Bancos Regionales': 'Finanzas',
+    'Finanzas Diversif.': 'Finanzas',
+    'Biotecnología': 'Salud', 'Farmacéuticas': 'Salud',
+    'Equipos Médicos': 'Salud', 'Servicios de Salud': 'Salud',
+    'Petróleo Integrado': 'Energía', 'Energía Renovable': 'Energía',
+    'Gas Natural': 'Energía', 'Energía Solar': 'Energía',
+    'Aeroespacial': 'Industriales', 'Transporte': 'Industriales', 'Defensa': 'Industriales',
+    'Retail': 'Consumo Discr.', 'Autos': 'Consumo Discr.',
+    'Hotelería/Viajes': 'Consumo Discr.', 'E-commerce': 'Consumo Discr.',
+    'Alimentos': 'Consumo Básico',
+    'Minería Oro': 'Materiales', 'Cobre/Metales': 'Materiales', 'Acero': 'Materiales',
+    'Eléctricas': 'Utilities', 'Agua': 'Utilities',
+    'REIT Industrial': 'Real Estate', 'REIT Residencial': 'Real Estate',
+    'Telecomunicaciones': 'Comunicaciones', 'Internet': 'Comunicaciones',
+}
+
+COLORES_SECTOR_PADRE = {nombre: color for nombre, (tk, color) in SECTORES_GICS.items()}
+
+
+# --- Mercados reales: energía, metales, minería, agro, blandos, cripto ---
+MERCADOS_REALES = {
+    # --- Energía ---
+    'Petróleo WTI':   ('CL=F',    'Energía',      '#f0883e'),
+    'Petróleo Brent': ('BZ=F',    'Energía',      '#ffa657'),
+    'Gas Natural':    ('NG=F',    'Energía',      '#79c0ff'),
+    'Gasolina RBOB':  ('RB=F',    'Energía',      '#ff9e64'),
+    'Heating Oil':    ('HO=F',    'Energía',      '#ff7b72'),
+    'Uranio (ETF)':   ('URA',     'Energía',      '#56d364'),
+
+    # --- Metales Preciosos ---
+    'Oro':     ('GC=F', 'Met. Prec.', '#e3b341'),
+    'Plata':   ('SI=F', 'Met. Prec.', '#8b949e'),
+    'Platino': ('PL=F', 'Met. Prec.', '#bc8cff'),
+    'Paladio': ('PA=F', 'Met. Prec.', '#d2a8ff'),
+
+    # --- Metales Industriales / Tierras Raras ---
+    'Cobre':          ('HG=F',  'Met. Ind.', '#cd7f32'),
+    'Litio (ETF)':    ('LIT',   'Met. Ind.', '#79c0ff'),
+    'Acero (ETF)':    ('SLX',   'Met. Ind.', '#8b949e'),
+
+    # --- Minería ---
+    'Mineras Oro':   ('GDX',  'Minería', '#e3b341'),
+    'Mineras Plata': ('SIL',  'Minería', '#8b949e'),
+    'Mineras Cobre': ('COPX', 'Minería', '#cd7f32'),
+
+    # --- Agro (granos) ---
+    'Soja':  ('ZS=F', 'Agro', '#3fb950'),
+    'Maíz':  ('ZC=F', 'Agro', '#7ee787'),
+    'Trigo': ('ZW=F', 'Agro', '#ffa657'),
+    'Avena': ('ZO=F', 'Agro', '#a4e494'),
+    'Arroz': ('ZR=F', 'Agro', '#c9e88c'),
+
+    # --- Blandos (Softs) ---
+    'Café':             ('KC=F', 'Blandos', '#a0754b'),
+    'Azúcar':           ('SB=F', 'Blandos', '#f3d9a4'),
+    'Algodón':          ('CT=F', 'Blandos', '#eaeaea'),
+    'Cacao':            ('CC=F', 'Blandos', '#7a4b2a'),
+
+    # --- Cripto (Coins) ---
+    'Bitcoin':    ('BTC-USD',  'Cripto', '#f0883e'),
+    'Ethereum':   ('ETH-USD',  'Cripto', '#7ee787'),
+    'Solana':     ('SOL-USD',  'Cripto', '#bc8cff'),
+    'BNB':        ('BNB-USD',  'Cripto', '#f3ba2f'),
+    'XRP':        ('XRP-USD',  'Cripto', '#3a7bd5'),
+    'Cardano':    ('ADA-USD',  'Cripto', '#2a71d0'),
+    'Dogecoin':   ('DOGE-USD', 'Cripto', '#e8b923'),
+    'Avalanche':  ('AVAX-USD', 'Cripto', '#e84142'),
+    'Polkadot':   ('DOT-USD',  'Cripto', '#e6007a'),
+    'Chainlink':  ('LINK-USD', 'Cripto', '#2a5ada'),
+    'Litecoin':   ('LTC-USD',  'Cripto', '#bebebe'),
+    'Cosmos':     ('ATOM-USD', 'Cripto', '#2e3148'),
+    'Ethereum Classic':('ETC-USD','Cripto','#328332'),
+    'Stellar':    ('XLM-USD',  'Cripto', '#08b5e5'),
+    'Filecoin':   ('FIL-USD',  'Cripto', '#0090ff'),
+    'Internet Computer':('ICP-USD','Cripto','#3b00b9'),
+    'Hedera':     ('HBAR-USD', 'Cripto', '#4b4b4b'),
+    'Near':       ('NEAR-USD', 'Cripto', '#000000'),
+    'Arbitrum':   ('ARB-USD',  'Cripto', '#28a0f0'),
+
+    # --- Cripto (ETF / Mineras) ---
+    'Coinbase':   ('COIN',  'Cripto ETF', '#0052ff'),
+    'Marathon Digital':('MARA','Cripto ETF','#f7931a'),
+    'Riot Platforms':  ('RIOT', 'Cripto ETF', '#e8412f'),
+    'CleanSpark':      ('CLSK', 'Cripto ETF', '#00b894'),
+    'Hut 8':           ('HUT',  'Cripto ETF', '#6c5ce7'),
+    'Bitdeer':         ('BTDR', 'Cripto ETF', '#fdcb6e'),
+    'Iris Energy':     ('IREN', 'Cripto ETF', '#74b9ff'),
+    'Canaan':          ('CAN',  'Cripto ETF', '#a29bfe'),
+    'TeraWulf':        ('WULF', 'Cripto ETF', '#fab1a0'),
+}
+
 ZONA_AR = ZoneInfo("America/Argentina/Buenos_Aires")
-BENCHMARK_DEFAULT = 'SPY'
+BENCHMARK_DEFAULT = '^GSPC'  # S&P 500, referencia general de mercado (usado por O'Neil)
+
+METODOS_DISPONIBLES = {
+    "Stan Weinstein — Fases de mercado": "weinstein",
+    "William O'Neil — CANSLIM técnico / Fuerza relativa": "oneil",
+    "Darvas Box — Cajas de consolidación + breakout": "darvas",
+    "Wyckoff — Acumulación / Distribución": "wyckoff",
+}
+
+# --------------------------------------------------------------
+# Categorías de selección de activo → cómo resolver el ticker
+# --------------------------------------------------------------
+CATEGORIAS_ACTIVO = [
+    "Acción (por industria)",
+    "Forex",
+    "Índice / País",
+    "ETF de Índice",
+    "ETF Sector / Subsector",
+    "Mercado real (commodity / cripto)",
+    "Ticker manual (cualquiera)",
+]
 
 
-def _rot_ahora_ar():
+def _at_ahora_ar():
     return datetime.now(ZONA_AR)
 
 
-def _rot_semana_actual():
-    """Etiqueta de la semana ISO actual (año-semana). Todos los usuarios que corran
-    el módulo en la misma semana calendario comparten la misma etiqueta, así el
-    rebalanceo es 'semanal' de verdad y no 'cada vez que tocás el botón'."""
-    hoy = _rot_ahora_ar()
-    y, w, _ = hoy.isocalendar()
-    return f'{y}-W{w:02d}'
+# ==============================================================
+#  SELECTOR DE ACTIVO (reemplaza al text_input libre)
+# ==============================================================
 
+def _at_seleccionar_ticker():
+    """Devuelve (ticker, etiqueta_legible) según la categoría elegida."""
+    categoria = st.selectbox('Tipo de activo', CATEGORIAS_ACTIVO, key='at_categoria')
 
-def _rot_semana_de_fecha(fecha):
-    """Igual que _rot_semana_actual pero para una fecha arbitraria — se usa
-    para etiquetar los rebalanceos históricos calculados en el backtesting."""
-    ts = pd.Timestamp(fecha)
-    y, w, _ = ts.isocalendar()
-    return f'{y}-W{w:02d}'
+    if categoria == "Acción (por industria)":
+        industria = st.selectbox('Industria', sorted(ACCIONES_POR_INDUSTRIA.keys()), key='at_industria')
+        ticker = st.selectbox('Ticker', sorted(set(ACCIONES_POR_INDUSTRIA[industria])), key='at_ticker_industria')
+        return ticker, f"{ticker} ({industria})"
+
+    elif categoria == "Forex":
+        par = st.selectbox('Par de divisas', sorted(FOREX.keys()), key='at_forex_par')
+        ticker, sub = FOREX[par]
+        return ticker, f"{par} ({sub})"
+
+    elif categoria == "Índice / País":
+        pais = st.selectbox('País / Índice', sorted(PAISES.keys()), key='at_pais')
+        ticker, region = PAISES[pais]
+        return ticker, f"{pais} ({region})"
+
+    elif categoria == "ETF de Índice":
+        nombre = st.selectbox('Índice (vía ETF)', sorted(ETFS.keys()), key='at_etf_indice')
+        ticker, cat, _color = ETFS[nombre]
+        return ticker, f"{nombre} ({cat})"
+
+    elif categoria == "ETF Sector / Subsector":
+        nombre = st.selectbox('Sector / Subsector', sorted(SECTORES_TOTAL.keys()), key='at_etf_sector')
+        ticker, cat, _color = SECTORES_TOTAL[nombre]
+        return ticker, f"{nombre} ({cat})"
+
+    elif categoria == "Mercado real (commodity / cripto)":
+        nombre = st.selectbox('Mercado', sorted(MERCADOS_REALES.keys()), key='at_mercado_real')
+        ticker, cat, _color = MERCADOS_REALES[nombre]
+        return ticker, f"{nombre} ({cat})"
+
+    else:  # Ticker manual
+        ticker = st.text_input(
+            'Ticker manual (cualquier activo soportado por Yahoo Finance)',
+            value='AAPL', key='at_ticker_manual',
+        ).strip().upper()
+        return ticker, ticker
 
 
 # ==============================================================
-#  DESCARGA DE PRECIOS
+#  DESCARGA DE DATOS
 # ==============================================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _rot_descargar_precios(tickers_tuple, periodo='2y'):
+def _at_descargar(ticker, periodo='2y', intervalo='1d'):
     try:
         import yfinance as yf
-        tickers = sorted(set(tickers_tuple))
-        data = yf.download(tickers, period=periodo, interval='1d',
-                            auto_adjust=True, progress=False, group_by='ticker')
-        if data is None or data.empty:
-            return None
-        precios = pd.DataFrame()
-        for tk in tickers:
-            try:
-                if isinstance(data.columns, pd.MultiIndex):
-                    if (tk, 'Close') in data.columns:
-                        s = data[(tk, 'Close')]
-                    elif ('Close', tk) in data.columns:
-                        s = data[('Close', tk)]
-                    else:
-                        continue
-                else:
-                    s = data['Close'] if 'Close' in data.columns else None
-                    if s is None:
-                        continue
-                precios[tk] = s
-            except Exception:
-                continue
-        return precios.dropna(how='all')
+        data = yf.Ticker(ticker).history(period=periodo, interval=intervalo, auto_adjust=True)
+        data = data[["Open", "High", "Low", "Close", "Volume"]].dropna()
+        return data if not data.empty else None
     except Exception:
         return None
 
 
-# ==============================================================
-#  INDICADORES DE APOYO (tendencia, RSI) — mismo criterio que el
-#  resto de la app (Golden Cross, MACD, RSI 14)
-# ==============================================================
-
-def _rot_rsi(serie, periodo=14):
-    delta = serie.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1 / periodo, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1 / periodo, adjust=False).mean()
-    rs = gain / loss.replace(0, np.nan)
-    return (100 - 100 / (1 + rs)).fillna(50)
-
-
-def _rot_macd_bull(serie):
-    macd = serie.ewm(span=12, adjust=False).mean() - serie.ewm(span=26, adjust=False).mean()
-    señal = macd.ewm(span=9, adjust=False).mean()
-    try:
-        return bool(float(macd.iloc[-1]) > float(señal.iloc[-1]))
-    except Exception:
-        return None
-
-
-def _rot_golden_cross(serie):
-    if len(serie) < 200:
-        return None
-    ma50 = serie.rolling(50).mean()
-    ma200 = serie.rolling(200).mean()
-    try:
-        return bool(float(ma50.iloc[-1]) > float(ma200.iloc[-1]))
-    except Exception:
-        return None
+def _at_agregar_medias(data):
+    data = data.copy()
+    data["MM30"] = data["Close"].rolling(window=30).mean()
+    data["MM50"] = data["Close"].rolling(window=50).mean()
+    data["MM150"] = data["Close"].rolling(window=150).mean()
+    data["MM200"] = data["Close"].rolling(window=200).mean()
+    return data
 
 
 # ==============================================================
-#  ANÁLISIS POR ACTIVO — momentum + tendencia + RSI + fuerza relativa
+#  ADX DE WILDER (filtro de tendencia, uso transversal)
 # ==============================================================
 
-def _rot_analizar_activo(precios, tk, ret_bench_medio=None):
-    try:
-        s = precios[tk].dropna()
-        if len(s) < 30 * 5 + 10:  # ~30 semanas mínimo de historia
-            return None
+def _at_calcular_adx(data, periodo=14):
+    """ADX (Average Directional Index) de Welles Wilder. Filtro objetivo de
+    '¿hay tendencia establecida o no?', reutilizado dentro de O'Neil y como
+    dato informativo en Weinstein/Darvas/Wyckoff. ADX >= 25 = umbral clásico
+    de tendencia establecida."""
+    high, low, close = data["High"], data["Low"], data["Close"]
+    prev_close, prev_high, prev_low = close.shift(1), high.shift(1), low.shift(1)
 
-        semanas_cortas, semanas_medias, semanas_largas = 4, 12, 26
-        ret_corto = float(s.pct_change(semanas_cortas * 5).iloc[-1])
-        ret_medio = float(s.pct_change(semanas_medias * 5).iloc[-1])
-        ret_largo = float(s.pct_change(semanas_largas * 5).iloc[-1]) if len(s) >= semanas_largas * 5 + 5 else None
-        if any(pd.isna(x) for x in [ret_corto, ret_medio] + ([ret_largo] if ret_largo is not None else [])):
-            return None
-        if ret_largo is None:
-            ret_largo = ret_medio  # fallback si aún no hay 26 semanas de historia
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
 
-        vol_diaria = s.pct_change().rolling(semanas_medias * 5).std().iloc[-1]
-        vol_anual = float(vol_diaria) * np.sqrt(252) if pd.notna(vol_diaria) and vol_diaria > 0 else 0.20
+    up_move = high - prev_high
+    down_move = prev_low - low
+    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=data.index)
+    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=data.index)
 
-        rsi = float(_rot_rsi(s).iloc[-1])
-        macd_bull = _rot_macd_bull(s)
-        golden_cross = _rot_golden_cross(s)
+    tr_s = tr.ewm(alpha=1 / periodo, adjust=False).mean()
+    plus_dm_s = plus_dm.ewm(alpha=1 / periodo, adjust=False).mean()
+    minus_dm_s = minus_dm.ewm(alpha=1 / periodo, adjust=False).mean()
 
-        momentum_bruto = ret_corto * 0.20 + ret_medio * 0.35 + ret_largo * 0.45
-        score_momentum = momentum_bruto / max(vol_anual, 0.05)
+    plus_di = 100 * (plus_dm_s / tr_s)
+    minus_di = 100 * (minus_dm_s / tr_s)
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+    adx = dx.ewm(alpha=1 / periodo, adjust=False).mean()
 
-        alpha_medio = (ret_medio - ret_bench_medio) if ret_bench_medio is not None else None
-
-        return dict(
-            ticker=tk, precio=float(s.iloc[-1]),
-            ret_corto=ret_corto * 100, ret_medio=ret_medio * 100, ret_largo=ret_largo * 100,
-            vol_anual=vol_anual * 100, rsi=rsi, macd_bull=macd_bull, golden_cross=golden_cross,
-            alpha_medio=(alpha_medio * 100 if alpha_medio is not None else None),
-            score_momentum=score_momentum,
-        )
-    except Exception:
-        return None
+    return plus_di, minus_di, adx
 
 
-def _rot_score_tendencia(golden_cross, macd_bull):
-    if golden_cross is True and macd_bull is True:
-        return 100
-    if golden_cross is None and macd_bull is None:
-        return 50
-    votos = [v for v in [golden_cross, macd_bull] if v is not None]
-    if not votos:
-        return 50
-    return 100 * (sum(1 for v in votos if v) / len(votos))
+# ==============================================================
+#  MÉTODO 1: STAN WEINSTEIN
+# ==============================================================
 
+def _at_analizar_weinstein(data):
+    mm30_actual = data["MM30"].iloc[-1]
+    pendiente_mm30 = data["MM30"].diff().iloc[-5:].mean()
+    precio = data["Close"].iloc[-1]
 
-def _rot_score_rsi_salud(rsi):
-    """Zona ideal ~45-65 (momentum saludable sin excesos). Penaliza tanto la
-    sobrecompra extrema (riesgo de reversión / toma de ganancias) como la
-    debilidad (RSI bajo, sin presión compradora)."""
-    return max(0.0, 100 - abs(rsi - 55) * 2.4)
-
-
-def _rot_construir_ranking_desde_filas(filas):
-    """Toma la lista de dicts que devuelve _rot_analizar_activo por cada
-    ticker y arma el DataFrame de ranking con percentiles + score compuesto.
-    Está separado de _rot_calcular_ranking para poder reutilizarlo tanto en
-    el ranking 'en vivo' como en cada punto del backtesting histórico."""
-    if not filas:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(filas)
-
-    df['perc_momentum'] = df['score_momentum'].rank(pct=True) * 100
-    df['perc_riesgo'] = (1 / df['vol_anual'].clip(lower=0.5)).rank(pct=True) * 100
-    df['perc_tendencia'] = df.apply(lambda r: _rot_score_tendencia(r['golden_cross'], r['macd_bull']), axis=1)
-    df['perc_rsi_salud'] = df['rsi'].apply(_rot_score_rsi_salud)
-    if df['alpha_medio'].notna().any():
-        df['perc_fuerza_relativa'] = df['alpha_medio'].rank(pct=True) * 100
+    if precio > mm30_actual and pendiente_mm30 > 0:
+        fase = "Fase 2 – Tendencia alcista"
+        descripcion = "El precio está por encima de la MM30 y la media sube. Señal alcista."
+    elif precio < mm30_actual and pendiente_mm30 < 0:
+        fase = "Fase 4 – Tendencia bajista"
+        descripcion = "El precio está por debajo de la MM30 y la media baja. Señal bajista."
+    elif abs(precio - mm30_actual) / mm30_actual < 0.03 and abs(pendiente_mm30) < 0.01:
+        fase = "Fase 1 – Acumulación"
+        descripcion = "El precio y la MM30 se mueven lateralmente sin tendencia clara."
     else:
-        df['perc_fuerza_relativa'] = 50.0
+        fase = "Fase 3 – Distribución"
+        descripcion = "El precio pierde fuerza, lateraliza cerca de la MM30. Posible techo."
 
-    df['score_pct'] = (
-        df['perc_momentum'] * 0.40 +
-        df['perc_tendencia'] * 0.20 +
-        df['perc_fuerza_relativa'] * 0.20 +
-        df['perc_rsi_salud'] * 0.10 +
-        df['perc_riesgo'] * 0.10
-    ).round(1)
-
-    df = df.sort_values('score_pct', ascending=False).reset_index(drop=True)
-    df['rank'] = df.index + 1
-    return df
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _rot_calcular_ranking(tickers_tuple, benchmark=BENCHMARK_DEFAULT, periodo='2y'):
-    universo = tuple(sorted(set(tickers_tuple) | {benchmark}))
-    precios = _rot_descargar_precios(universo, periodo)
-    if precios is None or precios.empty or benchmark not in precios.columns:
-        return pd.DataFrame(), precios
-
-    s_bench = precios[benchmark].dropna()
-    ret_bench_medio = float(s_bench.pct_change(60).iloc[-1]) if len(s_bench) >= 65 else None
-
-    filas = []
-    for tk in tickers_tuple:
-        if tk == benchmark or tk not in precios.columns:
-            continue
-        r = _rot_analizar_activo(precios, tk, ret_bench_medio)
-        if r:
-            filas.append(r)
-
-    df = _rot_construir_ranking_desde_filas(filas)
-    return df, precios
-
-
-def _rot_calcular_ranking_en_fecha(precios_completo, tickers, benchmark, fecha_corte):
-    """Igual que _rot_calcular_ranking, pero recalculado usando SOLO los
-    precios disponibles hasta 'fecha_corte' (inclusive). Esto es lo que
-    permite reconstruir, sin look-ahead bias, qué hubiera dado el ranking
-    en cualquier semana pasada — la base del backtesting de 5 años."""
-    precios = precios_completo.loc[:fecha_corte]
-    if precios.empty or benchmark not in precios.columns:
-        return pd.DataFrame()
-
-    s_bench = precios[benchmark].dropna()
-    if s_bench.empty:
-        return pd.DataFrame()
-    ret_bench_medio = float(s_bench.pct_change(60).iloc[-1]) if len(s_bench) >= 65 else None
-
-    filas = []
-    for tk in tickers:
-        if tk == benchmark or tk not in precios.columns:
-            continue
-        r = _rot_analizar_activo(precios, tk, ret_bench_medio)
-        if r:
-            filas.append(r)
-
-    return _rot_construir_ranking_desde_filas(filas)
-
-
-# ==============================================================
-#  NARRATIVA — por qué entra/sale cada activo
-# ==============================================================
-
-def _rot_razones(row):
-    pos, alerta = [], []
-
-    if row['perc_momentum'] >= 65:
-        pos.append(f"Momentum fuerte: {row['ret_medio']:+.1f}% en 12 semanas (percentil {row['perc_momentum']:.0f})")
-    elif row['perc_momentum'] <= 35:
-        alerta.append(f"Momentum débil: {row['ret_medio']:+.1f}% en 12 semanas (percentil {row['perc_momentum']:.0f})")
-
-    if row['golden_cross'] is True:
-        pos.append('Tendencia de fondo alcista (MA50 > MA200)')
-    elif row['golden_cross'] is False:
-        alerta.append('Sin confirmación de tendencia de largo plazo (MA50 < MA200)')
-
-    if row['macd_bull'] is True:
-        pos.append('MACD en fase alcista')
-    elif row['macd_bull'] is False:
-        alerta.append('MACD en fase bajista')
-
-    if row['alpha_medio'] is not None:
-        if row['alpha_medio'] > 0:
-            pos.append(f"Le gana al benchmark por {row['alpha_medio']:+.1f} pp en 12 semanas")
-        else:
-            alerta.append(f"Rinde por debajo del benchmark ({row['alpha_medio']:+.1f} pp en 12 semanas)")
-
-    if row['rsi'] >= 75:
-        alerta.append(f"RSI en {row['rsi']:.0f}: sobrecompra, riesgo de toma de ganancias")
-    elif row['rsi'] <= 30:
-        alerta.append(f"RSI en {row['rsi']:.0f}: débil, sin presión compradora")
+    if "Fase 2" in fase:
+        conclusion = ("El activo está en tendencia alcista confirmada. Es la fase que Weinstein "
+                      "considera apta para comprar o mantener posiciones ya abiertas.")
+    elif "Fase 4" in fase:
+        conclusion = ("El activo está en tendencia bajista confirmada. Weinstein recomienda evitar "
+                      "compras acá y, si tenés posición, priorizar la salida o esperar una nueva Fase 1.")
+    elif "Fase 1" in fase:
+        conclusion = ("El activo está lateralizando, sin tendencia definida. Es una fase de espera: "
+                      "conviene monitorear hasta que se confirme una ruptura al alza (Fase 2) o a la baja (Fase 4).")
     else:
-        pos.append(f"RSI saludable en {row['rsi']:.0f}, sin excesos")
+        conclusion = ("El activo muestra señales de agotamiento tras una suba. Es momento de cautela, "
+                      "ya que suele preceder a un cambio de tendencia hacia la Fase 4.")
 
-    if row['perc_riesgo'] >= 60:
-        pos.append(f"Volatilidad controlada ({row['vol_anual']:.1f}% anual)")
-    elif row['perc_riesgo'] <= 35:
-        alerta.append(f"Volatilidad elevada ({row['vol_anual']:.1f}% anual)")
-
-    return pos, alerta
-
-
-def _rot_clasificar_fase(score_pct, delta):
-    """Clasifica el activo en una fase de ciclo, comparando el score de esta
-    semana contra el de la semana anterior (si hay historial)."""
-    if delta is None:
-        return '🆕 Primer registro', '#8b949e', 'Todavía no hay una semana previa registrada para comparar la tendencia del score.'
-    if score_pct >= 60 and delta >= 2:
-        return '🟢 Liderando y acelerando', '#3fb950', 'Está entre los mejores del universo y su score sigue subiendo semana a semana.'
-    if score_pct >= 60 and delta < 2:
-        return '🟠 Liderando pero perdiendo fuerza', '#f0883e', 'Sigue entre los mejores, pero el score dejó de acelerar — puede ser el comienzo de un techo.'
-    if score_pct < 40 and delta >= 5:
-        return '🟡 Emergiendo (rezagado que mejora)', '#e3b341', 'Todavía está débil en el ranking general, pero viene mejorando rápido semana a semana.'
-    if score_pct < 40:
-        return '🔴 Rezagado', '#f85149', 'Score bajo y sin señales claras de mejora respecto a la semana anterior.'
-    return '⚪ Neutral / en transición', '#6b7d9a', 'Zona media del ranking, sin una tendencia clara de mejora ni de deterioro.'
+    resumen = {
+        "Método": "Stan Weinstein", "Señal principal": fase, "Descripción": descripcion,
+        "MM30 actual": mm30_actual, "Pendiente MM30 (5d)": pendiente_mm30,
+        "ADX(14)": data["ADX"].iloc[-1],
+        "+DI / -DI": f"{data['+DI'].iloc[-1]:.1f} / {data['-DI'].iloc[-1]:.1f}",
+        "Conclusión": conclusion,
+    }
+    return resumen, [("MM30", data["MM30"])], []
 
 
 # ==============================================================
-#  PERSISTENCIA EN SUPABASE — ranking completo por semana
-#  (no solo el Top N, así se puede clasificar TODO el universo,
-#  no solo lo que está en cartera)
+#  FUERZA RELATIVA (usada por O'Neil)
 # ==============================================================
 
-def _rot_guardar_estado(supabase, user_id, tipo, semana, ranking_completo, top_n):
-    try:
-        supabase.table('rotacion_estado').upsert({
-            'user_id': user_id, 'tipo': tipo, 'semana': semana,
-            'ranking': ranking_completo, 'top_n': top_n,
-            'actualizado_en': _rot_ahora_ar().isoformat(),
-        }, on_conflict='user_id,tipo,semana').execute()
-    except Exception:
-        pass
+def _at_calcular_rs_rating(data, benchmark_data):
+    """Fuerza relativa simplificada estilo IBD: compara el retorno del activo
+    contra el benchmark en distintas ventanas, ponderando más lo reciente.
+    No es el RS Rating oficial de IBD, pero sigue la misma lógica."""
+    activo = data["Close"]
+    bench = benchmark_data["Close"].reindex(activo.index, method="nearest")
 
+    ventanas, pesos = [63, 126, 189, 252], [0.4, 0.2, 0.2, 0.2]
+    score = 0
+    for w, p in zip(ventanas, pesos):
+        w = min(w, len(activo) - 1)
+        if w <= 0:
+            continue
+        ret_activo = activo.iloc[-1] / activo.iloc[-w] - 1
+        ret_bench = bench.iloc[-1] / bench.iloc[-w] - 1
+        score += p * (ret_activo - ret_bench)
 
-def _rot_leer_ranking_previo(supabase, user_id, tipo, semana_actual):
-    try:
-        res = (supabase.table('rotacion_estado')
-               .select('semana, ranking')
-               .eq('user_id', user_id).eq('tipo', tipo)
-               .neq('semana', semana_actual)
-               .order('semana', desc=True).limit(1).execute())
-        if res.data:
-            ranking_prev = {x['ticker']: x['score_pct'] for x in res.data[0]['ranking']}
-            return ranking_prev, res.data[0]['semana']
-    except Exception:
-        pass
-    return {}, None
-
-
-def _rot_leer_historial(supabase, user_id, tipo, limite=12):
-    try:
-        res = (supabase.table('rotacion_estado')
-               .select('semana, ranking, top_n')
-               .eq('user_id', user_id).eq('tipo', tipo)
-               .order('semana', desc=True).limit(limite).execute())
-        return res.data or []
-    except Exception:
-        return []
-
-
-def _rot_obtener_semanas_existentes(supabase, user_id, tipo):
-    """Trae solo las etiquetas de semana ya guardadas para este usuario/tipo.
-    Se usa antes de correr el backtesting para no recalcular ni volver a
-    escribir semanas que ya están en la base."""
-    try:
-        res = (supabase.table('rotacion_estado')
-               .select('semana')
-               .eq('user_id', user_id).eq('tipo', tipo)
-               .execute())
-        return set(x['semana'] for x in (res.data or []))
-    except Exception:
-        return set()
+    return int(np.clip(50 + score * 200, 1, 99))
 
 
 # ==============================================================
-#  BACKTESTING / HISTORIAL DE 5 AÑOS
-#  Descarga varios años de precios una sola vez y recalcula el ranking
-#  multi-factor semana por semana (viernes a viernes), usando en cada
-#  punto SOLO los precios disponibles hasta esa fecha. Así se reconstruye
-#  el historial completo aunque el módulo se use por primera vez hoy,
-#  en vez de arrancar el historial vacío desde la semana actual.
+#  MÉTODO 2: WILLIAM O'NEIL
 # ==============================================================
 
-def _rot_generar_historial_backfill(supabase, user_id, tipo_clave, universo_tickers, benchmark,
-                                     top_n_guardar, años=5):
-    universo_completo = tuple(sorted(set(universo_tickers) | {benchmark}))
-    # Se descarga con buffer extra (+2 años) para que incluso la semana más
-    # antigua del backtesting tenga los ~200 días hábiles que necesita la
-    # MA200 (Golden Cross) y las 26 semanas del momentum de largo plazo.
-    periodo_descarga = f'{años + 2}y'
+def _at_analizar_oneil(data, benchmark_data):
+    precio = data["Close"].iloc[-1]
+    mm50, mm150 = data["MM50"].iloc[-1], data["MM150"].iloc[-1]
 
-    with st.spinner(f'Descargando {periodo_descarga} de precios históricos (se cachea, no se vuelve a bajar)...'):
-        precios = _rot_descargar_precios(universo_completo, periodo_descarga)
+    maximo_52 = data["Close"].rolling(window=252, min_periods=50).max().iloc[-1]
+    minimo_52 = data["Close"].rolling(window=252, min_periods=50).min().iloc[-1]
+    distancia_maximo = (precio / maximo_52 - 1) * 100
+    distancia_minimo = (precio / minimo_52 - 1) * 100
 
-    if precios is None or precios.empty or benchmark not in precios.columns:
-        st.error('No se pudo descargar suficiente historial de precios para el backtesting de 5 años '
-                 '(verificá conexión a Yahoo Finance).')
-        return 0
+    vol_mm50 = data["Volume"].rolling(50).mean().iloc[-1]
+    vol_mm10 = data["Volume"].rolling(10).mean().iloc[-1]
+    volumen_creciente = bool(vol_mm10 > vol_mm50)
 
-    semanas_existentes = _rot_obtener_semanas_existentes(supabase, user_id, tipo_clave)
-
-    hoy = pd.Timestamp(_rot_ahora_ar().date())
-    fecha_inicio = hoy - pd.DateOffset(years=años)
-    fechas_viernes = pd.date_range(start=fecha_inicio, end=hoy, freq='W-FRI')
-
-    if len(fechas_viernes) == 0:
-        st.warning('No se generaron fechas para el backtesting.')
-        return 0
-
-    total = len(fechas_viernes)
-    barra = st.progress(0.0, text=f'Calculando ranking histórico semana a semana (0/{total})...')
-
-    registros_nuevos = []
-    for i, fecha in enumerate(fechas_viernes):
-        semana_lbl = _rot_semana_de_fecha(fecha)
-        if semana_lbl not in semanas_existentes:
-            df_hist = _rot_calcular_ranking_en_fecha(precios, universo_tickers, benchmark, fecha)
-            if not df_hist.empty:
-                top_n_real_hist = min(top_n_guardar, len(df_hist))
-                ranking_completo = [
-                    {'ticker': r['ticker'], 'score_pct': round(float(r['score_pct']), 2), 'rank': int(r['rank'])}
-                    for _, r in df_hist.iterrows()
-                ]
-                registros_nuevos.append({
-                    'user_id': user_id, 'tipo': tipo_clave, 'semana': semana_lbl,
-                    'ranking': ranking_completo, 'top_n': top_n_real_hist,
-                    'actualizado_en': _rot_ahora_ar().isoformat(),
-                })
-                semanas_existentes.add(semana_lbl)
-        if i % 4 == 0 or i == total - 1:
-            barra.progress((i + 1) / total, text=f'Calculando ranking histórico semana a semana ({i + 1}/{total})...')
-
-    barra.empty()
-
-    guardadas = 0
-    if registros_nuevos:
+    rs_rating = None
+    if benchmark_data is not None:
         try:
-            # Se guarda en tandas de 50 registros por llamada, en vez de una
-            # llamada a Supabase por semana, para que no tarde una eternidad.
-            for j in range(0, len(registros_nuevos), 50):
-                lote = registros_nuevos[j:j + 50]
-                supabase.table('rotacion_estado').upsert(lote, on_conflict='user_id,tipo,semana').execute()
-                guardadas += len(lote)
-        except Exception as e:
-            st.warning(f'Se calcularon {len(registros_nuevos)} semanas nuevas, pero hubo un error guardando '
-                       f'algunas en la base: {e}')
-            return guardadas
+            rs_rating = _at_calcular_rs_rating(data, benchmark_data)
+        except Exception:
+            rs_rating = None
 
-    return guardadas
-
-
-# ==============================================================
-#  UI COMPARTIDA
-# ==============================================================
-
-def _rot_fig_ranking(df, top_n, titulo, C_MONSTER='#6CC24A', C_MUTED='#6b7d9a', C_GRID='#21262d',
-                      C_TEXT='#e6edf3', C_BG1='#0d1117', C_BG2='#07090f'):
-    colores = [C_MONSTER if i < top_n else '#f85149' if i >= len(df) - max(top_n // 2, 1) else C_MUTED
-               for i in range(len(df))]
-    fig = go.Figure(go.Bar(
-        x=df['score_pct'], y=df['ticker'], orientation='h',
-        marker_color=colores,
-        text=[f"{v:.0f}" for v in df['score_pct']], textposition='outside',
-        hovertemplate='%{y}<br>Score compuesto: %{x:.1f}<extra></extra>',
-    ))
-    fig.add_vline(x=df['score_pct'].iloc[top_n - 1] if len(df) >= top_n else 50,
-                  line_dash='dash', line_color=C_MONSTER, opacity=0.5)
-    fig.update_layout(
-        plot_bgcolor=C_BG1, paper_bgcolor=C_BG2, font=dict(color='#b0bcd0', family='Inter, sans-serif'),
-        title=dict(text=titulo, font=dict(color=C_TEXT, size=14)),
-        xaxis=dict(title='Score compuesto (momentum + tendencia + fuerza relativa + RSI + riesgo)',
-                   range=[0, 110], gridcolor=C_GRID),
-        yaxis=dict(autorange='reversed'),
-        height=max(320, len(df) * 26 + 90), margin=dict(l=10, r=30, t=45, b=30),
+    adx_actual = data["ADX"].iloc[-1]
+    plus_di_actual, minus_di_actual = data["+DI"].iloc[-1], data["-DI"].iloc[-1]
+    tendencia_confirmada_adx = bool(
+        not np.isnan(adx_actual) and adx_actual >= 25 and plus_di_actual > minus_di_actual
     )
-    return fig
+
+    condiciones = {
+        "Precio sobre MM50": bool(precio > mm50),
+        "Precio sobre MM150": bool(precio > mm150),
+        "Cerca del máximo de 52 semanas (dentro del 15%)": bool(distancia_maximo >= -15),
+        "Lejos del mínimo de 52 semanas (>=30% sobre el piso)": bool(distancia_minimo >= 30),
+        "Volumen en expansión (promedio 10d > promedio 50d)": volumen_creciente,
+        "ADX(14) >= 25 con +DI > -DI (tendencia alcista confirmada por Wilder)": tendencia_confirmada_adx,
+    }
+    if rs_rating is not None:
+        condiciones["RS Rating aproximado >= 70 (fuerte vs mercado)"] = bool(rs_rating >= 70)
+
+    cumplidas, total = sum(condiciones.values()), len(condiciones)
+
+    if cumplidas == total:
+        senal = "Configuración O'Neil COMPLETA – Candidato de compra / líder de mercado"
+    elif cumplidas >= total - 1:
+        senal = "Configuración O'Neil casi completa – Vigilar de cerca"
+    elif cumplidas >= total / 2:
+        senal = "Configuración parcial – Falta confirmar fuerza"
+    else:
+        senal = "No cumple criterios O'Neil – Débil frente al mercado"
+
+    rs_texto = f"un RS Rating aproximado de {rs_rating}" if rs_rating is not None else "sin dato de RS Rating"
+    if cumplidas == total:
+        conclusion = (f"El activo cumple todos los criterios de O'Neil: está por encima de sus medias "
+                      f"móviles clave, cerca de máximos de 52 semanas, con volumen en expansión, tendencia "
+                      f"confirmada por ADX y {rs_texto}. Es el perfil de 'líder de mercado' que busca CANSLIM.")
+    elif cumplidas >= total - 1:
+        conclusion = ("Al activo le falta un solo criterio para el perfil O'Neil completo. Vale la pena "
+                      "seguirlo de cerca, está muy cerca de mostrar fuerza relativa frente al mercado.")
+    elif cumplidas >= total / 2:
+        conclusion = ("El activo cumple parte de los criterios, pero todavía no muestra la fuerza y el "
+                      "acompañamiento de volumen que O'Neil exige para considerarlo un líder claro.")
+    else:
+        conclusion = ("El activo está débil frente al criterio O'Neil: lejos de máximos, sin acompañamiento "
+                      "de volumen o por debajo de sus medias móviles clave. No es el momento para este método.")
+
+    resumen = {
+        "Método": "William O'Neil (CANSLIM técnico)", "Señal principal": senal,
+        "Criterios cumplidos": f"{cumplidas}/{total}", "Detalle": condiciones,
+        "% respecto al máximo 52 sem": distancia_maximo, "% respecto al mínimo 52 sem": distancia_minimo,
+        "RS Rating (aprox., no oficial IBD)": rs_rating, "ADX(14)": adx_actual, "Conclusión": conclusion,
+    }
+    return resumen, [("MM50", data["MM50"]), ("MM150", data["MM150"])], []
 
 
-def _rot_fig_historial(df_hist_evol, titulo):
-    """Línea de tiempo con la evolución del score de los tickers que más
-    aparecieron en el Top N a lo largo del historial guardado."""
+# ==============================================================
+#  MÉTODO 3: DARVAS BOX
+# ==============================================================
+
+def _at_detectar_darvas_box(data, ventana=130, dias_confirmacion=3, tolerancia_pct=1.0):
+    """Detección algorítmica simplificada de Cajas de Darvas: techo confirmado
+    tras N días sin ser superado, piso = mínimo posterior mientras el precio
+    se mantenga dentro de la caja, breakout = cierre sobre el techo con
+    volumen por encima del promedio."""
+    sub = data.tail(ventana).copy()
+    highs, lows, closes, fechas, n = sub["High"].values, sub["Low"].values, sub["Close"].values, sub.index, len(sub)
+
+    cajas, i = [], 0
+    while i < n:
+        max_local, idx_max, j, confirmado = highs[i], i, i + 1, 0
+        while j < n and confirmado < dias_confirmacion:
+            if highs[j] > max_local:
+                max_local, idx_max, confirmado = highs[j], j, 0
+            else:
+                confirmado += 1
+            j += 1
+        if confirmado < dias_confirmacion:
+            break
+
+        techo, idx_techo = max_local, idx_max
+        piso, idx_piso = lows[idx_techo], idx_techo
+        k = idx_techo + 1
+        while k < n:
+            if closes[k] > techo * (1 + tolerancia_pct / 100):
+                break
+            if lows[k] < piso:
+                piso, idx_piso = lows[k], k
+            if closes[k] < piso * (1 - tolerancia_pct / 100):
+                break
+            k += 1
+
+        cajas.append({"techo": techo, "piso": piso, "fecha_techo": fechas[idx_techo],
+                       "fecha_piso": fechas[idx_piso], "fin_idx": k})
+        i = k if k > idx_techo else idx_techo + 1
+
+    if not cajas:
+        return {"detectado": False, "caja_actual": None}
+
+    caja_actual = cajas[-1]
+    techo, piso = caja_actual["techo"], caja_actual["piso"]
+    precio_actual, volumen_actual = data["Close"].iloc[-1], data["Volume"].iloc[-1]
+    vol_mm50 = data["Volume"].rolling(50).mean().iloc[-1]
+
+    ancho_caja_pct = (techo - piso) / piso * 100
+    breakout = bool(precio_actual > techo and volumen_actual > vol_mm50 * 1.3)
+    dentro_de_caja = bool(piso <= precio_actual <= techo * (1 + tolerancia_pct / 100))
+
+    criterios = {
+        "Caja angosta (ancho <= 15%, consolidación real)": bool(ancho_caja_pct <= 15),
+        "Precio dentro o rompiendo la caja actual": bool(dentro_de_caja or breakout),
+        "Breakout con volumen (> 1.3x MM50 de volumen)": breakout,
+    }
+
+    return {"detectado": True, "caja_actual": caja_actual, "techo": techo, "piso": piso,
+            "ancho_caja_pct": ancho_caja_pct, "breakout": breakout, "criterios": criterios}
+
+
+def _at_analizar_darvas(data):
+    resultado = _at_detectar_darvas_box(data)
+    adx_actual = data["ADX"].iloc[-1]
+
+    if not resultado["detectado"]:
+        resumen = {
+            "Método": "Darvas Box",
+            "Señal principal": "No se pudo identificar una Caja de Darvas clara con los datos disponibles",
+            "ADX(14)": adx_actual,
+            "Conclusión": ("No se detectó una secuencia de techo/piso confirmada en la ventana analizada. "
+                          "Puede que el activo esté en tendencia demasiado limpia o con demasiada "
+                          "volatilidad para formar una caja clásica de Darvas."),
+        }
+        return resumen, [], []
+
+    criterios = resultado["criterios"]
+    cumplidas, total = sum(criterios.values()), len(criterios)
+    breakout = resultado["breakout"]
+
+    if breakout and cumplidas == total:
+        senal = "BREAKOUT confirmado de la Caja de Darvas – Señal de compra clásica"
+    elif breakout:
+        senal = "Breakout del techo, pero sin confirmación total (revisar volumen/ancho)"
+    elif cumplidas >= total - 1:
+        senal = "Precio dentro de una caja angosta – Vigilar breakout inminente"
+    else:
+        senal = "Caja identificada pero todavía amplia / sin condiciones de breakout"
+
+    if breakout and cumplidas == total:
+        conclusion = (f"El precio rompió el techo de la caja (USD {resultado['techo']:.2f}) con volumen por "
+                      f"encima del promedio, cumpliendo la regla clásica de Darvas: comprar en la ruptura de "
+                      f"una caja angosta con más volumen que lo normal, usando el piso (USD {resultado['piso']:.2f}) "
+                      f"como referencia de stop.")
+    elif breakout:
+        conclusion = ("Hay ruptura del techo, pero la caja no era lo suficientemente angosta o el volumen no "
+                      "acompañó del todo. Darvas exigía ambas condiciones; conviene ser cauteloso.")
+    else:
+        conclusion = (f"El precio se mantiene dentro de la caja actual (piso USD {resultado['piso']:.2f} – "
+                      f"techo USD {resultado['techo']:.2f}, ancho {resultado['ancho_caja_pct']:.1f}%). "
+                      f"Conviene esperar la ruptura del techo con volumen antes de actuar.")
+
+    resumen = {
+        "Método": "Darvas Box", "Señal principal": senal, "Criterios cumplidos": f"{cumplidas}/{total}",
+        "Detalle": criterios, "Techo de la caja actual": resultado["techo"],
+        "Piso de la caja actual": resultado["piso"], "Ancho de la caja (%)": resultado["ancho_caja_pct"],
+        "ADX(14)": adx_actual, "Conclusión": conclusion,
+    }
+    marcadores = [
+        (resultado["caja_actual"]["fecha_techo"], resultado["techo"], "pico"),
+        (resultado["caja_actual"]["fecha_piso"], resultado["piso"], "valle"),
+    ]
+    return resumen, [], marcadores
+
+
+# ==============================================================
+#  MÉTODO 4: WYCKOFF (Acumulación/Distribución)
+# ==============================================================
+
+def _at_analizar_wyckoff(data, ventana=90):
+    """Aproximación heurística al esquema de Wyckoff usando volumen, spread
+    y posición del precio dentro del rango reciente. No sustituye una
+    lectura barra-por-barra de eventos (Spring, Test, UTAD, SOS, SOW)."""
+    sub = data.tail(ventana).copy()
+    precio, mm50 = data["Close"].iloc[-1], data["MM50"].iloc[-1]
+    mm50_hace_20 = data["MM50"].iloc[-21] if len(data) > 21 else np.nan
+    tendencia_mm50 = "ascendente" if (not np.isnan(mm50_hace_20) and mm50 > mm50_hace_20) else "descendente"
+
+    maximo_rango, minimo_rango = sub["High"].max(), sub["Low"].min()
+    rango_total = maximo_rango - minimo_rango
+    posicion_en_rango = (precio - minimo_rango) / rango_total * 100 if rango_total > 0 else 50
+
+    spread = sub["High"] - sub["Low"]
+    compresion = bool(spread.tail(15).mean() < spread.mean() * 0.8)
+
+    vol_mm50_serie = data["Volume"].rolling(50).mean()
+    dias_climax = sub[sub["Volume"] > vol_mm50_serie.reindex(sub.index) * 2]
+    hay_climax_reciente = bool(len(dias_climax.tail(15)) > 0)
+
+    if compresion and posicion_en_rango <= 35 and tendencia_mm50 == "descendente":
+        fase = "Posible Acumulación"
+        descripcion = ("El precio lateraliza en la parte baja de su rango reciente, con contracción de "
+                       "volatilidad tras una tendencia bajista. " +
+                       ("Se detectó volumen de clímax reciente (posible Selling Climax / Spring)."
+                        if hay_climax_reciente else "Todavía sin un clímax de volumen claro que confirme el piso."))
+    elif not compresion and posicion_en_rango >= 60 and tendencia_mm50 == "ascendente" and precio > mm50:
+        fase = "Markup (Tendencia alcista)"
+        descripcion = ("El precio está en la parte alta de su rango reciente, con la MM50 ascendente. "
+                       "Fase de tendencia alcista activa (expansión de rango).")
+    elif compresion and posicion_en_rango >= 65 and tendencia_mm50 == "ascendente":
+        fase = "Posible Distribución"
+        descripcion = ("El precio lateraliza en la parte alta de su rango tras una suba, con contracción de "
+                       "volatilidad. " +
+                       ("Se detectó volumen de clímax reciente (posible Buying Climax / UTAD)."
+                        if hay_climax_reciente else "Todavía sin un clímax de volumen claro que confirme el techo."))
+    elif not compresion and posicion_en_rango <= 40 and tendencia_mm50 == "descendente" and precio < mm50:
+        fase = "Markdown (Tendencia bajista)"
+        descripcion = ("El precio está en la parte baja de su rango reciente, con la MM50 descendente. "
+                       "Fase de tendencia bajista activa.")
+    else:
+        fase = "Fase indefinida / transición"
+        descripcion = ("La combinación de rango, volumen y tendencia no encaja claramente en ninguna de las "
+                       "4 fases clásicas de Wyckoff con los umbrales usados acá.")
+
+    conclusiones = {
+        "Posible Acumulación": ("El activo muestra señales compatibles con una fase de Acumulación: "
+                                 "lateralización tras la baja, con contracción de volatilidad. Si aparece un "
+                                 "clímax de volumen seguido de un Spring y un Test exitoso, sería la "
+                                 "confirmación clásica para buscar el inicio del Markup."),
+        "Markup (Tendencia alcista)": ("El activo está en Markup: tendencia alcista confirmada con expansión "
+                                        "de rango y precio en la parte alta de su banda reciente. Es la fase "
+                                        "que Wyckoff considera para mantener o sumar posiciones."),
+        "Posible Distribución": ("El activo muestra señales compatibles con una fase de Distribución: "
+                                  "lateralización tras la suba, en la parte alta del rango, con contracción "
+                                  "de volatilidad. Si aparece un clímax de volumen y luego un UTAD fallido, "
+                                  "sería la confirmación clásica de un techo antes del Markdown."),
+        "Markdown (Tendencia bajista)": ("El activo está en Markdown: tendencia bajista confirmada, con "
+                                          "precio en la parte baja de su rango reciente. Conviene evitar "
+                                          "compras y esperar señales de Acumulación."),
+        "Fase indefinida / transición": ("No hay una fase de Wyckoff clara todavía. Conviene esperar más "
+                                          "definición en el rango y el volumen antes de sacar conclusiones."),
+    }
+
+    resumen = {
+        "Método": "Wyckoff (Acumulación/Distribución) — aproximación algorítmica", "Señal principal": fase,
+        "Descripción": descripcion, "Posición dentro del rango reciente (%)": posicion_en_rango,
+        "Tendencia MM50": tendencia_mm50, "Compresión de volatilidad reciente": compresion,
+        "Clímax de volumen detectado (últimos 15d)": hay_climax_reciente,
+        "Máximo del rango analizado": maximo_rango, "Mínimo del rango analizado": minimo_rango,
+        "ADX(14)": data["ADX"].iloc[-1], "Conclusión": conclusiones[fase],
+    }
+    return resumen, [("MM50", data["MM50"])], []
+
+
+# ==============================================================
+#  DISPATCH
+# ==============================================================
+
+def _at_analizar(metodo, data, benchmark_data=None):
+    if metodo == "weinstein":
+        return _at_analizar_weinstein(data)
+    elif metodo == "oneil":
+        return _at_analizar_oneil(data, benchmark_data)
+    elif metodo == "darvas":
+        return _at_analizar_darvas(data)
+    elif metodo == "wyckoff":
+        return _at_analizar_wyckoff(data)
+    raise ValueError("Método no reconocido")
+
+
+# ==============================================================
+#  GRÁFICO (Plotly, mismo estilo oscuro que el resto de la app)
+# ==============================================================
+
+def _at_fig_precio(data, lineas_extra, marcadores_extra, titulo):
+    paleta = ['#3a7bd5', '#e3b341', '#a371f7', '#39c5cf']
     fig = go.Figure()
-    paleta = ['#6CC24A', '#3a7bd5', '#e3b341', '#f0883e', '#a371f7', '#f85149', '#39c5cf', '#8b949e']
-    for i, tk in enumerate(df_hist_evol.columns):
-        fig.add_trace(go.Scatter(
-            x=df_hist_evol.index, y=df_hist_evol[tk], mode='lines', name=tk,
-            line=dict(color=paleta[i % len(paleta)], width=2),
-        ))
+    fig.add_trace(go.Scatter(x=data.index, y=data["Close"], mode='lines', name='Precio cierre',
+                              line=dict(color='#e6edf3', width=1.6)))
+    for i, (etiqueta, serie) in enumerate(lineas_extra):
+        fig.add_trace(go.Scatter(x=data.index, y=serie, mode='lines', name=etiqueta,
+                                  line=dict(color=paleta[i % len(paleta)], width=1.2, dash='dash')))
+    for fecha, precio_marca, tipo in marcadores_extra:
+        es_pico = tipo == "pico"
+        fig.add_trace(go.Scatter(x=[fecha], y=[precio_marca], mode='markers',
+                                  marker=dict(color='#f85149' if es_pico else '#3fb950',
+                                              symbol='triangle-down' if es_pico else 'triangle-up', size=12),
+                                  name='Techo caja' if es_pico else 'Piso caja', showlegend=True))
     fig.update_layout(
         plot_bgcolor='#0d1117', paper_bgcolor='#07090f', font=dict(color='#b0bcd0', family='Inter, sans-serif'),
         title=dict(text=titulo, font=dict(color='#e6edf3', size=14)),
-        xaxis=dict(title='Semana', gridcolor='#21262d'),
-        yaxis=dict(title='Score', range=[0, 105], gridcolor='#21262d'),
-        height=380, margin=dict(l=10, r=10, t=45, b=30), legend=dict(orientation='h', y=-0.2),
+        xaxis=dict(title='Fecha', gridcolor='#21262d'), yaxis=dict(title='Precio', gridcolor='#21262d'),
+        height=460, margin=dict(l=10, r=10, t=45, b=30), legend=dict(orientation='h', y=-0.2),
     )
     return fig
 
 
-def _rot_tarjeta_activo(row, delta, mostrar_clasificacion=True):
-    clasif, color_clasif, texto_clasif = _rot_clasificar_fase(row['score_pct'], delta)
-    pos, alerta = _rot_razones(row)
-    delta_txt = f"{delta:+.1f} pts vs. semana anterior" if delta is not None else 'sin historial previo'
+# ==============================================================
+#  TARJETA DE RESUMEN (mismo lenguaje visual que el resto de la app)
+# ==============================================================
 
-    bloque_clasif = ''
-    if mostrar_clasificacion:
-        bloque_clasif = (
-            f'<div style="margin-bottom:8px">'
-            f'<span style="padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;'
-            f'background:{color_clasif}22;border:1px solid {color_clasif};color:{color_clasif}">{clasif}</span>'
-            f'<span style="color:#6b7d9a;font-size:11px;margin-left:8px">{delta_txt}</span>'
-            f'</div>'
-            f'<div style="font-size:11px;color:#8b949e;margin-bottom:8px">{texto_clasif}</div>'
+def _at_tarjeta_resumen(resumen):
+    detalle = resumen.get("Detalle")
+    lineas_check = ''
+    if isinstance(detalle, dict):
+        lineas_check = ''.join(
+            f'<div style="font-size:11px;color:{"#3fb950" if cumple else "#f85149"};padding:2px 0">'
+            f'{"✅" if cumple else "❌"} {cond}</div>'
+            for cond, cumple in detalle.items()
         )
 
-    lineas_pos = ''.join(f'<div style="font-size:11px;color:#3fb950;padding:2px 0">✅ {m}</div>' for m in pos)
-    lineas_alt = ''.join(f'<div style="font-size:11px;color:#f85149;padding:2px 0">⚠️ {m}</div>' for m in alerta)
+    metricas = []
+    for k, v in resumen.items():
+        if k in ("Método", "Señal principal", "Detalle", "Conclusión", "Descripción"):
+            continue
+        if v is None:
+            continue
+        val_fmt = f"{v:,.2f}" if isinstance(v, float) else str(v)
+        metricas.append(f'<span style="display:inline-block;background:#0d1117;border:1px solid #21262d;'
+                         f'border-radius:6px;padding:4px 10px;margin:3px 6px 3px 0;font-size:11px;'
+                         f'color:#e6edf3;font-family:JetBrains Mono,monospace">{k}: {val_fmt}</span>')
+
+    descripcion_html = f'<div style="font-size:12px;color:#8b949e;margin:8px 0">{resumen["Descripción"]}</div>' \
+        if resumen.get("Descripción") else ''
+    criterios_html = f'<div style="font-size:12px;color:#6b7d9a;margin:4px 0 8px 0">' \
+                     f'Criterios cumplidos: <b style="color:#e6edf3">{resumen["Criterios cumplidos"]}</b></div>' \
+        if resumen.get("Criterios cumplidos") else ''
 
     st.markdown(f"""
     <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid #6CC24A;
-         border-radius:8px;padding:14px 18px;margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
-        <span style="color:#e6edf3;font-size:14px;font-weight:700;font-family:'JetBrains Mono',monospace">{row['ticker']}</span>
-        <span style="color:#6CC24A;font-size:13px;font-weight:700">Score {row['score_pct']:.0f}/100</span>
-        <span style="color:#6b7d9a;font-size:11px">#{int(row['rank'])} del ranking</span>
-      </div>
-      {bloque_clasif}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px">
-        {lineas_pos}{lineas_alt}
+         border-radius:8px;padding:16px 20px;margin-bottom:14px">
+      <div style="color:#6b7d9a;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">{resumen['Método']}</div>
+      <div style="color:#e6edf3;font-size:16px;font-weight:700;margin:4px 0 8px 0">{resumen['Señal principal']}</div>
+      {descripcion_html}
+      {criterios_html}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px;margin-bottom:8px">{lineas_check}</div>
+      <div>{''.join(metricas)}</div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid #21262d;font-size:13px;color:#f5f7fa">
+        <b style="color:#6CC24A">Conclusión:</b> {resumen['Conclusión']}
       </div>
     </div>
     """, unsafe_allow_html=True)
 
 
-def _rot_render_motor(
-    universo_tickers, universo_nombre, tipo_clave, top_n_default, min_top_n, max_top_n,
-    supabase, user_id, fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
-    benchmark=BENCHMARK_DEFAULT, mostrar_panel_fases=False, años_historial=5,
-):
-    fmt_precio = fmt_precio or (lambda p: f'${p:,.2f}' if p else 'S/D')
+# ==============================================================
+#  ENTRY POINT — llamar esto desde el archivo principal
+#  (reemplaza a modulo_sector_rotation / modulo_commodities_rotation /
+#   modulo_cripto_rotation / modulo_indices_rotation)
+#
+#  Sin Supabase: no recibe supabase/user_id y no persiste nada.
+# ==============================================================
 
-    top_n = st.slider(
-        f'Cuántos {universo_nombre.lower()} comprar cada semana (Top N)',
-        min_top_n, max_top_n, top_n_default, 1, key=f'rot_topn_{tipo_clave}',
-    )
+def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
+    """Análisis técnico de un activo con 4 métodos clásicos: Stan Weinstein,
+    William O'Neil, Darvas Box y Wyckoff. El ADX de Wilder se calcula
+    siempre como filtro/dato transversal. El activo se elige desde las
+    categorías de tu configuración (acciones por industria, forex,
+    índices/países, ETFs de índice, ETFs de sector/subsector, mercados
+    reales) o como ticker manual. No se guarda ningún historial."""
 
-    semana_actual = _rot_semana_actual()
-    n_semanas_guardadas = len(_rot_obtener_semanas_existentes(supabase, user_id, tipo_clave))
-    st.caption(f'📅 Semana de rebalanceo: **{semana_actual}** · Universo: {len(universo_tickers)} '
-               f'{universo_nombre.lower()} · Benchmark de referencia: **{benchmark}** · '
-               f'📚 Semanas de historial guardadas: **{n_semanas_guardadas}**')
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #6CC24A;
+         border-radius:14px; padding:26px 30px; margin-bottom:22px;">
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📐 Análisis Técnico</div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+        Analizá cualquier activo de tu universo con 4 métodos técnicos clásicos:
+        <b style="color:#e6edf3">Stan Weinstein</b> (fases de mercado), <b style="color:#e6edf3">William O'Neil</b>
+        (CANSLIM técnico / fuerza relativa), <b style="color:#e6edf3">Darvas Box</b> (cajas de consolidación +
+        breakout) y <b style="color:#e6edf3">Wyckoff</b> (acumulación/distribución). El ADX de Wilder se calcula
+        siempre como filtro de tendencia. Este análisis no se guarda: vive solo en la sesión actual.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    col_btn1, col_btn2 = st.columns([1, 1.3])
-    with col_btn1:
-        forzar_recalculo = st.button(
-            '🔄 Recalcular ahora', key=f'rot_run_{tipo_clave}',
-            help='El ranking ya se calcula y guarda solo al abrir esta pantalla (se cachea 1 hora). '
-                 'Usá este botón solo si querés forzar un recálculo inmediato con precios más frescos.',
-        )
-    with col_btn2:
-        generar_historial = st.button(
-            f'📚 Generar historial de {años_historial} años (backtesting)',
-            key=f'rot_backfill_{tipo_clave}',
-            help='Reconstruye el ranking semana a semana usando solo los precios disponibles hasta cada '
-                 'fecha (sin mirar al futuro) y lo guarda. Solo calcula las semanas que todavía no están '
-                 'en la base — se puede volver a apretar sin duplicar trabajo. Esto es aparte del cálculo '
-                 'automático semanal: es para traer historia pasada una sola vez.',
-        )
+    col1, col2 = st.columns([2, 2])
+    with col1:
+        ticker, etiqueta_activo = _at_seleccionar_ticker()
+    with col2:
+        metodo_label = st.selectbox('Método de análisis', list(METODOS_DISPONIBLES.keys()), key='at_metodo')
+    metodo = METODOS_DISPONIBLES[metodo_label]
 
-    if generar_historial:
-        n_nuevas = _rot_generar_historial_backfill(
-            supabase, user_id, tipo_clave, universo_tickers, benchmark,
-            top_n_guardar=top_n, años=años_historial,
-        )
-        if n_nuevas > 0:
-            st.success(f'✅ Se calcularon y guardaron {n_nuevas} semanas nuevas de historial '
-                       f'(backtesting de {años_historial} años).')
-        else:
-            st.info(f'El historial de {años_historial} años ya estaba completo para este universo — '
-                    f'no había semanas nuevas para calcular.')
-
-    if forzar_recalculo:
-        # Limpia el caché de esta función puntualmente para traer precios frescos
-        # en vez de esperar a que expire el TTL de 1 hora.
-        _rot_calcular_ranking.clear()
-
-    # El ranking de la semana actual se calcula y guarda SOLO, sin necesidad de
-    # apretar ningún botón: cada vez que se abre esta pantalla (o Streamlit
-    # vuelve a correr el script), se recalcula y se guarda el estado de la
-    # semana ISO actual (upsert por 'user_id,tipo,semana', así que entrar
-    # varias veces en la misma semana no genera duplicados, solo actualiza
-    # esa fila con el precio más reciente disponible).
-    with st.spinner(f'Descargando precios y calculando el score multi-factor de {len(universo_tickers)} activos...'):
-        df_rank, _precios = _rot_calcular_ranking(tuple(sorted(set(universo_tickers))), benchmark=benchmark)
-
-    if df_rank.empty:
-        st.error('No se pudo calcular el ranking (verificá conexión a Yahoo Finance, el universo elegido, '
-                 'o si hay suficiente historial — se necesitan al menos ~30 semanas de precios).')
+    if not ticker:
+        st.info('Seleccioná o ingresá un activo para analizar.')
         return
 
-    top_n_real = min(top_n, len(df_rank))
-    cartera_nueva = df_rank.head(top_n_real).copy()
+    with st.spinner(f'Descargando datos de {ticker}...'):
+        data = _at_descargar(ticker)
 
-    ranking_completo = [
-        {'ticker': r['ticker'], 'score_pct': round(float(r['score_pct']), 2), 'rank': int(r['rank'])}
-        for _, r in df_rank.iterrows()
-    ]
-    ranking_previo, semana_previa = _rot_leer_ranking_previo(supabase, user_id, tipo_clave, semana_actual)
+    if data is None or data.empty:
+        st.error(f'No se pudieron descargar datos para {ticker}. Verificá el ticker.')
+        return
+    if len(data) < 60:
+        st.error(f'{ticker} tiene muy poca historia ({len(data)} velas) para un análisis técnico confiable.')
+        return
+    if len(data) < 210:
+        st.warning(f'⚠️ {ticker} tiene solo {len(data)} velas diarias de historial. Los criterios que usan '
+                   f'MM150/MM200 pueden no ser confiables (activo joven / poca historia).')
 
-    tickers_previos_topn = set()
-    if ranking_previo:
-        ordenado_prev = sorted(ranking_previo.items(), key=lambda x: x[1], reverse=True)
-        tickers_previos_topn = set(tk for tk, _sc in ordenado_prev[:top_n_real])
+    data = _at_agregar_medias(data)
+    data["+DI"], data["-DI"], data["ADX"] = _at_calcular_adx(data)
 
-    tickers_nuevos = set(cartera_nueva['ticker'].tolist())
-    comprar = sorted(tickers_nuevos - tickers_previos_topn)
-    vender = sorted(tickers_previos_topn - tickers_nuevos)
-    mantener = sorted(tickers_nuevos & tickers_previos_topn)
+    benchmark_data = None
+    if metodo == 'oneil':
+        with st.spinner('Descargando benchmark de mercado...'):
+            benchmark_data = _at_descargar(benchmark)
+        if benchmark_data is None:
+            st.info('No se pudo descargar el benchmark — el RS Rating no estará disponible para este análisis.')
 
-    _rot_guardar_estado(supabase, user_id, tipo_clave, semana_actual, ranking_completo, top_n_real)
+    resumen, lineas_extra, marcadores_extra = _at_analizar(metodo, data, benchmark_data)
 
-    kpis = [
-        ('Cartera actual', str(top_n_real), f'de {len(df_rank)} analizados', '#6CC24A'),
-        ('🟢 Comprar', str(len(comprar)), 'nuevos ingresos', '#3fb950'),
-        ('🔴 Vender', str(len(vender)), 'salen del Top', '#f85149'),
-        ('⏸️ Mantener', str(len(mantener)), 'siguen en cartera', '#e3b341'),
-    ]
-    if kpi_cards_4:
-        kpi_cards_4(kpis)
-    else:
-        cols = st.columns(4)
-        for c, (lbl, val, sub, _color) in zip(cols, kpis):
-            with c:
-                st.metric(lbl, val, sub)
+    cols = st.columns(3)
+    with cols[0]:
+        st.metric('Último cierre', f"${data['Close'].iloc[-1]:,.2f}")
+    with cols[1]:
+        st.metric('ADX(14)', f"{data['ADX'].iloc[-1]:.1f}")
+    with cols[2]:
+        st.metric('Fecha del dato', data.index[-1].strftime('%Y-%m-%d'))
 
-    if semana_previa:
-        st.caption(f'📊 Comparando contra el rebalanceo de la semana {semana_previa}.')
-    else:
-        st.caption('📊 Primer rebalanceo registrado para este universo — todavía no hay semana previa para comparar tendencia. '
-                   'Tip: usá "Generar historial" para traer semanas pasadas y que esta comparación funcione desde ya.')
+    tab_resumen, tab_grafico = st.tabs(['🧾 Resumen y señal', '📈 Gráfico'])
 
-    tabs_labels = ['🧾 Por qué se elige cada activo', '📋 Ranking completo', '📈 Historial']
-    if mostrar_panel_fases:
-        tabs_labels.insert(1, '🗺️ Mapa de fases (liderando/rezagado)')
-    tabs = st.tabs(tabs_labels)
-    tab_razones = tabs[0]
-    tab_fases = tabs[1] if mostrar_panel_fases else None
-    tab_ranking = tabs[2] if mostrar_panel_fases else tabs[1]
-    tab_hist = tabs[3] if mostrar_panel_fases else tabs[2]
+    with tab_resumen:
+        _at_tarjeta_resumen(resumen)
 
-    # ── TAB: por qué se elige cada activo ────────────────────────────────
-    with tab_razones:
-        if comprar:
-            st.markdown('#### 🟢 Entran a la cartera esta semana')
-            for tk in comprar:
-                fila = df_rank[df_rank['ticker'] == tk].iloc[0]
-                delta = (fila['score_pct'] - ranking_previo[tk]) if tk in ranking_previo else None
-                _rot_tarjeta_activo(fila, delta)
-        if mantener:
-            with st.expander(f'⏸️ Se mantienen en cartera ({len(mantener)})', expanded=False):
-                for tk in mantener:
-                    fila = df_rank[df_rank['ticker'] == tk].iloc[0]
-                    delta = (fila['score_pct'] - ranking_previo[tk]) if tk in ranking_previo else None
-                    _rot_tarjeta_activo(fila, delta)
-        if vender:
-            st.markdown('#### 🔴 Salen de la cartera esta semana')
-            for tk in vender:
-                fila_prev_score = ranking_previo.get(tk)
-                fila_actual = df_rank[df_rank['ticker'] == tk]
-                if not fila_actual.empty:
-                    fila = fila_actual.iloc[0]
-                    delta = (fila['score_pct'] - fila_prev_score) if fila_prev_score is not None else None
-                    _rot_tarjeta_activo(fila, delta)
-                else:
-                    st.markdown(f"**{tk}** — ya no aparece en el universo analizado esta semana (sin datos suficientes).")
-        if not (comprar or vender or mantener):
-            st.info('No hay movimientos calculados todavía.')
-
-        peso = round(100 / top_n_real, 2) if top_n_real else 0
-        st.markdown(f"""
-        <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid #6CC24A;
-             border-radius:8px;padding:12px 16px;margin-top:6px;font-size:13px;color:#f5f7fa">
-          <b style="color:#6CC24A">Peso sugerido por posición:</b> {peso}% (equal-weight sobre {top_n_real} activos).<br>
-          <span style="color:#6b7d9a;font-size:11px">Modelo cuantitativo de momentum multi-factor, no asesoramiento financiero — verificá comisiones y slippage antes de operar.</span>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # ── TAB: mapa de fases (solo Sector Rotation) ────────────────────────
-    if mostrar_panel_fases and tab_fases is not None:
-        with tab_fases:
-            st.caption('Clasificación de TODOS los activos del universo (no solo los que están en cartera), '
-                       'comparando el score de esta semana contra el de la semana anterior.')
-            filas_fase = []
-            for _, r in df_rank.iterrows():
-                delta = (r['score_pct'] - ranking_previo[r['ticker']]) if r['ticker'] in ranking_previo else None
-                clasif, color, texto = _rot_clasificar_fase(r['score_pct'], delta)
-                filas_fase.append({
-                    'orden': {'🟢': 0, '🟠': 1, '🟡': 2, '⚪': 3, '🔴': 4, '🆕': 5}.get(clasif[0], 6),
-                    'ticker': r['ticker'], 'clasificacion': clasif, 'color': color, 'texto': texto,
-                    'score_pct': r['score_pct'], 'delta': delta,
-                })
-            df_fase = pd.DataFrame(filas_fase).sort_values(['orden', 'score_pct'], ascending=[True, False])
-
-            for clasif_val in df_fase['clasificacion'].unique():
-                grupo = df_fase[df_fase['clasificacion'] == clasif_val]
-                color_g = grupo.iloc[0]['color']
-                texto_g = grupo.iloc[0]['texto']
-                st.markdown(f"""
-                <div style="margin:14px 0 6px 0">
-                  <span style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;
-                    background:{color_g}22;border:1px solid {color_g};color:{color_g}">{clasif_val}</span>
-                  <span style="color:#6b7d9a;font-size:11px;margin-left:8px">{texto_g}</span>
-                </div>
-                """, unsafe_allow_html=True)
-                chips = ''.join(
-                    f'<span style="display:inline-block;background:#0d1117;border:1px solid #21262d;'
-                    f'border-radius:6px;padding:4px 10px;margin:3px 6px 3px 0;font-size:11px;color:#e6edf3;'
-                    f'font-family:JetBrains Mono,monospace">{row["ticker"]} · {row["score_pct"]:.0f}'
-                    f'{f" ({row["delta"]:+.1f})" if row["delta"] is not None else ""}</span>'
-                    for _, row in grupo.iterrows()
-                )
-                st.markdown(f'<div>{chips}</div>', unsafe_allow_html=True)
-
-    # ── TAB: ranking completo ────────────────────────────────────────────
-    with tab_ranking:
-        st.plotly_chart(
-            _rot_fig_ranking(df_rank, top_n_real, f'Ranking de calidad — {universo_nombre}'),
-            use_container_width=True, config=PLOTLY_CONFIG,
-        )
-        df_show = df_rank.copy()
-        df_show['En cartera'] = df_show['ticker'].apply(lambda t: '✅' if t in tickers_nuevos else '')
-        df_show['Tendencia'] = df_show.apply(
-            lambda r: ('✅✅' if (r['golden_cross'] and r['macd_bull'])
-                       else '✅' if (r['golden_cross'] or r['macd_bull']) else '—'), axis=1)
-        cols_mostrar = ['rank', 'ticker', 'precio', 'ret_corto', 'ret_medio', 'ret_largo',
-                        'vol_anual', 'rsi', 'Tendencia', 'alpha_medio', 'score_pct', 'En cartera']
-        df_show_fmt = df_show[cols_mostrar].copy()
-        df_show_fmt.columns = ['#', 'Ticker', 'Precio', 'Ret 4sem %', 'Ret 12sem %', 'Ret 26sem %',
-                                'Vol Anual %', 'RSI', 'Tendencia', f'Alpha vs {benchmark} pp', 'Score', 'En cartera']
-        df_show_fmt['Precio'] = df_show_fmt['Precio'].apply(fmt_precio)
-        for c in ['Ret 4sem %', 'Ret 12sem %', 'Ret 26sem %', 'Vol Anual %', 'RSI', f'Alpha vs {benchmark} pp', 'Score']:
-            df_show_fmt[c] = df_show_fmt[c].round(2)
-        st.dataframe(df_show_fmt, use_container_width=True,
-                     height=min(650, max(200, len(df_show_fmt) * 32 + 45)))
-        st.caption('Score = 40% Momentum + 20% Tendencia (Golden Cross/MACD) + 20% Fuerza relativa vs. '
-                   f'{benchmark} + 10% Salud del RSI + 10% Control de volatilidad — todo expresado en percentil (0-100) dentro del universo.')
-        if chips_navegacion:
-            chips_navegacion(cartera_nueva['ticker'].tolist(), f'rot_{tipo_clave}')
-
-    # ── TAB: historial ────────────────────────────────────────────────────
-    with tab_hist:
-        limite_historial = st.selectbox(
-            'Ver últimas...', options=[12, 26, 52, 104, 260], index=2,
-            format_func=lambda x: f'{x} semanas' + (' (~5 años)' if x == 260 else ''),
-            key=f'rot_hist_limite_{tipo_clave}',
-        )
-        historial = _rot_leer_historial(supabase, user_id, tipo_clave, limite=limite_historial)
-        if not historial:
-            st.info(f'Todavía no hay historial guardado para este universo. Usá el botón '
-                    f'"📚 Generar historial de {años_historial} años" para reconstruirlo con backtesting.')
-        else:
-            historial_asc = list(reversed(historial))  # de más vieja a más nueva, para el gráfico
-
-            # Evolución del score de los tickers que más aparecieron en el Top N
-            conteo = {}
-            for h in historial_asc:
-                tn = h.get('top_n') or 10
-                top_h = sorted(h['ranking'], key=lambda x: x['score_pct'], reverse=True)[:tn]
-                for x in top_h:
-                    conteo[x['ticker']] = conteo.get(x['ticker'], 0) + 1
-            top_tickers_evol = [tk for tk, _c in sorted(conteo.items(), key=lambda x: x[1], reverse=True)[:8]]
-
-            if top_tickers_evol:
-                filas_evol = {}
-                for h in historial_asc:
-                    scores_semana = {x['ticker']: x['score_pct'] for x in h['ranking']}
-                    filas_evol[h['semana']] = {tk: scores_semana.get(tk, np.nan) for tk in top_tickers_evol}
-                df_evol = pd.DataFrame.from_dict(filas_evol, orient='index')
-                st.plotly_chart(
-                    _rot_fig_historial(df_evol, f'Evolución del score — {universo_nombre} (más presentes en el Top)'),
-                    use_container_width=True, config=PLOTLY_CONFIG,
-                )
-
-            filas_hist = []
-            for h in historial:
-                tn = h.get('top_n') or 10
-                ordenado = sorted(h['ranking'], key=lambda x: x['score_pct'], reverse=True)[:tn]
-                tickers_h = ', '.join(x['ticker'] for x in ordenado)
-                filas_hist.append({'Semana': h['semana'], 'Top N': tn, 'Cartera': tickers_h})
-            df_hist = pd.DataFrame(filas_hist)
-            st.dataframe(df_hist, use_container_width=True, hide_index=True,
-                         height=min(500, len(df_hist) * 40 + 45))
-
-
-# ==============================================================
-#  UNIVERSOS POR DEFECTO — Commodities / Cripto / Índices
-#  Mismo formato que 'sectores_gics' de tu app: dict {nombre: (ticker, color)}.
-#  Podés pasar tu propio dict a cada función si querés otro universo o
-#  colores distintos; si no pasás nada, usa estos.
-# ==============================================================
-
-COMMODITIES_DEFAULT = {
-    'Oro':                  ('GLD',  '#FFD700'),
-    'Plata':                ('SLV',  '#C0C0C0'),
-    'Petróleo (WTI)':       ('USO',  '#3a3a3a'),
-    'Gas Natural':          ('UNG',  '#4FC3F7'),
-    'Cobre':                ('CPER', '#B87333'),
-    'Platino':              ('PPLT', '#7C7C7C'),
-    'Paladio':              ('PALL', '#9E9E9E'),
-    'Agricultura':          ('DBA',  '#8BC34A'),
-    'Metales Industriales': ('DBB',  '#546E7A'),
-    'Materias Primas (amplio)': ('DBC', '#795548'),
-}
-
-CRIPTOS_DEFAULT = {
-    'Bitcoin':    ('BTC-USD',  '#F7931A'),
-    'Ethereum':   ('ETH-USD',  '#627EEA'),
-    'BNB':        ('BNB-USD',  '#F3BA2F'),
-    'Solana':     ('SOL-USD',  '#14F195'),
-    'XRP':        ('XRP-USD',  '#00A3E0'),
-    'Cardano':    ('ADA-USD',  '#0033AD'),
-    'Dogecoin':   ('DOGE-USD', '#C2A633'),
-    'Avalanche':  ('AVAX-USD', '#E84142'),
-    'Polkadot':   ('DOT-USD',  '#E6007A'),
-    'Chainlink':  ('LINK-USD', '#2A5ADA'),
-    'Litecoin':   ('LTC-USD',  '#345D9D'),
-    'Polygon':    ('MATIC-USD','#8247E5'),
-}
-
-INDICES_DEFAULT = {
-    'S&P 500 (EE.UU.)':          ('^GSPC',  '#3a7bd5'),
-    'Nasdaq 100':                ('^NDX',  '#6CC24A'),
-    'Russell 2000 (Small Caps)': ('^RUT',  '#E3B341'),
-    'DOW JONES':                 ('^DJI',  '#F0883E'),
-    'Argentina':                 ('^MERV',  '#F85149'),
-    'Brasil':                    ('^BVSP',  '#D32F2F'),
-    'Japón':                     ('^N225',  '#EF5350'),
-    'China':                     ('^HSI', '#FF9800'),
-    'Corea del Sur':             ('^KS11',  '#4CAF50'),
-    'India':                     ('^NSEI',  '#FFC107'),
-    'Alemania':                  ('^GDAXI',  '#5C6BC0'),
-    'Europa General':            ('^STOXX50E', '#9CCC65'),
-    'Gran Bretaña':              ('^FTSE',  '#3a7bd5'),
-    'Francia':                   ('^FCHI',  '#6CC24A'),
-}
-
-
-# ==============================================================
-#  MOTOR GENÉRICO DE UN MÓDULO DE ROTACIÓN
-#  Renderiza el encabezado + llama a _rot_render_motor con
-#  mostrar_panel_fases=True siempre (Liderando/Emergiendo/Rezagado),
-#  igual que Sector Rotation. Todas las rotaciones (sectores,
-#  commodities, cripto, índices) se arman llamando a esto.
-# ==============================================================
-
-def _rot_modulo_generico(
-    universo_dict, titulo, emoji, descripcion_html, color_barra, tipo_clave,
-    top_n_default, min_top_n, max_top_n,
-    supabase, user_id, fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
-    benchmark=BENCHMARK_DEFAULT, años_historial=5,
-):
-    st.markdown(f"""
-    <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid {color_barra};
-         border-radius:14px; padding:26px 30px; margin-bottom:22px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">{emoji} {titulo}</div>
-      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">{descripcion_html}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    universo = sorted(set(tk for tk, _color in universo_dict.values()))
-    _rot_render_motor(
-        universo_tickers=universo, universo_nombre=titulo, tipo_clave=tipo_clave,
-        top_n_default=top_n_default, min_top_n=min_top_n, max_top_n=max_top_n,
-        supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
-        kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
-        benchmark=benchmark, mostrar_panel_fases=True, años_historial=años_historial,
-    )
-
-
-# ==============================================================
-#  ENTRY POINTS — llamar estos desde el archivo principal
-# ==============================================================
-
-def modulo_sector_rotation(
-    sectores_gics, supabase, user_id,
-    fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
-    benchmark=BENCHMARK_DEFAULT, años_historial=5,
-):
-    """Sector Rotation: rota entre los 11 sectores GICS (ETFs SPDR). Clasifica
-    TODOS los sectores (no solo los que están en cartera) en Liderando /
-    Emergiendo / Perdiendo potencial / Rezagado, comparando el score de esta
-    semana contra el de la semana anterior. El ranking de la semana se
-    calcula y guarda solo al abrir la pantalla. Incluye backtesting de hasta
-    'años_historial' años vía el botón "Generar historial"."""
-    descripcion = (
-        'En vez de elegir acciones individuales, rota entre los 11 sectores GICS del S&amp;P500. '
-        'Además del ranking, clasifica cada sector en su <b style="color:#e6edf3">fase de ciclo</b>: '
-        '🟢 liderando y acelerando, 🟠 liderando pero perdiendo fuerza, 🟡 emergiendo, 🔴 rezagado — comparando '
-        'el score de esta semana contra el de la semana anterior. Con el botón de historial se puede '
-        'reconstruir hasta 5 años de rotaciones pasadas entre sectores.'
-    )
-    _rot_modulo_generico(
-        sectores_gics, 'Sector Rotation', '🔄', descripcion, '#3a7bd5', 'sector',
-        top_n_default=3, min_top_n=1, max_top_n=6,
-        supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
-        kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
-        benchmark=benchmark, años_historial=años_historial,
-    )
-
-
-def modulo_commodities_rotation(
-    supabase, user_id, commodities=None,
-    fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
-    benchmark=BENCHMARK_DEFAULT, años_historial=5,
-):
-    """Commodities Rotation: mismo motor que Sector Rotation pero rotando
-    entre las principales materias primas (oro, plata, petróleo, gas natural,
-    cobre, metales, agro) vía ETFs líquidos. Si no se pasa 'commodities',
-    usa COMMODITIES_DEFAULT — pasá tu propio dict {nombre: (ticker, color)}
-    si querés otro universo."""
-    commodities = commodities or COMMODITIES_DEFAULT
-    descripcion = (
-        'Rota entre las principales materias primas — oro, plata, petróleo, gas natural, cobre, '
-        'platino, paladio, agro y metales industriales — usando ETFs líquidos. Clasifica cada '
-        'commodity en su <b style="color:#e6edf3">fase de ciclo</b>: 🟢 liderando y acelerando, '
-        '🟠 liderando pero perdiendo fuerza, 🟡 emergiendo, 🔴 rezagado. Con el botón de historial se '
-        'puede reconstruir hasta 5 años de rotaciones pasadas.'
-    )
-    _rot_modulo_generico(
-        commodities, 'Commodities Rotation', '🪙', descripcion, '#C9972B', 'commodities',
-        top_n_default=3, min_top_n=1, max_top_n=6,
-        supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
-        kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
-        benchmark=benchmark, años_historial=años_historial,
-    )
-
-
-def modulo_cripto_rotation(
-    supabase, user_id, criptos=None,
-    fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
-    benchmark=BENCHMARK_DEFAULT, años_historial=5,
-):
-    """Cripto Rotation: mismo motor que Sector Rotation pero rotando entre
-    las principales criptomonedas por capitalización (BTC, ETH, BNB, SOL,
-    XRP, ADA, DOGE, AVAX, DOT, LINK, LTC, MATIC vía tickers -USD de Yahoo
-    Finance). Si no se pasa 'criptos', usa CRIPTOS_DEFAULT.
-
-    Ojo: la volatilidad de cripto es mucho mayor a la de acciones/sectores,
-    así que el score de 'control de volatilidad' penaliza fuerte a todo el
-    universo por igual — lo relevante para elegir entre criptos sigue
-    siendo el ranking relativo dentro de ese universo, no el score en
-    términos absolutos comparado con otras rotaciones."""
-    criptos = criptos or CRIPTOS_DEFAULT
-    descripcion = (
-        'Rota entre las principales criptomonedas por capitalización de mercado (Bitcoin, Ethereum, '
-        'BNB, Solana, XRP, Cardano, Dogecoin, Avalanche, Polkadot, Chainlink, Litecoin, Polygon). '
-        'Clasifica cada cripto en su <b style="color:#e6edf3">fase de ciclo</b>: 🟢 liderando y acelerando, '
-        '🟠 liderando pero perdiendo fuerza, 🟡 emergiendo, 🔴 rezagado. Cotiza y opera 24/7, así que el '
-        'ranking se recalcula solo cada vez que se abre esta pantalla, no solo los días hábiles.'
-    )
-    _rot_modulo_generico(
-        criptos, 'Cripto Rotation', '₿', descripcion, '#F7931A', 'cripto',
-        top_n_default=3, min_top_n=1, max_top_n=6,
-        supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
-        kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
-        benchmark=benchmark, años_historial=años_historial,
-    )
-
-
-def modulo_indices_rotation(
-    supabase, user_id, indices=None,
-    fmt_precio=None, kpi_cards_4=None, chips_navegacion=None, PLOTLY_CONFIG=None,
-    benchmark=BENCHMARK_DEFAULT, años_historial=5,
-):
-    """Índices Rotation: mismo motor que Sector Rotation pero rotando entre
-    índices/regiones globales vía ETFs (S&P 500, Nasdaq 100, Small Caps,
-    Desarrollados, Emergentes, China, Japón, India, Brasil, Alemania, Reino
-    Unido, Todo el mundo). Si no se pasa 'indices', usa INDICES_DEFAULT."""
-    indices = indices or INDICES_DEFAULT
-    descripcion = (
-        'Rota entre índices y regiones globales — EE.UU., Nasdaq, small caps, mercados desarrollados '
-        'y emergentes, China, Japón, India, Brasil, Alemania, Reino Unido — vía ETFs líquidos. '
-        'Clasifica cada índice en su <b style="color:#e6edf3">fase de ciclo</b>: 🟢 liderando y acelerando, '
-        '🟠 liderando pero perdiendo fuerza, 🟡 emergiendo, 🔴 rezagado. Con el botón de historial se puede '
-        'reconstruir hasta 5 años de rotaciones pasadas entre regiones.'
-    )
-    _rot_modulo_generico(
-        indices, 'Índices Rotation', '🌐', descripcion, '#8A2BE2', 'indices',
-        top_n_default=3, min_top_n=1, max_top_n=6,
-        supabase=supabase, user_id=user_id, fmt_precio=fmt_precio,
-        kpi_cards_4=kpi_cards_4, chips_navegacion=chips_navegacion, PLOTLY_CONFIG=PLOTLY_CONFIG,
-        benchmark=benchmark, años_historial=años_historial,
-    )
+    with tab_grafico:
+        fig = _at_fig_precio(data, lineas_extra, marcadores_extra, f"{resumen['Método']} — {etiqueta_activo}")
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
