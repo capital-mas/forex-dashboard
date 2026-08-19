@@ -10,6 +10,12 @@
 #  El ADX de Wilder se calcula siempre como dato/filtro transversal
 #  (se usa fuerte dentro de O'Neil).
 #
+#  NUEVO: selector de temporalidad (1 Hora / 4 Horas / 1 Día).
+#  Yahoo Finance no tiene intervalo nativo de 4H, así que para esa
+#  opción se descargan velas de 1H y se resamplean a 4H con pandas.
+#  El intervalo de 60m tiene un límite de histórico de Yahoo de ~730
+#  días, así que se pide el máximo permitido para esa temporalidad.
+#
 #  Sin persistencia: no se guarda nada en Supabase. Cada análisis
 #  vive solo en la sesión actual.
 # ==============================================================
@@ -58,6 +64,39 @@ METODOS_DISPONIBLES = {
     "Wyckoff (Acumulación/Distribución)": "wyckoff",
 }
 
+# ----------------------------------------------------------------
+#  Temporalidades disponibles.
+#  yf_interval / yf_periodo: lo que se le pide a Yahoo Finance.
+#  resample: si no es None, se descarga yf_interval y se agrupa a esa
+#            regla de pandas (ej. "4h") porque Yahoo no la ofrece nativa.
+#  min_velas / min_velas_mm_largas: umbrales de historial mínimo,
+#            iguales en cantidad de barras para las 3 temporalidades
+#            (30/50/150/200 velas siguen significando lo mismo en
+#            cantidad de barras, cambia lo que representan en tiempo).
+# ----------------------------------------------------------------
+TIMEFRAMES_DISPONIBLES = {
+    "1 Día": {
+        "yf_interval": "1d",
+        "yf_periodo": "3y",
+        "resample": None,
+        "sufijo_grafico": "Diario",
+    },
+    "4 Horas": {
+        "yf_interval": "1h",
+        "yf_periodo": "730d",   # límite real de Yahoo para intervalo 60m
+        "resample": "4h",
+        "sufijo_grafico": "4H",
+    },
+    "1 Hora": {
+        "yf_interval": "1h",
+        "yf_periodo": "730d",   # límite real de Yahoo para intervalo 60m
+        "resample": None,
+        "sufijo_grafico": "1H",
+    },
+}
+TIMEFRAME_DEFAULT = "1 Día"
+
+
 # ==============================================================
 #  SELECTOR DE ACTIVO (reemplaza al text_input libre)
 # ==============================================================
@@ -105,6 +144,20 @@ def _at_seleccionar_ticker():
 
 
 # ==============================================================
+#  SELECTOR DE TEMPORALIDAD
+# ==============================================================
+
+def _at_seleccionar_timeframe():
+    """Devuelve la etiqueta de temporalidad elegida (clave de TIMEFRAMES_DISPONIBLES)."""
+    return st.selectbox(
+        'Temporalidad',
+        list(TIMEFRAMES_DISPONIBLES.keys()),
+        index=list(TIMEFRAMES_DISPONIBLES.keys()).index(TIMEFRAME_DEFAULT),
+        key='at_timeframe',
+    )
+
+
+# ==============================================================
 #  DESCARGA DE DATOS
 # ==============================================================
 
@@ -117,6 +170,35 @@ def _at_descargar(ticker, periodo='2y', intervalo='1d'):
         return data if not data.empty else None
     except Exception:
         return None
+
+
+def _at_resample_ohlcv(data, regla):
+    """Agrupa velas (ej. de 1H) a una temporalidad mayor no soportada
+    nativamente por Yahoo Finance (ej. 4H), respetando OHLCV."""
+    agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
+    out = data.resample(regla).agg(agg)
+    out = out.dropna(subset=["Open", "High", "Low", "Close"])
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _at_obtener_datos(ticker, timeframe_label):
+    """Descarga los datos de `ticker` en la temporalidad elegida,
+    resampleando si hace falta (caso 4H)."""
+    if timeframe_label not in TIMEFRAMES_DISPONIBLES:
+        timeframe_label = TIMEFRAME_DEFAULT
+    cfg = TIMEFRAMES_DISPONIBLES[timeframe_label]
+
+    data = _at_descargar(ticker, periodo=cfg["yf_periodo"], intervalo=cfg["yf_interval"])
+    if data is None or data.empty:
+        return None
+
+    if cfg["resample"]:
+        data = _at_resample_ohlcv(data, cfg["resample"])
+        if data.empty:
+            return None
+
+    return data
 
 
 def _at_agregar_medias(data):
@@ -136,7 +218,9 @@ def _at_calcular_adx(data, periodo=14):
     """ADX (Average Directional Index) de Welles Wilder. Filtro objetivo de
     '¿hay tendencia establecida o no?', reutilizado dentro de O'Neil y como
     dato informativo en Weinstein/Darvas/Wyckoff. ADX >= 25 = umbral clásico
-    de tendencia establecida."""
+    de tendencia establecida. El período (14 barras) se mantiene fijo sin
+    importar la temporalidad, tal como se usa habitualmente en cualquier
+    gráfico (14 velas de 1H, de 4H o diarias)."""
     high, low, close = data["High"], data["Low"], data["Close"]
     prev_close, prev_high, prev_low = close.shift(1), high.shift(1), low.shift(1)
 
@@ -196,7 +280,7 @@ def _at_analizar_weinstein(data):
 
     resumen = {
         "Método": "Stan Weinstein", "Señal principal": fase, "Descripción": descripcion,
-        "MM30 actual": mm30_actual, "Pendiente MM30 (5d)": pendiente_mm30,
+        "MM30 actual": mm30_actual, "Pendiente MM30 (5 velas)": pendiente_mm30,
         "ADX(14)": data["ADX"].iloc[-1],
         "+DI / -DI": f"{data['+DI'].iloc[-1]:.1f} / {data['-DI'].iloc[-1]:.1f}",
         "Conclusión": conclusion,
@@ -211,7 +295,10 @@ def _at_analizar_weinstein(data):
 def _at_calcular_rs_rating(data, benchmark_data):
     """Fuerza relativa simplificada estilo IBD: compara el retorno del activo
     contra el benchmark en distintas ventanas, ponderando más lo reciente.
-    No es el RS Rating oficial de IBD, pero sigue la misma lógica."""
+    No es el RS Rating oficial de IBD, pero sigue la misma lógica.
+    Las ventanas están expresadas en cantidad de velas (igual que en el
+    original, que usaba velas diarias); en temporalidades intradiarias
+    representan una porción de tiempo menor, lo cual es esperable."""
     activo = data["Close"]
     bench = benchmark_data["Close"].reindex(activo.index, method="nearest")
 
@@ -261,9 +348,9 @@ def _at_analizar_oneil(data, benchmark_data):
     condiciones = {
         "Precio sobre MM50": bool(precio > mm50),
         "Precio sobre MM150": bool(precio > mm150),
-        "Cerca del máximo de 52 semanas (dentro del 15%)": bool(distancia_maximo >= -15),
-        "Lejos del mínimo de 52 semanas (>=30% sobre el piso)": bool(distancia_minimo >= 30),
-        "Volumen en expansión (promedio 10d > promedio 50d)": volumen_creciente,
+        "Cerca del máximo del rango analizado (dentro del 15%)": bool(distancia_maximo >= -15),
+        "Lejos del mínimo del rango analizado (>=30% sobre el piso)": bool(distancia_minimo >= 30),
+        "Volumen en expansión (promedio 10 velas > promedio 50 velas)": volumen_creciente,
         "ADX(14) >= 25 con +DI > -DI (tendencia alcista confirmada por Wilder)": tendencia_confirmada_adx,
     }
     if rs_rating is not None:
@@ -283,7 +370,7 @@ def _at_analizar_oneil(data, benchmark_data):
     rs_texto = f"un RS Rating aproximado de {rs_rating}" if rs_rating is not None else "sin dato de RS Rating"
     if cumplidas == total:
         conclusion = (f"El activo cumple todos los criterios de O'Neil: está por encima de sus medias "
-                      f"móviles clave, cerca de máximos de 52 semanas, con volumen en expansión, tendencia "
+                      f"móviles clave, cerca de máximos del rango analizado, con volumen en expansión, tendencia "
                       f"confirmada por ADX y {rs_texto}. Es el perfil de 'líder de mercado' que busca CANSLIM.")
     elif cumplidas >= total - 1:
         conclusion = ("Al activo le falta un solo criterio para el perfil O'Neil completo. Vale la pena "
@@ -298,7 +385,7 @@ def _at_analizar_oneil(data, benchmark_data):
     resumen = {
         "Método": "William O'Neil (CANSLIM técnico)", "Señal principal": senal,
         "Criterios cumplidos": f"{cumplidas}/{total}", "Detalle": condiciones,
-        "% respecto al máximo 52 sem": distancia_maximo, "% respecto al mínimo 52 sem": distancia_minimo,
+        "% respecto al máximo del rango": distancia_maximo, "% respecto al mínimo del rango": distancia_minimo,
         "RS Rating (aprox., no oficial IBD)": rs_rating, "ADX(14)": adx_actual, "Conclusión": conclusion,
     }
     return resumen, [("MM50", data["MM50"]), ("MM150", data["MM150"])], []
@@ -310,9 +397,11 @@ def _at_analizar_oneil(data, benchmark_data):
 
 def _at_detectar_darvas_box(data, ventana=130, dias_confirmacion=3, tolerancia_pct=1.0):
     """Detección algorítmica simplificada de Cajas de Darvas: techo confirmado
-    tras N días sin ser superado, piso = mínimo posterior mientras el precio
+    tras N velas sin ser superado, piso = mínimo posterior mientras el precio
     se mantenga dentro de la caja, breakout = cierre sobre el techo con
-    volumen por encima del promedio."""
+    volumen por encima del promedio. `ventana` y `dias_confirmacion` están
+    en cantidad de velas, no de días calendario, así que funcionan igual
+    sin importar la temporalidad elegida."""
     sub = data.tail(ventana).copy()
     highs, lows, closes, fechas, n = sub["High"].values, sub["Low"].values, sub["Close"].values, sub.index, len(sub)
 
@@ -377,7 +466,7 @@ def _at_analizar_darvas(data):
             "ADX(14)": adx_actual,
             "Conclusión": ("No se detectó una secuencia de techo/piso confirmada en la ventana analizada. "
                           "Puede que el activo esté en tendencia demasiado limpia o con demasiada "
-                          "volatilidad para formar una caja clásica de Darvas."),
+                          "volatilidad para formar una caja clásica de Darvas en esta temporalidad."),
         }
         return resumen, [], []
 
@@ -427,7 +516,8 @@ def _at_analizar_darvas(data):
 def _at_analizar_wyckoff(data, ventana=90):
     """Aproximación heurística al esquema de Wyckoff usando volumen, spread
     y posición del precio dentro del rango reciente. No sustituye una
-    lectura barra-por-barra de eventos (Spring, Test, UTAD, SOS, SOW)."""
+    lectura barra-por-barra de eventos (Spring, Test, UTAD, SOS, SOW).
+    `ventana` está en cantidad de velas, igual en las 3 temporalidades."""
     sub = data.tail(ventana).copy()
     precio, mm50 = data["Close"].iloc[-1], data["MM50"].iloc[-1]
     mm50_hace_20 = data["MM50"].iloc[-21] if len(data) > 21 else np.nan
@@ -492,7 +582,7 @@ def _at_analizar_wyckoff(data, ventana=90):
         "Método": "Wyckoff (Acumulación/Distribución) — aproximación algorítmica", "Señal principal": fase,
         "Descripción": descripcion, "Posición dentro del rango reciente (%)": posicion_en_rango,
         "Tendencia MM50": tendencia_mm50, "Compresión de volatilidad reciente": compresion,
-        "Clímax de volumen detectado (últimos 15d)": hay_climax_reciente,
+        "Clímax de volumen detectado (últimas 15 velas)": hay_climax_reciente,
         "Máximo del rango analizado": maximo_rango, "Mínimo del rango analizado": minimo_rango,
         "ADX(14)": data["ADX"].iloc[-1], "Conclusión": conclusiones[fase],
     }
@@ -599,11 +689,12 @@ def _at_tarjeta_resumen(resumen):
 
 def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
     """Análisis técnico de un activo con 4 métodos clásicos: Stan Weinstein,
-    William O'Neil, Darvas Box y Wyckoff. El ADX de Wilder se calcula
-    siempre como filtro/dato transversal. El activo se elige desde las
-    categorías de tu configuración (acciones por industria, forex,
-    índices/países, ETFs de índice, ETFs de sector/subsector, mercados
-    reales) o como ticker manual. No se guarda ningún historial."""
+    William O'Neil, Darvas Box y Wyckoff, en 3 temporalidades: 1 Hora,
+    4 Horas y 1 Día. El ADX de Wilder se calcula siempre como filtro/dato
+    transversal. El activo se elige desde las categorías de tu
+    configuración (acciones por industria, forex, índices/países, ETFs de
+    índice, ETFs de sector/subsector, mercados reales) o como ticker
+    manual. No se guarda ningún historial."""
 
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
@@ -614,35 +705,43 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
         Analizá cualquier activo de tu universo con 4 métodos técnicos clásicos:
         <b style="color:#e6edf3">Stan Weinstein</b> (fases de mercado), <b style="color:#e6edf3">William O'Neil</b>
         (CANSLIM técnico / fuerza relativa), <b style="color:#e6edf3">Darvas Box</b> (cajas de consolidación +
-        breakout) y <b style="color:#e6edf3">Wyckoff</b> (acumulación/distribución). El ADX de Wilder se calcula
-        siempre como filtro de tendencia. Este análisis no se guarda: vive solo en la sesión actual.
+        breakout) y <b style="color:#e6edf3">Wyckoff</b> (acumulación/distribución), en la temporalidad que elijas:
+        <b style="color:#e6edf3">1 Hora</b>, <b style="color:#e6edf3">4 Horas</b> o <b style="color:#e6edf3">1 Día</b>.
+        El ADX de Wilder se calcula siempre como filtro de tendencia. Este análisis no se guarda: vive solo en
+        la sesión actual.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns([2, 2])
+    col1, col2, col3 = st.columns([2, 2, 1.3])
     with col1:
         ticker, etiqueta_activo = _at_seleccionar_ticker()
     with col2:
         metodo_label = st.selectbox('Método de análisis', list(METODOS_DISPONIBLES.keys()), key='at_metodo')
+    with col3:
+        timeframe_label = _at_seleccionar_timeframe()
     metodo = METODOS_DISPONIBLES[metodo_label]
+    tf_cfg = TIMEFRAMES_DISPONIBLES[timeframe_label]
 
     if not ticker:
         st.info('Seleccioná o ingresá un activo para analizar.')
         return
 
-    with st.spinner(f'Descargando datos de {ticker}...'):
-        data = _at_descargar(ticker)
+    with st.spinner(f'Descargando datos de {ticker} ({timeframe_label})...'):
+        data = _at_obtener_datos(ticker, timeframe_label)
 
     if data is None or data.empty:
-        st.error(f'No se pudieron descargar datos para {ticker}. Verificá el ticker.')
+        st.error(f'No se pudieron descargar datos para {ticker} en temporalidad {timeframe_label}. '
+                 f'Verificá el ticker (algunos activos no tienen datos intradiarios en Yahoo Finance).')
         return
     if len(data) < 60:
-        st.error(f'{ticker} tiene muy poca historia ({len(data)} velas) para un análisis técnico confiable.')
+        st.error(f'{ticker} tiene muy poca historia en {timeframe_label} ({len(data)} velas) '
+                 f'para un análisis técnico confiable.')
         return
     if len(data) < 210:
-        st.warning(f'⚠️ {ticker} tiene solo {len(data)} velas diarias de historial. Los criterios que usan '
-                   f'MM150/MM200 pueden no ser confiables (activo joven / poca historia).')
+        st.warning(f'⚠️ {ticker} tiene solo {len(data)} velas de historial en {timeframe_label}. Los criterios '
+                   f'que usan MM150/MM200 pueden no ser confiables (activo joven / poca historia / la '
+                   f'temporalidad intradiaria tiene menos velas disponibles que la diaria).')
 
     data = _at_agregar_medias(data)
     data["+DI"], data["-DI"], data["ADX"] = _at_calcular_adx(data)
@@ -650,19 +749,22 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
     benchmark_data = None
     if metodo == 'oneil':
         with st.spinner('Descargando benchmark de mercado...'):
-            benchmark_data = _at_descargar(benchmark)
+            benchmark_data = _at_obtener_datos(benchmark, timeframe_label)
         if benchmark_data is None:
             st.info('No se pudo descargar el benchmark — el RS Rating no estará disponible para este análisis.')
 
     resumen, lineas_extra, marcadores_extra = _at_analizar(metodo, data, benchmark_data)
 
-    cols = st.columns(3)
+    cols = st.columns(4)
     with cols[0]:
         st.metric('Último cierre', f"${data['Close'].iloc[-1]:,.2f}")
     with cols[1]:
         st.metric('ADX(14)', f"{data['ADX'].iloc[-1]:.1f}")
     with cols[2]:
-        st.metric('Fecha del dato', data.index[-1].strftime('%Y-%m-%d'))
+        st.metric('Temporalidad', timeframe_label)
+    with cols[3]:
+        fmt_fecha = '%Y-%m-%d %H:%M' if tf_cfg["resample"] or tf_cfg["yf_interval"] != "1d" else '%Y-%m-%d'
+        st.metric('Fecha del dato', data.index[-1].strftime(fmt_fecha))
 
     tab_resumen, tab_grafico = st.tabs(['🧾 Resumen y señal', '📈 Gráfico'])
 
@@ -670,5 +772,6 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
         _at_tarjeta_resumen(resumen)
 
     with tab_grafico:
-        fig = _at_fig_precio(data, lineas_extra, marcadores_extra, f"{resumen['Método']} — {etiqueta_activo}")
+        titulo = f"{resumen['Método']} — {etiqueta_activo} ({tf_cfg['sufijo_grafico']})"
+        fig = _at_fig_precio(data, lineas_extra, marcadores_extra, titulo)
         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
