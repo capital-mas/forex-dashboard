@@ -1,5 +1,5 @@
 # ==============================================================
-#  MÓDULO ANÁLISIS TÉCNICO — Weinstein / O'Neil / Darvas Box / Wyckoff
+#  MÓDULO ANÁLISIS TÉCNICO — Weinstein / O'Neil / Darvas Box / Wyckoff / ORB
 #  Reemplaza al módulo de Rotación (Sector/Commodities/Cripto/Índices).
 #
 #  Diferencia clave: acá NO hay un universo fijo de activos ni ranking
@@ -10,11 +10,19 @@
 #  El ADX de Wilder se calcula siempre como dato/filtro transversal
 #  (se usa fuerte dentro de O'Neil).
 #
-#  NUEVO: selector de temporalidad (1 Hora / 4 Horas / 1 Día).
-#  Yahoo Finance no tiene intervalo nativo de 4H, así que para esa
-#  opción se descargan velas de 1H y se resamplean a 4H con pandas.
-#  El intervalo de 60m tiene un límite de histórico de Yahoo de ~730
-#  días, así que se pide el máximo permitido para esa temporalidad.
+#  Selector de temporalidad: 1 Día / 4 Horas / 1 Hora / 45 Minutos /
+#  30 Minutos / 15 Minutos / 5 Minutos, para los métodos Weinstein,
+#  O'Neil, Darvas Box y Wyckoff. Yahoo Finance no tiene intervalo nativo
+#  de 4H ni de 45M, así que esas dos se arman resampleando con pandas
+#  (4H desde velas de 1H, 45M desde velas de 15M).
+#
+#  NUEVO: método Opening Range Breakout (ORB). A diferencia de los otros
+#  4 métodos (que operan sobre la lista de temporalidades de arriba), el
+#  ORB necesita velas intradía finas (5 minutos) y arma la "caja" con
+#  los primeros minutos de CADA sesión, no con N velas históricas fijas.
+#  Por eso tiene su propio pipeline de datos y su propio selector
+#  (período de caja: 5/15/30 minutos) en vez del selector de
+#  temporalidad genérico.
 #
 #  Sin persistencia: no se guarda nada en Supabase. Cada análisis
 #  vive solo en la sesión actual.
@@ -62,16 +70,17 @@ METODOS_DISPONIBLES = {
     "William O'Neil (CANSLIM técnico)": "oneil",
     "Darvas Box": "darvas",
     "Wyckoff (Acumulación/Distribución)": "wyckoff",
+    "ORB (Opening Range Breakout)": "orb",
 }
 
 # ----------------------------------------------------------------
-#  Temporalidades disponibles.
+#  Temporalidades disponibles (métodos Weinstein / O'Neil / Darvas / Wyckoff).
 #  yf_interval / yf_periodo: lo que se le pide a Yahoo Finance.
 #  resample: si no es None, se descarga yf_interval y se agrupa a esa
 #            regla de pandas (ej. "4h", "45min") porque Yahoo no la
 #            ofrece nativa.
 #  min_velas / min_velas_mm_largas: umbrales de historial mínimo,
-#            iguales en cantidad de barras para las 3 temporalidades
+#            iguales en cantidad de barras para todas las temporalidades
 #            (30/50/150/200 velas siguen significando lo mismo en
 #            cantidad de barras, cambia lo que representan en tiempo).
 #
@@ -149,6 +158,20 @@ DARVAS_CONFIG_POR_TIMEFRAME = {
     "5 Minutos": {"ventana": 900, "confirmacion_velas": 36},   # ~6 días
 }
 
+# ----------------------------------------------------------------
+#  Períodos de caja disponibles para el método ORB.
+#  Se expresan en cantidad de velas de 5 minutos, porque la data de ORB
+#  siempre se descarga en ese intervalo (ver _at_descargar_orb), sin
+#  importar qué período de caja elija el usuario.
+# ----------------------------------------------------------------
+ORB_PERIODOS_DISPONIBLES = {
+    "5 Minutos": 1,
+    "15 Minutos": 3,
+    "30 Minutos": 6,
+}
+ORB_PERIODO_DEFAULT = "15 Minutos"
+
+
 # ==============================================================
 #  SELECTOR DE ACTIVO (reemplaza al text_input libre)
 # ==============================================================
@@ -196,7 +219,7 @@ def _at_seleccionar_ticker():
 
 
 # ==============================================================
-#  SELECTOR DE TEMPORALIDAD
+#  SELECTOR DE TEMPORALIDAD (métodos Weinstein / O'Neil / Darvas / Wyckoff)
 # ==============================================================
 
 def _at_seleccionar_timeframe():
@@ -209,8 +232,19 @@ def _at_seleccionar_timeframe():
     )
 
 
+def _at_seleccionar_periodo_orb():
+    """Devuelve la etiqueta de período de caja elegida para ORB (clave de
+    ORB_PERIODOS_DISPONIBLES)."""
+    return st.selectbox(
+        'Período de la caja de apertura',
+        list(ORB_PERIODOS_DISPONIBLES.keys()),
+        index=list(ORB_PERIODOS_DISPONIBLES.keys()).index(ORB_PERIODO_DEFAULT),
+        key='at_orb_periodo',
+    )
+
+
 # ==============================================================
-#  DESCARGA DE DATOS
+#  DESCARGA DE DATOS (métodos Weinstein / O'Neil / Darvas / Wyckoff)
 # ==============================================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -263,7 +297,30 @@ def _at_agregar_medias(data):
 
 
 # ==============================================================
-#  ADX DE WILDER (filtro de tendencia, uso transversal)
+#  DESCARGA DE DATOS (método ORB — velas intradía de 5 minutos)
+# ==============================================================
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _at_descargar_orb(ticker):
+    """Descarga velas de 5 minutos para el método ORB. TTL corto (5 min,
+    a diferencia de 1 hora en los otros métodos) porque acá interesa la
+    sesión más reciente, posiblemente en curso. Yahoo Finance devuelve
+    por default solo el horario regular de mercado (prepost=False), así
+    que la primera vela de cada día calendario en el resultado coincide
+    con la apertura real de la sesión — no hace falta resolver el huso
+    horario ni la hora de apertura de cada exchange a mano."""
+    try:
+        import yfinance as yf
+        data = yf.Ticker(ticker).history(period="60d", interval="5m", auto_adjust=True, prepost=False)
+        data = data[["Open", "High", "Low", "Close", "Volume"]].dropna()
+        return data if not data.empty else None
+    except Exception:
+        return None
+
+
+# ==============================================================
+#  ADX DE WILDER (filtro de tendencia, uso transversal en Weinstein/
+#  O'Neil/Darvas/Wyckoff — el ORB usa su propio ATR, más abajo)
 # ==============================================================
 
 def _at_calcular_adx(data, periodo=14):
@@ -574,7 +631,7 @@ def _at_analizar_wyckoff(data, ventana=90):
     """Aproximación heurística al esquema de Wyckoff usando volumen, spread
     y posición del precio dentro del rango reciente. No sustituye una
     lectura barra-por-barra de eventos (Spring, Test, UTAD, SOS, SOW).
-    `ventana` está en cantidad de velas, igual en las 3 temporalidades."""
+    `ventana` está en cantidad de velas, igual en todas las temporalidades."""
     sub = data.tail(ventana).copy()
     precio, mm50 = data["Close"].iloc[-1], data["MM50"].iloc[-1]
     mm50_hace_20 = data["MM50"].iloc[-21] if len(data) > 21 else np.nan
@@ -647,7 +704,186 @@ def _at_analizar_wyckoff(data, ventana=90):
 
 
 # ==============================================================
-#  DISPATCH
+#  MÉTODO 5: OPENING RANGE BREAKOUT (ORB)
+# ==============================================================
+
+def _at_calcular_vwap_sesion(sub_dia):
+    """VWAP de la sesión, reiniciado en cada llamada (recibe solo las velas
+    de UN día). Precio típico (H+L+C)/3 ponderado por volumen, tal como se
+    usa habitualmente en trading intradía."""
+    precio_tipico = (sub_dia["High"] + sub_dia["Low"] + sub_dia["Close"]) / 3
+    vol_acumulado = sub_dia["Volume"].cumsum()
+    return (precio_tipico * sub_dia["Volume"]).cumsum() / vol_acumulado.replace(0, np.nan)
+
+
+def _at_calcular_rsi(closes, periodo=14):
+    """RSI de Wilder estándar."""
+    delta = closes.diff()
+    ganancia = delta.clip(lower=0)
+    perdida = -delta.clip(upper=0)
+    avg_gain = ganancia.ewm(alpha=1 / periodo, adjust=False).mean()
+    avg_loss = perdida.ewm(alpha=1 / periodo, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    return 100 - (100 / (1 + rs))
+
+
+def _at_calcular_atr(data, periodo=14):
+    """ATR de Wilder (misma lógica de True Range que el ADX, sin la parte
+    direccional)."""
+    high, low, close = data["High"], data["Low"], data["Close"]
+    prev_close = close.shift(1)
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / periodo, adjust=False).mean()
+
+
+def _at_clasificar_atr(atr_serie, ventana_promedio=20):
+    """Clasifica el ATR actual contra su propio promedio reciente (ventana
+    de 20 velas de 5 minutos, ≈ última hora y media de sesión), en vez de un
+    umbral fijo — así funciona igual sin importar cuán volátil sea el activo
+    de base."""
+    if len(atr_serie.dropna()) < 5:
+        return "Sin dato suficiente", None
+    atr_actual = atr_serie.iloc[-1]
+    atr_promedio = atr_serie.tail(ventana_promedio).mean()
+    if not atr_promedio or np.isnan(atr_promedio):
+        return "Sin dato suficiente", None
+    ratio = atr_actual / atr_promedio
+    if ratio < 0.8:
+        return "Comprimido (volatilidad baja vs. reciente)", ratio
+    elif ratio > 1.3:
+        return "Expandido (volatilidad alta vs. reciente)", ratio
+    else:
+        return "Normal", ratio
+
+
+def _at_analizar_orb(ticker, periodo_orb_label):
+    """Arma la caja de apertura (Opening Range) con los primeros minutos de
+    la sesión más reciente disponible y evalúa si hubo ruptura del techo
+    (LONG) o del piso (SHORT), con VWAP, RSI, ATR y volumen de la vela de
+    ruptura contra el volumen histórico promedio de ESE horario puntual
+    (una especie de RVOL), no contra el promedio general del día.
+
+    Devuelve (resumen, contexto_grafico) si pudo analizar, o (None, mensaje)
+    si no hay datos suficientes."""
+    n_velas_caja = ORB_PERIODOS_DISPONIBLES[periodo_orb_label]
+
+    data = _at_descargar_orb(ticker)
+    if data is None or data.empty:
+        return None, (
+            f"No se pudieron descargar velas de 5 minutos para {ticker}. El método ORB necesita datos "
+            f"intradía, que Yahoo Finance no siempre ofrece (típico en ETFs poco líquidos, forex exóticos "
+            f"o algunos mercados reales). Probá con otro activo o con otro método."
+        )
+
+    # Volumen promedio histórico por horario puntual (ej. todas las velas
+    # de las 09:35 de los últimos ~60 días), para medir el "volume breakout"
+    # de forma realista en vez de comparar solo contra la propia caja.
+    vol_promedio_horario = data.groupby(data.index.time)["Volume"].mean()
+
+    # Buscar la sesión más reciente que ya tenga al menos la caja completa
+    # + 1 vela de confirmación (si la sesión de hoy está en curso y todavía
+    # no llegó a formar la caja, cae a la última sesión completa).
+    fechas = sorted(set(data.index.date))
+    dia_objetivo = None
+    for fecha in reversed(fechas):
+        sub_fecha = data[data.index.date == fecha]
+        if len(sub_fecha) >= n_velas_caja + 1:
+            dia_objetivo = fecha
+            break
+
+    if dia_objetivo is None:
+        return None, (
+            f"No hay suficientes velas dentro de una misma sesión para formar la caja de apertura de "
+            f"{periodo_orb_label}. Probá con un período de caja más corto (ej. 5 Minutos)."
+        )
+
+    sub_dia = data[data.index.date == dia_objetivo]
+    caja = sub_dia.iloc[:n_velas_caja]
+    resto = sub_dia.iloc[n_velas_caja:]
+
+    techo_caja, piso_caja = caja["High"].max(), caja["Low"].min()
+    apertura = caja["Open"].iloc[0]
+    ancho_caja_pct = (techo_caja - piso_caja) / apertura * 100 if apertura else np.nan
+
+    # VWAP, RSI y ATR sobre TODA la sesión (no solo el "resto"), para que
+    # el VWAP arranque bien desde la apertura y el ATR tenga contexto previo.
+    vwap = _at_calcular_vwap_sesion(sub_dia)
+    rsi = _at_calcular_rsi(sub_dia["Close"])
+    atr = _at_calcular_atr(sub_dia)
+    clasificacion_atr, ratio_atr = _at_clasificar_atr(atr)
+
+    precio_actual = sub_dia["Close"].iloc[-1]
+    vwap_actual = vwap.iloc[-1]
+    rsi_actual = rsi.iloc[-1]
+    vwap_sesgo = "Alcista (precio sobre VWAP)" if precio_actual > vwap_actual else "Bajista (precio bajo VWAP)"
+
+    # Primer breakout por CIERRE de vela (no por mecha) fuera de la caja,
+    # vela por vela, dentro del resto de la sesión.
+    breakout_tipo, vela_breakout = None, None
+    for _, vela in resto.iterrows():
+        if vela["Close"] > techo_caja:
+            breakout_tipo, vela_breakout = "LONG", vela
+            break
+        if vela["Close"] < piso_caja:
+            breakout_tipo, vela_breakout = "SHORT", vela
+            break
+
+    volumen_breakout_pct = None
+    if vela_breakout is not None:
+        hora_breakout = vela_breakout.name.time()
+        vol_prom_ese_horario = vol_promedio_horario.get(hora_breakout, np.nan)
+        if not vol_prom_ese_horario or np.isnan(vol_prom_ese_horario) or vol_prom_ese_horario <= 0:
+            # fallback: si no hay suficiente historia por horario, comparar
+            # contra el volumen promedio de la propia caja
+            vol_mm_caja = caja["Volume"].mean()
+            if vol_mm_caja > 0:
+                volumen_breakout_pct = (vela_breakout["Volume"] / vol_mm_caja - 1) * 100
+        else:
+            volumen_breakout_pct = (vela_breakout["Volume"] / vol_prom_ese_horario - 1) * 100
+
+    if breakout_tipo == "LONG":
+        senal = "LONG — Ruptura del techo de la caja de apertura"
+        conclusion = (f"El precio rompió el techo de la caja de apertura (${techo_caja:.2f}) formada en los "
+                      f"primeros {periodo_orb_label.lower()} de la sesión. Setup clásico de ORB alcista: "
+                      f"entrada en la ruptura, con el piso de la caja (${piso_caja:.2f}) como referencia de stop.")
+    elif breakout_tipo == "SHORT":
+        senal = "SHORT — Ruptura del piso de la caja de apertura"
+        conclusion = (f"El precio rompió el piso de la caja de apertura (${piso_caja:.2f}) formada en los "
+                      f"primeros {periodo_orb_label.lower()} de la sesión. Setup clásico de ORB bajista: "
+                      f"entrada en la ruptura, con el techo de la caja (${techo_caja:.2f}) como referencia de stop.")
+    else:
+        senal = "Sin ruptura todavía — Precio dentro de la caja de apertura"
+        conclusion = (f"El precio todavía se mueve dentro del rango formado en los primeros "
+                      f"{periodo_orb_label.lower()} de la sesión (${piso_caja:.2f} – ${techo_caja:.2f}). "
+                      f"Conviene esperar el cierre de una vela por fuera de la caja antes de operar el ORB.")
+
+    atr_texto = clasificacion_atr if ratio_atr is None else f"{clasificacion_atr} (x{ratio_atr:.2f} vs. últimas 20 velas)"
+
+    resumen = {
+        "Método": f"Opening Range Breakout ({periodo_orb_label})",
+        "Señal principal": senal,
+        "Rango de la caja (%)": ancho_caja_pct,
+        "Techo de la caja": techo_caja,
+        "Piso de la caja": piso_caja,
+        "Volumen breakout (% vs. promedio histórico del horario)": volumen_breakout_pct,
+        "VWAP": vwap_sesgo,
+        "RSI(14)": rsi_actual,
+        "ATR(14)": atr_texto,
+        "Sesión analizada": str(dia_objetivo),
+        "Conclusión": conclusion,
+    }
+
+    contexto_grafico = {
+        "sub_dia": sub_dia, "techo_caja": techo_caja, "piso_caja": piso_caja,
+        "vwap": vwap, "n_velas_caja": n_velas_caja,
+    }
+    return resumen, contexto_grafico
+
+
+# ==============================================================
+#  DISPATCH (métodos Weinstein / O'Neil / Darvas / Wyckoff — ORB tiene
+#  su propio flujo en _at_ejecutar_orb porque no comparte pipeline de
+#  datos con estos 4)
 # ==============================================================
 
 def _at_analizar(metodo, data, benchmark_data=None, timeframe_label=TIMEFRAME_DEFAULT):
@@ -663,7 +899,8 @@ def _at_analizar(metodo, data, benchmark_data=None, timeframe_label=TIMEFRAME_DE
 
 
 # ==============================================================
-#  GRÁFICO (Plotly, mismo estilo oscuro que el resto de la app)
+#  GRÁFICO (Plotly, mismo estilo oscuro que el resto de la app) —
+#  métodos Weinstein / O'Neil / Darvas / Wyckoff
 # ==============================================================
 
 def _at_fig_precio(data, lineas_extra, marcadores_extra, titulo):
@@ -690,7 +927,39 @@ def _at_fig_precio(data, lineas_extra, marcadores_extra, titulo):
 
 
 # ==============================================================
-#  TARJETA DE RESUMEN (mismo lenguaje visual que el resto de la app)
+#  GRÁFICO — método ORB (velas intradía + caja de apertura + VWAP)
+# ==============================================================
+
+def _at_fig_orb(contexto, etiqueta_activo, periodo_orb_label):
+    sub_dia = contexto["sub_dia"]
+    techo, piso = contexto["techo_caja"], contexto["piso_caja"]
+    vwap = contexto["vwap"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=sub_dia.index, y=sub_dia["Close"], mode='lines', name='Precio cierre',
+                              line=dict(color='#e6edf3', width=1.6)))
+    fig.add_trace(go.Scatter(x=sub_dia.index, y=vwap, mode='lines', name='VWAP',
+                              line=dict(color='#e3b341', width=1.2, dash='dot')))
+
+    fig.add_shape(type="rect", x0=sub_dia.index[0], x1=sub_dia.index[-1], y0=piso, y1=techo,
+                  fillcolor="rgba(58,123,213,0.10)", line=dict(color="#3a7bd5", width=1))
+    fig.add_hline(y=techo, line=dict(color='#3fb950', width=1, dash='dash'),
+                  annotation_text='Techo caja', annotation_position='top left')
+    fig.add_hline(y=piso, line=dict(color='#f85149', width=1, dash='dash'),
+                  annotation_text='Piso caja', annotation_position='bottom left')
+
+    fig.update_layout(
+        plot_bgcolor='#0d1117', paper_bgcolor='#07090f', font=dict(color='#b0bcd0', family='Inter, sans-serif'),
+        title=dict(text=f"ORB {periodo_orb_label} — {etiqueta_activo}", font=dict(color='#e6edf3', size=14)),
+        xaxis=dict(title='Hora', gridcolor='#21262d'), yaxis=dict(title='Precio', gridcolor='#21262d'),
+        height=460, margin=dict(l=10, r=10, t=45, b=30), legend=dict(orientation='h', y=-0.2),
+    )
+    return fig
+
+
+# ==============================================================
+#  TARJETA DE RESUMEN (mismo lenguaje visual que el resto de la app,
+#  compartida por los 5 métodos)
 # ==============================================================
 
 def _at_tarjeta_resumen(resumen):
@@ -708,6 +977,8 @@ def _at_tarjeta_resumen(resumen):
         if k in ("Método", "Señal principal", "Detalle", "Conclusión", "Descripción"):
             continue
         if v is None:
+            continue
+        if isinstance(v, float) and np.isnan(v):
             continue
         val_fmt = f"{v:,.2f}" if isinstance(v, float) else str(v)
         metricas.append(f'<span style="display:inline-block;background:#0d1117;border:1px solid #21262d;'
@@ -737,6 +1008,44 @@ def _at_tarjeta_resumen(resumen):
 
 
 # ==============================================================
+#  FLUJO COMPLETO DEL MÉTODO ORB (datos, métricas, tarjeta, gráfico)
+#  Separado del resto porque no comparte pipeline (MM/ADX/benchmark)
+#  con Weinstein/O'Neil/Darvas/Wyckoff.
+# ==============================================================
+
+def _at_ejecutar_orb(ticker, etiqueta_activo, periodo_orb_label, PLOTLY_CONFIG):
+    with st.spinner(f'Descargando velas de 5 minutos de {ticker}...'):
+        resumen, extra = _at_analizar_orb(ticker, periodo_orb_label)
+
+    if resumen is None:
+        st.error(extra)
+        return
+
+    contexto = extra
+    sub_dia = contexto["sub_dia"]
+
+    cols = st.columns(4)
+    with cols[0]:
+        st.metric('Último cierre', f"${sub_dia['Close'].iloc[-1]:,.2f}")
+    with cols[1]:
+        rsi_val = resumen['RSI(14)']
+        st.metric('RSI(14)', f"{rsi_val:.1f}" if not np.isnan(rsi_val) else "s/d")
+    with cols[2]:
+        st.metric('Caja de apertura', periodo_orb_label)
+    with cols[3]:
+        st.metric('Sesión analizada', resumen['Sesión analizada'])
+
+    tab_resumen, tab_grafico = st.tabs(['🧾 Resumen y señal', '📈 Gráfico'])
+
+    with tab_resumen:
+        _at_tarjeta_resumen(resumen)
+
+    with tab_grafico:
+        fig = _at_fig_orb(contexto, etiqueta_activo, periodo_orb_label)
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+
+# ==============================================================
 #  ENTRY POINT — llamar esto desde el archivo principal
 #  (reemplaza a modulo_sector_rotation / modulo_commodities_rotation /
 #   modulo_cripto_rotation / modulo_indices_rotation)
@@ -745,13 +1054,17 @@ def _at_tarjeta_resumen(resumen):
 # ==============================================================
 
 def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
-    """Análisis técnico de un activo con 4 métodos clásicos: Stan Weinstein,
-    William O'Neil, Darvas Box y Wyckoff, en 5 temporalidades: 1 Día,
-    4 Horas, 1 Hora, 45 Minutos y 30 Minutos. El ADX de Wilder se calcula
-    siempre como filtro/dato transversal. El activo se elige desde las
-    categorías de tu configuración (acciones por industria, forex,
-    índices/países, ETFs de índice, ETFs de sector/subsector, mercados
-    reales) o como ticker manual. No se guarda ningún historial."""
+    """Análisis técnico de un activo con 5 métodos clásicos: Stan Weinstein,
+    William O'Neil, Darvas Box, Wyckoff y ORB (Opening Range Breakout).
+    Los primeros 4 operan en 7 temporalidades (1 Día, 4 Horas, 1 Hora,
+    45 Minutos, 30 Minutos, 15 Minutos, 5 Minutos); el ORB arma su propia
+    caja con los primeros 5/15/30 minutos de cada sesión, en vez de usar el
+    selector de temporalidad genérico. El ADX de Wilder se calcula siempre
+    como filtro/dato transversal en los primeros 4 métodos; ORB usa su
+    propio ATR + VWAP + RSI + volumen relativo por horario. El activo se
+    elige desde las categorías de tu configuración (acciones por industria,
+    forex, índices/países, ETFs de índice, ETFs de sector/subsector,
+    mercados reales) o como ticker manual. No se guarda ningún historial."""
 
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
@@ -759,31 +1072,47 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
          border-radius:14px; padding:26px 30px; margin-bottom:22px;">
       <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📐 Análisis Técnico</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Analizá cualquier activo de tu universo con 4 métodos técnicos clásicos:
+        Analizá cualquier activo de tu universo con 5 métodos técnicos clásicos:
         <b style="color:#e6edf3">Stan Weinstein</b> (fases de mercado), <b style="color:#e6edf3">William O'Neil</b>
         (CANSLIM técnico / fuerza relativa), <b style="color:#e6edf3">Darvas Box</b> (cajas de consolidación +
-        breakout) y <b style="color:#e6edf3">Wyckoff</b> (acumulación/distribución), en la temporalidad que elijas:
+        breakout), <b style="color:#e6edf3">Wyckoff</b> (acumulación/distribución) y <b style="color:#e6edf3">ORB</b>
+        (Opening Range Breakout intradía). Los primeros 4 métodos operan en la temporalidad que elijas:
         <b style="color:#e6edf3">1 Día</b>, <b style="color:#e6edf3">4 Horas</b>, <b style="color:#e6edf3">1 Hora</b>,
-        <b style="color:#e6edf3">45 Minutos</b> o <b style="color:#e6edf3">30 Minutos</b>.
-        El ADX de Wilder se calcula siempre como filtro de tendencia. Este análisis no se guarda: vive solo en
-        la sesión actual.
+        <b style="color:#e6edf3">45 Minutos</b>, <b style="color:#e6edf3">30 Minutos</b>,
+        <b style="color:#e6edf3">15 Minutos</b> o <b style="color:#e6edf3">5 Minutos</b>; el ORB arma su propia caja
+        con los primeros 5/15/30 minutos de la sesión. Este análisis no se guarda: vive solo en la sesión actual.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([2, 2, 1.3])
-    with col1:
-        ticker, etiqueta_activo = _at_seleccionar_ticker()
+
     with col2:
         metodo_label = st.selectbox('Método de análisis', list(METODOS_DISPONIBLES.keys()), key='at_metodo')
-    with col3:
-        timeframe_label = _at_seleccionar_timeframe()
     metodo = METODOS_DISPONIBLES[metodo_label]
-    tf_cfg = TIMEFRAMES_DISPONIBLES[timeframe_label]
+
+    with col1:
+        ticker, etiqueta_activo = _at_seleccionar_ticker()
+
+    with col3:
+        if metodo == "orb":
+            periodo_orb_label = _at_seleccionar_periodo_orb()
+            timeframe_label = None
+        else:
+            timeframe_label = _at_seleccionar_timeframe()
+            periodo_orb_label = None
 
     if not ticker:
         st.info('Seleccioná o ingresá un activo para analizar.')
         return
+
+    # ---- Flujo ORB: pipeline propio, se corta acá ----
+    if metodo == "orb":
+        _at_ejecutar_orb(ticker, etiqueta_activo, periodo_orb_label, PLOTLY_CONFIG)
+        return
+
+    # ---- Flujo Weinstein / O'Neil / Darvas / Wyckoff (sin cambios) ----
+    tf_cfg = TIMEFRAMES_DISPONIBLES[timeframe_label]
 
     with st.spinner(f'Descargando datos de {ticker} ({timeframe_label})...'):
         data = _at_obtener_datos(ticker, timeframe_label)
@@ -811,7 +1140,7 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
         if benchmark_data is None:
             st.info('No se pudo descargar el benchmark — el RS Rating no estará disponible para este análisis.')
 
-    resumen, lineas_extra, marcadores_extra = _at_analizar(metodo, data, benchmark_data)
+    resumen, lineas_extra, marcadores_extra = _at_analizar(metodo, data, benchmark_data, timeframe_label)
 
     cols = st.columns(4)
     with cols[0]:
