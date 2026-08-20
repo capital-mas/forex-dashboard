@@ -130,8 +130,8 @@ DARVAS_CONFIG_POR_TIMEFRAME = {
     "1 Día":      {"ventana": 130, "confirmacion_velas": 3},    # ~130 días
     "4 Horas":    {"ventana": 270, "confirmacion_velas": 12},   # ~45 días
     "1 Hora":     {"ventana": 432, "confirmacion_velas": 24},   # ~18 días
-    "45 Minutos": {"ventana": 320, "confirmacion_velas": 16},   # ~10 días
-    "30 Minutos": {"ventana": 288, "confirmacion_velas": 24},   # ~6 días
+    "45 Minutos": {"ventana": 384, "confirmacion_velas": 20},   # ~10 días
+    "30 Minutos": {"ventana": 480, "confirmacion_velas": 24},   # ~6 días
 }
 
 # ==============================================================
