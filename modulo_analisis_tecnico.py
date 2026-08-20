@@ -68,11 +68,19 @@ METODOS_DISPONIBLES = {
 #  Temporalidades disponibles.
 #  yf_interval / yf_periodo: lo que se le pide a Yahoo Finance.
 #  resample: si no es None, se descarga yf_interval y se agrupa a esa
-#            regla de pandas (ej. "4h") porque Yahoo no la ofrece nativa.
+#            regla de pandas (ej. "4h", "45min") porque Yahoo no la
+#            ofrece nativa.
 #  min_velas / min_velas_mm_largas: umbrales de historial mínimo,
 #            iguales en cantidad de barras para las 3 temporalidades
 #            (30/50/150/200 velas siguen significando lo mismo en
 #            cantidad de barras, cambia lo que representan en tiempo).
+#
+#  Límites reales de Yahoo Finance para datos intradiarios:
+#   - intervalo 60m/1h: hasta ~730 días de histórico.
+#   - intervalos 5m/15m/30m: hasta ~60 días de histórico.
+#  Por eso 30m se pide directo con yf_periodo="60d", y 45m (que Yahoo
+#  no ofrece nativo) se arma resampleando velas de 15m también con
+#  yf_periodo="60d".
 # ----------------------------------------------------------------
 TIMEFRAMES_DISPONIBLES = {
     "1 Día": {
@@ -92,6 +100,18 @@ TIMEFRAMES_DISPONIBLES = {
         "yf_periodo": "730d",   # límite real de Yahoo para intervalo 60m
         "resample": None,
         "sufijo_grafico": "1H",
+    },
+    "45 Minutos": {
+        "yf_interval": "15m",
+        "yf_periodo": "60d",    # límite real de Yahoo para intervalos 5m/15m/30m
+        "resample": "45min",    # Yahoo no ofrece 45m nativo, se arma desde 15m
+        "sufijo_grafico": "45M",
+    },
+    "30 Minutos": {
+        "yf_interval": "30m",
+        "yf_periodo": "60d",    # límite real de Yahoo para intervalos 5m/15m/30m
+        "resample": None,
+        "sufijo_grafico": "30M",
     },
 }
 TIMEFRAME_DEFAULT = "1 Día"
@@ -173,8 +193,8 @@ def _at_descargar(ticker, periodo='2y', intervalo='1d'):
 
 
 def _at_resample_ohlcv(data, regla):
-    """Agrupa velas (ej. de 1H) a una temporalidad mayor no soportada
-    nativamente por Yahoo Finance (ej. 4H), respetando OHLCV."""
+    """Agrupa velas (ej. de 15m o 1H) a una temporalidad mayor no soportada
+    nativamente por Yahoo Finance (ej. 45m, 4H), respetando OHLCV."""
     agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
     out = data.resample(regla).agg(agg)
     out = out.dropna(subset=["Open", "High", "Low", "Close"])
@@ -184,7 +204,7 @@ def _at_resample_ohlcv(data, regla):
 @st.cache_data(ttl=3600, show_spinner=False)
 def _at_obtener_datos(ticker, timeframe_label):
     """Descarga los datos de `ticker` en la temporalidad elegida,
-    resampleando si hace falta (caso 4H)."""
+    resampleando si hace falta (casos 4H y 45M)."""
     if timeframe_label not in TIMEFRAMES_DISPONIBLES:
         timeframe_label = TIMEFRAME_DEFAULT
     cfg = TIMEFRAMES_DISPONIBLES[timeframe_label]
@@ -689,12 +709,12 @@ def _at_tarjeta_resumen(resumen):
 
 def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
     """Análisis técnico de un activo con 4 métodos clásicos: Stan Weinstein,
-    William O'Neil, Darvas Box y Wyckoff, en 3 temporalidades: 1 Hora,
-    4 Horas y 1 Día. El ADX de Wilder se calcula siempre como filtro/dato
-    transversal. El activo se elige desde las categorías de tu
-    configuración (acciones por industria, forex, índices/países, ETFs de
-    índice, ETFs de sector/subsector, mercados reales) o como ticker
-    manual. No se guarda ningún historial."""
+    William O'Neil, Darvas Box y Wyckoff, en 5 temporalidades: 1 Día,
+    4 Horas, 1 Hora, 45 Minutos y 30 Minutos. El ADX de Wilder se calcula
+    siempre como filtro/dato transversal. El activo se elige desde las
+    categorías de tu configuración (acciones por industria, forex,
+    índices/países, ETFs de índice, ETFs de sector/subsector, mercados
+    reales) o como ticker manual. No se guarda ningún historial."""
 
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
@@ -706,7 +726,8 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
         <b style="color:#e6edf3">Stan Weinstein</b> (fases de mercado), <b style="color:#e6edf3">William O'Neil</b>
         (CANSLIM técnico / fuerza relativa), <b style="color:#e6edf3">Darvas Box</b> (cajas de consolidación +
         breakout) y <b style="color:#e6edf3">Wyckoff</b> (acumulación/distribución), en la temporalidad que elijas:
-        <b style="color:#e6edf3">1 Hora</b>, <b style="color:#e6edf3">4 Horas</b> o <b style="color:#e6edf3">1 Día</b>.
+        <b style="color:#e6edf3">1 Día</b>, <b style="color:#e6edf3">4 Horas</b>, <b style="color:#e6edf3">1 Hora</b>,
+        <b style="color:#e6edf3">45 Minutos</b> o <b style="color:#e6edf3">30 Minutos</b>.
         El ADX de Wilder se calcula siempre como filtro de tendencia. Este análisis no se guarda: vive solo en
         la sesión actual.
       </div>
