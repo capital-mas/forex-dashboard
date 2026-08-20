@@ -116,6 +116,24 @@ TIMEFRAMES_DISPONIBLES = {
 }
 TIMEFRAME_DEFAULT = "1 Día"
 
+# ----------------------------------------------------------------
+#  Config de Darvas Box por temporalidad: ventana y confirmación
+#  expresadas en velas, pero calculadas para representar una cantidad
+#  de tiempo REAL distinta en cada timeframe (asumiendo ~24h de
+#  mercado, razonable para forex/cripto; en acciones el día real
+#  puede ser más largo, pero el objetivo acá es solo diferenciar
+#  las temporalidades entre sí, no ser exacto al segundo).
+#  Cuanto más chica la vela, ventana más corta/reciente en días;
+#  cuanto más grande la vela, ventana más amplia.
+# ----------------------------------------------------------------
+DARVAS_CONFIG_POR_TIMEFRAME = {
+    "1 Día":      {"ventana": 130, "confirmacion_velas": 3},    # ~130 días
+    "4 Horas":    {"ventana": 270, "confirmacion_velas": 12},   # ~45 días
+    "1 Hora":     {"ventana": 432, "confirmacion_velas": 24},   # ~18 días
+    "45 Minutos": {"ventana": 320, "confirmacion_velas": 16},   # ~10 días
+    "30 Minutos": {"ventana": 288, "confirmacion_velas": 24},   # ~6 días
+}
+
 
 # ==============================================================
 #  SELECTOR DE ACTIVO (reemplaza al text_input libre)
@@ -475,8 +493,13 @@ def _at_detectar_darvas_box(data, ventana=130, dias_confirmacion=3, tolerancia_p
             "ancho_caja_pct": ancho_caja_pct, "breakout": breakout, "criterios": criterios}
 
 
-def _at_analizar_darvas(data):
-    resultado = _at_detectar_darvas_box(data)
+def _at_analizar_darvas(data, timeframe_label=TIMEFRAME_DEFAULT):
+    cfg_darvas = DARVAS_CONFIG_POR_TIMEFRAME.get(timeframe_label, DARVAS_CONFIG_POR_TIMEFRAME[TIMEFRAME_DEFAULT])
+    resultado = _at_detectar_darvas_box(
+        data,
+        ventana=cfg_darvas["ventana"],
+        dias_confirmacion=cfg_darvas["confirmacion_velas"],
+    )
     adx_actual = data["ADX"].iloc[-1]
 
     if not resultado["detectado"]:
@@ -613,17 +636,16 @@ def _at_analizar_wyckoff(data, ventana=90):
 #  DISPATCH
 # ==============================================================
 
-def _at_analizar(metodo, data, benchmark_data=None):
+def _at_analizar(metodo, data, benchmark_data=None, timeframe_label=TIMEFRAME_DEFAULT):
     if metodo == "weinstein":
         return _at_analizar_weinstein(data)
     elif metodo == "oneil":
         return _at_analizar_oneil(data, benchmark_data)
     elif metodo == "darvas":
-        return _at_analizar_darvas(data)
+        return _at_analizar_darvas(data, timeframe_label)
     elif metodo == "wyckoff":
         return _at_analizar_wyckoff(data)
     raise ValueError("Método no reconocido")
-
 
 # ==============================================================
 #  GRÁFICO (Plotly, mismo estilo oscuro que el resto de la app)
@@ -774,7 +796,7 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
         if benchmark_data is None:
             st.info('No se pudo descargar el benchmark — el RS Rating no estará disponible para este análisis.')
 
-    resumen, lineas_extra, marcadores_extra = _at_analizar(metodo, data, benchmark_data)
+        resumen, lineas_extra, marcadores_extra = _at_analizar(metodo, data, benchmark_data, timeframe_label)
 
     cols = st.columns(4)
     with cols[0]:
