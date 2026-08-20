@@ -817,45 +817,85 @@ def _at_analizar_orb(ticker, periodo_orb_label):
     rsi_actual = rsi.iloc[-1]
     vwap_sesgo = "Alcista (precio sobre VWAP)" if precio_actual > vwap_actual else "Bajista (precio bajo VWAP)"
 
-    # Primer breakout por CIERRE de vela (no por mecha) fuera de la caja,
-    # vela por vela, dentro del resto de la sesión.
-    breakout_tipo, vela_breakout = None, None
+    # Recorremos el resto de la sesión vela por vela llevando el ESTADO
+    # ACTUAL (dentro de la caja / LONG / SHORT) en vez de quedarnos solo con
+    # la primera ruptura. Esto permite detectar reingresos a la caja (falsa
+    # ruptura) y reversiones completas de un lado al otro — algo que pasa
+    # seguido en cripto, que no tiene "cierre de sesión" real.
+    primer_breakout_tipo, primer_breakout_vela = None, None
+    estado_actual, vela_ultimo_cambio, cambios_de_estado = "DENTRO", None, 0
+
     for _, vela in resto.iterrows():
         if vela["Close"] > techo_caja:
-            breakout_tipo, vela_breakout = "LONG", vela
-            break
-        if vela["Close"] < piso_caja:
-            breakout_tipo, vela_breakout = "SHORT", vela
-            break
+            nuevo_estado = "LONG"
+        elif vela["Close"] < piso_caja:
+            nuevo_estado = "SHORT"
+        else:
+            nuevo_estado = "DENTRO"
 
+        if nuevo_estado != estado_actual:
+            cambios_de_estado += 1
+            if primer_breakout_tipo is None and nuevo_estado in ("LONG", "SHORT"):
+                primer_breakout_tipo, primer_breakout_vela = nuevo_estado, vela
+            estado_actual, vela_ultimo_cambio = nuevo_estado, vela
+
+    # El volumen de referencia es el de la vela que generó el estado VIGENTE
+    # (la última transición), no necesariamente la primera ruptura del día.
     volumen_breakout_pct = None
-    if vela_breakout is not None:
-        hora_breakout = vela_breakout.name.time()
-        vol_prom_ese_horario = vol_promedio_horario.get(hora_breakout, np.nan)
+    vela_para_volumen = vela_ultimo_cambio if vela_ultimo_cambio is not None else primer_breakout_vela
+    if vela_para_volumen is not None:
+        hora_vela = vela_para_volumen.name.time()
+        vol_prom_ese_horario = vol_promedio_horario.get(hora_vela, np.nan)
         if not vol_prom_ese_horario or np.isnan(vol_prom_ese_horario) or vol_prom_ese_horario <= 0:
             # fallback: si no hay suficiente historia por horario, comparar
             # contra el volumen promedio de la propia caja
             vol_mm_caja = caja["Volume"].mean()
             if vol_mm_caja > 0:
-                volumen_breakout_pct = (vela_breakout["Volume"] / vol_mm_caja - 1) * 100
+                volumen_breakout_pct = (vela_para_volumen["Volume"] / vol_mm_caja - 1) * 100
         else:
-            volumen_breakout_pct = (vela_breakout["Volume"] / vol_prom_ese_horario - 1) * 100
+            volumen_breakout_pct = (vela_para_volumen["Volume"] / vol_prom_ese_horario - 1) * 100
 
-    if breakout_tipo == "LONG":
-        senal = "LONG — Ruptura del techo de la caja de apertura"
-        conclusion = (f"El precio rompió el techo de la caja de apertura (${techo_caja:.2f}) formada en los "
-                      f"primeros {periodo_orb_label.lower()} de la sesión. Setup clásico de ORB alcista: "
-                      f"entrada en la ruptura, con el piso de la caja (${piso_caja:.2f}) como referencia de stop.")
-    elif breakout_tipo == "SHORT":
-        senal = "SHORT — Ruptura del piso de la caja de apertura"
-        conclusion = (f"El precio rompió el piso de la caja de apertura (${piso_caja:.2f}) formada en los "
-                      f"primeros {periodo_orb_label.lower()} de la sesión. Setup clásico de ORB bajista: "
-                      f"entrada en la ruptura, con el techo de la caja (${techo_caja:.2f}) como referencia de stop.")
-    else:
+    lado_texto = {"LONG": "techo", "SHORT": "piso"}
+
+    if primer_breakout_tipo is None:
+        # Nunca rompió ningún lado de la caja en toda la sesión.
         senal = "Sin ruptura todavía — Precio dentro de la caja de apertura"
         conclusion = (f"El precio todavía se mueve dentro del rango formado en los primeros "
                       f"{periodo_orb_label.lower()} de la sesión (${piso_caja:.2f} – ${techo_caja:.2f}). "
                       f"Conviene esperar el cierre de una vela por fuera de la caja antes de operar el ORB.")
+
+    elif estado_actual == "DENTRO":
+        # Rompió un lado en algún momento, pero volvió a meterse dentro de
+        # la caja: ruptura fallida / falsa señal.
+        senal = f"Ruptura fallida ({primer_breakout_tipo}) — el precio reingresó a la caja"
+        conclusion = (f"El precio llegó a romper el {lado_texto[primer_breakout_tipo]} de la caja "
+                      f"(setup {primer_breakout_tipo} inicial), pero volvió a entrar dentro del rango "
+                      f"(${piso_caja:.2f} – ${techo_caja:.2f}). Es una falsa ruptura clásica del ORB: conviene "
+                      f"esperar una nueva señal en vez de operar la ruptura original.")
+
+    elif estado_actual != primer_breakout_tipo:
+        # Reversión completa: rompió para un lado y terminó rompiendo el
+        # lado opuesto (por ejemplo: SHORT al principio, LONG ahora).
+        senal = f"{estado_actual} — Reversión tras ruptura fallida de {primer_breakout_tipo}"
+        conclusion = (f"El precio inicialmente rompió el {lado_texto[primer_breakout_tipo]} de la caja "
+                      f"(señal {primer_breakout_tipo}), pero revirtió por completo y ahora está rompiendo el "
+                      f"{lado_texto[estado_actual]} opuesto, con señal {estado_actual} vigente. La ruptura "
+                      f"{primer_breakout_tipo} original quedó invalidada — lo que importa ahora es el estado actual.")
+
+    else:
+        # Mismo lado que la ruptura original, sostenida (puede haber tenido
+        # algún reingreso en el medio, pero terminó volviendo a romper del
+        # mismo lado).
+        nota_extra = (" (tuvo al menos un reingreso a la caja en el medio antes de retomar la ruptura)"
+                      if cambios_de_estado > 1 else "")
+        senal = f"{estado_actual} — Ruptura de la caja de apertura vigente{nota_extra}"
+        nivel_ref = techo_caja if estado_actual == "LONG" else piso_caja
+        stop_ref = piso_caja if estado_actual == "LONG" else techo_caja
+        direccion = "alcista" if estado_actual == "LONG" else "bajista"
+        conclusion = (f"El precio rompió el {lado_texto[estado_actual]} de la caja de apertura (${nivel_ref:.2f}) "
+                      f"formada en los primeros {periodo_orb_label.lower()} de la sesión{nota_extra}. Setup "
+                      f"clásico de ORB {direccion}: entrada en la ruptura, con ${stop_ref:.2f} (lado opuesto de "
+                      f"la caja) como referencia de stop.")
 
     atr_texto = clasificacion_atr if ratio_atr is None else f"{clasificacion_atr} (x{ratio_atr:.2f} vs. últimas 20 velas)"
 
