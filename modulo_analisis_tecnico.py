@@ -114,17 +114,18 @@ TIMEFRAMES_DISPONIBLES = {
         "sufijo_grafico": "30M",
     },
     "15 Minutos": {
-    "yf_interval": "15m",
-    "yf_periodo": "60d",
-    "resample": None,
-    "sufijo_grafico": "15M",
-},
+        "yf_interval": "15m",
+        "yf_periodo": "60d",
+        "resample": None,
+        "sufijo_grafico": "15M",
+    },
 
-"5 Minutos": {
-    "yf_interval": "5m",
-    "yf_periodo": "60d",
-    "resample": None,
-    "sufijo_grafico": "5M",
+    "5 Minutos": {
+        "yf_interval": "5m",
+        "yf_periodo": "60d",
+        "resample": None,
+        "sufijo_grafico": "5M",
+    },
 }
 TIMEFRAME_DEFAULT = "1 Día"
 
