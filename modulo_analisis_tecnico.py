@@ -790,31 +790,69 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
     data["+DI"], data["-DI"], data["ADX"] = _at_calcular_adx(data)
 
     benchmark_data = None
-    if metodo == 'oneil':
-        with st.spinner('Descargando benchmark de mercado...'):
-            benchmark_data = _at_obtener_datos(benchmark, timeframe_label)
-        if benchmark_data is None:
-            st.info('No se pudo descargar el benchmark — el RS Rating no estará disponible para este análisis.')
 
-        resumen, lineas_extra, marcadores_extra = _at_analizar(metodo, data, benchmark_data, timeframe_label)
+if metodo == 'oneil':
+    with st.spinner('Descargando benchmark de mercado...'):
+        benchmark_data = _at_obtener_datos(benchmark, timeframe_label)
 
-    cols = st.columns(4)
-    with cols[0]:
-        st.metric('Último cierre', f"${data['Close'].iloc[-1]:,.2f}")
-    with cols[1]:
-        st.metric('ADX(14)', f"{data['ADX'].iloc[-1]:.1f}")
-    with cols[2]:
-        st.metric('Temporalidad', timeframe_label)
-    with cols[3]:
-        fmt_fecha = '%Y-%m-%d %H:%M' if tf_cfg["resample"] or tf_cfg["yf_interval"] != "1d" else '%Y-%m-%d'
-        st.metric('Fecha del dato', data.index[-1].strftime(fmt_fecha))
+    if benchmark_data is None:
+        st.info(
+            'No se pudo descargar el benchmark — el RS Rating no estará disponible '
+            'para este análisis.'
+        )
 
-    tab_resumen, tab_grafico = st.tabs(['🧾 Resumen y señal', '📈 Gráfico'])
+resumen, lineas_extra, marcadores_extra = _at_analizar(
+    metodo,
+    data,
+    benchmark_data,
+    timeframe_label
+)
 
-    with tab_resumen:
-        _at_tarjeta_resumen(resumen)
+cols = st.columns(4)
 
-    with tab_grafico:
-        titulo = f"{resumen['Método']} — {etiqueta_activo} ({tf_cfg['sufijo_grafico']})"
-        fig = _at_fig_precio(data, lineas_extra, marcadores_extra, titulo)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+with cols[0]:
+    st.metric('Último cierre', f"${data['Close'].iloc[-1]:,.2f}")
+
+with cols[1]:
+    st.metric('ADX(14)', f"{data['ADX'].iloc[-1]:.1f}")
+
+with cols[2]:
+    st.metric('Temporalidad', timeframe_label)
+
+with cols[3]:
+    fmt_fecha = (
+        '%Y-%m-%d %H:%M'
+        if tf_cfg["resample"] or tf_cfg["yf_interval"] != "1d"
+        else '%Y-%m-%d'
+    )
+    st.metric(
+        'Fecha del dato',
+        data.index[-1].strftime(fmt_fecha)
+    )
+
+tab_resumen, tab_grafico = st.tabs(
+    ['🧾 Resumen y señal', '📈 Gráfico']
+)
+
+with tab_resumen:
+    _at_tarjeta_resumen(resumen)
+
+with tab_grafico:
+    titulo = (
+        f"{resumen['Método']} — "
+        f"{etiqueta_activo} "
+        f"({tf_cfg['sufijo_grafico']})"
+    )
+
+    fig = _at_fig_precio(
+        data,
+        lineas_extra,
+        marcadores_extra,
+        titulo
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config=PLOTLY_CONFIG
+    )
