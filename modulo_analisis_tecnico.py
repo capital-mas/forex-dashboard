@@ -113,6 +113,18 @@ TIMEFRAMES_DISPONIBLES = {
         "resample": None,
         "sufijo_grafico": "30M",
     },
+    "15 Minutos": {
+    "yf_interval": "15m",
+    "yf_periodo": "60d",
+    "resample": None,
+    "sufijo_grafico": "15M",
+},
+
+"5 Minutos": {
+    "yf_interval": "5m",
+    "yf_periodo": "60d",
+    "resample": None,
+    "sufijo_grafico": "5M",
 }
 TIMEFRAME_DEFAULT = "1 Día"
 
@@ -132,6 +144,8 @@ DARVAS_CONFIG_POR_TIMEFRAME = {
     "1 Hora":     {"ventana": 432, "confirmacion_velas": 24},   # ~18 días
     "45 Minutos": {"ventana": 384, "confirmacion_velas": 20},   # ~10 días
     "30 Minutos": {"ventana": 480, "confirmacion_velas": 24},   # ~6 días
+    "15 Minutos": {"ventana": 640, "confirmacion_velas": 32},   # ~6 días
+    "5 Minutos": {"ventana": 900, "confirmacion_velas": 36},   # ~6 días
 }
 
 # ==============================================================
