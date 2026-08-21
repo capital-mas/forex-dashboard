@@ -705,57 +705,84 @@ def _at_analizar_wyckoff(data, ventana=90):
 
 
 # ==============================================================
-#  MÉTODO 5: CPR (Central Pivot Range)
+#  MÉTODO: CPR (Central Pivot Range) + niveles R1–R4 / S1–S4
 # ==============================================================
 
 def _at_calcular_cpr(data):
-    """Central Pivot Range clásico de floor traders, calculado con la vela
-    ANTERIOR y proyectado sobre la vela actual: Pivot = (H+L+C)/3, BC
-    (Bottom Central) = (H+L)/2, TC (Top Central) = 2*Pivot - BC. El ancho
-    del CPR (TC - BC) es la señal clave: un CPR angosto respecto a su
-    propio promedio reciente suele preceder un período de tendencia/
-    breakout; uno ancho suele preceder un período lateral (rango). Al
-    igual que Darvas/Wyckoff, funciona igual sin importar la temporalidad
-    elegida porque opera sobre 'la vela anterior', no sobre una cantidad
-    fija de días calendario."""
-    high_prev = data["High"].shift(1)
-    low_prev = data["Low"].shift(1)
-    close_prev = data["Close"].shift(1)
+    """Central Pivot Range + niveles de floor traders, calculados con la
+    vela ANTERIOR y proyectados sobre la vela actual:
+      Pivot = (H+L+C)/3
+      BC (Bottom Central) = (H+L)/2      TC (Top Central) = 2*Pivot - BC
+      R1 = 2*Pivot - L        S1 = 2*Pivot - H
+      R2 = Pivot + (H - L)    S2 = Pivot - (H - L)
+      R3 = H + 2*(Pivot - L)  S3 = L - 2*(H - Pivot)
+      R4 = R3 + (R2 - R1)     S4 = S3 - (S1 - S2)
+    El ancho del CPR (TC - BC) sigue siendo la señal de "tipo de período":
+    angosto = probable tendencia/breakout, ancho = probable rango.
+    Funciona igual sin importar la temporalidad elegida porque opera
+    sobre 'la vela anterior', no sobre una cantidad fija de días."""
+    h, l, c = data["High"].shift(1), data["Low"].shift(1), data["Close"].shift(1)
 
-    pivot = (high_prev + low_prev + close_prev) / 3
-    bc = (high_prev + low_prev) / 2
-    tc = 2 * pivot - bc
-
-    # normalizamos para que "techo" sea siempre el mayor de los dos (TC y
-    # BC pueden invertirse en velas bajistas fuertes)
-    techo = pd.concat([tc, bc], axis=1).max(axis=1)
-    piso = pd.concat([tc, bc], axis=1).min(axis=1)
+    pivot = (h + l + c) / 3
+    bc_raw = (h + l) / 2
+    tc_raw = 2 * pivot - bc_raw
+    # normalizamos para que "techo" sea siempre el mayor de los dos
+    techo = pd.concat([tc_raw, bc_raw], axis=1).max(axis=1)
+    piso = pd.concat([tc_raw, bc_raw], axis=1).min(axis=1)
     ancho = techo - piso
 
-    return pivot, techo, piso, ancho
+    r1 = 2 * pivot - l
+    s1 = 2 * pivot - h
+    r2 = pivot + (h - l)
+    s2 = pivot - (h - l)
+    r3 = h + 2 * (pivot - l)
+    s3 = l - 2 * (h - pivot)
+    r4 = r3 + (r2 - r1)
+    s4 = s3 - (s1 - s2)
+
+    return {
+        "pivot": pivot, "techo": techo, "piso": piso, "ancho": ancho,
+        "r1": r1, "r2": r2, "r3": r3, "r4": r4,
+        "s1": s1, "s2": s2, "s3": s3, "s4": s4,
+    }
 
 
 def _at_analizar_cpr(data, ventana_ancho=10):
-    pivot, techo, piso, ancho = _at_calcular_cpr(data)
+    niveles_series = _at_calcular_cpr(data)
     data = data.copy()
-    data["CPR_Pivot"], data["CPR_Techo"], data["CPR_Piso"] = pivot, techo, piso
+    for nombre, serie in niveles_series.items():
+        data[f"CPR_{nombre}"] = serie
 
     precio = data["Close"].iloc[-1]
-    pivot_actual, techo_actual, piso_actual = pivot.iloc[-1], techo.iloc[-1], piso.iloc[-1]
-    ancho_actual = ancho.iloc[-1]
-    ancho_promedio = ancho.tail(ventana_ancho).mean()
+    valores_actuales = {k: v.iloc[-1] for k, v in niveles_series.items()}
+    pivot_actual, techo_actual, piso_actual = valores_actuales["pivot"], valores_actuales["techo"], valores_actuales["piso"]
+    ancho_actual = valores_actuales["ancho"]
+    ancho_promedio = niveles_series["ancho"].tail(ventana_ancho).mean()
 
     ancho_pct_vs_promedio = (
         (ancho_actual / ancho_promedio - 1) * 100
         if ancho_promedio and not np.isnan(ancho_promedio) else np.nan
     )
-
     if not np.isnan(ancho_pct_vs_promedio) and ancho_pct_vs_promedio <= -25:
-        tipo_dia = "CPR angosto — probable período de tendencia/breakout"
+        tipo_periodo = "CPR angosto — probable período de tendencia/breakout"
     elif not np.isnan(ancho_pct_vs_promedio) and ancho_pct_vs_promedio >= 25:
-        tipo_dia = "CPR ancho — probable período lateral / de rango"
+        tipo_periodo = "CPR ancho — probable período lateral / de rango"
     else:
-        tipo_dia = "CPR de ancho normal — sin sesgo claro de tipo de período"
+        tipo_periodo = "CPR de ancho normal — sin sesgo claro de tipo de período"
+
+    # ---- Ubicar el precio dentro de la escalera completa de niveles ----
+    escalera = sorted(
+        [
+            ("S4", valores_actuales["s4"]), ("S3", valores_actuales["s3"]),
+            ("S2", valores_actuales["s2"]), ("S1", valores_actuales["s1"]),
+            ("BC", piso_actual), ("Pivot", pivot_actual), ("TC", techo_actual),
+            ("R1", valores_actuales["r1"]), ("R2", valores_actuales["r2"]),
+            ("R3", valores_actuales["r3"]), ("R4", valores_actuales["r4"]),
+        ],
+        key=lambda par: par[1],
+    )
+    resistencia = next(((nom, val) for nom, val in escalera if val > precio), None)
+    soporte = next(((nom, val) for nom, val in reversed(escalera) if val < precio), None)
 
     if precio > techo_actual:
         posicion, sesgo = "Precio por ENCIMA del CPR (sobre el TC)", "alcista"
@@ -770,39 +797,54 @@ def _at_analizar_cpr(data, ventana_ancho=10):
     adx_confirma_alcista = bool(not np.isnan(adx_actual) and adx_actual >= 25 and plus_di_actual > minus_di_actual)
     adx_confirma_bajista = bool(not np.isnan(adx_actual) and adx_actual >= 25 and minus_di_actual > plus_di_actual)
 
+    zona_texto = ""
+    if soporte and resistencia:
+        zona_texto = f"Zona actual: entre {soporte[0]} (${soporte[1]:.2f}) y {resistencia[0]} (${resistencia[1]:.2f})."
+    objetivo_texto = ""
+    if resistencia:
+        objetivo_texto += f" Próxima resistencia: {resistencia[0]} (${resistencia[1]:.2f})."
+    if soporte:
+        objetivo_texto += f" Próximo soporte: {soporte[0]} (${soporte[1]:.2f})."
+
     if sesgo == "alcista":
         senal = "Ruptura alcista del CPR" + (" con tendencia confirmada por ADX" if adx_confirma_alcista else "")
-        conclusion = (f"El precio está por encima del techo del CPR (TC ${techo_actual:.2f}), calculado con "
-                      f"la vela anterior. {tipo_dia}. Mientras se mantenga sobre el CPR, el sesgo de corto "
-                      f"plazo es alcista; el pivot (${pivot_actual:.2f}) sirve como primer soporte a vigilar "
-                      f"ante un pullback.")
+        conclusion = (f"El precio superó el techo del CPR (TC ${techo_actual:.2f}), calculado con la vela "
+                      f"anterior. {tipo_periodo}. {zona_texto}{objetivo_texto} Mientras se sostenga arriba "
+                      f"del CPR el sesgo de corto plazo es alcista; una pérdida del pivot (${pivot_actual:.2f}) "
+                      f"debilitaría el escenario.")
     elif sesgo == "bajista":
         senal = "Ruptura bajista del CPR" + (" con tendencia confirmada por ADX" if adx_confirma_bajista else "")
-        conclusion = (f"El precio está por debajo del piso del CPR (BC ${piso_actual:.2f}), calculado con "
-                      f"la vela anterior. {tipo_dia}. Mientras se mantenga bajo el CPR, el sesgo de corto "
-                      f"plazo es bajista; el pivot (${pivot_actual:.2f}) sirve como primera resistencia a "
-                      f"vigilar ante un rebote.")
+        conclusion = (f"El precio perdió el piso del CPR (BC ${piso_actual:.2f}), calculado con la vela "
+                      f"anterior. {tipo_periodo}. {zona_texto}{objetivo_texto} Mientras se sostenga debajo "
+                      f"del CPR el sesgo de corto plazo es bajista; una recuperación del pivot "
+                      f"(${pivot_actual:.2f}) debilitaría el escenario.")
     else:
         senal = "Precio dentro del CPR — zona de equilibrio"
         conclusion = (f"El precio está dentro del rango del CPR (piso ${piso_actual:.2f} – techo "
-                      f"${techo_actual:.2f}), zona de equilibrio entre compradores y vendedores. {tipo_dia}. "
-                      f"Conviene esperar una ruptura confirmada de cualquiera de los dos lados antes de tomar "
-                      f"una posición direccional.")
+                      f"${techo_actual:.2f}), zona de equilibrio entre compradores y vendedores. {tipo_periodo}. "
+                      f"{zona_texto}{objetivo_texto} Conviene esperar una ruptura confirmada de TC o BC antes "
+                      f"de tomar una posición direccional.")
 
     resumen = {
         "Método": "CPR (Central Pivot Range)",
         "Señal principal": senal,
         "Descripción": posicion,
-        "Pivot": pivot_actual,
-        "TC (techo)": techo_actual,
-        "BC (piso)": piso_actual,
+        "R4": valores_actuales["r4"], "R3": valores_actuales["r3"],
+        "R2": valores_actuales["r2"], "R1": valores_actuales["r1"],
+        "TC (techo)": techo_actual, "Pivot": pivot_actual, "BC (piso)": piso_actual,
+        "S1": valores_actuales["s1"], "S2": valores_actuales["s2"],
+        "S3": valores_actuales["s3"], "S4": valores_actuales["s4"],
         "Ancho del CPR": ancho_actual,
         "Ancho vs. promedio reciente (%)": ancho_pct_vs_promedio,
-        "Tipo de período esperado": tipo_dia,
+        "Tipo de período esperado": tipo_periodo,
         "ADX(14)": adx_actual,
         "Conclusión": conclusion,
     }
-    lineas_extra = [("Pivot", data["CPR_Pivot"]), ("TC", data["CPR_Techo"]), ("BC", data["CPR_Piso"])]
+    lineas_extra = [
+        ("R2", data["CPR_r2"]), ("R1", data["CPR_r1"]), ("TC", data["CPR_techo"]),
+        ("Pivot", data["CPR_pivot"]), ("BC", data["CPR_piso"]),
+        ("S1", data["CPR_s1"]), ("S2", data["CPR_s2"]),
+    ]
     return resumen, lineas_extra, []
 
 
