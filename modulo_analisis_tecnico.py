@@ -1,5 +1,6 @@
 # ==============================================================
-#  MÓDULO ANÁLISIS TÉCNICO — Weinstein / O'Neil / Darvas Box / Wyckoff / ORB
+#  MÓDULO ANÁLISIS TÉCNICO — Weinstein / O'Neil / Darvas Box / Wyckoff /
+#  CPR / Market Profile / ORB
 #  Reemplaza al módulo de Rotación (Sector/Commodities/Cripto/Índices).
 #
 #  Diferencia clave: acá NO hay un universo fijo de activos ni ranking
@@ -12,26 +13,26 @@
 #
 #  Selector de temporalidad: 1 Día / 4 Horas / 1 Hora / 45 Minutos /
 #  30 Minutos / 15 Minutos / 5 Minutos, para los métodos Weinstein,
-#  O'Neil, Darvas Box y Wyckoff. Yahoo Finance no tiene intervalo nativo
-#  de 4H ni de 45M, así que esas dos se arman resampleando con pandas
-#  (4H desde velas de 1H, 45M desde velas de 15M).
+#  O'Neil, Darvas Box, Wyckoff y CPR. Yahoo Finance no tiene intervalo
+#  nativo de 4H ni de 45M, así que esas dos se arman resampleando con
+#  pandas (4H desde velas de 1H, 45M desde velas de 15M).
 #
-#  NUEVO: método Opening Range Breakout (ORB). A diferencia de los otros
-#  4 métodos (que operan sobre la lista de temporalidades de arriba), el
-#  ORB necesita velas intradía finas (5 minutos) y arma la "caja" con
-#  los primeros minutos de CADA sesión, no con N velas históricas fijas.
-#  Por eso tiene su propio pipeline de datos y su propio selector
-#  (período de caja: 5/15/30 minutos) en vez del selector de
-#  temporalidad genérico.
+#  ORB y Market Profile necesitan velas intradía finas (5 minutos) y
+#  trabajan por SESIÓN (día calendario), no con N velas históricas fijas
+#  de una temporalidad elegida. Por eso comparten su propio pipeline de
+#  datos y su propio selector de período (caja de apertura / período de
+#  TPO), separados del selector de temporalidad genérico.
 #
 #  Sin persistencia: no se guarda nada en Supabase. Cada análisis
 #  vive solo en la sesión actual.
 # ==============================================================
 
+import string
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -71,11 +72,13 @@ METODOS_DISPONIBLES = {
     "Darvas Box": "darvas",
     "Wyckoff (Acumulación/Distribución)": "wyckoff",
     "CPR (Central Pivot Range)": "cpr",
+    "Market Profile (TPO)": "market_profile",
     "ORB (Opening Range Breakout)": "orb",
 }
 
 # ----------------------------------------------------------------
-#  Temporalidades disponibles (métodos Weinstein / O'Neil / Darvas / Wyckoff).
+#  Temporalidades disponibles (métodos Weinstein / O'Neil / Darvas /
+#  Wyckoff / CPR).
 #  yf_interval / yf_periodo: lo que se le pide a Yahoo Finance.
 #  resample: si no es None, se descarga yf_interval y se agrupa a esa
 #            regla de pandas (ej. "4h", "45min") porque Yahoo no la
@@ -172,6 +175,19 @@ ORB_PERIODOS_DISPONIBLES = {
 }
 ORB_PERIODO_DEFAULT = "15 Minutos"
 
+# ----------------------------------------------------------------
+#  Períodos de TPO disponibles para Market Profile. Igual que en ORB,
+#  se expresan en cantidad de velas de 5 minutos porque la data siempre
+#  se descarga en ese intervalo. 30 Minutos es el estándar clásico de
+#  Market Profile (nació con barras de 30 min en el CBOT).
+# ----------------------------------------------------------------
+MARKET_PROFILE_PERIODOS_DISPONIBLES = {
+    "15 Minutos": 3,
+    "30 Minutos": 6,
+    "60 Minutos": 12,
+}
+MARKET_PROFILE_PERIODO_DEFAULT = "30 Minutos"
+
 
 # ==============================================================
 #  SELECTOR DE ACTIVO (reemplaza al text_input libre)
@@ -220,7 +236,8 @@ def _at_seleccionar_ticker():
 
 
 # ==============================================================
-#  SELECTOR DE TEMPORALIDAD (métodos Weinstein / O'Neil / Darvas / Wyckoff)
+#  SELECTOR DE TEMPORALIDAD (métodos Weinstein / O'Neil / Darvas /
+#  Wyckoff / CPR)
 # ==============================================================
 
 def _at_seleccionar_timeframe():
@@ -244,8 +261,19 @@ def _at_seleccionar_periodo_orb():
     )
 
 
+def _at_seleccionar_periodo_market_profile():
+    """Devuelve la etiqueta de período de TPO elegida (clave de
+    MARKET_PROFILE_PERIODOS_DISPONIBLES)."""
+    return st.selectbox(
+        'Período de TPO',
+        list(MARKET_PROFILE_PERIODOS_DISPONIBLES.keys()),
+        index=list(MARKET_PROFILE_PERIODOS_DISPONIBLES.keys()).index(MARKET_PROFILE_PERIODO_DEFAULT),
+        key='at_mp_periodo',
+    )
+
+
 # ==============================================================
-#  DESCARGA DE DATOS (métodos Weinstein / O'Neil / Darvas / Wyckoff)
+#  DESCARGA DE DATOS (métodos Weinstein / O'Neil / Darvas / Wyckoff / CPR)
 # ==============================================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -298,13 +326,15 @@ def _at_agregar_medias(data):
 
 
 # ==============================================================
-#  DESCARGA DE DATOS (método ORB — velas intradía de 5 minutos)
+#  DESCARGA DE DATOS (métodos ORB y Market Profile — velas intradía de
+#  5 minutos, trabajan por sesión)
 # ==============================================================
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _at_descargar_orb(ticker):
-    """Descarga velas de 5 minutos para el método ORB. TTL corto (5 min,
-    a diferencia de 1 hora en los otros métodos) porque acá interesa la
+    """Descarga velas de 5 minutos, usadas tanto por ORB como por Market
+    Profile (y como fallback del gráfico de CPR). TTL corto (5 min, a
+    diferencia de 1 hora en los otros métodos) porque acá interesa la
     sesión más reciente, posiblemente en curso. Yahoo Finance devuelve
     por default solo el horario regular de mercado (prepost=False), así
     que la primera vela de cada día calendario en el resultado coincide
@@ -319,18 +349,35 @@ def _at_descargar_orb(ticker):
         return None
 
 
+def _at_seleccionar_sesion(data, min_velas=1):
+    """A partir de velas de 5 minutos ya descargadas, devuelve (sub_dia,
+    fecha) de la sesión (día calendario) más reciente que tenga al menos
+    `min_velas` velas — típicamente la sesión en curso, o la última
+    sesión completa si la de hoy todavía no llegó al mínimo pedido.
+    Devuelve (None, None) si ninguna sesión alcanza ese mínimo. Función
+    compartida por ORB, Market Profile y el gráfico intradía de CPR."""
+    if data is None or data.empty:
+        return None, None
+    fechas = sorted(set(data.index.date))
+    for fecha in reversed(fechas):
+        sub_fecha = data[data.index.date == fecha]
+        if len(sub_fecha) >= min_velas:
+            return sub_fecha, fecha
+    return None, None
+
+
 # ==============================================================
 #  ADX DE WILDER (filtro de tendencia, uso transversal en Weinstein/
-#  O'Neil/Darvas/Wyckoff — el ORB usa su propio ATR, más abajo)
+#  O'Neil/Darvas/Wyckoff/CPR — ORB usa su propio ATR, más abajo)
 # ==============================================================
 
 def _at_calcular_adx(data, periodo=14):
     """ADX (Average Directional Index) de Welles Wilder. Filtro objetivo de
     '¿hay tendencia establecida o no?', reutilizado dentro de O'Neil y como
-    dato informativo en Weinstein/Darvas/Wyckoff. ADX >= 25 = umbral clásico
-    de tendencia establecida. El período (14 barras) se mantiene fijo sin
-    importar la temporalidad, tal como se usa habitualmente en cualquier
-    gráfico (14 velas de 1H, de 4H o diarias)."""
+    dato informativo en Weinstein/Darvas/Wyckoff/CPR. ADX >= 25 = umbral
+    clásico de tendencia establecida. El período (14 barras) se mantiene
+    fijo sin importar la temporalidad, tal como se usa habitualmente en
+    cualquier gráfico (14 velas de 1H, de 4H o diarias)."""
     high, low, close = data["High"], data["Low"], data["Close"]
     prev_close, prev_high, prev_low = close.shift(1), high.shift(1), low.shift(1)
 
@@ -705,7 +752,7 @@ def _at_analizar_wyckoff(data, ventana=90):
 
 
 # ==============================================================
-#  MÉTODO: CPR (Central Pivot Range) + niveles R1–R4 / S1–S4
+#  MÉTODO 5: CPR (Central Pivot Range) + niveles R1–R4 / S1–S4
 # ==============================================================
 
 def _at_calcular_cpr(data):
@@ -849,7 +896,210 @@ def _at_analizar_cpr(data, ventana_ancho=10):
 
 
 # ==============================================================
-#  MÉTODO 6: OPENING RANGE BREAKOUT (ORB)
+#  MÉTODO 6: MARKET PROFILE (TPO)
+# ==============================================================
+
+def _at_generar_letra_tpo(indice):
+    """Genera la letra de un período TPO (A, B, C, ..., Z, a, b, c, ...).
+    Un día de cripto (24hs) puede superar las 26 letras con TPOs de 30
+    minutos (48 períodos), por eso se sigue con minúsculas."""
+    letras = string.ascii_uppercase + string.ascii_lowercase
+    return letras[indice % len(letras)]
+
+
+def _at_construir_market_profile(sub_dia, n_velas_periodo, n_filas=30):
+    """Arma el perfil de mercado (TPO) de una sesión: divide la sesión en
+    bloques de `n_velas_periodo` velas de 5 minutos (períodos TPO de
+    15/30/60 minutos) y cuenta, para cada nivel de precio, cuántos
+    períodos TPO distintos tocaron ese nivel. Devuelve el histograma de
+    TPOs por nivel y el precio representativo de cada nivel."""
+    maximo, minimo = sub_dia["High"].max(), sub_dia["Low"].min()
+    rango_total = maximo - minimo
+    if rango_total <= 0:
+        return None
+
+    alto_fila = rango_total / n_filas
+    n_bloques = int(np.ceil(len(sub_dia) / n_velas_periodo))
+
+    tpo_por_fila = np.zeros(n_filas, dtype=int)
+    letras_por_fila = [[] for _ in range(n_filas)]
+
+    for b in range(n_bloques):
+        bloque = sub_dia.iloc[b * n_velas_periodo:(b + 1) * n_velas_periodo]
+        if bloque.empty:
+            continue
+        letra = _at_generar_letra_tpo(b)
+        high_bloque, low_bloque = bloque["High"].max(), bloque["Low"].min()
+
+        fila_inicio = int((low_bloque - minimo) / alto_fila)
+        fila_fin = int((high_bloque - minimo) / alto_fila)
+        fila_inicio = max(0, min(fila_inicio, n_filas - 1))
+        fila_fin = max(0, min(fila_fin, n_filas - 1))
+
+        for fila in range(fila_inicio, fila_fin + 1):
+            tpo_por_fila[fila] += 1
+            letras_por_fila[fila].append(letra)
+
+    precios_fila = minimo + (np.arange(n_filas) + 0.5) * alto_fila
+
+    return {
+        "tpo_por_fila": tpo_por_fila, "precios_fila": precios_fila,
+        "letras_por_fila": letras_por_fila, "alto_fila": alto_fila,
+        "maximo": maximo, "minimo": minimo,
+    }
+
+
+def _at_calcular_poc_y_valor(perfil, porcentaje_valor=0.70):
+    """POC = nivel de precio con más TPOs (más tiempo de la sesión). Área
+    de Valor = expansión desde el POC hacia arriba/abajo hasta cubrir el
+    70% del total de TPOs, agregando de a una fila por vez del lado con
+    más actividad — el algoritmo clásico de Market Profile."""
+    tpo = perfil["tpo_por_fila"]
+    precios = perfil["precios_fila"]
+    alto_fila = perfil["alto_fila"]
+    total_tpo = int(tpo.sum())
+    if total_tpo == 0:
+        return None
+
+    poc_idx = int(np.argmax(tpo))
+    objetivo = total_tpo * porcentaje_valor
+
+    fila_inf, fila_sup = poc_idx, poc_idx
+    acumulado = int(tpo[poc_idx])
+
+    while acumulado < objetivo and (fila_inf > 0 or fila_sup < len(tpo) - 1):
+        cuenta_abajo = tpo[fila_inf - 1] if fila_inf > 0 else -1
+        cuenta_arriba = tpo[fila_sup + 1] if fila_sup < len(tpo) - 1 else -1
+
+        if cuenta_arriba >= cuenta_abajo and cuenta_arriba >= 0:
+            fila_sup += 1
+            acumulado += tpo[fila_sup]
+        elif cuenta_abajo >= 0:
+            fila_inf -= 1
+            acumulado += tpo[fila_inf]
+        else:
+            break
+
+    return {
+        "poc_precio": precios[poc_idx], "poc_idx": poc_idx,
+        "val_precio": precios[fila_inf] - alto_fila / 2,
+        "vah_precio": precios[fila_sup] + alto_fila / 2,
+        "fila_inf": fila_inf, "fila_sup": fila_sup,
+        "total_tpo": total_tpo, "porcentaje_cubierto": acumulado / total_tpo * 100,
+    }
+
+
+def _at_clasificar_forma_perfil(perfil, poc_info):
+    """Clasifica la forma del perfil según dónde cae el POC en el rango, y
+    si hay un segundo pico significativo separado del POC por un valle
+    (Doble Distribución). Heurística simplificada — no sustituye la
+    lectura visual completa de un Market Profile, pero da una idea rápida
+    del tipo de sesión."""
+    tpo = perfil["tpo_por_fila"]
+    n_filas = len(tpo)
+    poc_idx = poc_info["poc_idx"]
+    posicion_poc_pct = poc_idx / (n_filas - 1) * 100 if n_filas > 1 else 50
+
+    umbral_pico_secundario = tpo[poc_idx] * 0.7 if poc_info["total_tpo"] > 0 else 0
+    doble_distribucion = False
+    for i in range(1, n_filas - 1):
+        if i == poc_idx:
+            continue
+        es_pico_local = tpo[i] > tpo[i - 1] and tpo[i] > tpo[i + 1]
+        if es_pico_local and tpo[i] >= umbral_pico_secundario and abs(i - poc_idx) > n_filas * 0.15:
+            inicio, fin = sorted([i, poc_idx])
+            valle = tpo[inicio + 1:fin] if fin > inicio + 1 else np.array([0])
+            if valle.size and valle.min() < min(tpo[i], tpo[poc_idx]) * 0.5:
+                doble_distribucion = True
+                break
+
+    if doble_distribucion:
+        return "Doble Distribución (posible cambio de sesgo intra-sesión)"
+    elif posicion_poc_pct >= 70:
+        return "Día de Tendencia Alcista (POC en la parte alta del rango)"
+    elif posicion_poc_pct <= 30:
+        return "Día de Tendencia Bajista (POC en la parte baja del rango)"
+    else:
+        return "Día Normal / Balanceado (POC cerca del centro del rango)"
+
+
+def _at_analizar_market_profile(ticker, periodo_tpo_label):
+    """Arma el Market Profile (TPO) de la sesión más reciente disponible:
+    Punto de Control (POC), Área de Valor (VAH/VAL) y forma del día.
+
+    Devuelve (resumen, contexto_grafico) si pudo analizar, o (None, mensaje)
+    si no hay datos suficientes."""
+    n_velas_periodo = MARKET_PROFILE_PERIODOS_DISPONIBLES[periodo_tpo_label]
+
+    data = _at_descargar_orb(ticker)
+    if data is None or data.empty:
+        return None, (
+            f"No se pudieron descargar velas de 5 minutos para {ticker}. El Market Profile necesita datos "
+            f"intradía, que Yahoo Finance no siempre ofrece (típico en ETFs poco líquidos, forex exóticos "
+            f"o algunos mercados reales). Probá con otro activo o con otro método."
+        )
+
+    # Se pide al menos 3 períodos TPO completos para que el perfil tenga
+    # sentido (con menos, el POC/Área de Valor son poco representativos).
+    sub_dia, dia_objetivo = _at_seleccionar_sesion(data, min_velas=n_velas_periodo * 3)
+    if sub_dia is None:
+        return None, (
+            "No hay suficientes velas dentro de una misma sesión para armar un Market Profile con este "
+            "período de TPO. Probá con un período más corto (ej. 15 Minutos)."
+        )
+
+    perfil = _at_construir_market_profile(sub_dia, n_velas_periodo)
+    if perfil is None:
+        return None, "El rango de precios de la sesión fue cero o inválido; no se pudo armar el perfil."
+
+    poc_info = _at_calcular_poc_y_valor(perfil)
+    if poc_info is None:
+        return None, "No se pudo calcular el Punto de Control (POC) para esta sesión."
+
+    forma = _at_clasificar_forma_perfil(perfil, poc_info)
+
+    precio_actual = sub_dia["Close"].iloc[-1]
+    vah, val = poc_info["vah_precio"], poc_info["val_precio"]
+
+    if precio_actual > vah:
+        posicion = "Por encima del Área de Valor"
+        sesgo_texto = ("Rechazo del rango si vuelve a entrar, o continuación alcista si mantiene "
+                       "cierres por fuera del VAH.")
+    elif precio_actual < val:
+        posicion = "Por debajo del Área de Valor"
+        sesgo_texto = ("Rechazo del rango si vuelve a entrar, o continuación bajista si mantiene "
+                       "cierres por fuera del VAL.")
+    else:
+        posicion = "Dentro del Área de Valor"
+        sesgo_texto = "Zona de equilibrio: lo esperable es rotación dentro del área de valor, sin dirección clara."
+
+    senal = f"{forma.split(' (')[0]} — Precio {posicion.lower()}"
+
+    conclusion = (
+        f"El perfil de la sesión ({str(dia_objetivo)}) muestra un Punto de Control (POC) en "
+        f"${poc_info['poc_precio']:.2f}, con un Área de Valor entre ${val:.2f} (VAL) y ${vah:.2f} (VAH) "
+        f"que concentra ~{poc_info['porcentaje_cubierto']:.0f}% del tiempo/actividad de la sesión. "
+        f"Se clasifica como {forma.lower()}. {sesgo_texto}"
+    )
+
+    resumen = {
+        "Método": f"Market Profile / TPO ({periodo_tpo_label})",
+        "Señal principal": senal,
+        "POC (Punto de Control)": poc_info["poc_precio"],
+        "VAH (techo Área de Valor)": vah,
+        "VAL (piso Área de Valor)": val,
+        "% de la sesión en el Área de Valor": poc_info["porcentaje_cubierto"],
+        "Forma del perfil": forma,
+        "Sesión analizada": str(dia_objetivo),
+        "Conclusión": conclusion,
+    }
+
+    contexto_grafico = {"sub_dia": sub_dia, "perfil": perfil, "poc_info": poc_info}
+    return resumen, contexto_grafico
+
+
+# ==============================================================
+#  MÉTODO 7: OPENING RANGE BREAKOUT (ORB)
 # ==============================================================
 
 def _at_calcular_vwap_sesion(sub_dia):
@@ -925,24 +1175,16 @@ def _at_analizar_orb(ticker, periodo_orb_label):
     # de forma realista en vez de comparar solo contra la propia caja.
     vol_promedio_horario = data.groupby(data.index.time)["Volume"].mean()
 
-    # Buscar la sesión más reciente que ya tenga al menos la caja completa
-    # + 1 vela de confirmación (si la sesión de hoy está en curso y todavía
-    # no llegó a formar la caja, cae a la última sesión completa).
-    fechas = sorted(set(data.index.date))
-    dia_objetivo = None
-    for fecha in reversed(fechas):
-        sub_fecha = data[data.index.date == fecha]
-        if len(sub_fecha) >= n_velas_caja + 1:
-            dia_objetivo = fecha
-            break
-
-    if dia_objetivo is None:
+    # Sesión más reciente que ya tenga al menos la caja completa + 1 vela
+    # de confirmación (si la de hoy está en curso y no llegó al mínimo,
+    # cae a la última sesión completa).
+    sub_dia, dia_objetivo = _at_seleccionar_sesion(data, min_velas=n_velas_caja + 1)
+    if sub_dia is None:
         return None, (
             f"No hay suficientes velas dentro de una misma sesión para formar la caja de apertura de "
             f"{periodo_orb_label}. Probá con un período de caja más corto (ej. 5 Minutos)."
         )
 
-    sub_dia = data[data.index.date == dia_objetivo]
     caja = sub_dia.iloc[:n_velas_caja]
     resto = sub_dia.iloc[n_velas_caja:]
 
@@ -1066,9 +1308,9 @@ def _at_analizar_orb(ticker, periodo_orb_label):
 
 
 # ==============================================================
-#  DISPATCH (métodos Weinstein / O'Neil / Darvas / Wyckoff — ORB tiene
-#  su propio flujo en _at_ejecutar_orb porque no comparte pipeline de
-#  datos con estos 4)
+#  DISPATCH (métodos Weinstein / O'Neil / Darvas / Wyckoff / CPR — ORB y
+#  Market Profile tienen su propio flujo en _at_ejecutar_* porque no
+#  comparten pipeline de datos con estos 5)
 # ==============================================================
 
 def _at_analizar(metodo, data, benchmark_data=None, timeframe_label=TIMEFRAME_DEFAULT):
@@ -1112,29 +1354,27 @@ def _at_fig_precio(data, lineas_extra, marcadores_extra, titulo):
     )
     return fig
 
+
 # ==============================================================
-#  GRÁFICO — método CPR (ventana reciente + niveles horizontales,
-#  mismo estilo visual que el gráfico de ORB, en vez de superponer
-#  líneas sobre TODO el histórico)
+#  GRÁFICO — método CPR: sesión en velas de 5 minutos desde la apertura
+#  (igual que ORB), con los niveles calculados según la temporalidad
+#  seleccionada arriba superpuestos como líneas horizontales. Si el
+#  ticker no tiene datos intradía disponibles, cae de nuevo a mostrar la
+#  última ventana de velas de la temporalidad elegida.
 # ==============================================================
 
-def _at_fig_cpr(data, resumen, etiqueta_activo, tf_cfg, n_velas_mostrar=60):
-    """En vez de dibujar el CPR como líneas continuas sobre años de datos
-    (ilegible), se muestra solo la ventana más reciente de velas junto con
-    los niveles del CPR VIGENTE (Pivot/TC/BC/R1-R4/S1-S4) como líneas
-    horizontales y la caja BC-TC sombreada, igual que la caja de apertura
-    en el gráfico de ORB."""
-    sub = data.tail(n_velas_mostrar)
+def _at_fig_cpr(data, ticker, resumen, etiqueta_activo, tf_cfg, n_velas_fallback=60):
+    """Los NIVELES numéricos (Pivot/TC/BC/R1-R4/S1-S4) siempre salen de
+    _at_analizar_cpr, calculados con la temporalidad que el usuario eligió
+    arriba — acá solo cambia CÓMO se visualiza el precio: en vez de la
+    última ventana de velas de esa temporalidad, se muestra la sesión más
+    reciente en velas de 5 minutos desde la apertura, para poder ver con
+    detalle cómo se comportó el precio contra esos niveles minuto a
+    minuto."""
+    data_intradia = _at_descargar_orb(ticker)
+    sub_dia, dia_objetivo = _at_seleccionar_sesion(data_intradia, min_velas=1) if data_intradia is not None else (None, None)
 
     techo, piso, pivot = resumen["TC (techo)"], resumen["BC (piso)"], resumen["Pivot"]
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=sub.index, y=sub["Close"], mode='lines', name='Precio cierre',
-                              line=dict(color='#e6edf3', width=1.6)))
-
-    fig.add_shape(type="rect", x0=sub.index[0], x1=sub.index[-1], y0=piso, y1=techo,
-                  fillcolor="rgba(58,123,213,0.10)", line=dict(color="#3a7bd5", width=1))
-
     niveles_lineas = [
         ("R4", resumen["R4"], '#f85149'), ("R3", resumen["R3"], '#f85149'),
         ("R2", resumen["R2"], '#e3b341'), ("R1", resumen["R1"], '#e3b341'),
@@ -1142,6 +1382,30 @@ def _at_fig_cpr(data, resumen, etiqueta_activo, tf_cfg, n_velas_mostrar=60):
         ("S1", resumen["S1"], '#39c5cf'), ("S2", resumen["S2"], '#39c5cf'),
         ("S3", resumen["S3"], '#e3b341'), ("S4", resumen["S4"], '#e3b341'),
     ]
+
+    fig = go.Figure()
+
+    if sub_dia is not None and not sub_dia.empty:
+        # Caso normal: sesión más reciente en velas de 5 minutos, desde
+        # la apertura hasta el dato más nuevo disponible.
+        fig.add_trace(go.Scatter(x=sub_dia.index, y=sub_dia["Close"], mode='lines', name='Precio cierre',
+                                  line=dict(color='#e6edf3', width=1.6)))
+        fig.add_shape(type="rect", x0=sub_dia.index[0], x1=sub_dia.index[-1], y0=piso, y1=techo,
+                      fillcolor="rgba(58,123,213,0.10)", line=dict(color="#3a7bd5", width=1))
+        eje_x_titulo = 'Hora'
+        subtitulo = f" — sesión {dia_objetivo} en velas de 5 minutos"
+    else:
+        # Fallback: ticker sin datos de 5 minutos en Yahoo Finance (pasa
+        # con algunos forex/mercados reales) — se muestra la última
+        # ventana de velas de la temporalidad seleccionada, como antes.
+        sub = data.tail(n_velas_fallback)
+        fig.add_trace(go.Scatter(x=sub.index, y=sub["Close"], mode='lines', name='Precio cierre',
+                                  line=dict(color='#e6edf3', width=1.6)))
+        fig.add_shape(type="rect", x0=sub.index[0], x1=sub.index[-1], y0=piso, y1=techo,
+                      fillcolor="rgba(58,123,213,0.10)", line=dict(color="#3a7bd5", width=1))
+        eje_x_titulo = 'Fecha'
+        subtitulo = " — sin datos intradía de 5 minutos disponibles, se muestra la temporalidad seleccionada"
+
     for nombre, valor, color in niveles_lineas:
         if valor is None or (isinstance(valor, float) and np.isnan(valor)):
             continue
@@ -1150,12 +1414,54 @@ def _at_fig_cpr(data, resumen, etiqueta_activo, tf_cfg, n_velas_mostrar=60):
 
     fig.update_layout(
         plot_bgcolor='#0d1117', paper_bgcolor='#07090f', font=dict(color='#b0bcd0', family='Inter, sans-serif'),
-        title=dict(text=f"CPR — {etiqueta_activo} ({tf_cfg['sufijo_grafico']})", font=dict(color='#e6edf3', size=14)),
-        xaxis=dict(title='Fecha', gridcolor='#21262d'), yaxis=dict(title='Precio', gridcolor='#21262d'),
+        title=dict(text=f"CPR ({tf_cfg['sufijo_grafico']}){subtitulo} — {etiqueta_activo}",
+                   font=dict(color='#e6edf3', size=14)),
+        xaxis=dict(title=eje_x_titulo, gridcolor='#21262d'), yaxis=dict(title='Precio', gridcolor='#21262d'),
         height=460, margin=dict(l=10, r=10, t=45, b=30), legend=dict(orientation='h', y=-0.2),
     )
     return fig
-    
+
+
+# ==============================================================
+#  GRÁFICO — método Market Profile (histograma de TPO a la izquierda +
+#  precio intradía a la derecha, con POC y Área de Valor superpuestos)
+# ==============================================================
+
+def _at_fig_market_profile(contexto, etiqueta_activo, periodo_tpo_label):
+    sub_dia = contexto["sub_dia"]
+    perfil = contexto["perfil"]
+    poc_info = contexto["poc_info"]
+
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.25, 0.75], shared_yaxes=True,
+                         horizontal_spacing=0.02)
+
+    fig.add_trace(go.Bar(x=perfil["tpo_por_fila"], y=perfil["precios_fila"], orientation='h',
+                          width=perfil["alto_fila"] * 0.9,
+                          marker=dict(color='#3a7bd5'), name='TPO por nivel', showlegend=False),
+                  row=1, col=1)
+
+    fig.add_trace(go.Scatter(x=sub_dia.index, y=sub_dia["Close"], mode='lines', name='Precio cierre',
+                              line=dict(color='#e6edf3', width=1.6)), row=1, col=2)
+
+    fig.add_hline(y=poc_info["poc_precio"], line=dict(color='#e3b341', width=1.5),
+                  annotation_text='POC', annotation_position='top left', row=1, col=2)
+    fig.add_hrect(y0=poc_info["val_precio"], y1=poc_info["vah_precio"],
+                  fillcolor="rgba(63,185,80,0.08)", line=dict(color="#3fb950", width=1), row=1, col=2)
+
+    fig.update_layout(
+        plot_bgcolor='#0d1117', paper_bgcolor='#07090f', font=dict(color='#b0bcd0', family='Inter, sans-serif'),
+        title=dict(text=f"Market Profile {periodo_tpo_label} — {etiqueta_activo}",
+                   font=dict(color='#e6edf3', size=14)),
+        height=480, margin=dict(l=10, r=10, t=45, b=30), legend=dict(orientation='h', y=-0.15),
+        bargap=0.1, showlegend=True,
+    )
+    fig.update_xaxes(title_text='TPOs', gridcolor='#21262d', row=1, col=1)
+    fig.update_xaxes(title_text='Hora', gridcolor='#21262d', row=1, col=2)
+    fig.update_yaxes(title_text='Precio', gridcolor='#21262d', row=1, col=1)
+    fig.update_yaxes(gridcolor='#21262d', row=1, col=2)
+    return fig
+
+
 # ==============================================================
 #  GRÁFICO — método ORB (velas intradía + caja de apertura + VWAP)
 # ==============================================================
@@ -1189,7 +1495,7 @@ def _at_fig_orb(contexto, etiqueta_activo, periodo_orb_label):
 
 # ==============================================================
 #  TARJETA DE RESUMEN (mismo lenguaje visual que el resto de la app,
-#  compartida por los 5 métodos)
+#  compartida por los 7 métodos)
 # ==============================================================
 
 def _at_tarjeta_resumen(resumen):
@@ -1240,7 +1546,7 @@ def _at_tarjeta_resumen(resumen):
 # ==============================================================
 #  FLUJO COMPLETO DEL MÉTODO ORB (datos, métricas, tarjeta, gráfico)
 #  Separado del resto porque no comparte pipeline (MM/ADX/benchmark)
-#  con Weinstein/O'Neil/Darvas/Wyckoff.
+#  con Weinstein/O'Neil/Darvas/Wyckoff/CPR.
 # ==============================================================
 
 def _at_ejecutar_orb(ticker, etiqueta_activo, periodo_orb_label, PLOTLY_CONFIG):
@@ -1276,6 +1582,44 @@ def _at_ejecutar_orb(ticker, etiqueta_activo, periodo_orb_label, PLOTLY_CONFIG):
 
 
 # ==============================================================
+#  FLUJO COMPLETO DEL MÉTODO MARKET PROFILE (datos, métricas, tarjeta,
+#  gráfico). Separado del resto porque no comparte pipeline con los
+#  otros 5 métodos ni con ORB (aunque reutiliza la misma descarga de
+#  velas de 5 minutos).
+# ==============================================================
+
+def _at_ejecutar_market_profile(ticker, etiqueta_activo, periodo_tpo_label, PLOTLY_CONFIG):
+    with st.spinner(f'Descargando velas de 5 minutos de {ticker}...'):
+        resumen, extra = _at_analizar_market_profile(ticker, periodo_tpo_label)
+
+    if resumen is None:
+        st.error(extra)
+        return
+
+    contexto = extra
+    sub_dia = contexto["sub_dia"]
+
+    cols = st.columns(4)
+    with cols[0]:
+        st.metric('Último cierre', f"${sub_dia['Close'].iloc[-1]:,.2f}")
+    with cols[1]:
+        st.metric('POC', f"${resumen['POC (Punto de Control)']:,.2f}")
+    with cols[2]:
+        st.metric('Período TPO', periodo_tpo_label)
+    with cols[3]:
+        st.metric('Sesión analizada', resumen['Sesión analizada'])
+
+    tab_resumen, tab_grafico = st.tabs(['🧾 Resumen y señal', '📈 Gráfico'])
+
+    with tab_resumen:
+        _at_tarjeta_resumen(resumen)
+
+    with tab_grafico:
+        fig = _at_fig_market_profile(contexto, etiqueta_activo, periodo_tpo_label)
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+
+# ==============================================================
 #  ENTRY POINT — llamar esto desde el archivo principal
 #  (reemplaza a modulo_sector_rotation / modulo_commodities_rotation /
 #   modulo_cripto_rotation / modulo_indices_rotation)
@@ -1284,17 +1628,22 @@ def _at_ejecutar_orb(ticker, etiqueta_activo, periodo_orb_label, PLOTLY_CONFIG):
 # ==============================================================
 
 def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
-    """Análisis técnico de un activo con 5 métodos clásicos: Stan Weinstein,
-    William O'Neil, Darvas Box, Wyckoff y ORB (Opening Range Breakout).
-    Los primeros 4 operan en 7 temporalidades (1 Día, 4 Horas, 1 Hora,
-    45 Minutos, 30 Minutos, 15 Minutos, 5 Minutos); el ORB arma su propia
-    caja con los primeros 5/15/30 minutos de cada sesión, en vez de usar el
-    selector de temporalidad genérico. El ADX de Wilder se calcula siempre
-    como filtro/dato transversal en los primeros 4 métodos; ORB usa su
-    propio ATR + VWAP + RSI + volumen relativo por horario. El activo se
-    elige desde las categorías de tu configuración (acciones por industria,
-    forex, índices/países, ETFs de índice, ETFs de sector/subsector,
-    mercados reales) o como ticker manual. No se guarda ningún historial."""
+    """Análisis técnico de un activo con 7 métodos: Stan Weinstein,
+    William O'Neil, Darvas Box, Wyckoff, CPR, Market Profile (TPO) y ORB
+    (Opening Range Breakout).
+
+    Los primeros 5 (Weinstein, O'Neil, Darvas, Wyckoff, CPR) operan sobre
+    la temporalidad que elijas (1 Día, 4 Horas, 1 Hora, 45/30/15/5
+    Minutos). Market Profile y ORB trabajan por SESIÓN, con su propio
+    selector de período (TPO / caja de apertura) en vez del selector de
+    temporalidad genérico, y comparten la misma descarga de velas de 5
+    minutos.
+
+    El ADX de Wilder se calcula siempre como filtro/dato transversal en
+    los primeros 5 métodos. El activo se elige desde las categorías de tu
+    configuración (acciones por industria, forex, índices/países, ETFs de
+    índice, ETFs de sector/subsector, mercados reales) o como ticker
+    manual. No se guarda ningún historial."""
 
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
@@ -1302,15 +1651,17 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
          border-radius:14px; padding:26px 30px; margin-bottom:22px;">
       <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📐 Análisis Técnico</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Analizá cualquier activo de tu universo con 5 métodos técnicos clásicos:
-        <b style="color:#e6edf3">Stan Weinstein</b> (fases de mercado), <b style="color:#e6edf3">William O'Neil</b>
-        (CANSLIM técnico / fuerza relativa), <b style="color:#e6edf3">Darvas Box</b> (cajas de consolidación +
-        breakout), <b style="color:#e6edf3">Wyckoff</b> (acumulación/distribución) y <b style="color:#e6edf3">ORB</b>
-        (Opening Range Breakout intradía). Los primeros 4 métodos operan en la temporalidad que elijas:
-        <b style="color:#e6edf3">1 Día</b>, <b style="color:#e6edf3">4 Horas</b>, <b style="color:#e6edf3">1 Hora</b>,
-        <b style="color:#e6edf3">45 Minutos</b>, <b style="color:#e6edf3">30 Minutos</b>,
-        <b style="color:#e6edf3">15 Minutos</b> o <b style="color:#e6edf3">5 Minutos</b>; el ORB arma su propia caja
-        con los primeros 5/15/30 minutos de la sesión. Este análisis no se guarda: vive solo en la sesión actual.
+        Analizá cualquier activo de tu universo con 7 métodos técnicos: <b style="color:#e6edf3">Stan
+        Weinstein</b> (fases de mercado), <b style="color:#e6edf3">William O'Neil</b> (CANSLIM técnico /
+        fuerza relativa), <b style="color:#e6edf3">Darvas Box</b> (cajas de consolidación + breakout),
+        <b style="color:#e6edf3">Wyckoff</b> (acumulación/distribución), <b style="color:#e6edf3">CPR</b>
+        (Central Pivot Range + R1-R4/S1-S4), <b style="color:#e6edf3">Market Profile</b> (POC + Área de Valor)
+        y <b style="color:#e6edf3">ORB</b> (Opening Range Breakout intradía). Los primeros 5 operan en la
+        temporalidad que elijas: <b style="color:#e6edf3">1 Día</b>, <b style="color:#e6edf3">4 Horas</b>,
+        <b style="color:#e6edf3">1 Hora</b>, <b style="color:#e6edf3">45 Minutos</b>,
+        <b style="color:#e6edf3">30 Minutos</b>, <b style="color:#e6edf3">15 Minutos</b> o
+        <b style="color:#e6edf3">5 Minutos</b>; Market Profile y ORB arman su propio período por sesión.
+        Este análisis no se guarda: vive solo en la sesión actual.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1327,10 +1678,13 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
     with col3:
         if metodo == "orb":
             periodo_orb_label = _at_seleccionar_periodo_orb()
-            timeframe_label = None
+            timeframe_label, periodo_tpo_label = None, None
+        elif metodo == "market_profile":
+            periodo_tpo_label = _at_seleccionar_periodo_market_profile()
+            timeframe_label, periodo_orb_label = None, None
         else:
             timeframe_label = _at_seleccionar_timeframe()
-            periodo_orb_label = None
+            periodo_orb_label, periodo_tpo_label = None, None
 
     if not ticker:
         st.info('Seleccioná o ingresá un activo para analizar.')
@@ -1341,7 +1695,12 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
         _at_ejecutar_orb(ticker, etiqueta_activo, periodo_orb_label, PLOTLY_CONFIG)
         return
 
-    # ---- Flujo Weinstein / O'Neil / Darvas / Wyckoff (sin cambios) ----
+    # ---- Flujo Market Profile: pipeline propio, se corta acá ----
+    if metodo == "market_profile":
+        _at_ejecutar_market_profile(ticker, etiqueta_activo, periodo_tpo_label, PLOTLY_CONFIG)
+        return
+
+    # ---- Flujo Weinstein / O'Neil / Darvas / Wyckoff / CPR ----
     tf_cfg = TIMEFRAMES_DISPONIBLES[timeframe_label]
 
     with st.spinner(f'Descargando datos de {ticker} ({timeframe_label})...'):
@@ -1390,7 +1749,7 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
 
     with tab_grafico:
         if metodo == "cpr":
-            fig = _at_fig_cpr(data, resumen, etiqueta_activo, tf_cfg)
+            fig = _at_fig_cpr(data, ticker, resumen, etiqueta_activo, tf_cfg)
         else:
             titulo = f"{resumen['Método']} — {etiqueta_activo} ({tf_cfg['sufijo_grafico']})"
             fig = _at_fig_precio(data, lineas_extra, marcadores_extra, titulo)
