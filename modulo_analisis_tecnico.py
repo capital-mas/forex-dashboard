@@ -1112,7 +1112,50 @@ def _at_fig_precio(data, lineas_extra, marcadores_extra, titulo):
     )
     return fig
 
+# ==============================================================
+#  GRÁFICO — método CPR (ventana reciente + niveles horizontales,
+#  mismo estilo visual que el gráfico de ORB, en vez de superponer
+#  líneas sobre TODO el histórico)
+# ==============================================================
 
+def _at_fig_cpr(data, resumen, etiqueta_activo, tf_cfg, n_velas_mostrar=60):
+    """En vez de dibujar el CPR como líneas continuas sobre años de datos
+    (ilegible), se muestra solo la ventana más reciente de velas junto con
+    los niveles del CPR VIGENTE (Pivot/TC/BC/R1-R4/S1-S4) como líneas
+    horizontales y la caja BC-TC sombreada, igual que la caja de apertura
+    en el gráfico de ORB."""
+    sub = data.tail(n_velas_mostrar)
+
+    techo, piso, pivot = resumen["TC (techo)"], resumen["BC (piso)"], resumen["Pivot"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=sub.index, y=sub["Close"], mode='lines', name='Precio cierre',
+                              line=dict(color='#e6edf3', width=1.6)))
+
+    fig.add_shape(type="rect", x0=sub.index[0], x1=sub.index[-1], y0=piso, y1=techo,
+                  fillcolor="rgba(58,123,213,0.10)", line=dict(color="#3a7bd5", width=1))
+
+    niveles_lineas = [
+        ("R4", resumen["R4"], '#f85149'), ("R3", resumen["R3"], '#f85149'),
+        ("R2", resumen["R2"], '#e3b341'), ("R1", resumen["R1"], '#e3b341'),
+        ("TC", techo, '#3fb950'), ("Pivot", pivot, '#a371f7'), ("BC", piso, '#3fb950'),
+        ("S1", resumen["S1"], '#39c5cf'), ("S2", resumen["S2"], '#39c5cf'),
+        ("S3", resumen["S3"], '#e3b341'), ("S4", resumen["S4"], '#e3b341'),
+    ]
+    for nombre, valor, color in niveles_lineas:
+        if valor is None or (isinstance(valor, float) and np.isnan(valor)):
+            continue
+        fig.add_hline(y=valor, line=dict(color=color, width=1, dash='dash'),
+                      annotation_text=nombre, annotation_position='right')
+
+    fig.update_layout(
+        plot_bgcolor='#0d1117', paper_bgcolor='#07090f', font=dict(color='#b0bcd0', family='Inter, sans-serif'),
+        title=dict(text=f"CPR — {etiqueta_activo} ({tf_cfg['sufijo_grafico']})", font=dict(color='#e6edf3', size=14)),
+        xaxis=dict(title='Fecha', gridcolor='#21262d'), yaxis=dict(title='Precio', gridcolor='#21262d'),
+        height=460, margin=dict(l=10, r=10, t=45, b=30), legend=dict(orientation='h', y=-0.2),
+    )
+    return fig
+    
 # ==============================================================
 #  GRÁFICO — método ORB (velas intradía + caja de apertura + VWAP)
 # ==============================================================
@@ -1346,6 +1389,9 @@ def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
         _at_tarjeta_resumen(resumen)
 
     with tab_grafico:
-        titulo = f"{resumen['Método']} — {etiqueta_activo} ({tf_cfg['sufijo_grafico']})"
-        fig = _at_fig_precio(data, lineas_extra, marcadores_extra, titulo)
+        if metodo == "cpr":
+            fig = _at_fig_cpr(data, resumen, etiqueta_activo, tf_cfg)
+        else:
+            titulo = f"{resumen['Método']} — {etiqueta_activo} ({tf_cfg['sufijo_grafico']})"
+            fig = _at_fig_precio(data, lineas_extra, marcadores_extra, titulo)
         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
