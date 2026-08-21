@@ -70,6 +70,7 @@ METODOS_DISPONIBLES = {
     "William O'Neil (CANSLIM técnico)": "oneil",
     "Darvas Box": "darvas",
     "Wyckoff (Acumulación/Distribución)": "wyckoff",
+    "CPR (Central Pivot Range)": "cpr",
     "ORB (Opening Range Breakout)": "orb",
 }
 
@@ -704,7 +705,109 @@ def _at_analizar_wyckoff(data, ventana=90):
 
 
 # ==============================================================
-#  MÉTODO 5: OPENING RANGE BREAKOUT (ORB)
+#  MÉTODO 5: CPR (Central Pivot Range)
+# ==============================================================
+
+def _at_calcular_cpr(data):
+    """Central Pivot Range clásico de floor traders, calculado con la vela
+    ANTERIOR y proyectado sobre la vela actual: Pivot = (H+L+C)/3, BC
+    (Bottom Central) = (H+L)/2, TC (Top Central) = 2*Pivot - BC. El ancho
+    del CPR (TC - BC) es la señal clave: un CPR angosto respecto a su
+    propio promedio reciente suele preceder un período de tendencia/
+    breakout; uno ancho suele preceder un período lateral (rango). Al
+    igual que Darvas/Wyckoff, funciona igual sin importar la temporalidad
+    elegida porque opera sobre 'la vela anterior', no sobre una cantidad
+    fija de días calendario."""
+    high_prev = data["High"].shift(1)
+    low_prev = data["Low"].shift(1)
+    close_prev = data["Close"].shift(1)
+
+    pivot = (high_prev + low_prev + close_prev) / 3
+    bc = (high_prev + low_prev) / 2
+    tc = 2 * pivot - bc
+
+    # normalizamos para que "techo" sea siempre el mayor de los dos (TC y
+    # BC pueden invertirse en velas bajistas fuertes)
+    techo = pd.concat([tc, bc], axis=1).max(axis=1)
+    piso = pd.concat([tc, bc], axis=1).min(axis=1)
+    ancho = techo - piso
+
+    return pivot, techo, piso, ancho
+
+
+def _at_analizar_cpr(data, ventana_ancho=10):
+    pivot, techo, piso, ancho = _at_calcular_cpr(data)
+    data = data.copy()
+    data["CPR_Pivot"], data["CPR_Techo"], data["CPR_Piso"] = pivot, techo, piso
+
+    precio = data["Close"].iloc[-1]
+    pivot_actual, techo_actual, piso_actual = pivot.iloc[-1], techo.iloc[-1], piso.iloc[-1]
+    ancho_actual = ancho.iloc[-1]
+    ancho_promedio = ancho.tail(ventana_ancho).mean()
+
+    ancho_pct_vs_promedio = (
+        (ancho_actual / ancho_promedio - 1) * 100
+        if ancho_promedio and not np.isnan(ancho_promedio) else np.nan
+    )
+
+    if not np.isnan(ancho_pct_vs_promedio) and ancho_pct_vs_promedio <= -25:
+        tipo_dia = "CPR angosto — probable período de tendencia/breakout"
+    elif not np.isnan(ancho_pct_vs_promedio) and ancho_pct_vs_promedio >= 25:
+        tipo_dia = "CPR ancho — probable período lateral / de rango"
+    else:
+        tipo_dia = "CPR de ancho normal — sin sesgo claro de tipo de período"
+
+    if precio > techo_actual:
+        posicion, sesgo = "Precio por ENCIMA del CPR (sobre el TC)", "alcista"
+    elif precio < piso_actual:
+        posicion, sesgo = "Precio por DEBAJO del CPR (bajo el BC)", "bajista"
+    else:
+        posicion, sesgo = "Precio DENTRO del CPR (entre BC y TC)", "neutral"
+
+    adx_actual = data["ADX"].iloc[-1] if "ADX" in data.columns else np.nan
+    plus_di_actual = data["+DI"].iloc[-1] if "+DI" in data.columns else np.nan
+    minus_di_actual = data["-DI"].iloc[-1] if "-DI" in data.columns else np.nan
+    adx_confirma_alcista = bool(not np.isnan(adx_actual) and adx_actual >= 25 and plus_di_actual > minus_di_actual)
+    adx_confirma_bajista = bool(not np.isnan(adx_actual) and adx_actual >= 25 and minus_di_actual > plus_di_actual)
+
+    if sesgo == "alcista":
+        senal = "Ruptura alcista del CPR" + (" con tendencia confirmada por ADX" if adx_confirma_alcista else "")
+        conclusion = (f"El precio está por encima del techo del CPR (TC ${techo_actual:.2f}), calculado con "
+                      f"la vela anterior. {tipo_dia}. Mientras se mantenga sobre el CPR, el sesgo de corto "
+                      f"plazo es alcista; el pivot (${pivot_actual:.2f}) sirve como primer soporte a vigilar "
+                      f"ante un pullback.")
+    elif sesgo == "bajista":
+        senal = "Ruptura bajista del CPR" + (" con tendencia confirmada por ADX" if adx_confirma_bajista else "")
+        conclusion = (f"El precio está por debajo del piso del CPR (BC ${piso_actual:.2f}), calculado con "
+                      f"la vela anterior. {tipo_dia}. Mientras se mantenga bajo el CPR, el sesgo de corto "
+                      f"plazo es bajista; el pivot (${pivot_actual:.2f}) sirve como primera resistencia a "
+                      f"vigilar ante un rebote.")
+    else:
+        senal = "Precio dentro del CPR — zona de equilibrio"
+        conclusion = (f"El precio está dentro del rango del CPR (piso ${piso_actual:.2f} – techo "
+                      f"${techo_actual:.2f}), zona de equilibrio entre compradores y vendedores. {tipo_dia}. "
+                      f"Conviene esperar una ruptura confirmada de cualquiera de los dos lados antes de tomar "
+                      f"una posición direccional.")
+
+    resumen = {
+        "Método": "CPR (Central Pivot Range)",
+        "Señal principal": senal,
+        "Descripción": posicion,
+        "Pivot": pivot_actual,
+        "TC (techo)": techo_actual,
+        "BC (piso)": piso_actual,
+        "Ancho del CPR": ancho_actual,
+        "Ancho vs. promedio reciente (%)": ancho_pct_vs_promedio,
+        "Tipo de período esperado": tipo_dia,
+        "ADX(14)": adx_actual,
+        "Conclusión": conclusion,
+    }
+    lineas_extra = [("Pivot", data["CPR_Pivot"]), ("TC", data["CPR_Techo"]), ("BC", data["CPR_Piso"])]
+    return resumen, lineas_extra, []
+
+
+# ==============================================================
+#  MÉTODO 6: OPENING RANGE BREAKOUT (ORB)
 # ==============================================================
 
 def _at_calcular_vwap_sesion(sub_dia):
@@ -935,6 +1038,8 @@ def _at_analizar(metodo, data, benchmark_data=None, timeframe_label=TIMEFRAME_DE
         return _at_analizar_darvas(data, timeframe_label)
     elif metodo == "wyckoff":
         return _at_analizar_wyckoff(data)
+    elif metodo == "cpr":
+        return _at_analizar_cpr(data)
     raise ValueError("Método no reconocido")
 
 
