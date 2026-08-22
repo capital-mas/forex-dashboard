@@ -1,10 +1,12 @@
 # ==============================================================
-#  MÓDULOS COMBINADOS: VOLATILIDAD + ANÁLISIS TÉCNICO
+#  MÓDULOS COMBINADOS: PERFIL DE VOLATILIDAD + ANÁLISIS TÉCNICO
 #
 #  Este archivo une dos módulos independientes que antes vivían en
 #  archivos separados:
 #
-#    1) MÓDULO VOLATILIDAD — Dashboard comparativo de índices VIX
+#    1) MÓDULO PERFIL DE VOLATILIDAD — Volatilidad realizada, volatilidad
+#       relativa (percentil/Z-Score), régimen (compresión/expansión) y
+#       cruce precio vs. volatilidad, para CUALQUIER activo de tu universo
 #       (funciones con prefijo _vol_, entry point: modulo_volatilidad)
 #
 #    2) MÓDULO ANÁLISIS TÉCNICO — Weinstein / O'Neil / Darvas Box /
@@ -35,8 +37,9 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # Diccionarios de activos (industrias, forex, países, ETFs, mercados
-# reales), usados por el módulo de Análisis Técnico. Deben vivir en un
-# módulo aparte para evitar import circular con app.py.
+# reales), usados por AMBOS módulos (Volatilidad y Análisis Técnico) para
+# el selector de activo. Deben vivir en un módulo aparte para evitar
+# import circular con app.py.
 from config_activos import (
     ACCIONES_POR_INDUSTRIA,
     FOREX,
@@ -48,61 +51,109 @@ from config_activos import (
 
 
 # ██████████████████████████████████████████████████████████████
-#  MÓDULO 1 — VOLATILIDAD
-#  Dashboard comparativo de índices VIX (VIX, VXN, RVX, VXD, OVX, GVZ,
-#  VXEEM, VXFXI) + curva de plazos del VIX clásico + ratio VVIX/VIX +
-#  correlación con el subyacente.
+#  MÓDULO 1 — PERFIL DE VOLATILIDAD DEL ACTIVO
 #
-#  Módulo independiente del de Análisis Técnico: acá NO se elige un
-#  solo activo para estudiarlo con distintos métodos, sino que se
-#  bajan y comparan TODOS los índices de volatilidad de una, en un
-#  dashboard. Un VIX no se analiza con medias móviles como una acción
-#  (es mean-reverting, no tendencial), así que las señales acá son
-#  otras: percentil histórico, spikes, curva de plazos, correlación
-#  con el subyacente y ratio VVIX/VIX.
+#  Diferencia clave respecto a la versión anterior: acá NO se compara un
+#  universo fijo de índices de miedo (VIX/VXN/RVX/etc.), sino que se
+#  analiza la volatilidad de UN activo elegido por el usuario — el mismo
+#  selector por categorías que usa el módulo de Análisis Técnico (acciones
+#  por industria, forex, índices/países, ETFs, mercados reales, o ticker
+#  manual).
 #
-#  Sin persistencia: no se guarda nada en Supabase. Cada análisis
-#  vive solo en la sesión actual.
+#  Cuatro bloques de análisis:
+#    1) Volatilidad realizada anualizada en 6 ventanas (5/10/20/50/100/200
+#       ruedas), calculada sobre retornos logarítmicos diarios.
+#    2) Volatilidad relativa: percentil histórico (1 año) y Z-Score de la
+#       volatilidad de referencia contra el propio historial del activo.
+#    3) Régimen de volatilidad: heurística que ubica el momento actual
+#       dentro del ciclo COMPRESSION → BUILDING → EXPANSION → EXTREME →
+#       NORMALIZATION, usando percentil histórico + tendencia reciente.
+#    4) Cruce dirección de precio × dirección de volatilidad, para una
+#       lectura rápida del tipo de movimiento en curso (tendencia sana,
+#       tensión, capitulación, pérdida de momentum, compresión o
+#       preparación para una expansión).
+#
+#  Sin persistencia: no se guarda nada en Supabase. Cada análisis vive
+#  solo en la sesión actual.
 # ██████████████████████████████████████████████████████████████
 
 # ==============================================================
 #  CONFIG
-#  (si preferís centralizar todo en config_activos.py, este dict se
-#  puede mover ahí sin cambiar nada más del módulo)
 # ==============================================================
 
-# Índices de volatilidad a comparar + su "referencia" (el activo/índice
-# subyacente cuya volatilidad implícita miden), usada para la
-# correlación. Todos con ticker confiable y con historia larga en
-# Yahoo Finance.
-VOL_INDICES = {
-    "VIX (S&P 500)":      {"ticker": "^VIX",   "grupo": "Acciones EE.UU.", "referencia": "^GSPC"},
-    "VXN (Nasdaq 100)":   {"ticker": "^VXN",   "grupo": "Acciones EE.UU.", "referencia": "^NDX"},
-    "RVX (Russell 2000)": {"ticker": "^RVX",   "grupo": "Acciones EE.UU.", "referencia": "^RUT"},
-    "VXD (Dow Jones)":    {"ticker": "^VXD",   "grupo": "Acciones EE.UU.", "referencia": "^DJI"},
-    "OVX (Petróleo)":     {"ticker": "^OVX",   "grupo": "Commodities",     "referencia": "CL=F"},
-    "GVZ (Oro)":          {"ticker": "^GVZ",   "grupo": "Commodities",     "referencia": "GC=F"},
-    "VXEEM (Emergentes)": {"ticker": "^VXEEM", "grupo": "Países/Regiones", "referencia": "EEM"},
-    "VXFXI (China)":      {"ticker": "^VXFXI", "grupo": "Países/Regiones", "referencia": "FXI"},
-}
-GRUPOS_ORDEN = ["Acciones EE.UU.", "Commodities", "Países/Regiones"]
+# Categorías del selector de activo (idénticas en espíritu a las de
+# Análisis Técnico, pero con claves de widget propias — prefijo "vol_" —
+# para no pisar las del otro módulo si ambos viven en la misma página).
+VOL_CATEGORIAS_ACTIVO = [
+    "Acción (por industria)",
+    "Forex",
+    "Índice / País",
+    "ETF de Índice",
+    "ETF Sector / Subsector",
+    "Mercado real (commodity / cripto)",
+    "Ticker manual",
+]
 
-# Familia de plazos del VIX "clásico" (S&P 500) — los únicos con
-# tickers de distintos vencimientos disponibles en Yahoo Finance, por
-# eso la curva de plazos (term structure) se arma solo con esta familia
-# y no con el resto de los índices de la tabla de arriba.
-VOL_TERM_STRUCTURE = {
-    "9 días":  "^VIX9D",
-    "30 días": "^VIX",
-    "3 meses": "^VIX3M",
-    "6 meses": "^VIX6M",
-}
-TICKER_VVIX = "^VVIX"
+# Ventanas de volatilidad realizada, en cantidad de ruedas.
+VOL_PERIODOS_REALIZADA = [5, 10, 20, 50, 100, 200]
+VOL_PERIODO_REFERENCIA_DEFAULT = 20
 
-# Umbrales de clasificación
-UMBRAL_SPIKE_ZSCORE = 2.0
-UMBRAL_ELEVADO_PERCENTIL = 70
-UMBRAL_BAJO_PERCENTIL = 30
+# Ventanas usadas para volatilidad relativa y detección de régimen.
+VOL_VENTANA_PERCENTIL = 252   # ~1 año de ruedas
+VOL_VENTANA_ZSCORE = 60
+VOL_VENTANA_TENDENCIA = 10    # ruedas hacia atrás para medir "¿está subiendo o bajando?"
+
+# Umbrales de clasificación.
+VOL_UMBRAL_SPIKE_ZSCORE = 2.5
+VOL_UMBRAL_ELEVADO_PERCENTIL = 70
+VOL_UMBRAL_BAJO_PERCENTIL = 30
+VOL_UMBRAL_PRECIO_PLANO_PCT = 2.0  # variación de precio por debajo de esto se considera "lateral"
+
+
+# ==============================================================
+#  SELECTOR DE ACTIVO
+# ==============================================================
+
+def _vol_seleccionar_ticker():
+    """Devuelve (ticker, etiqueta_legible) según la categoría elegida."""
+    categoria = st.selectbox('Tipo de activo', VOL_CATEGORIAS_ACTIVO, key='vol_categoria')
+
+    if categoria == "Acción (por industria)":
+        industria = st.selectbox('Industria', sorted(ACCIONES_POR_INDUSTRIA.keys()), key='vol_industria')
+        ticker = st.selectbox('Ticker', sorted(set(ACCIONES_POR_INDUSTRIA[industria])), key='vol_ticker_industria')
+        return ticker, f"{ticker} ({industria})"
+
+    elif categoria == "Forex":
+        par = st.selectbox('Par de divisas', sorted(FOREX.keys()), key='vol_forex_par')
+        ticker, sub = FOREX[par]
+        return ticker, f"{par} ({sub})"
+
+    elif categoria == "Índice / País":
+        pais = st.selectbox('País / Índice', sorted(PAISES.keys()), key='vol_pais')
+        ticker, region = PAISES[pais]
+        return ticker, f"{pais} ({region})"
+
+    elif categoria == "ETF de Índice":
+        nombre = st.selectbox('Índice (vía ETF)', sorted(ETFS.keys()), key='vol_etf_indice')
+        ticker, cat, _color = ETFS[nombre]
+        return ticker, f"{nombre} ({cat})"
+
+    elif categoria == "ETF Sector / Subsector":
+        nombre = st.selectbox('Sector / Subsector', sorted(SECTORES_TOTAL.keys()), key='vol_etf_sector')
+        ticker, cat, _color = SECTORES_TOTAL[nombre]
+        return ticker, f"{nombre} ({cat})"
+
+    elif categoria == "Mercado real (commodity / cripto)":
+        nombre = st.selectbox('Mercado', sorted(MERCADOS_REALES.keys()), key='vol_mercado_real')
+        ticker, cat, _color = MERCADOS_REALES[nombre]
+        return ticker, f"{nombre} ({cat})"
+
+    else:  # Ticker manual
+        ticker = st.text_input(
+            'Ticker manual (cualquier activo soportado por Yahoo Finance)',
+            value='AAPL', key='vol_ticker_manual',
+        ).strip().upper()
+        return ticker, ticker
 
 
 # ==============================================================
@@ -110,7 +161,7 @@ UMBRAL_BAJO_PERCENTIL = 30
 # ==============================================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _vol_descargar(ticker, periodo="5y", intervalo="1d"):
+def _vol_descargar(ticker, periodo="3y", intervalo="1d"):
     try:
         import yfinance as yf
         data = yf.Ticker(ticker).history(period=periodo, interval=intervalo, auto_adjust=True)
@@ -121,7 +172,8 @@ def _vol_descargar(ticker, periodo="5y", intervalo="1d"):
 
 
 # ==============================================================
-#  ESTADÍSTICA BASE (percentil, z-score, clasificación)
+#  ESTADÍSTICA BASE (percentil, z-score — igual lógica que antes, ahora
+#  aplicada a la volatilidad del activo en vez de a un índice VIX)
 # ==============================================================
 
 def _vol_percentil(serie, valor, ventana=None):
@@ -137,9 +189,7 @@ def _vol_percentil(serie, valor, ventana=None):
 
 def _vol_zscore(serie, ventana=60):
     """Qué tan lejos está el valor actual de su propio promedio reciente,
-    en desvíos estándar. Sirve para detectar spikes independientemente
-    del nivel absoluto de cada índice (un OVX y un VIX tienen escalas
-    distintas, pero un z-score alto significa lo mismo para los dos)."""
+    en desvíos estándar."""
     sub = serie.tail(ventana).dropna()
     if len(sub) < 20:
         return None
@@ -149,381 +199,455 @@ def _vol_zscore(serie, ventana=60):
     return float((serie.iloc[-1] - media) / desvio)
 
 
-def _vol_clasificar(percentil_1y, zscore_60):
-    if percentil_1y is None:
+# ==============================================================
+#  BLOQUE 1 — VOLATILIDAD REALIZADA (6 ventanas)
+# ==============================================================
+
+def _vol_calcular_retornos_log(close):
+    return np.log(close / close.shift(1))
+
+
+def _vol_calcular_vol_realizada(close, periodos=VOL_PERIODOS_REALIZADA):
+    """Volatilidad realizada anualizada (desvío estándar de retornos
+    logarítmicos diarios, anualizado con sqrt(252)) para cada ventana en
+    `periodos` (expresadas en ruedas). Devuelve un dict {periodo: serie_%}."""
+    retornos = _vol_calcular_retornos_log(close)
+    return {p: (retornos.rolling(p).std() * np.sqrt(252) * 100) for p in periodos}
+
+
+# ==============================================================
+#  BLOQUE 2 — VOLATILIDAD RELATIVA (percentil + Z-Score contra el propio
+#  historial de la volatilidad de referencia elegida)
+# ==============================================================
+
+def _vol_clasificar_relativa(percentil, zscore):
+    if percentil is None:
         return "Sin dato suficiente", "#6b7d9a"
-    if zscore_60 is not None and zscore_60 >= UMBRAL_SPIKE_ZSCORE:
-        return "SPIKE — subida abrupta vs. últimos 60 días", "#f85149"
-    if percentil_1y >= UMBRAL_ELEVADO_PERCENTIL:
-        return "Elevado vs. último año", "#e3b341"
-    if percentil_1y <= UMBRAL_BAJO_PERCENTIL:
-        return "Bajo vs. último año — complacencia", "#3fb950"
-    return "Normal", "#39c5cf"
+    if zscore is not None and zscore >= VOL_UMBRAL_SPIKE_ZSCORE:
+        return "Volatilidad muy elevada vs. su historial reciente (spike)", "#f85149"
+    if percentil >= VOL_UMBRAL_ELEVADO_PERCENTIL:
+        return "Volatilidad alta vs. su historial (1 año)", "#e3b341"
+    if percentil <= VOL_UMBRAL_BAJO_PERCENTIL:
+        return "Volatilidad baja vs. su historial — posible complacencia", "#3fb950"
+    return "Volatilidad normal vs. su historial", "#39c5cf"
 
 
 # ==============================================================
-#  ANÁLISIS POR ÍNDICE (nivel, percentil, spike, correlación con el
-#  subyacente de referencia)
+#  BLOQUE 3 — RÉGIMEN DE VOLATILIDAD (ciclo compresión → expansión)
 # ==============================================================
 
-def _vol_analizar_indice(nombre, cfg):
-    data = _vol_descargar(cfg["ticker"])
-    if data is None or len(data) < 30:
-        return {"nombre": nombre, "ticker": cfg["ticker"], "grupo": cfg["grupo"], "error": True}
+def _vol_detectar_regimen(vol_serie, ventana_percentil=VOL_VENTANA_PERCENTIL,
+                           ventana_tendencia=VOL_VENTANA_TENDENCIA):
+    """Heurística que ubica el momento actual dentro del ciclo clásico:
 
-    close = data["Close"]
-    valor_actual = float(close.iloc[-1])
-    cambio_1d = float((close.iloc[-1] / close.iloc[-2] - 1) * 100) if len(close) > 1 else None
-    cambio_5d = float((close.iloc[-1] / close.iloc[-6] - 1) * 100) if len(close) > 6 else None
+        VOLATILITY COMPRESSION
+                ↓
+        VOLATILITY BUILDING
+                ↓
+        VOLATILITY EXPANSION
+                ↓
+        VOLATILITY EXTREME
+                ↓
+        VOLATILITY NORMALIZATION
 
-    percentil_1y = _vol_percentil(close, valor_actual, ventana=252)
-    percentil_5y = _vol_percentil(close, valor_actual, ventana=None)
-    zscore_60 = _vol_zscore(close, ventana=60)
-    clasificacion, color = _vol_clasificar(percentil_1y, zscore_60)
-
-    # Correlación rodante (20 ruedas) entre retornos diarios del índice
-    # de volatilidad y de su subyacente de referencia. Lo normal es que
-    # sea fuertemente negativa (cuando el mercado cae, la volatilidad
-    # implícita sube). "Divergencia" = hoy subieron los dos juntos, algo
-    # atípico que puede anticipar más nerviosismo aunque el precio
-    # todavía no lo refleje.
-    correlacion_20d, divergencia_hoy = None, False
-    ref_ticker = cfg.get("referencia")
-    if ref_ticker:
-        ref_data = _vol_descargar(ref_ticker)
-        if ref_data is not None and len(ref_data) > 25:
-            ret_vol = close.pct_change()
-            ret_ref = ref_data["Close"].reindex(close.index, method="nearest").pct_change()
-            conjunta = pd.concat([ret_vol, ret_ref], axis=1).dropna().tail(20)
-            conjunta.columns = ["vol", "ref"]
-            if len(conjunta) >= 15:
-                correlacion_20d = float(conjunta["vol"].corr(conjunta["ref"]))
-            if len(ret_vol.dropna()) >= 1 and len(ret_ref.dropna()) >= 1:
-                ult_vol, ult_ref = ret_vol.iloc[-1], ret_ref.iloc[-1]
-                if not np.isnan(ult_vol) and not np.isnan(ult_ref):
-                    divergencia_hoy = bool(ult_vol > 0 and ult_ref > 0)
-
-    return {
-        "nombre": nombre, "ticker": cfg["ticker"], "grupo": cfg["grupo"], "error": False,
-        "valor_actual": valor_actual, "cambio_1d": cambio_1d, "cambio_5d": cambio_5d,
-        "percentil_1y": percentil_1y, "percentil_5y": percentil_5y, "zscore_60": zscore_60,
-        "clasificacion": clasificacion, "color": color,
-        "correlacion_20d": correlacion_20d, "divergencia_hoy": divergencia_hoy,
-        "serie": close,
-    }
-
-
-# ==============================================================
-#  CURVA DE PLAZOS DEL VIX (term structure) — contango vs. backwardation
-# ==============================================================
-
-def _vol_analizar_term_structure():
-    valores = {}
-    for etiqueta, ticker in VOL_TERM_STRUCTURE.items():
-        data = _vol_descargar(ticker, periodo="2y")
-        if data is not None and not data.empty:
-            valores[etiqueta] = float(data["Close"].iloc[-1])
-
-    if "30 días" not in valores or len(valores) < 2:
+    usando el percentil histórico (1 año) de la volatilidad de referencia y
+    su tendencia reciente (contra el valor de hace `ventana_tendencia`
+    ruedas). No es una clasificación exacta: es una lectura rápida del
+    ciclo, pensada para complementar —no reemplazar— el resto del análisis."""
+    serie_valida = vol_serie.dropna()
+    if len(serie_valida) < ventana_tendencia + 20:
         return None
 
-    orden = [e for e in VOL_TERM_STRUCTURE.keys() if e in valores]
-    vix_30d = valores["30 días"]
-    valor_3m = valores.get("3 meses")
-    valor_9d = valores.get("9 días")
+    valor_actual = serie_valida.iloc[-1]
+    percentil_actual = _vol_percentil(vol_serie, valor_actual, ventana=ventana_percentil)
+    zscore_actual = _vol_zscore(vol_serie, ventana=VOL_VENTANA_ZSCORE)
 
-    spread_3m_30d = (valor_3m - vix_30d) if valor_3m is not None else None
-    spread_9d_30d = (valor_9d - vix_30d) if valor_9d is not None else None
+    if percentil_actual is None:
+        return None
 
-    if spread_3m_30d is not None and spread_3m_30d > 0:
-        estructura = "Contango (curva normal — mercado tranquilo)"
-        color = "#3fb950"
-    elif spread_3m_30d is not None and spread_3m_30d < 0:
-        estructura = "Backwardation (curva invertida — estrés de corto plazo)"
-        color = "#f85149"
+    valor_hace_n = serie_valida.iloc[-ventana_tendencia - 1] if len(serie_valida) > ventana_tendencia else None
+    percentil_hace_n = (
+        _vol_percentil(vol_serie, valor_hace_n, ventana=ventana_percentil) if valor_hace_n is not None else None
+    )
+
+    subiendo = bool(percentil_hace_n is not None and percentil_actual > percentil_hace_n + 5)
+    bajando = bool(percentil_hace_n is not None and percentil_actual < percentil_hace_n - 5)
+
+    if (zscore_actual is not None and zscore_actual >= VOL_UMBRAL_SPIKE_ZSCORE) or percentil_actual >= 92:
+        regimen, color = "VOLATILITY EXTREME", "#f85149"
+        descripcion = ("La volatilidad está en niveles extremos frente a su propio historial: zona de "
+                       "pánico/capitulación o de un evento puntual (earnings, noticia). Suele ser "
+                       "insostenible en el tiempo y tiende a revertir.")
+    elif bajando and percentil_hace_n is not None and percentil_hace_n >= 60:
+        regimen, color = "VOLATILITY NORMALIZATION", "#3a7bd5"
+        descripcion = ("La volatilidad viene bajando después de haber estado en zona elevada: el activo se "
+                       "está calmando tras el episodio de estrés reciente.")
+    elif percentil_actual <= VOL_UMBRAL_BAJO_PERCENTIL and not subiendo:
+        regimen, color = "VOLATILITY COMPRESSION", "#3fb950"
+        descripcion = ("La volatilidad está comprimida frente a su historial reciente: rango de precios "
+                       "angosto, señal típica de que se está acumulando energía para un movimiento futuro.")
+    elif percentil_actual < VOL_UMBRAL_ELEVADO_PERCENTIL and subiendo:
+        regimen, color = "VOLATILITY BUILDING", "#e3b341"
+        descripcion = ("La volatilidad viene subiendo desde niveles bajos o normales: primeras señales de "
+                       "que el activo está saliendo de la calma, sin llegar todavía a una expansión plena.")
+    elif percentil_actual >= VOL_UMBRAL_ELEVADO_PERCENTIL:
+        regimen, color = "VOLATILITY EXPANSION", "#f0883e"
+        descripcion = ("La volatilidad está en niveles altos y en expansión activa: el activo se está "
+                       "moviendo con rangos mucho más amplios que lo habitual.")
     else:
-        estructura = "Curva plana / sin dato suficiente"
-        color = "#6b7d9a"
-
-    alerta_front = None
-    if spread_9d_30d is not None and spread_9d_30d > 0:
-        alerta_front = ("El plazo más corto (9 días) ya cotiza por encima del VIX de 30 días: "
-                        "señal de estrés muy inmediato, típica en el medio de un selloff.")
+        regimen, color = "Zona de transición — sin sesgo claro", "#6b7d9a"
+        descripcion = ("La volatilidad no muestra todavía un sesgo claro de tendencia dentro del ciclo "
+                       "compresión/expansión con los datos disponibles.")
 
     return {
-        "valores": valores, "orden": orden, "estructura": estructura, "color": color,
-        "spread_3m_30d": spread_3m_30d, "spread_9d_30d": spread_9d_30d, "alerta_front": alerta_front,
+        "regimen": regimen, "color": color, "descripcion": descripcion,
+        "percentil_actual": percentil_actual, "percentil_hace_n": percentil_hace_n,
+        "zscore_actual": zscore_actual, "subiendo": subiendo, "bajando": bajando,
     }
 
 
 # ==============================================================
-#  RATIO VVIX / VIX ("miedo del miedo")
+#  BLOQUE 4 — PRECIO × VOLATILIDAD (matriz de interpretación)
 # ==============================================================
 
-def _vol_analizar_vvix():
-    vvix_data = _vol_descargar(TICKER_VVIX)
-    vix_data = _vol_descargar("^VIX")
-    if vvix_data is None or vix_data is None:
-        return None
+def _vol_direccion_precio(close, ventana=VOL_VENTANA_TENDENCIA, umbral_pct=VOL_UMBRAL_PRECIO_PLANO_PCT):
+    """↑ / ↓ / → según la variación de precio en las últimas `ventana`
+    ruedas, con `umbral_pct` como banda muerta para considerarlo lateral."""
+    sub = close.dropna()
+    if len(sub) <= ventana:
+        return "→", None
+    cambio_pct = float((sub.iloc[-1] / sub.iloc[-ventana - 1] - 1) * 100)
+    if cambio_pct >= umbral_pct:
+        return "↑", cambio_pct
+    if cambio_pct <= -umbral_pct:
+        return "↓", cambio_pct
+    return "→", cambio_pct
 
-    vvix = vvix_data["Close"]
-    vix = vix_data["Close"].reindex(vvix.index, method="nearest")
-    ratio = (vvix / vix).dropna()
-    if ratio.empty:
-        return None
 
-    ratio_actual = float(ratio.iloc[-1])
-    percentil = _vol_percentil(ratio, ratio_actual, ventana=252)
+def _vol_direccion_volatilidad(regimen_info):
+    """↑ / ↓ / → según la tendencia de volatilidad detectada en el régimen."""
+    if regimen_info is None:
+        return "→"
+    if regimen_info["subiendo"]:
+        return "↑"
+    if regimen_info["bajando"]:
+        return "↓"
+    return "→"
 
-    if percentil is not None and percentil >= 80:
-        lectura = ("Ratio muy alto: el mercado le está poniendo mucho precio a un salto futuro del VIX, "
-                   "aunque el VIX en sí todavía no esté tan alto.")
-    elif percentil is not None and percentil <= 20:
-        lectura = "Ratio bajo: poca expectativa de que la volatilidad se dispare desde acá."
-    else:
-        lectura = "Ratio en zona normal respecto al último año."
 
-    return {
-        "ratio_actual": ratio_actual, "percentil_1y": percentil, "serie": ratio, "lectura": lectura,
-        "vvix_actual": float(vvix.iloc[-1]), "vix_actual": float(vix.iloc[-1]),
-    }
+# Matriz de interpretación combinando dirección de precio y de volatilidad.
+VOL_MATRIZ_INTERPRETACION = {
+    ("↑", "↓"): ("Tendencia saludable", "#3fb950",
+                 "El precio sube y la volatilidad baja: suba ordenada, con participación consistente y "
+                 "sin sobresaltos. Es el escenario más sano para una tendencia alcista."),
+    ("↑", "↑"): ("Tendencia con tensión", "#e3b341",
+                 "El precio sube pero la volatilidad también: la suba viene acompañada de rangos cada vez "
+                 "más amplios, señal de nerviosismo o de un movimiento que se está acelerando más de lo "
+                 "sano."),
+    ("↓", "↑"): ("Presión / posible capitulación", "#f85149",
+                 "El precio cae y la volatilidad sube: presión vendedora fuerte, típica de un proceso de "
+                 "capitulación o pánico."),
+    ("↓", "↓"): ("Pérdida de momentum", "#6b7d9a",
+                 "El precio cae pero la volatilidad baja: la caída pierde fuerza, sin nuevos vendedores "
+                 "agresivos entrando. Puede anticipar un amesetamiento."),
+    ("→", "↓"): ("Compresión", "#3a7bd5",
+                 "El precio lateraliza y la volatilidad sigue bajando: el activo se está comprimiendo, "
+                 "acumulando energía para un movimiento futuro."),
+    ("→", "↑"): ("Preparación para expansión", "#f0883e",
+                 "El precio todavía lateraliza pero la volatilidad ya empezó a subir: suele preceder a una "
+                 "ruptura del rango, aunque todavía no se definió la dirección."),
+}
+VOL_MATRIZ_DEFAULT = ("Sin señal clara", "#6b7d9a",
+                      "La combinación actual de dirección de precio y de volatilidad no encaja en ninguno "
+                      "de los patrones típicos analizados (por ejemplo, ambas laterales).")
+
+
+def _vol_interpretar_matriz(dir_precio, dir_vol):
+    return VOL_MATRIZ_INTERPRETACION.get((dir_precio, dir_vol), VOL_MATRIZ_DEFAULT)
 
 
 # ==============================================================
 #  GRÁFICOS (Plotly, mismo estilo oscuro que el resto de la app)
 # ==============================================================
 
-def _vol_fig_ranking(resultados):
-    validos = [r for r in resultados if not r.get("error") and r["percentil_1y"] is not None]
-    validos = sorted(validos, key=lambda r: r["percentil_1y"], reverse=True)
-    if not validos:
-        return None
+def _vol_fig_snapshot_periodos(vol_dict):
+    """Barra con el valor ACTUAL de volatilidad realizada por cada ventana,
+    para comparar de un vistazo el corto plazo contra el largo plazo."""
+    periodos = list(vol_dict.keys())
+    valores = [
+        float(vol_dict[p].iloc[-1]) if not np.isnan(vol_dict[p].iloc[-1]) else None
+        for p in periodos
+    ]
+    etiquetas = [f"{p} ruedas" for p in periodos]
 
-    nombres = [r["nombre"] for r in validos]
-    percentiles = [r["percentil_1y"] for r in validos]
-    colores = [r["color"] for r in validos]
-
-    fig = go.Figure(go.Bar(x=percentiles, y=nombres, orientation='h', marker=dict(color=colores),
-                            text=[f"{p:.0f}" for p in percentiles], textposition='outside'))
-    fig.add_vline(x=UMBRAL_ELEVADO_PERCENTIL, line=dict(color='#f85149', width=1, dash='dot'))
-    fig.add_vline(x=UMBRAL_BAJO_PERCENTIL, line=dict(color='#3fb950', width=1, dash='dot'))
+    fig = go.Figure(go.Bar(
+        x=etiquetas, y=valores, marker=dict(color='#3a7bd5'),
+        text=[f"{v:.1f}%" if v is not None else "s/d" for v in valores], textposition='outside',
+    ))
     fig.update_layout(
         plot_bgcolor='#0d1117', paper_bgcolor='#07090f', font=dict(color='#b0bcd0', family='Inter, sans-serif'),
-        title=dict(text='Percentil actual vs. último año (dónde hay más miedo relativo)',
+        title=dict(text='Volatilidad realizada actual por ventana (corto vs. largo plazo)',
                    font=dict(color='#e6edf3', size=13)),
-        xaxis=dict(title='Percentil', range=[0, 105], gridcolor='#21262d'),
-        yaxis=dict(gridcolor='#21262d'), height=max(320, 55 * len(nombres)),
-        margin=dict(l=10, r=40, t=45, b=30),
+        xaxis=dict(gridcolor='#21262d'), yaxis=dict(title='Volatilidad anualizada (%)', gridcolor='#21262d'),
+        height=380, margin=dict(l=10, r=40, t=45, b=30),
     )
     return fig
 
 
-def _vol_fig_term_structure(ts):
-    orden, valores = ts["orden"], ts["valores"]
-    x = orden
-    y = [valores[e] for e in orden]
-    fig = go.Figure(go.Scatter(x=x, y=y, mode='lines+markers', line=dict(color='#3a7bd5', width=2),
-                                marker=dict(size=9), text=[f"{v:.2f}" for v in y], textposition='top center'))
+def _vol_fig_realizada_historia(vol_dict, ventana_grafico=300):
+    """Serie histórica de volatilidad realizada para cada ventana, últimas
+    `ventana_grafico` ruedas — para ver cómo se relacionan entre sí en el
+    tiempo (ej. cuándo la corta cruza por encima de la larga)."""
+    paleta = ['#3a7bd5', '#e3b341', '#a371f7', '#39c5cf', '#f85149', '#3fb950']
+    fig = go.Figure()
+    for i, (periodo, serie) in enumerate(vol_dict.items()):
+        sub = serie.tail(ventana_grafico)
+        fig.add_trace(go.Scatter(x=sub.index, y=sub, mode='lines', name=f"{periodo}R",
+                                  line=dict(color=paleta[i % len(paleta)], width=1.4)))
     fig.update_layout(
         plot_bgcolor='#0d1117', paper_bgcolor='#07090f', font=dict(color='#b0bcd0', family='Inter, sans-serif'),
-        title=dict(text=f"Curva de plazos del VIX — {ts['estructura']}", font=dict(color='#e6edf3', size=13)),
-        xaxis=dict(title='Plazo', gridcolor='#21262d'), yaxis=dict(title='Nivel', gridcolor='#21262d'),
-        height=360, margin=dict(l=10, r=10, t=45, b=30),
+        title=dict(text='Volatilidad realizada anualizada por ventana — evolución reciente',
+                   font=dict(color='#e6edf3', size=13)),
+        xaxis=dict(title='Fecha', gridcolor='#21262d'),
+        yaxis=dict(title='Volatilidad anualizada (%)', gridcolor='#21262d'),
+        height=420, margin=dict(l=10, r=10, t=45, b=30), legend=dict(orientation='h', y=-0.2),
     )
     return fig
 
 
-def _vol_fig_vvix(vvix_info, ventana=252):
-    serie = vvix_info["serie"].tail(ventana)
-    fig = go.Figure(go.Scatter(x=serie.index, y=serie, mode='lines', line=dict(color='#a371f7', width=1.6)))
-    fig.add_hline(y=vvix_info["ratio_actual"], line=dict(color='#e3b341', width=1, dash='dash'),
-                  annotation_text='Actual', annotation_position='top left')
+def _vol_fig_percentil_historia(vol_referencia, ventana_percentil=VOL_VENTANA_PERCENTIL, ventana_grafico=300):
+    """Serie histórica del percentil rolling (1 año) de la volatilidad de
+    referencia, con líneas de umbral bajo/elevado — sirve para ver
+    visualmente los tramos de compresión y expansión pasados."""
+    serie = vol_referencia.dropna()
+    percentiles = serie.rolling(ventana_percentil, min_periods=60).apply(
+        lambda ventana: (ventana < ventana.iloc[-1]).mean() * 100, raw=False
+    ).tail(ventana_grafico)
+
+    fig = go.Figure(go.Scatter(x=percentiles.index, y=percentiles, mode='lines',
+                                line=dict(color='#a371f7', width=1.6)))
+    fig.add_hline(y=VOL_UMBRAL_ELEVADO_PERCENTIL, line=dict(color='#f85149', width=1, dash='dot'))
+    fig.add_hline(y=VOL_UMBRAL_BAJO_PERCENTIL, line=dict(color='#3fb950', width=1, dash='dot'))
     fig.update_layout(
         plot_bgcolor='#0d1117', paper_bgcolor='#07090f', font=dict(color='#b0bcd0', family='Inter, sans-serif'),
-        title=dict(text='Ratio VVIX / VIX (miedo del miedo) — último año', font=dict(color='#e6edf3', size=13)),
-        xaxis=dict(title='Fecha', gridcolor='#21262d'), yaxis=dict(title='Ratio', gridcolor='#21262d'),
-        height=360, margin=dict(l=10, r=10, t=45, b=30),
+        title=dict(text='Percentil histórico (1 año) de la volatilidad de referencia',
+                   font=dict(color='#e6edf3', size=13)),
+        xaxis=dict(title='Fecha', gridcolor='#21262d'),
+        yaxis=dict(title='Percentil', range=[0, 105], gridcolor='#21262d'),
+        height=380, margin=dict(l=10, r=10, t=45, b=30),
     )
     return fig
 
 
 # ==============================================================
-#  TARJETA POR ÍNDICE (mismo lenguaje visual que el resto de la app)
+#  TARJETAS (mismo lenguaje visual que el resto de la app)
 # ==============================================================
 
-def _vol_tarjeta_indice(r):
-    if r.get("error"):
-        st.markdown(f"""
-        <div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;
-             padding:12px 16px;margin-bottom:8px;color:#6b7d9a;font-size:12px">
-          {r['nombre']} ({r['ticker']}): sin datos suficientes en Yahoo Finance.
-        </div>""", unsafe_allow_html=True)
-        return
-
-    def _fmt_pct(v):
-        return f"{v:+.1f}%" if v is not None else "s/d"
-
-    def _fmt_num(v, dec=1):
-        return f"{v:.{dec}f}" if v is not None else "s/d"
-
-    cambio_1d = r["cambio_1d"] if r["cambio_1d"] is not None else 0
-    cambio_1d_color = "#3fb950" if cambio_1d < 0 else "#f85149"
-
-    divergencia_html = ""
-    if r["divergencia_hoy"]:
-        divergencia_html = (
-            '<div style="font-size:11px;color:#e3b341;margin-top:6px">'
-            '⚠️ Hoy subió junto con su subyacente de referencia — divergencia de la relación '
-            'inversa habitual.</div>'
-        )
+def _vol_tarjeta_resumen(ticker, etiqueta_activo, valor_actual, cambio_1d, periodo_ref,
+                          vol_actual, clasificacion, color):
+    cambio_1d_color = "#3fb950" if (cambio_1d or 0) >= 0 else "#f85149"
+    cambio_1d_txt = f"{cambio_1d:+.2f}%" if cambio_1d is not None else "s/d"
+    vol_txt = f"{vol_actual:.1f}%" if vol_actual is not None else "s/d"
 
     st.markdown(f"""
-    <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid {r['color']};
+    <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid {color};
          border-radius:8px;padding:14px 18px;margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:baseline">
         <div>
-          <div style="color:#6b7d9a;font-size:11px;text-transform:uppercase">{r['ticker']}</div>
-          <div style="color:#e6edf3;font-size:15px;font-weight:700">{r['nombre']}</div>
+          <div style="color:#6b7d9a;font-size:11px;text-transform:uppercase">{ticker}</div>
+          <div style="color:#e6edf3;font-size:15px;font-weight:700">{etiqueta_activo}</div>
         </div>
         <div style="text-align:right">
-          <div style="color:#e6edf3;font-size:20px;font-weight:700">{r['valor_actual']:.2f}</div>
-          <div style="color:{cambio_1d_color};font-size:12px">{_fmt_pct(r['cambio_1d'])} hoy</div>
+          <div style="color:#e6edf3;font-size:20px;font-weight:700">${valor_actual:,.2f}</div>
+          <div style="color:{cambio_1d_color};font-size:12px">{cambio_1d_txt} hoy</div>
         </div>
       </div>
-      <div style="color:{r['color']};font-size:13px;font-weight:600;margin-top:6px">{r['clasificacion']}</div>
+      <div style="color:{color};font-size:13px;font-weight:600;margin-top:6px">{clasificacion}</div>
       <div style="margin-top:8px;font-size:11px;color:#8b949e">
-        Percentil 1A: <b style="color:#e6edf3">{_fmt_num(r['percentil_1y'])}</b> ·
-        Percentil 5A: <b style="color:#e6edf3">{_fmt_num(r['percentil_5y'])}</b> ·
-        Z-score(60): <b style="color:#e6edf3">{_fmt_num(r['zscore_60'], 2)}</b> ·
-        Var. 5 ruedas: <b style="color:#e6edf3">{_fmt_pct(r['cambio_5d'])}</b> ·
-        Correl. 20d vs. subyacente: <b style="color:#e6edf3">{_fmt_num(r['correlacion_20d'], 2)}</b>
+        Volatilidad realizada ({periodo_ref}R, anualizada): <b style="color:#e6edf3">{vol_txt}</b>
       </div>
-      {divergencia_html}
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def _vol_tarjeta_regimen(regimen_info):
+    p_actual = regimen_info["percentil_actual"]
+    p_hace_n = regimen_info["percentil_hace_n"]
+    z = regimen_info["zscore_actual"]
+    p_actual_txt = f"{p_actual:.0f}" if p_actual is not None else "s/d"
+    p_hace_n_txt = f"{p_hace_n:.0f}" if p_hace_n is not None else "s/d"
+    z_txt = f"{z:+.2f}" if z is not None else "s/d"
+
+    st.markdown(f"""
+    <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid {regimen_info['color']};
+         border-radius:8px;padding:16px 20px;margin-bottom:14px">
+      <div style="color:#6b7d9a;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Régimen de volatilidad</div>
+      <div style="color:{regimen_info['color']};font-size:17px;font-weight:700;margin:4px 0 8px 0">{regimen_info['regimen']}</div>
+      <div style="font-size:12px;color:#8b949e;margin-bottom:8px">{regimen_info['descripcion']}</div>
+      <div style="font-size:11px;color:#6b7d9a">
+        Percentil actual: <b style="color:#e6edf3">{p_actual_txt}</b> ·
+        Percentil hace {VOL_VENTANA_TENDENCIA} ruedas: <b style="color:#e6edf3">{p_hace_n_txt}</b> ·
+        Z-Score(60): <b style="color:#e6edf3">{z_txt}</b>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def _vol_tarjeta_matriz(dir_precio, dir_vol, titulo, color, descripcion, cambio_precio_pct):
+    cambio_txt = f"{cambio_precio_pct:+.1f}%" if cambio_precio_pct is not None else "s/d"
+
+    st.markdown(f"""
+    <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid {color};
+         border-radius:8px;padding:16px 20px;margin-bottom:14px">
+      <div style="color:#6b7d9a;font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Precio vs. Volatilidad</div>
+      <div style="display:flex;align-items:baseline;gap:14px;margin:6px 0 8px 0">
+        <div style="font-size:26px">{dir_precio}</div>
+        <div style="font-size:12px;color:#6b7d9a">precio</div>
+        <div style="font-size:26px">{dir_vol}</div>
+        <div style="font-size:12px;color:#6b7d9a">volatilidad</div>
+      </div>
+      <div style="color:{color};font-size:17px;font-weight:700;margin-bottom:8px">{titulo}</div>
+      <div style="font-size:12px;color:#8b949e;margin-bottom:8px">{descripcion}</div>
+      <div style="font-size:11px;color:#6b7d9a">
+        Variación de precio ({VOL_VENTANA_TENDENCIA} ruedas): <b style="color:#e6edf3">{cambio_txt}</b>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
 
 # ==============================================================
 #  ENTRY POINT — llamar esto desde el archivo principal
-#  Independiente de modulo_analisis_tecnico: no recibe ticker, arma
-#  el dashboard comparativo completo directamente.
+#  Reemplaza al dashboard comparativo de índices VIX (modulo_volatilidad
+#  anterior). Se mantiene el mismo nombre de función para no romper el
+#  import ya existente en app.py.
 # ==============================================================
 
 def modulo_volatilidad(PLOTLY_CONFIG=None):
-    """Dashboard comparativo de índices de volatilidad implícita (familia
-    VIX de CBOE): VIX, VXN, RVX, VXD, OVX, GVZ, VXEEM y VXFXI.
+    """Perfil de volatilidad de UN activo (no un dashboard de índices VIX):
 
-    Para cada uno calcula nivel actual, variación 1 y 5 ruedas, percentil
-    histórico (1 año y desde que hay datos), z-score de 60 ruedas (para
-    detectar spikes) y correlación rodante de 20 ruedas con su
-    subyacente de referencia (con aviso de divergencia si hoy se movieron
-    en el mismo sentido). Además arma la curva de plazos del VIX clásico
-    (9 días / 30 días / 3 meses / 6 meses, vía ^VIX9D/^VIX/^VIX3M/^VIX6M)
-    para leer contango vs. backwardation, y el ratio VVIX/VIX ("miedo del
-    miedo").
+      1) Volatilidad realizada anualizada en 6 ventanas (5/10/20/50/100/200
+         ruedas), calculada sobre retornos logarítmicos diarios.
+      2) Volatilidad relativa: percentil histórico (1 año) y Z-Score de la
+         ventana de referencia contra el propio historial del activo.
+      3) Régimen de volatilidad dentro del ciclo COMPRESSION → BUILDING →
+         EXPANSION → EXTREME → NORMALIZATION.
+      4) Cruce dirección de precio × dirección de volatilidad, con la
+         matriz de interpretación (tendencia sana, tensión, capitulación,
+         pérdida de momentum, compresión o preparación para expansión).
 
-    Todo se descarga de Yahoo Finance vía yfinance, con caché de 1 hora.
-    Sin persistencia: vive solo en la sesión actual, igual que el resto
-    de la app."""
+    El activo se elige desde las mismas categorías que usa el módulo de
+    Análisis Técnico (acciones por industria, forex, índices/países, ETFs,
+    mercados reales) o como ticker manual. Todo se descarga de Yahoo
+    Finance vía yfinance, con caché de 1 hora. Sin persistencia: vive solo
+    en la sesión actual, igual que el resto de la app."""
 
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid #e3b341;
+         border:1px solid #21262d; border-top:2px solid #a371f7;
          border-radius:14px; padding:26px 30px; margin-bottom:22px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🌪️ Dashboard de Volatilidad</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🌪️ Perfil de Volatilidad del Activo</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Compará de un vistazo los principales índices de volatilidad implícita (familia VIX de CBOE):
-        <b style="color:#e6edf3">VIX</b>, <b style="color:#e6edf3">VXN</b>, <b style="color:#e6edf3">RVX</b>,
-        <b style="color:#e6edf3">VXD</b>, <b style="color:#e6edf3">OVX</b>, <b style="color:#e6edf3">GVZ</b>,
-        <b style="color:#e6edf3">VXEEM</b> y <b style="color:#e6edf3">VXFXI</b>. Para cada uno: nivel actual,
-        <b style="color:#e6edf3">percentil histórico</b> (¿está caro o barato el miedo?),
-        <b style="color:#e6edf3">detección de spikes</b>, <b style="color:#e6edf3">curva de plazos</b> del
-        VIX clásico (contango/backwardation) y <b style="color:#e6edf3">correlación</b> con su subyacente
-        de referencia, además del ratio <b style="color:#e6edf3">VVIX/VIX</b> ("miedo del miedo"). Este
-        dashboard no se guarda: vive solo en la sesión actual.
+        Analizá la volatilidad de <b style="color:#e6edf3">cualquier activo</b> de tu universo, en vez de
+        mirar un índice de miedo genérico como el VIX: <b style="color:#e6edf3">volatilidad realizada</b>
+        anualizada en 6 ventanas (5/10/20/50/100/200 ruedas), <b style="color:#e6edf3">volatilidad
+        relativa</b> (percentil histórico y Z-Score contra su propio historial), el
+        <b style="color:#e6edf3">régimen de volatilidad</b> dentro del ciclo COMPRESSION → BUILDING →
+        EXPANSION → EXTREME → NORMALIZATION, y el cruce entre <b style="color:#e6edf3">dirección de
+        precio</b> y <b style="color:#e6edf3">dirección de volatilidad</b> para leer rápido qué tipo de
+        movimiento hay en curso. Este análisis no se guarda: vive solo en la sesión actual.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    with st.spinner('Descargando índices de volatilidad...'):
-        resultados = [_vol_analizar_indice(nombre, cfg) for nombre, cfg in VOL_INDICES.items()]
-        ts = _vol_analizar_term_structure()
-        vvix_info = _vol_analizar_vvix()
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        ticker, etiqueta_activo = _vol_seleccionar_ticker()
+    with col2:
+        periodo_ref = st.selectbox(
+            'Ventana de referencia (relativa / régimen)',
+            VOL_PERIODOS_REALIZADA,
+            index=VOL_PERIODOS_REALIZADA.index(VOL_PERIODO_REFERENCIA_DEFAULT),
+            key='vol_periodo_ref',
+        )
 
-    validos = [r for r in resultados if not r.get("error")]
-    en_spike = [r for r in validos if "SPIKE" in r["clasificacion"]]
-    elevados = [r for r in validos if "Elevado" in r["clasificacion"]]
-    percentiles_validos = [r["percentil_1y"] for r in validos if r["percentil_1y"] is not None]
+    if not ticker:
+        st.info('Seleccioná o ingresá un activo para analizar.')
+        return
+
+    with st.spinner(f'Descargando datos de {ticker}...'):
+        data = _vol_descargar(ticker)
+
+    if data is None or len(data) < 220:
+        st.error(f'No se pudieron descargar suficientes datos para {ticker} (se necesitan al menos ~220 '
+                 f'ruedas para calcular el percentil de 1 año). Verificá el ticker.')
+        return
+
+    close = data["Close"]
+    vol_dict = _vol_calcular_vol_realizada(close)
+    vol_referencia = vol_dict[periodo_ref]
+
+    valor_actual = float(close.iloc[-1])
+    cambio_1d = float((close.iloc[-1] / close.iloc[-2] - 1) * 100) if len(close) > 1 else None
+
+    ultimo_vol = vol_referencia.iloc[-1]
+    vol_actual = float(ultimo_vol) if not np.isnan(ultimo_vol) else None
+    percentil = _vol_percentil(vol_referencia, vol_actual, ventana=VOL_VENTANA_PERCENTIL) if vol_actual is not None else None
+    zscore = _vol_zscore(vol_referencia, ventana=VOL_VENTANA_ZSCORE) if vol_actual is not None else None
+    clasificacion, color = _vol_clasificar_relativa(percentil, zscore)
+
+    regimen_info = _vol_detectar_regimen(vol_referencia)
+    dir_precio, cambio_precio_pct = _vol_direccion_precio(close)
+    dir_vol = _vol_direccion_volatilidad(regimen_info)
+    titulo_matriz, color_matriz, descripcion_matriz = _vol_interpretar_matriz(dir_precio, dir_vol)
 
     cols = st.columns(4)
     with cols[0]:
-        st.metric('Índices monitoreados', f"{len(validos)}/{len(resultados)}")
+        st.metric('Último cierre', f"${valor_actual:,.2f}", f"{cambio_1d:+.2f}%" if cambio_1d is not None else None)
     with cols[1]:
-        st.metric('En spike ahora', len(en_spike))
+        st.metric(f'Volatilidad {periodo_ref}R', f"{vol_actual:.1f}%" if vol_actual is not None else "s/d")
     with cols[2]:
-        st.metric('Elevados vs. último año', len(elevados))
+        st.metric('Percentil histórico (1A)', f"{percentil:.0f}" if percentil is not None else "s/d")
     with cols[3]:
-        percentil_prom = float(np.mean(percentiles_validos)) if percentiles_validos else None
-        st.metric('Percentil promedio', f"{percentil_prom:.0f}" if percentil_prom is not None else "s/d")
+        st.metric('Z-Score (60R)', f"{zscore:+.2f}" if zscore is not None else "s/d")
 
-    tab_resumen, tab_ranking, tab_term, tab_vvix = st.tabs(
-        ['🧾 Resumen por índice', '📊 Ranking de miedo', '📐 Curva de plazos (VIX)', '🌀 VVIX/VIX']
+    tab_resumen, tab_realizada, tab_regimen, tab_matriz = st.tabs(
+        ['🧾 Resumen', '📊 Volatilidad realizada', '🔄 Régimen', '🎯 Precio vs. Volatilidad']
     )
 
     with tab_resumen:
-        for grupo in GRUPOS_ORDEN:
-            del_grupo = [r for r in resultados if r.get("grupo") == grupo]
-            if not del_grupo:
-                continue
-            st.markdown(f"##### {grupo}")
-            for r in del_grupo:
-                _vol_tarjeta_indice(r)
+        _vol_tarjeta_resumen(ticker, etiqueta_activo, valor_actual, cambio_1d, periodo_ref,
+                             vol_actual, clasificacion, color)
+        if regimen_info:
+            _vol_tarjeta_regimen(regimen_info)
+        _vol_tarjeta_matriz(dir_precio, dir_vol, titulo_matriz, color_matriz, descripcion_matriz, cambio_precio_pct)
 
-    with tab_ranking:
-        fig = _vol_fig_ranking(resultados)
-        if fig is not None:
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            st.caption("Percentil alto (línea roja, ≥70) = ese índice está caro en términos históricos, hay "
-                       "más miedo puesto en precio ahí que en el resto. Percentil bajo (línea verde, ≤30) = "
-                       "complacencia relativa.")
-        else:
-            st.info('No se pudo descargar ningún índice de volatilidad con historial suficiente.')
+    with tab_realizada:
+        fig_snapshot = _vol_fig_snapshot_periodos(vol_dict)
+        st.plotly_chart(fig_snapshot, use_container_width=True, config=PLOTLY_CONFIG)
+        fig_historia = _vol_fig_realizada_historia(vol_dict)
+        st.plotly_chart(fig_historia, use_container_width=True, config=PLOTLY_CONFIG)
+        st.caption("La volatilidad realizada de ventanas cortas (5-10 ruedas) reacciona más rápido a "
+                   "eventos recientes; las ventanas largas (100-200 ruedas) muestran el nivel de fondo del "
+                   "activo. Cuando la corta está muy por encima de la larga, el activo está más nervioso "
+                   "que su promedio de largo plazo; cuando está muy por debajo, se calmó respecto a ese "
+                   "promedio.")
 
-    with tab_term:
-        if ts:
-            fig = _vol_fig_term_structure(ts)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            spread_txt = f"{ts['spread_3m_30d']:.2f}" if ts['spread_3m_30d'] is not None else "s/d"
-            st.markdown(f"""
-            <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid {ts['color']};
-                 border-radius:8px;padding:14px 18px;margin-top:10px;font-size:13px;color:#e6edf3">
-              <b>{ts['estructura']}</b><br>
-              <span style="color:#8b949e;font-size:12px">Spread 3 meses − 30 días: {spread_txt} puntos.
-              Contango (spread positivo) es lo habitual en mercados tranquilos porque el mercado espera
-              algo más de incertidumbre a futuro que hoy; backwardation (spread negativo) aparece cuando
-              el miedo de corto plazo supera al de largo plazo — típico durante caídas fuertes.</span>
-            </div>
-            """, unsafe_allow_html=True)
-            if ts.get("alerta_front"):
-                st.warning(f"⚠️ {ts['alerta_front']}")
+    with tab_regimen:
+        if regimen_info:
+            _vol_tarjeta_regimen(regimen_info)
+            fig_percentil = _vol_fig_percentil_historia(vol_referencia)
+            st.plotly_chart(fig_percentil, use_container_width=True, config=PLOTLY_CONFIG)
+            st.caption("Percentil alto (línea roja, ≥70) = volatilidad cara en términos históricos para "
+                       "este activo. Percentil bajo (línea verde, ≤30) = volatilidad comprimida, terreno "
+                       "típico previo a una expansión.")
         else:
-            st.info('No se pudo armar la curva de plazos (faltan datos de ^VIX9D / ^VIX3M / ^VIX6M en '
-                    'Yahoo Finance).')
+            st.info('No hay suficiente historial de este activo para detectar el régimen de volatilidad.')
 
-    with tab_vvix:
-        if vvix_info:
-            fig = _vol_fig_vvix(vvix_info)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            cols2 = st.columns(3)
-            with cols2[0]:
-                st.metric('VVIX actual', f"{vvix_info['vvix_actual']:.1f}")
-            with cols2[1]:
-                st.metric('VIX actual', f"{vvix_info['vix_actual']:.1f}")
-            with cols2[2]:
-                st.metric('Ratio VVIX/VIX', f"{vvix_info['ratio_actual']:.2f}")
-            st.caption(vvix_info["lectura"])
-        else:
-            st.info('No se pudo calcular el ratio VVIX/VIX (faltan datos de ^VVIX o ^VIX en Yahoo Finance).')
+    with tab_matriz:
+        _vol_tarjeta_matriz(dir_precio, dir_vol, titulo_matriz, color_matriz, descripcion_matriz, cambio_precio_pct)
+        st.caption(f"Dirección de precio calculada sobre las últimas {VOL_VENTANA_TENDENCIA} ruedas (banda "
+                   f"muerta de {VOL_UMBRAL_PRECIO_PLANO_PCT:.0f}% para considerarlo lateral); dirección de "
+                   f"volatilidad según la tendencia del régimen detectado en la pestaña anterior.")
 
 
 # ██████████████████████████████████████████████████████████████
