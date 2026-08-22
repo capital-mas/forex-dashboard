@@ -6766,8 +6766,8 @@ elif MODULO == 'optimizador':
 
 
 elif MODULO == 'pares':
-    tab_analisis_tecnico, tab_rot_pares, tab_coint = st.tabs([
-        '📐 Análisis Técnico', '🔗 Pares (Mean Reversion)', '📐 Cointegración (Engle-Granger)',
+    tab_analisis_tecnico, tab_rot_pares, tab_coint, tab_vol = st.tabs([
+        '📐 Análisis Técnico', '🔗 Pares (Mean Reversion)', '📐 Cointegración (Engle-Granger)', '🌪️ Volatilidad (VIX)',
     ])
     with tab_analisis_tecnico:
         modulo_analisis_tecnico(PLOTLY_CONFIG=PLOTLY_CONFIG)
@@ -6783,6 +6783,8 @@ elif MODULO == 'pares':
             PLOTLY_CONFIG=PLOTLY_CONFIG,
             selector_ticker_autocomplete=selector_ticker_autocomplete,
         )
+    with tab_vol:
+        modulo_volatilidad(PLOTLY_CONFIG=PLOTLY_CONFIG)
 elif MODULO == 'opciones':
     modulo_opciones()
 
