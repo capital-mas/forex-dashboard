@@ -1,8 +1,16 @@
 """
 modulo_pago_manual.py
-Pago manual de Capital+ — el usuario elige NIVEL (Básico o Pro) y DURACIÓN
-(Mensual, Trimestral o Anual), transfiere en cripto, y vos aprobás el acceso
-a mano desde el panel admin.
+Ciclo de vida del acceso a Capital+:
+
+1. Primer login del usuario  -> se le activa automáticamente un trial
+   gratuito de TRIAL_DIAS días (plan='trial').
+2. Mientras el trial esté vigente -> acceso completo, sin pedir nada.
+3. Cuando el trial (o un plan pago) vence -> se le corta el acceso y
+   tiene que elegir un NIVEL (Básico o Pro) y una DURACIÓN (Mensual,
+   Trimestral o Anual), transferir en cripto, y esperar aprobación.
+4. Vos aprobás desde el panel admin -> se actualiza perfiles.plan con
+   el nivel elegido y perfiles.plan_vence_en con hoy + los días de esa
+   duración, y se habilita la cuenta.
 
 IMPORTANTE: todas las funciones de este módulo reciben `data_client`,
 que es el cliente de Supabase creado con la service_role key (ver
@@ -10,6 +18,9 @@ clientes_supabase.py). Ese cliente bypassea RLS por completo, así que
 no hace falta ninguna política de RLS en 'perfiles' ni 'solicitudes_pago'
 para que esto funcione. La seguridad la maneja el propio código Python
 (chequeando es_admin antes de dejar hacer nada administrativo).
+
+No requiere columnas nuevas en Supabase: usa 'plan', 'plan_vence_en'
+y 'habilitado', que ya existían.
 
 secrets.toml necesario:
 
@@ -25,6 +36,8 @@ wallet = "T-tu-direccion-de-wallet-aca"
 
 import streamlit as st
 from datetime import datetime, timezone, timedelta
+
+TRIAL_DIAS = 7
 
 # ── Niveles y duraciones disponibles — ajustá nombres, días y precios a gusto ──
 PLANES_NIVELES = {
@@ -46,6 +59,12 @@ PLANES_NIVELES = {
     },
 }
 
+NOMBRE_PLAN_DISPLAY = {
+    "trial": "Prueba gratuita",
+    "basico": "Básico",
+    "pro": "Pro",
+}
+
 
 def obtener_estado_perfil(data_client, user_id: str):
     """
@@ -63,12 +82,32 @@ def obtener_estado_perfil(data_client, user_id: str):
     return res.data
 
 
-def _dias_plan_restantes(plan_vence_en: str):
+def _dias_restantes(plan_vence_en: str):
     if not plan_vence_en:
         return None
     venc = datetime.fromisoformat(plan_vence_en.replace("Z", "+00:00"))
     restante = venc - datetime.now(timezone.utc)
-    return max(0, restante.days)
+    return restante.total_seconds() / 86400  # puede ser negativo si ya venció
+
+
+def _iniciar_trial_si_corresponde(data_client, user_id: str, perfil: dict) -> dict:
+    """Si la cuenta nunca tuvo un plan asignado (nunca pagó ni tuvo trial),
+    le activamos automáticamente el trial gratuito. Es el único lugar donde
+    se otorga: una vez que 'plan' queda seteado (a 'trial', 'basico' o 'pro'),
+    esta función no vuelve a tocar nada, así que no se puede reiniciar el
+    trial infinitas veces."""
+    if perfil.get("plan") is None and perfil.get("plan_vence_en") is None:
+        vence = datetime.now(timezone.utc) + timedelta(days=TRIAL_DIAS)
+        data_client.table("perfiles").update({
+            "plan": "trial",
+            "habilitado": True,
+            "plan_vence_en": vence.isoformat(),
+        }).eq("id", user_id).execute()
+        perfil = dict(perfil)
+        perfil["plan"] = "trial"
+        perfil["habilitado"] = True
+        perfil["plan_vence_en"] = vence.isoformat()
+    return perfil
 
 
 def _ya_tiene_solicitud_pendiente(data_client, user_id: str) -> bool:
@@ -83,44 +122,22 @@ def _ya_tiene_solicitud_pendiente(data_client, user_id: str) -> bool:
     return len(res.data) > 0
 
 
-def pantalla_suscripcion(data_client, user_id: str, email: str):
-    """
-    Bloque de UI: chequea si la cuenta está habilitada. Si no, deja
-    elegir nivel (Básico/Pro) y duración, y notificar cuando ya transfirió
-    en cripto. Devuelve True si el usuario tiene acceso.
-    """
-    perfil = obtener_estado_perfil(data_client, user_id)
+def _mostrar_selector_planes(data_client, user_id: str, email: str, mensaje_previo: str = None):
+    """Pantalla para elegir NIVEL (Básico/Pro) y DURACIÓN, pagar en cripto
+    y notificar la transferencia. Se usa tanto cuando vence el trial como
+    cuando vence un plan pago."""
+    if mensaje_previo:
+        st.warning(mensaje_previo)
 
-    if perfil is None:
-        st.error("⛔ No se encontró tu perfil. Contactá al administrador.")
-        return False
-
-    # Los admins tienen acceso completo siempre
-    if perfil.get("es_admin"):
-        return True
-
-    if perfil.get("habilitado"):
-        dias_restantes = _dias_plan_restantes(perfil.get("plan_vence_en"))
-        nombre_plan_actual = (perfil.get("plan") or "").capitalize() or "activo"
-        if dias_restantes is None:
-            st.success(f"✅ Tu acceso a Capital+ ({nombre_plan_actual}) está activo.")
-            return True
-        if dias_restantes > 0:
-            st.success(f"✅ Tu acceso a Capital+ ({nombre_plan_actual}) está activo — vence en {dias_restantes} día(s).")
-            return True
-        # se venció el plan: lo tratamos como deshabilitado más abajo
-        st.warning("Tu acceso pago venció.")
-
-    st.markdown("### Suscribite a Capital+")
+    st.markdown("### Elegí tu plan")
     st.caption("💰 Los pagos se realizan exclusivamente en criptomonedas.")
 
     if _ya_tiene_solicitud_pendiente(data_client, user_id):
         st.info("🕐 Tu pago está en revisión. Se activa en poco tiempo una vez confirmado.")
         if st.button("🔄 Verificar de nuevo"):
             st.rerun()
-        return False
+        return
 
-    # ── 1. Elegir nivel ──────────────────────────────────────────
     tabs_nivel = st.tabs([f"⭐ {n}" for n in PLANES_NIVELES.keys()])
     cfg_cripto = st.secrets["pago_manual"]["cripto"]
     red = cfg_cripto.get("red", "USDT (TRC-20)")
@@ -128,9 +145,11 @@ def pantalla_suscripcion(data_client, user_id: str, email: str):
 
     for tab_nivel, (nombre_nivel, datos_nivel) in zip(tabs_nivel, PLANES_NIVELES.items()):
         with tab_nivel:
-            st.markdown(f"<div style='color:#8b949e;font-size:13px;margin-bottom:12px'>{datos_nivel['descripcion']}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='color:#8b949e;font-size:13px;margin-bottom:12px'>{datos_nivel['descripcion']}</div>",
+                unsafe_allow_html=True,
+            )
 
-            # ── 2. Elegir duración ────────────────────────────────
             nombre_duracion = st.radio(
                 "Elegí la duración",
                 list(datos_nivel["duraciones"].keys()),
@@ -174,6 +193,47 @@ def pantalla_suscripcion(data_client, user_id: str, email: str):
                 st.success("¡Recibido! Tu pago va a ser revisado y tu acceso se activa a la brevedad.")
                 st.rerun()
 
+
+def pantalla_suscripcion(data_client, user_id: str, email: str):
+    """
+    Bloque de UI principal. Devuelve True si el usuario tiene acceso
+    (trial vigente, plan pago vigente o admin); False si tiene que
+    elegir un plan (trial vencido, plan vencido, o cuenta deshabilitada).
+    """
+    perfil = obtener_estado_perfil(data_client, user_id)
+
+    if perfil is None:
+        st.error("⛔ No se encontró tu perfil. Contactá al administrador.")
+        return False
+
+    # Los admins tienen acceso completo siempre
+    if perfil.get("es_admin"):
+        return True
+
+    perfil = _iniciar_trial_si_corresponde(data_client, user_id, perfil)
+
+    plan_actual = perfil.get("plan")
+    dias_rest = _dias_restantes(perfil.get("plan_vence_en"))
+    nombre_display = NOMBRE_PLAN_DISPLAY.get(plan_actual, plan_actual or "")
+
+    # ── Caso 1: acceso vigente (trial o pago) ──────────────────────
+    if perfil.get("habilitado") and dias_rest is not None and dias_rest > 0:
+        dias_enteros = int(dias_rest) if dias_rest >= 1 else 0
+        if plan_actual == "trial":
+            st.success(f"🎁 Estás en tu prueba gratuita — te quedan {dias_enteros} día(s).")
+        else:
+            st.success(f"✅ Tu plan **{nombre_display}** está activo — vence en {dias_enteros} día(s).")
+        return True
+
+    # ── Caso 2: venció (trial o plan pago) o cuenta deshabilitada ──
+    if plan_actual == "trial":
+        mensaje = "🕐 Tu prueba gratuita de 7 días finalizó. Elegí un plan para continuar."
+    elif plan_actual in ("basico", "pro"):
+        mensaje = f"⏰ Tu plan **{nombre_display}** venció. Elegí uno para renovar."
+    else:
+        mensaje = None
+
+    _mostrar_selector_planes(data_client, user_id, email, mensaje_previo=mensaje)
     return False
 
 
@@ -195,7 +255,7 @@ def es_admin_usuario(data_client, user_id: str) -> bool:
 def _listar_cuentas(data_client):
     res = (
         data_client.table("perfiles")
-        .select("id, email, plan, es_admin, habilitado")
+        .select("id, email, plan, plan_vence_en, es_admin, habilitado")
         .order("email")
         .execute()
     )
@@ -209,8 +269,9 @@ def _toggle_habilitado(data_client, cuenta_id: str, nuevo_estado: bool):
 
 
 def panel_gestion_cuentas(data_client, user_id: str):
-    """Panel visible SOLO para admins. Lista todas las cuentas y permite
-    habilitar/deshabilitar el acceso de cualquiera con un click."""
+    """Panel visible SOLO para admins. Lista todas las cuentas (con su
+    nivel y vencimiento) y permite habilitar/deshabilitar el acceso de
+    cualquiera con un click."""
     if not es_admin_usuario(data_client, user_id):
         return
 
@@ -231,7 +292,10 @@ def panel_gestion_cuentas(data_client, user_id: str):
                 with c1:
                     estado = "🟢 Habilitada" if cuenta.get("habilitado") else "🔴 Deshabilitada"
                     admin_tag = " · 🛠️ admin" if cuenta.get("es_admin") else ""
-                    st.markdown(f"**{cuenta['email']}** — nivel: {cuenta.get('plan', '-')} — {estado}{admin_tag}")
+                    nombre_plan = NOMBRE_PLAN_DISPLAY.get(cuenta.get("plan"), cuenta.get("plan") or "sin plan")
+                    dias_rest_c = _dias_restantes(cuenta.get("plan_vence_en"))
+                    venc_txt = f" · vence en {int(dias_rest_c)}d" if dias_rest_c is not None and dias_rest_c > 0 else (" · vencido" if dias_rest_c is not None else "")
+                    st.markdown(f"**{cuenta['email']}** — plan: {nombre_plan}{venc_txt} — {estado}{admin_tag}")
                 with c2:
                     if cuenta.get("habilitado"):
                         if st.button("🚫 Deshabilitar", key=f"deshab_{cuenta['id']}", use_container_width=True):
@@ -245,8 +309,9 @@ def panel_gestion_cuentas(data_client, user_id: str):
 
 def panel_admin_pagos(data_client, user_id: str):
     """Panel visible SOLO para cuentas es_admin = true. Muestra las
-    solicitudes de pago pendientes (siempre en cripto) con botones
-    para aprobar o rechazar."""
+    solicitudes de pago pendientes (siempre en cripto) con botones para
+    aprobar o rechazar. Al aprobar, actualiza perfiles.plan con el nivel
+    elegido y perfiles.plan_vence_en con hoy + los días de esa duración."""
     if not es_admin_usuario(data_client, user_id):
         return
 
@@ -277,7 +342,7 @@ def panel_admin_pagos(data_client, user_id: str):
                 with c1:
                     if st.button("✅ Aprobar", key=f"aprobar_{sol['id']}", use_container_width=True):
                         dias = sol.get("dias", 30)
-                        nivel = (sol.get("nivel") or "basico").lower()
+                        nivel = (sol.get("nivel") or "Básico").strip().lower()
                         vence = datetime.now(timezone.utc) + timedelta(days=dias)
                         data_client.table("perfiles").update({
                             "plan": nivel,
