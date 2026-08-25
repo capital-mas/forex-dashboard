@@ -26,6 +26,7 @@ from itertools import combinations
 from modulo_opciones import modulo_opciones
 from modulo_estados_financieros import render_analisis_profundo, render_comparativo_estados
 from modulo_calendario import render_calendario_economico, render_noticias
+from modulo_senales_trading import render_senales_trading
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
 from modulo_pago_manual import pantalla_suscripcion, panel_admin_pagos, panel_gestion_cuentas, es_admin_usuario
