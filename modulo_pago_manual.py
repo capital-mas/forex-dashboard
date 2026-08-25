@@ -12,15 +12,12 @@ Ciclo de vida del acceso a Capital+:
    el nivel elegido y perfiles.plan_vence_en con hoy + los días de esa
    duración, y se habilita la cuenta.
 
-IMPORTANTE: todas las funciones de este módulo reciben `data_client`,
-que es el cliente de Supabase creado con la service_role key (ver
-clientes_supabase.py). Ese cliente bypassea RLS por completo, así que
-no hace falta ninguna política de RLS en 'perfiles' ni 'solicitudes_pago'
-para que esto funcione. La seguridad la maneja el propio código Python
-(chequeando es_admin antes de dejar hacer nada administrativo).
-
-No requiere columnas nuevas en Supabase: usa 'plan', 'plan_vence_en'
-y 'habilitado', que ya existían.
+NO REQUIERE NINGÚN CAMBIO EN SUPABASE: usa únicamente columnas que ya
+existían en 'perfiles' (plan, plan_vence_en, habilitado, es_admin) y en
+'solicitudes_pago' (user_id, email, monto, moneda, nota, estado,
+plan_nombre, dias, metodo, creado_en, revisado_en). El nivel elegido
+(Básico/Pro) se guarda codificado dentro de plan_nombre, ej:
+"Básico - Mensual", y se extrae de ahí al momento de aprobar.
 
 secrets.toml necesario:
 
@@ -178,6 +175,8 @@ def _mostrar_selector_planes(data_client, user_id: str, email: str, mensaje_prev
             )
             if st.button(f"✅ Ya transferí — {nombre_nivel} {nombre_duracion}", type="primary",
                          use_container_width=True, key=f"btn_notif_{nombre_nivel}"):
+                # El nivel (Básico/Pro) queda codificado dentro de plan_nombre,
+                # ej "Básico - Mensual", para no necesitar una columna nueva.
                 data_client.table("solicitudes_pago").insert({
                     "user_id": user_id,
                     "email": email,
@@ -185,7 +184,6 @@ def _mostrar_selector_planes(data_client, user_id: str, email: str, mensaje_prev
                     "moneda": "USD",
                     "nota": nota_cripto,
                     "estado": "pendiente",
-                    "nivel": nombre_nivel,
                     "plan_nombre": f"{nombre_nivel} - {nombre_duracion}",
                     "dias": datos_duracion["dias"],
                     "metodo": "cripto",
@@ -307,18 +305,31 @@ def panel_gestion_cuentas(data_client, user_id: str):
                             st.rerun()
 
 
+def _extraer_nivel_de_plan_nombre(plan_nombre: str) -> str:
+    """plan_nombre viene como 'Básico - Mensual' o 'Pro - Anual'.
+    Devuelve el nivel en minúsculas ('basico' o 'pro') para guardarlo
+    en perfiles.plan. Si no matchea nada conocido, cae en 'basico'."""
+    if not plan_nombre:
+        return "basico"
+    primera_parte = plan_nombre.split(" - ")[0].strip().lower()
+    if "pro" in primera_parte:
+        return "pro"
+    return "basico"
+
+
 def panel_admin_pagos(data_client, user_id: str):
     """Panel visible SOLO para cuentas es_admin = true. Muestra las
     solicitudes de pago pendientes (siempre en cripto) con botones para
     aprobar o rechazar. Al aprobar, actualiza perfiles.plan con el nivel
-    elegido y perfiles.plan_vence_en con hoy + los días de esa duración."""
+    (extraído de plan_nombre) y perfiles.plan_vence_en con hoy + los
+    días de esa duración."""
     if not es_admin_usuario(data_client, user_id):
         return
 
     with st.expander("🛠️ Panel de aprobación de pagos", expanded=False):
         res = (
             data_client.table("solicitudes_pago")
-            .select("id, user_id, email, monto, moneda, nota, creado_en, nivel, plan_nombre, dias")
+            .select("id, user_id, email, monto, moneda, nota, creado_en, plan_nombre, dias")
             .eq("estado", "pendiente")
             .order("creado_en", desc=True)
             .execute()
@@ -342,7 +353,7 @@ def panel_admin_pagos(data_client, user_id: str):
                 with c1:
                     if st.button("✅ Aprobar", key=f"aprobar_{sol['id']}", use_container_width=True):
                         dias = sol.get("dias", 30)
-                        nivel = (sol.get("nivel") or "Básico").strip().lower()
+                        nivel = _extraer_nivel_de_plan_nombre(sol.get("plan_nombre"))
                         vence = datetime.now(timezone.utc) + timedelta(days=dias)
                         data_client.table("perfiles").update({
                             "plan": nivel,
