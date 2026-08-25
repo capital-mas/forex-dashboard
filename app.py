@@ -566,8 +566,8 @@ def pantalla_landing():
       </div>
       <div class="landing-step">
         <div class="landing-step-num">3</div>
-        <div class="landing-step-title">Suscribite si te sirve</div>
-        <div class="landing-step-desc">Mercado Pago o cripto. Cancelás cuando quieras, sin ataduras.</div>
+        <div class="landing-step-title">Elegí tu plan</div>
+        <div class="landing-step-desc">Básico o Pro, pagando en cripto. Cancelás cuando quieras, sin ataduras.</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -626,43 +626,26 @@ def pantalla_landing():
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="landing-section-title">Elegí tu plan</div>', unsafe_allow_html=True)
-    st.markdown('<div class="landing-section-sub">Mientras más largo el plan, menor el costo mensual equivalente</div>', unsafe_allow_html=True)
+    st.markdown('<div class="landing-section-sub">Dos niveles de acceso, pagando en criptomonedas</div>', unsafe_allow_html=True)
 
     st.markdown("""
-    <div class="pricing-grid">
+    <div class="pricing-grid" style="grid-template-columns:repeat(2,1fr);max-width:640px">
       <div class="pricing-card">
-        <div class="pricing-name">Mensual</div>
-        <div class="pricing-price">$15.000<br><small>o U$S10</small></div>
-        <div class="pricing-permes">U$S10 / mes</div>
-        <div class="pricing-sub">Acceso completo a todos los módulos</div>
+        <div class="pricing-name">Básico</div>
+        <div class="pricing-price">U$S10<br><small>/ mes</small></div>
+        <div class="pricing-permes">Trimestral U$S27 · Anual U$S90</div>
+        <div class="pricing-sub">Acceso a los módulos esenciales</div>
         <div class="pricing-trial">🎁 7 días gratis</div>
-        <div class="pricing-cancel">Cancelás cuando quieras</div>
-      </div>
-      <div class="pricing-card">
-        <div class="pricing-badge">Más elegido</div>
-        <div class="pricing-name">Trimestral</div>
-        <div class="pricing-price">$40.000<br><small>o U$S27</small></div>
-        <div class="pricing-permes">U$S9 / mes</div>
-        <div class="pricing-sub">Acceso completo a todos los módulos</div>
-        <div class="pricing-trial">🎁 7 días gratis</div>
-        <div class="pricing-cancel">Cancelás cuando quieras</div>
-      </div>
-      <div class="pricing-card">
-        <div class="pricing-name">Semestral</div>
-        <div class="pricing-price">$75.000<br><small>o U$S50</small></div>
-        <div class="pricing-permes">U$S8,33 / mes</div>
-        <div class="pricing-sub">Acceso completo a todos los módulos</div>
-        <div class="pricing-trial">🎁 7 días gratis</div>
-        <div class="pricing-cancel">Cancelás cuando quieras</div>
+        <div class="pricing-cancel">Pago en cripto</div>
       </div>
       <div class="pricing-card featured">
-        <div class="pricing-badge">Mejor precio</div>
-        <div class="pricing-name">Anual</div>
-        <div class="pricing-price">$135.000<br><small>o U$S90</small></div>
-        <div class="pricing-permes">U$S7,50 / mes</div>
-        <div class="pricing-sub">Acceso completo a todos los módulos</div>
+        <div class="pricing-badge">Recomendado</div>
+        <div class="pricing-name">Pro</div>
+        <div class="pricing-price">U$S18<br><small>/ mes</small></div>
+        <div class="pricing-permes">Trimestral U$S48 · Anual U$S160</div>
+        <div class="pricing-sub">Acceso completo: Optimizador, Opciones, Señales y más</div>
         <div class="pricing-trial">🎁 7 días gratis</div>
-        <div class="pricing-cancel">Cancelás cuando quieras</div>
+        <div class="pricing-cancel">Pago en cripto</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -673,7 +656,7 @@ def pantalla_landing():
         with st.expander("¿Necesito tarjeta para probarlo?"):
             st.write("No. Te registrás con tu email y arrancás el trial de 7 días sin cargar ningún método de pago.")
         with st.expander("¿Qué pasa cuando termina el trial?"):
-            st.write("Te pedimos que te suscribas para seguir con acceso completo. Podés pagar con Mercado Pago o, próximamente, con criptomonedas.")
+            st.write("Te pedimos que elijas un plan (Básico o Pro) para seguir con acceso. El pago se realiza en criptomonedas.")
         with st.expander("¿Puedo cancelar cuando quiera?"):
             st.write("Sí, la suscripción se puede cancelar en cualquier momento, sin permanencia mínima.")
         with st.expander("¿Los datos son en tiempo real?"):
