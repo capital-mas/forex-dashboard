@@ -29,7 +29,10 @@ from modulo_calendario import render_calendario_economico, render_noticias
 from modulo_senales_trading import render_senales_trading
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
-from modulo_pago_manual import pantalla_suscripcion, panel_admin_pagos, panel_gestion_cuentas, es_admin_usuario
+from modulo_pago_manual import (
+    pantalla_suscripcion, panel_admin_pagos, panel_gestion_cuentas,
+    es_admin_usuario, obtener_plan_actual, mostrar_selector_planes,
+)
 from modulo_promediador import modulo_promediador
 from modulo_volatilidad_y_analisis_tecnico import (
     modulo_volatilidad,
@@ -719,6 +722,40 @@ def _es_admin_cache(_client, user_id):
         return False
 
 ES_ADMIN = _es_admin_cache(supabase, USER_ID)
+@st.cache_data(ttl=300, show_spinner=False)
+def _plan_cache(_client, user_id):
+    try:
+        return obtener_plan_actual(_client, user_id)
+    except Exception:
+        return None
+
+PLAN_USUARIO = _plan_cache(supabase, USER_ID)
+MODULOS_SOLO_PRO = {'optimizador', 'senales', 'pares'}
+TIENE_ACCESO_PRO = ES_ADMIN or PLAN_USUARIO in ('trial', 'pro')
+
+
+def _mostrar_bloqueo_pro(nombre_funcion):
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#1a0d20 0%,#150a30 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #bc8cff;
+         border-radius:14px; padding:40px 32px; text-align:center; margin-top:20px;">
+      <div style="font-size:40px;margin-bottom:12px">🔒</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:8px">
+        {nombre_funcion} es exclusivo del plan Pro
+      </div>
+      <div style="font-size:13px;color:#8b949e;line-height:1.7;max-width:480px;margin:0 auto 20px auto">
+        Tu plan actual (Básico) no incluye esta función. Actualizá a Pro para
+        desbloquear Optimizador de Cartera, Señales de Trading y Rotación/Pares.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button('⭐ Ver planes y actualizar a Pro', key=f'upgrade_{nombre_funcion}', use_container_width=True):
+        st.session_state['mostrar_upgrade'] = True
+        st.rerun()
+
+    if st.session_state.get('mostrar_upgrade'):
+        st.markdown('---')
+        mostrar_selector_planes(supabase, USER_ID, st.session_state["usuario"].email)
 # ==============================================================
 #  PALETA (para HTML / Plotly)
 # ==============================================================
@@ -6401,15 +6438,15 @@ with st.container(key='nav_pills_wrap'):
              HORIZONTE=='buscador', None, 'buscador', 'buscador')
     _nav_btn(_c[4], '⚖️ Comparar', 'nav_comparador',
              HORIZONTE=='comparador', None, 'comparador', 'comparador')
-    _nav_btn(_c[5], '🧮 Optimizar', 'nav_optimizador',
+    _nav_btn(_c[5], '🧮 Optimizar' if TIENE_ACCESO_PRO else '🔒 Optimizar', 'nav_optimizador',
              HORIZONTE=='optimizador', None, 'optimizador', 'optimizador')
     _nav_btn(_c[6], '📐 Promediador', 'nav_promediador',
              HORIZONTE=='promediador', None, 'promediador', 'promediador')
-    _nav_btn(_c[7], '🔄 Rotación', 'nav_pares',
+    _nav_btn(_c[7], '🔄 Rotación' if TIENE_ACCESO_PRO else '🔒 Rotación', 'nav_pares',
              HORIZONTE=='pares', None, 'pares', 'pares')
     _nav_btn(_c[8], '🎲 Opciones', 'nav_opciones',
              HORIZONTE=='opciones', None, 'opciones', 'opciones')
-    _nav_btn(_c[9], '🎯 Señales', 'nav_senales',
+    _nav_btn(_c[9], '🎯 Señales' if TIENE_ACCESO_PRO else '🔒 Señales', 'nav_senales',
              HORIZONTE=='senales', None, 'senales', 'senales')
 
     n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
@@ -6749,34 +6786,43 @@ elif MODULO == 'comparador':
 
 
 elif MODULO == 'optimizador':
-    modulo_optimizador()
+    if TIENE_ACCESO_PRO:
+        modulo_optimizador()
+    else:
+        _mostrar_bloqueo_pro('Optimizador de Cartera')
 
 
 elif MODULO == 'pares':
-    tab_analisis_tecnico, tab_rot_pares, tab_coint, tab_vol = st.tabs([
-        '📐 Análisis Técnico', '🔗 Pares (Mean Reversion)', '📐 Cointegración (Engle-Granger)', '🌪️ Volatilidad (VIX)',
-    ])
-    with tab_analisis_tecnico:
-        modulo_analisis_tecnico(PLOTLY_CONFIG=PLOTLY_CONFIG)
-    with tab_rot_pares:
-        modulo_scanner_pares()
-    with tab_coint:
-        modulo_pares_cointegracion(
-            descargar_datos=descargar_datos,
-            get_close_series=get_close_series,
-            fmt_precio=fmt_precio,
-            kpi_cards_4=kpi_cards_4,
-            chips_navegacion=chips_navegacion,
-            PLOTLY_CONFIG=PLOTLY_CONFIG,
-            selector_ticker_autocomplete=selector_ticker_autocomplete,
-        )
-    with tab_vol:
-        modulo_volatilidad(PLOTLY_CONFIG=PLOTLY_CONFIG)
+    if TIENE_ACCESO_PRO:
+        tab_analisis_tecnico, tab_rot_pares, tab_coint, tab_vol = st.tabs([
+            '📐 Análisis Técnico', '🔗 Pares (Mean Reversion)', '📐 Cointegración (Engle-Granger)', '🌪️ Volatilidad (VIX)',
+        ])
+        with tab_analisis_tecnico:
+            modulo_analisis_tecnico(PLOTLY_CONFIG=PLOTLY_CONFIG)
+        with tab_rot_pares:
+            modulo_scanner_pares()
+        with tab_coint:
+            modulo_pares_cointegracion(
+                descargar_datos=descargar_datos,
+                get_close_series=get_close_series,
+                fmt_precio=fmt_precio,
+                kpi_cards_4=kpi_cards_4,
+                chips_navegacion=chips_navegacion,
+                PLOTLY_CONFIG=PLOTLY_CONFIG,
+                selector_ticker_autocomplete=selector_ticker_autocomplete,
+            )
+        with tab_vol:
+            modulo_volatilidad(PLOTLY_CONFIG=PLOTLY_CONFIG)
+    else:
+        _mostrar_bloqueo_pro('Rotación y Pares')
 elif MODULO == 'opciones':
     modulo_opciones()
 
 elif MODULO == 'senales':
-    render_senales_trading(supabase, USER_ID, st.session_state["usuario"].email)
+    if TIENE_ACCESO_PRO:
+        render_senales_trading(supabase, USER_ID, st.session_state["usuario"].email)
+    else:
+        _mostrar_bloqueo_pro('Señales de Trading')
 
 elif MODULO == 'calendario':
        render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
