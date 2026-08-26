@@ -79,6 +79,16 @@ def obtener_estado_perfil(data_client, user_id: str):
     return res.data
 
 
+def obtener_plan_actual(data_client, user_id: str):
+    """Devuelve el valor crudo de perfiles.plan ('trial', 'basico', 'pro' o
+    None). Pensado para que app.py decida qué módulos habilitar según el
+    nivel contratado (ej: Optimizador/Señales/Rotación solo para 'pro')."""
+    perfil = obtener_estado_perfil(data_client, user_id)
+    if perfil is None:
+        return None
+    return perfil.get("plan")
+
+
 def _dias_restantes(plan_vence_en: str):
     if not plan_vence_en:
         return None
@@ -119,10 +129,11 @@ def _ya_tiene_solicitud_pendiente(data_client, user_id: str) -> bool:
     return len(res.data) > 0
 
 
-def _mostrar_selector_planes(data_client, user_id: str, email: str, mensaje_previo: str = None):
+def mostrar_selector_planes(data_client, user_id: str, email: str, mensaje_previo: str = None):
     """Pantalla para elegir NIVEL (Básico/Pro) y DURACIÓN, pagar en cripto
-    y notificar la transferencia. Se usa tanto cuando vence el trial como
-    cuando vence un plan pago."""
+    y notificar la transferencia. Se usa cuando vence el trial, cuando
+    vence un plan pago, y también como botón de "upgrade" cuando un
+    usuario Básico intenta entrar a una función exclusiva de Pro."""
     if mensaje_previo:
         st.warning(mensaje_previo)
 
@@ -231,7 +242,7 @@ def pantalla_suscripcion(data_client, user_id: str, email: str):
     else:
         mensaje = None
 
-    _mostrar_selector_planes(data_client, user_id, email, mensaje_previo=mensaje)
+    mostrar_selector_planes(data_client, user_id, email, mensaje_previo=mensaje)
     return False
 
 
