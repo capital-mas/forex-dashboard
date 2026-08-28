@@ -6428,7 +6428,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
 
 
 with st.container(key='nav_pills_wrap'):
-    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.15, 1.1, 1.15, 0.95, 1.0, 1.15, 0.25, 1.1, 0.15, 1.3])
+    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.3, 1.4, 0.25, 1.1, 0.15, 1.3])
 
     _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
              HORIZONTE=='inicio', None, 'inicio', 'inicio')
@@ -6438,18 +6438,50 @@ with st.container(key='nav_pills_wrap'):
              HORIZONTE=='largo', None, 'largo', 'ranking')
     _nav_btn(_c[3], '🔍 Buscador', 'nav_buscador',
              HORIZONTE=='buscador', None, 'buscador', 'buscador')
-    _nav_btn(_c[4], '⚖️ Comparar', 'nav_comparador',
-             HORIZONTE=='comparador', None, 'comparador', 'comparador')
-    _nav_btn(_c[5], '🧮 Optimizar' if TIENE_ACCESO_PRO else '🔒 Optimizar', 'nav_optimizador',
-             HORIZONTE=='optimizador', None, 'optimizador', 'optimizador')
-    _nav_btn(_c[6], '📐 Promediador', 'nav_promediador',
-             HORIZONTE=='promediador', None, 'promediador', 'promediador')
-    _nav_btn(_c[7], '🔄 Rotación' if TIENE_ACCESO_PRO else '🔒 Rotación', 'nav_pares',
-             HORIZONTE=='pares', None, 'pares', 'pares')
-    _nav_btn(_c[8], '🎲 Opciones', 'nav_opciones',
-             HORIZONTE=='opciones', None, 'opciones', 'opciones')
-    _nav_btn(_c[9], '🎯 Señales' if TIENE_ACCESO_PRO else '🔒 Señales', 'nav_senales',
-             HORIZONTE=='senales', None, 'senales', 'senales')
+
+    # ── Menú desplegable "Herramientas" (mismo estilo que Mi Cuenta) ──
+    _HERRAMIENTAS_MAP = {
+        '⚖️ Comparar activos':          ('comparador',  'comparador'),
+        ('🧮 Optimizar cartera' if TIENE_ACCESO_PRO else '🔒 Optimizar cartera (Pro)'):
+                                          ('optimizador', 'optimizador'),
+        '📐 Promediador + Stop Loss':    ('promediador', 'promediador'),
+        ('🔄 Rotación y Pares' if TIENE_ACCESO_PRO else '🔒 Rotación y Pares (Pro)'):
+                                          ('pares',       'pares'),
+        '🎲 Valuación de Opciones':      ('opciones',    'opciones'),
+        ('🎯 Señales de Trading' if TIENE_ACCESO_PRO else '🔒 Señales de Trading (Pro)'):
+                                          ('senales',     'senales'),
+    }
+    _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'pares', 'opciones', 'senales'}
+    _herr_activo = HORIZONTE in _herr_horizontes
+    _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
+    _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
+
+    with _c[4]:
+        _cont_key_h = 'navcont_nav_herramientas'
+        with st.container(key=_cont_key_h):
+            with st.popover(_label_herramientas, use_container_width=True):
+                st.markdown(
+                    '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
+                    'Otras herramientas de análisis</div>',
+                    unsafe_allow_html=True
+                )
+                for label, (h_val, m_val) in _HERRAMIENTAS_MAP.items():
+                    if st.button(label, use_container_width=True, key=f'herr_{h_val}'):
+                        st.session_state['nav_horizonte'] = h_val
+                        st.session_state['nav_modulo'] = m_val
+                        st.rerun()
+        if _herr_activo:
+            st.markdown(f"""
+            <style>
+            .st-key-{_cont_key_h} button {{
+                background: #0d1117 !important;
+                color: var(--verde-monster) !important;
+                border: 1.5px solid var(--verde-monster) !important;
+                font-weight: 700 !important;
+                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+            }}
+            </style>
+            """, unsafe_allow_html=True)
 
     n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
     _label_cuenta = f'👤 Mi Cuenta 🔴{n_alertas_fin}' if n_alertas_fin > 0 else '👤 Mi Cuenta'
@@ -6458,12 +6490,12 @@ with st.container(key='nav_pills_wrap'):
         if n_alertas_fin > 0 else '💰 Finanzas'
     )
 
-    with _c[11]:
+    with _c[7]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 _refrescar_cotizaciones()
 
-    with _c[13]:
+    with _c[9]:
         with st.container(key='nav_cuenta_cont'):
             with st.popover(_label_cuenta, use_container_width=True):
                 st.markdown(
