@@ -6461,15 +6461,88 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
             st.rerun()
 
 
+_OPCIONES_SUB_CORTO = {
+    '🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
+    '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
+    '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones',
+}
+_OPCIONES_SUB_LARGO = {
+    '📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
+    '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
+    '📐 Top-Down Cuantitativo': 'tdc',
+}
+
 with st.container(key='nav_pills_wrap'):
     _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.2, 1.15, 0.25, 1.1, 0.15, 1.3])
 
     _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
              HORIZONTE=='inicio', None, 'inicio', 'inicio')
-    _nav_btn(_c[1], '⚡ Corto Plazo', 'nav_h_corto',
-             HORIZONTE=='corto', None, 'corto', 'resumen')
-    _nav_btn(_c[2], '📈 Largo Plazo', 'nav_h_largo',
-             HORIZONTE=='largo', None, 'largo', 'ranking')
+
+    # ── Corto Plazo: desplegable con sus módulos ──
+    _corto_label_actual = next(
+        (k for k, v in _OPCIONES_SUB_CORTO.items()
+         if v == MODULO or (MODULO == 'topdown' and v == 'resumen')), None
+    )
+    _label_corto = (f'⚡ {_corto_label_actual.split(" ",1)[1]}'
+                     if (HORIZONTE == 'corto' and _corto_label_actual) else '⚡ Corto Plazo')
+    with _c[1]:
+        _cont_key_cp = 'navcont_nav_corto'
+        with st.container(key=_cont_key_cp):
+            with st.popover(_label_corto, use_container_width=True):
+                st.markdown(
+                    '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
+                    'Corto Plazo</div>',
+                    unsafe_allow_html=True
+                )
+                for label, m_val in _OPCIONES_SUB_CORTO.items():
+                    if st.button(label, use_container_width=True, key=f'subcp_{m_val}'):
+                        st.session_state['nav_horizonte'] = 'corto'
+                        st.session_state['nav_modulo'] = m_val
+                        st.rerun()
+        if HORIZONTE == 'corto':
+            st.markdown(f"""
+            <style>
+            .st-key-{_cont_key_cp} button {{
+                background: #0d1117 !important;
+                color: var(--verde-monster) !important;
+                border: 1.5px solid var(--verde-monster) !important;
+                font-weight: 700 !important;
+                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+            }}
+            </style>
+            """, unsafe_allow_html=True)
+
+    # ── Largo Plazo: desplegable con sus módulos ──
+    _largo_label_actual = next((k for k, v in _OPCIONES_SUB_LARGO.items() if v == MODULO), None)
+    _label_largo = (f'📈 {_largo_label_actual.split(" ",1)[1]}'
+                     if (HORIZONTE == 'largo' and _largo_label_actual) else '📈 Largo Plazo')
+    with _c[2]:
+        _cont_key_lp = 'navcont_nav_largo'
+        with st.container(key=_cont_key_lp):
+            with st.popover(_label_largo, use_container_width=True):
+                st.markdown(
+                    '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
+                    'Largo Plazo</div>',
+                    unsafe_allow_html=True
+                )
+                for label, m_val in _OPCIONES_SUB_LARGO.items():
+                    if st.button(label, use_container_width=True, key=f'sublp_{m_val}'):
+                        st.session_state['nav_horizonte'] = 'largo'
+                        st.session_state['nav_modulo'] = m_val
+                        st.rerun()
+        if HORIZONTE == 'largo':
+            st.markdown(f"""
+            <style>
+            .st-key-{_cont_key_lp} button {{
+                background: #0d1117 !important;
+                color: var(--verde-monster) !important;
+                border: 1.5px solid var(--verde-monster) !important;
+                font-weight: 700 !important;
+                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+            }}
+            </style>
+            """, unsafe_allow_html=True)
+
     _nav_btn(_c[3], '🔍 Buscador', 'nav_buscador',
              HORIZONTE=='buscador', None, 'buscador', 'buscador')
 
@@ -6601,44 +6674,6 @@ with st.container(key='nav_pills_wrap'):
                     cookies.remove("sb_refresh_token")
                     del st.session_state["usuario"]
                     st.rerun()
-
-# ── Submenú como lista desplegable (no empuja los botones principales) ──
-def _cambiar_submodulo_corto():
-    st.session_state['nav_modulo'] = _OPCIONES_SUB_CORTO[st.session_state['nav_sub_corto']]
-
-def _cambiar_submodulo_largo():
-    st.session_state['nav_modulo'] = _OPCIONES_SUB_LARGO[st.session_state['nav_sub_largo']]
-
-if HORIZONTE == 'corto':
-    _OPCIONES_SUB_CORTO = {
-        '🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
-        '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
-        '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones',
-    }
-    _label_sub_actual = next(
-        (k for k, v in _OPCIONES_SUB_CORTO.items()
-         if v == MODULO or (MODULO == 'topdown' and v == 'resumen')),
-        '🎯 Resumen Top-Down'
-    )
-    # Con on_change, si el cambio vino de ESTE selectbox, MODULO ya llega
-    # actualizado acá arriba y este if no hace nada. Solo entra en juego
-    # cuando el módulo cambió por otra vía (botón, chip, onboarding).
-    if st.session_state.get('nav_sub_corto') != _label_sub_actual:
-        st.session_state['nav_sub_corto'] = _label_sub_actual
-    st.selectbox('Módulo de Corto Plazo', list(_OPCIONES_SUB_CORTO.keys()),
-                  key='nav_sub_corto', on_change=_cambiar_submodulo_corto)
-
-elif HORIZONTE == 'largo':
-    _OPCIONES_SUB_LARGO = {
-        '📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
-        '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
-        '📐 Top-Down Cuantitativo': 'tdc',
-    }
-    _label_sub_actual_l = next((k for k, v in _OPCIONES_SUB_LARGO.items() if v == MODULO), '📋 Ranking')
-    if st.session_state.get('nav_sub_largo') != _label_sub_actual_l:
-        st.session_state['nav_sub_largo'] = _label_sub_actual_l
-    st.selectbox('Módulo de Largo Plazo', list(_OPCIONES_SUB_LARGO.keys()),
-                  key='nav_sub_largo', on_change=_cambiar_submodulo_largo)
 
 st.markdown("""
 <style>
