@@ -238,9 +238,11 @@ div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button 
   }
     /* ── Triggers de los desplegables (Herramientas, Trading, Mi Cuenta) ──
      st.popover no hereda el estilo pill del resto del nav: se lo forzamos acá. ── */
-  .st-key-navcont_nav_herramientas button,
-  .st-key-navcont_nav_trading button,
-  .st-key-nav_cuenta_cont button {
+    .st-key-navcont_nav_corto button,
+    .st-key-navcont_nav_largo button,
+    .st-key-navcont_nav_herramientas button,
+    .st-key-navcont_nav_trading button,
+    .st-key-nav_cuenta_cont button {
     border-radius: 999px !important;
     border: 1px solid #21262d !important;
     padding: 8px 14px !important;
@@ -257,6 +259,8 @@ div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button 
     line-height: 1.25 !important;
     letter-spacing: 0.1px !important;
   }
+  .st-key-navcont_nav_corto button:hover,
+  .st-key-navcont_nav_largo button:hover,
   .st-key-navcont_nav_herramientas button:hover,
   .st-key-navcont_nav_trading button:hover,
   .st-key-nav_cuenta_cont button:hover {
