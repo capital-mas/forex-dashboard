@@ -236,6 +236,36 @@ div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button 
     transform: translateY(-1px) !important;
     box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
   }
+    /* ── Triggers de los desplegables (Herramientas, Trading, Mi Cuenta) ──
+     st.popover no hereda el estilo pill del resto del nav: se lo forzamos acá. ── */
+  .st-key-navcont_nav_herramientas button,
+  .st-key-navcont_nav_trading button,
+  .st-key-nav_cuenta_cont button {
+    border-radius: 999px !important;
+    border: 1px solid #21262d !important;
+    padding: 8px 14px !important;
+    font-size: 12.5px !important; font-weight: 600 !important;
+    height: auto !important; min-height: 40px !important;
+    width: 100% !important;
+    background: #0d1117 !important;
+    color: var(--verde-monster) !important;
+    transition: all .18s ease !important;
+    box-shadow: none !important;
+    white-space: normal !important;
+    word-break: keep-all !important;
+    overflow-wrap: normal !important;
+    line-height: 1.25 !important;
+    letter-spacing: 0.1px !important;
+  }
+  .st-key-navcont_nav_herramientas button:hover,
+  .st-key-navcont_nav_trading button:hover,
+  .st-key-nav_cuenta_cont button:hover {
+    background: #161b22 !important;
+    color: var(--verde-monster-hover) !important;
+    border-color: var(--verde-monster) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
+  }
 
 
   /* ── Page header ── */
