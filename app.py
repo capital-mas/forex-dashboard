@@ -6428,7 +6428,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
 
 
 with st.container(key='nav_pills_wrap'):
-    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.3, 1.4, 0.25, 1.1, 0.15, 1.3])
+    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.2, 1.15, 0.25, 1.1, 0.15, 1.3])
 
     _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
              HORIZONTE=='inicio', None, 'inicio', 'inicio')
@@ -6439,19 +6439,14 @@ with st.container(key='nav_pills_wrap'):
     _nav_btn(_c[3], '🔍 Buscador', 'nav_buscador',
              HORIZONTE=='buscador', None, 'buscador', 'buscador')
 
-    # ── Menú desplegable "Herramientas" (mismo estilo que Mi Cuenta) ──
+    # ── Menú desplegable "Herramientas": Comparar, Optimizar, Promediador ──
     _HERRAMIENTAS_MAP = {
-        '⚖️ Comparar activos':          ('comparador',  'comparador'),
+        '⚖️ Comparar activos': ('comparador', 'comparador'),
         ('🧮 Optimizar cartera' if TIENE_ACCESO_PRO else '🔒 Optimizar cartera (Pro)'):
-                                          ('optimizador', 'optimizador'),
-        '📐 Promediador + Stop Loss':    ('promediador', 'promediador'),
-        ('🔄 Rotación y Pares' if TIENE_ACCESO_PRO else '🔒 Rotación y Pares (Pro)'):
-                                          ('pares',       'pares'),
-        '🎲 Valuación de Opciones':      ('opciones',    'opciones'),
-        ('🎯 Señales de Trading' if TIENE_ACCESO_PRO else '🔒 Señales de Trading (Pro)'):
-                                          ('senales',     'senales'),
+                                 ('optimizador', 'optimizador'),
+        '📐 Promediador + Stop Loss': ('promediador', 'promediador'),
     }
-    _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'pares', 'opciones', 'senales'}
+    _herr_horizontes = {'comparador', 'optimizador', 'promediador'}
     _herr_activo = HORIZONTE in _herr_horizontes
     _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
     _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
@@ -6462,7 +6457,7 @@ with st.container(key='nav_pills_wrap'):
             with st.popover(_label_herramientas, use_container_width=True):
                 st.markdown(
                     '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
-                    'Otras herramientas de análisis</div>',
+                    'Herramientas de análisis</div>',
                     unsafe_allow_html=True
                 )
                 for label, (h_val, m_val) in _HERRAMIENTAS_MAP.items():
@@ -6474,6 +6469,46 @@ with st.container(key='nav_pills_wrap'):
             st.markdown(f"""
             <style>
             .st-key-{_cont_key_h} button {{
+                background: #0d1117 !important;
+                color: var(--verde-monster) !important;
+                border: 1.5px solid var(--verde-monster) !important;
+                font-weight: 700 !important;
+                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+            }}
+            </style>
+            """, unsafe_allow_html=True)
+
+    # ── Menú desplegable "Trading": Rotación, Señales, Opciones ──
+    _TRADING_MAP = {
+        ('🔄 Rotación y Pares' if TIENE_ACCESO_PRO else '🔒 Rotación y Pares (Pro)'):
+                                 ('pares', 'pares'),
+        ('🎯 Señales de Trading' if TIENE_ACCESO_PRO else '🔒 Señales de Trading (Pro)'):
+                                 ('senales', 'senales'),
+        '🎲 Valuación de Opciones': ('opciones', 'opciones'),
+    }
+    _trading_horizontes = {'pares', 'senales', 'opciones'}
+    _trading_activo = HORIZONTE in _trading_horizontes
+    _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
+    _label_trading = f'📈 {_trading_label_actual.split(" ",1)[1]}' if _trading_label_actual else '📈 Trading'
+
+    with _c[5]:
+        _cont_key_t = 'navcont_nav_trading'
+        with st.container(key=_cont_key_t):
+            with st.popover(_label_trading, use_container_width=True):
+                st.markdown(
+                    '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
+                    'Trading</div>',
+                    unsafe_allow_html=True
+                )
+                for label, (h_val, m_val) in _TRADING_MAP.items():
+                    if st.button(label, use_container_width=True, key=f'trad_{h_val}'):
+                        st.session_state['nav_horizonte'] = h_val
+                        st.session_state['nav_modulo'] = m_val
+                        st.rerun()
+        if _trading_activo:
+            st.markdown(f"""
+            <style>
+            .st-key-{_cont_key_t} button {{
                 background: #0d1117 !important;
                 color: var(--verde-monster) !important;
                 border: 1.5px solid var(--verde-monster) !important;
