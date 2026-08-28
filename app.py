@@ -216,14 +216,16 @@ st.markdown("""
 div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button {
     border-radius: 999px !important;
     border: 1px solid #21262d !important;
-    padding: 8px 16px !important;
-    font-size: 13px !important; font-weight: 600 !important;
+    padding: 8px 14px !important;
+    font-size: 12.5px !important; font-weight: 600 !important;
     height: auto !important; min-height: 40px !important;
     background: #0d1117 !important;
     color: var(--verde-monster) !important;
     transition: all .18s ease !important;
     box-shadow: none !important;
     white-space: normal !important;
+    word-break: keep-all !important;
+    overflow-wrap: normal !important;
     line-height: 1.25 !important;
     letter-spacing: 0.1px !important;
   }
