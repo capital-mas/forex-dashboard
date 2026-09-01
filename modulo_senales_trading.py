@@ -24,8 +24,16 @@
 #          cuántas unidades tiene 1 lote (sobre todo en Forex,
 #          índices y commodities), el valor "unidades por lote" es
 #          editable por categoría.
-#   - Eliminar señal ahora pide confirmación explícita (checkbox)
-#     antes de habilitar el botón, para evitar borrados accidentales.
+#   - Eliminar señal se movió por completo a la pestaña "Publicar
+#     Señal" (sección "Gestionar señales publicadas"), para que el
+#     admin maneje todo (alta y baja) desde un solo lugar. La
+#     pestaña "Señales y Resultados" ya no tiene botón de eliminar.
+#   - Nuevo: "Gestor de Riesgo" dentro de "Simulador de Capital".
+#     Calculadora de tamaño de posición ANTES de operar, con dos
+#     modos: por apalancamiento (calcula tamaño nominal + margen
+#     necesario) y por lotes (calcula cantidad de lotes), ambos a
+#     partir del % de capital que estás dispuesto a arriesgar y la
+#     distancia al Stop Loss.
 # ==============================================================
 
 import streamlit as st
@@ -257,6 +265,8 @@ def fmt_precio_local(p):
 
 # ==============================================================
 #  RENDER — TAB PUBLICAR (solo admin)
+#  Ahora también incluye "Gestionar señales publicadas" (eliminar),
+#  para que el admin maneje alta y baja desde una sola pestaña.
 # ==============================================================
 
 def _tab_publicar(supabase, user_id, user_email, es_admin):
@@ -318,9 +328,72 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
             except Exception as e:
                 st.error(f"❌ Error al publicar: {e}")
 
+    # ----------------------------------------------------------
+    #  Gestionar señales publicadas (eliminar) — todo desde acá
+    # ----------------------------------------------------------
+    st.divider()
+    st.markdown("#### 🗂️ Gestionar señales publicadas")
+    st.caption("Eliminá cualquier señal —abierta o cerrada— desde acá. El resto de los "
+               "usuarios solo puede ver y simular, nunca borrar.")
+
+    senales_admin = _obtener_senales(supabase, 200)
+    if not senales_admin:
+        st.info("Todavía no hay señales publicadas.")
+        return
+
+    df_admin = pd.DataFrame(senales_admin)
+    if "categoria" not in df_admin.columns:
+        df_admin["categoria"] = "🔹 Otro"
+    df_admin["categoria"] = df_admin["categoria"].fillna("🔹 Otro")
+
+    fa1, fa2, fa3 = st.columns(3)
+    with fa1:
+        tickers_admin = ["Todos"] + sorted(df_admin["ticker"].dropna().unique().tolist())
+        f_tk_admin = st.selectbox("Filtrar ticker", tickers_admin, key="sen_admin_f_tk")
+    with fa2:
+        estados_admin = ["Todos"] + sorted(df_admin["estado"].dropna().unique().tolist())
+        f_estado_admin = st.selectbox("Filtrar estado", estados_admin, key="sen_admin_f_estado")
+    with fa3:
+        categorias_admin = ["Todas"] + sorted(df_admin["categoria"].dropna().unique().tolist())
+        f_cat_admin = st.selectbox("Filtrar categoría", categorias_admin, key="sen_admin_f_cat")
+
+    df_admin_f = df_admin.copy()
+    if f_tk_admin != "Todos": df_admin_f = df_admin_f[df_admin_f["ticker"] == f_tk_admin]
+    if f_estado_admin != "Todos": df_admin_f = df_admin_f[df_admin_f["estado"] == f_estado_admin]
+    if f_cat_admin != "Todas": df_admin_f = df_admin_f[df_admin_f["categoria"] == f_cat_admin]
+
+    st.caption(f"{len(df_admin_f)} señales mostradas de {len(df_admin)} totales")
+
+    for _, row in df_admin_f.iterrows():
+        estado_row = row.get("estado", "ABIERTA")
+        col, bg, emoji = ESTADO_COLOR.get(estado_row, ("#8b949e", "rgba(139,148,158,0.12)", "⚪"))
+        categoria_row = row.get("categoria") or "🔹 Otro"
+        titulo = (f"{row.get('fecha','')} {row.get('hora','')} · {row.get('ticker','')} · "
+                  f"{categoria_row} · {row.get('tipo','')} · {estado_row}")
+        with st.expander(f"{emoji} {titulo}"):
+            v1, v2, v3, v4 = st.columns(4)
+            v1.metric("Entrada", fmt_precio_local(row.get("precio_entrada")))
+            v2.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
+            v3.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
+            v4.metric("Apalancamiento", f"{row.get('apalancamiento', 1):.0f}x")
+            if row.get("precio_cierre") is not None:
+                st.caption(f"Cerrada el {row.get('fecha_cierre','')} a "
+                           f"{fmt_precio_local(row.get('precio_cierre'))}")
+            if row.get("notas"):
+                st.markdown(f"**Notas:** {row['notas']}")
+
+            confirmar = st.checkbox("Confirmar eliminación", key=f"sen_admin_confirm_del_{row['id']}")
+            if st.button("🗑️ Eliminar señal", key=f"sen_admin_btn_del_{row['id']}",
+                         disabled=not confirmar):
+                _borrar_senal(supabase, row["id"])
+                _obtener_senales.clear()
+                st.success("Señal eliminada.")
+                st.rerun()
+
 
 # ==============================================================
 #  RENDER — TAB SEÑALES Y RESULTADOS (todos ven)
+#  Ya NO tiene botón de eliminar — eso vive en "Publicar Señal".
 # ==============================================================
 
 def _tab_senales(supabase, es_admin):
@@ -419,37 +492,145 @@ def _tab_senales(supabase, es_admin):
                 st.markdown(f"**Notas:** {row['notas']}")
 
             if es_admin and estado == "ABIERTA":
-                cc1, cc2 = st.columns(2)
-                with cc1:
-                    precio_cierre_manual = st.number_input(
-                        "Precio de cierre manual", min_value=0.0, format="%.5f",
-                        key=f"sen_cierre_{row['id']}")
-                    if st.button("🔒 Cerrar manualmente", key=f"sen_btn_cerrar_{row['id']}"):
-                        if precio_cierre_manual > 0:
-                            _cerrar_senal_manual(supabase, row["id"], precio_cierre_manual)
-                            _obtener_senales.clear()
-                            st.rerun()
-                        else:
-                            st.warning("Ingresá un precio de cierre válido.")
-                with cc2:
-                    st.write("")
-                    confirmar = st.checkbox("Confirmar eliminación", key=f"sen_confirm_del_{row['id']}")
-                    if st.button("🗑️ Eliminar señal", key=f"sen_btn_del_{row['id']}",
-                                 disabled=not confirmar):
-                        _borrar_senal(supabase, row["id"])
+                precio_cierre_manual = st.number_input(
+                    "Precio de cierre manual", min_value=0.0, format="%.5f",
+                    key=f"sen_cierre_{row['id']}")
+                if st.button("🔒 Cerrar manualmente", key=f"sen_btn_cerrar_{row['id']}"):
+                    if precio_cierre_manual > 0:
+                        _cerrar_senal_manual(supabase, row["id"], precio_cierre_manual)
                         _obtener_senales.clear()
-                        st.success("Señal eliminada.")
                         st.rerun()
-            elif es_admin and estado != "ABIERTA":
-                # También se puede borrar una señal ya cerrada (ej. cargada por error)
-                confirmar_cerrada = st.checkbox("Confirmar eliminación de esta señal cerrada",
-                                                 key=f"sen_confirm_del_c_{row['id']}")
-                if st.button("🗑️ Eliminar señal", key=f"sen_btn_del_c_{row['id']}",
-                             disabled=not confirmar_cerrada):
-                    _borrar_senal(supabase, row["id"])
-                    _obtener_senales.clear()
-                    st.success("Señal eliminada.")
-                    st.rerun()
+                    else:
+                        st.warning("Ingresá un precio de cierre válido.")
+                st.caption("🗑️ Para eliminar una señal, andá a la pestaña **Publicar Señal**.")
+
+
+# ==============================================================
+#  GESTOR DE RIESGO — calculadora de tamaño de posición
+#  (independiente de las señales publicadas: entrada manual)
+# ==============================================================
+
+def _gestor_riesgo():
+    st.markdown("#### 🛡️ Gestor de Riesgo — Calculadora de tamaño de posición")
+    st.caption(
+        "Definí ANTES de operar cuánto estás dispuesto a perder si se toca el Stop Loss. "
+        "Ingresá tu capital, el % de riesgo, y el precio de entrada/SL — la calculadora te "
+        "dice el tamaño de posición correcto, tanto en modo apalancamiento como en lotes."
+    )
+
+    modo_riesgo = st.radio("Modo de cálculo", ["📐 Por apalancamiento", "📦 Por lotes"],
+                            horizontal=True, key="gr_modo")
+
+    rc1, rc2, rc3 = st.columns(3)
+    with rc1:
+        capital_gr = st.number_input("💰 Capital total (USD)", min_value=100.0, value=1000.0,
+                                      step=100.0, key="gr_capital")
+    with rc2:
+        riesgo_pct = st.slider("⚠️ Riesgo por operación (%)", 0.1, 20.0, 1.0, step=0.1, key="gr_riesgo_pct")
+    with rc3:
+        tipo_gr = st.selectbox("Tipo de operación", ["🟢 LARGO (Compra)", "🔴 CORTO (Venta)"], key="gr_tipo")
+
+    rp1, rp2 = st.columns(2)
+    with rp1:
+        entrada_gr = st.number_input("Precio de entrada", min_value=0.0, format="%.5f", key="gr_entrada")
+    with rp2:
+        sl_gr = st.number_input("🛑 Stop Loss", min_value=0.0, format="%.5f", key="gr_sl")
+
+    if entrada_gr <= 0 or sl_gr <= 0:
+        st.info("Completá precio de entrada y Stop Loss para calcular.")
+        return
+
+    es_largo_gr = "LARGO" in tipo_gr.upper()
+    ok_niveles_gr = (sl_gr < entrada_gr) if es_largo_gr else (sl_gr > entrada_gr)
+    if not ok_niveles_gr:
+        st.warning("⚠️ Revisá los niveles: para LARGO el SL va debajo de la entrada; para CORTO, arriba.")
+        return
+
+    riesgo_usd = capital_gr * riesgo_pct / 100
+    distancia_precio = abs(entrada_gr - sl_gr)
+    distancia_pct = distancia_precio / entrada_gr * 100
+
+    st.markdown(
+        f'<div style="border-radius:10px;padding:10px 14px;margin:10px 0;'
+        f'background:rgba(227,179,65,0.10);border:1px solid #e3b34155">'
+        f'<div style="font-size:11px;color:#e3b341">Monto en riesgo si se toca el SL</div>'
+        f'<div style="font-size:18px;font-weight:800;color:#e3b341">${riesgo_usd:,.2f} '
+        f'<span style="font-size:12px;font-weight:400;color:#8b949e">'
+        f'(distancia al SL: {distancia_pct:.2f}% · ${distancia_precio:,.5f})</span></div></div>',
+        unsafe_allow_html=True,
+    )
+
+    if modo_riesgo == "📐 Por apalancamiento":
+        apalancamiento_gr = st.number_input("Apalancamiento a usar (x)", min_value=1.0, max_value=125.0,
+                                             value=1.0, step=1.0, key="gr_apalancamiento")
+        nominal_recomendado = riesgo_usd / (distancia_pct / 100)
+        margen_necesario = nominal_recomendado / apalancamiento_gr
+        pct_capital_margen = margen_necesario / capital_gr * 100 if capital_gr else 0
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Tamaño de posición (nominal)", f"${nominal_recomendado:,.2f}")
+        m2.metric("Margen necesario", f"${margen_necesario:,.2f}")
+        m3.metric("% del capital usado como margen", f"{pct_capital_margen:.1f}%")
+
+        if margen_necesario > capital_gr:
+            st.error("🚫 El margen necesario supera tu capital total. Bajá el % de riesgo o "
+                      "subí el apalancamiento para esta operación.")
+
+        st.caption(
+            "El tamaño nominal de la posición NO depende del apalancamiento: siempre necesitás "
+            "exponer ese monto en dólares para que la pérdida al tocar el SL sea igual al riesgo "
+            "que definiste. El apalancamiento solo cambia cuánto margen (capital propio) "
+            "necesitás inmovilizar para abrir esa posición."
+        )
+
+    else:
+        cat_gr = st.selectbox("🏷️ Categoría del activo", CATEGORIAS, key="gr_categoria")
+        default_upl = DEFAULT_UNIDADES_LOTE.get(cat_gr, 1.0)
+
+        preset_fx_gr = None
+        if cat_gr == "💱 Forex":
+            preset_fx_gr = st.selectbox(
+                "Preset de lote Forex (tamaños comunes de bróker)",
+                list(LOTES_FOREX_PRESETS.keys()) + ["Personalizado"],
+                key="gr_lote_fx_preset",
+            )
+            if preset_fx_gr != "Personalizado":
+                default_upl = LOTES_FOREX_PRESETS[preset_fx_gr]
+
+        upl1, upl2 = st.columns(2)
+        with upl1:
+            unidades_por_lote_gr = st.number_input(
+                f"Unidades por lote — {cat_gr}", min_value=0.01, value=float(default_upl),
+                step=1.0, key="gr_unidades_lote",
+                help="Cuántas unidades del activo representa 1 lote completo en tu bróker.")
+        with upl2:
+            apalancamiento_gr_lotes = st.number_input(
+                "Apalancamiento disponible (x, solo para estimar el margen)",
+                min_value=1.0, max_value=125.0, value=1.0, step=1.0, key="gr_apalancamiento_lotes")
+
+        lotes_recomendados = (riesgo_usd / (distancia_precio * unidades_por_lote_gr)
+                               if distancia_precio > 0 and unidades_por_lote_gr > 0 else 0)
+        unidades_totales = lotes_recomendados * unidades_por_lote_gr
+        nominal_lotes = unidades_totales * entrada_gr
+        margen_lotes = nominal_lotes / apalancamiento_gr_lotes if apalancamiento_gr_lotes else nominal_lotes
+
+        l1, l2, l3 = st.columns(3)
+        l1.metric("Lotes recomendados", f"{lotes_recomendados:,.2f}")
+        l2.metric("Unidades totales", f"{unidades_totales:,.2f}")
+        l3.metric("Margen necesario (aprox.)", f"${margen_lotes:,.2f}")
+
+        if margen_lotes > capital_gr:
+            st.error("🚫 El margen necesario para ese tamaño de lote supera tu capital total. "
+                      "Bajá el % de riesgo, la cantidad de lotes o subí el apalancamiento.")
+
+        st.caption(
+            "La cantidad de lotes se calcula para que, si el precio llega al Stop Loss, la "
+            "pérdida en dólares sea exactamente el monto en riesgo definido arriba. El "
+            "apalancamiento acá solo se usa para estimar el margen — el P&L en dólares no "
+            "cambia con el apalancamiento, igual que en un bróker real."
+        )
+
+    st.divider()
 
 
 # ==============================================================
@@ -459,6 +640,11 @@ def _tab_senales(supabase, es_admin):
 def _tab_simulador(supabase):
     st.caption("Simulá cuánto hubieras ganado o perdido replicando las señales publicadas, "
                "con tu propio capital y el apalancamiento definido en cada señal.")
+
+    with st.expander("🛡️ Gestor de Riesgo — Calculadora de tamaño de posición", expanded=True):
+        _gestor_riesgo()
+
+    st.markdown("#### 📊 Simulación sobre señales publicadas")
 
     senales = _obtener_senales(supabase, 200)
     if not senales:
@@ -714,8 +900,8 @@ def render_senales_trading(supabase, user_id, user_email):
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
         Señales publicadas con fecha, hora, stop loss, take profit, categoría y apalancamiento —
-        evaluación automática de aciertos/desaciertos y simulador de capital (por monto, % o
-        lotes) para cualquier usuario.
+        evaluación automática de aciertos/desaciertos, gestor de riesgo y simulador de capital
+        (por monto, % o lotes) para cualquier usuario.
       </div>
     </div>
     """, unsafe_allow_html=True)
