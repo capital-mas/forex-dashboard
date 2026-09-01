@@ -115,10 +115,6 @@ EVENTOS = {
 # ==============================================================
 EVENTOS_EXTENDIDOS = {
     # ---- Comercio Exterior ----
-    # Balanza/cuenta corriente: números "más altos" (más superávit o
-    # menos déficit) son mejores → directa. Precio de importación =
-    # inflación importada → inversa. Precio de exportación = mejores
-    # términos de intercambio para el país → directa.
     "Balanza comercial":                              {"categoria": "Comercio Exterior", "unidad": "B", "impacto": "Alto",  "polaridad": "directa"},
     "Exportaciones (Anual)":                          {"categoria": "Comercio Exterior", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
     "Importaciones (Anual)":                          {"categoria": "Comercio Exterior", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
@@ -131,9 +127,6 @@ EVENTOS_EXTENDIDOS = {
     "Flujos de capital en productos a largo plazo":   {"categoria": "Comercio Exterior", "unidad": "B", "impacto": "Bajo",  "polaridad": "directa"},
 
     # ---- Industria ----
-    # Inventarios: la señal es ambigua (puede ser reposición sana o
-    # señal de demanda floja) → se dejan en "neutral" para no forzar
-    # una lectura de bueno/malo que no está clara.
     "Gasto en construcción":                          {"categoria": "Industria", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
     "Pedidos de fábrica":                              {"categoria": "Industria", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
     "Producción manufacturera":                       {"categoria": "Industria", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
@@ -143,10 +136,6 @@ EVENTOS_EXTENDIDOS = {
     "Índice de Producción Industrial (China)":        {"categoria": "Industria", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
 
     # ---- Empleo ----
-    # Regla del analista: los indicadores de CANTIDAD de empleo (más
-    # empleos creados, más vacantes, más participación) son "directa".
-    # Los de DESEMPLEO/costo laboral (más desempleo, más solicitudes,
-    # más costo salarial de lo esperado) son "inversa".
     "Costes laborales unitarios":                     {"categoria": "Empleo", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
     "Productividad no agrícola":                      {"categoria": "Empleo", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
     "Renovaciones de los subsidios por desempleo":    {"categoria": "Empleo", "unidad": "K", "impacto": "Medio", "polaridad": "inversa"},
@@ -188,9 +177,6 @@ EVENTOS_EXTENDIDOS = {
     "Previsiones de ventas de la industria minorista":{"categoria": "Consumo", "unidad": "%", "impacto": "Bajo", "polaridad": "directa"},
 
     # ---- Vivienda ----
-    # El tipo hipotecario es una TASA: más alta = crédito más caro =
-    # peor para el sector → inversa. El resto son indicadores de
-    # actividad/precio de venta, donde más alto = sector más fuerte.
     "Índice Halifax de precios de la vivienda":       {"categoria": "Vivienda", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
     "Hipotecas sobre viviendas":                      {"categoria": "Vivienda", "unidad": "%", "impacto": "Bajo",  "polaridad": "directa"},
     "Venta de viviendas pendientes":                  {"categoria": "Vivienda", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
@@ -199,10 +185,6 @@ EVENTOS_EXTENDIDOS = {
     "Índice de precios de viviendas nuevas":          {"categoria": "Vivienda", "unidad": "%", "impacto": "Bajo",  "polaridad": "directa"},
 
     # ---- Política Monetaria / Crédito / Fiscal ----
-    # Tasa del PBoC: igual que cualquier tasa de interés, más alta =
-    # restrictivo = inversa. Balance fiscal: "más alto" (menos
-    # negativo/superávit mayor) = mejor → directa (ver corrección de
-    # signo en CATEGORIA_INTERPRETACION más abajo).
     "Balance general de la Fed":                      {"categoria": "Política Monetaria", "unidad": "B", "impacto": "Medio", "polaridad": "directa"},
     "Nuevos préstamos (China)":                       {"categoria": "Crédito", "unidad": "B", "impacto": "Alto", "polaridad": "directa"},
     "Tasa de préstamo preferencial del PBoC":         {"categoria": "Política Monetaria", "unidad": "%", "impacto": "Alto", "polaridad": "inversa"},
@@ -226,11 +208,6 @@ EVENTOS_EXTENDIDOS = {
     "Resultado bruto de explotación de las empresas": {"categoria": "Crecimiento", "unidad": "%", "impacto": "Bajo", "polaridad": "directa"},
 
     # ---- Energía ----
-    # Se mantiene consistente con la lectura ya curada de "Inventarios
-    # de petróleo crudo (EIA)": más oferta/inventario = presión
-    # bajista sobre el precio del crudo = desinflacionario = directa
-    # (bueno para el mercado en general, aunque sea malo puntualmente
-    # para el sector energético).
     "Reservas semanales de crudo del API":            {"categoria": "Energía", "unidad": "M Barriles", "impacto": "Medio", "polaridad": "directa"},
     "Número de plataformas petrolíferas (Baker Hughes)": {"categoria": "Energía", "unidad": "u", "impacto": "Bajo", "polaridad": "directa"},
     "Informe mensual de la AIE":                      {"categoria": "Energía", "unidad": "", "impacto": "Bajo", "polaridad": "neutral"},
@@ -241,14 +218,9 @@ EVENTOS_EXTENDIDOS = {
     "Informe WASDE":                                  {"categoria": "Agricultura", "unidad": "", "impacto": "Bajo", "polaridad": "neutral"},
 
     # ---- Deuda pública ----
-    # Subasta de deuda: rendimiento más alto de lo esperado = el
-    # mercado exige más prima por el riesgo = inversa.
     "Subasta de deuda pública":                       {"categoria": "Deuda Pública", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
 
     # ---- Posicionamiento especulativo (CFTC) ----
-    # No es un dato de "salud económica": es posicionamiento de
-    # traders. Se deja neutral para no mezclarlo con el puntaje de
-    # fortaleza económica del comparador país vs país.
     "Posiciones netas especulativas (CFTC)":          {"categoria": "Posicionamiento Especulativo", "unidad": "K", "impacto": "Bajo", "polaridad": "neutral"},
 
     # ---- Comentarios de funcionarios / eventos especiales ----
@@ -261,7 +233,6 @@ EVENTOS_EXTENDIDOS = {
 EVENTOS.update(EVENTOS_EXTENDIDOS)
 
 # Diccionario de interpretación macro (idéntico al de Apps Script).
-# Se deja completo para no perder cobertura de eventos.
 INTERPRETACION_MACRO = {
     "IPC (inflación general)": {
         "mayor": {"divisas": "🟢 Moneda fuerte por inflación elevada", "bonos": "🔴 Caída de bonos soberanos", "acciones": "🔴 Negativo para acciones e índices", "oro": "🟢 Oro favorecido como cobertura", "crypto": "🔴 Presión sobre criptomonedas", "politica": "📈 Política monetaria restrictiva", "riesgo": "🔴 Risk-off", "lectura": "La inflación supera lo esperado y aumenta la presión sobre el banco central."},
@@ -368,10 +339,6 @@ INTERPRETACION_MACRO = {
 
 # ==============================================================
 #  INTERPRETACIÓN MACRO GENÉRICA POR CATEGORÍA (fallback)
-#  Se usa para cualquier evento que no tenga una entrada propia en
-#  INTERPRETACION_MACRO. Cubre todos los eventos agregados en
-#  EVENTOS_EXTENDIDOS y cualquier evento futuro: solo hace falta
-#  asignarle una categoría existente para que ya tenga lectura macro.
 # ==============================================================
 CATEGORIA_INTERPRETACION = {
     "Inflación": {
@@ -419,10 +386,6 @@ CATEGORIA_INTERPRETACION = {
         "menor": {"divisas": "🔴 Sesgo más expansivo debilita la moneda", "bonos": "🟢 Bonos favorecidos", "acciones": "🟢 Impulso para acciones", "oro": "🟢 Oro favorecido", "crypto": "🟢 Mayor liquidez favorable", "politica": "📉 Sesgo monetario más expansivo", "riesgo": "🟢 Risk-on", "lectura": "El dato de política monetaria resulta más expansivo de lo esperado."},
     },
     "Política Fiscal": {
-        # Nota de signo: el balance fiscal se carga como número negativo
-        # cuando hay déficit (ej. real=-432B). Por eso "mayor" (número más
-        # alto, es decir déficit MENOR o superávit) es la mejora, y "menor"
-        # (número más bajo, déficit MÁS negativo) es el deterioro.
         "mayor": {"divisas": "🟢 Mejora la percepción fiscal", "bonos": "🟢 Menor emisión relativa favorece bonos", "acciones": "⚪ Impacto mixto", "oro": "🔴 Menor necesidad de cobertura", "crypto": "⚪ Impacto limitado", "politica": "📈 Mejora de las cuentas públicas", "riesgo": "🟢 Menor riesgo fiscal", "lectura": "El resultado fiscal es mejor (déficit menor al esperado) de lo esperado."},
         "menor": {"divisas": "🔴 Mayor déficit genera cautela sobre la moneda", "bonos": "🔴 Mayor emisión presiona bonos", "acciones": "⚪ Impacto mixto", "oro": "🟢 Cobertura ante riesgo fiscal", "crypto": "⚪ Impacto limitado", "politica": "📉 Deterioro de las cuentas públicas", "riesgo": "🔴 Riesgo fiscal", "lectura": "El resultado fiscal es peor (déficit mayor al esperado)."},
     },
@@ -448,11 +411,6 @@ IMPACTO_COLOR = {"Muy Alto": "#f85149", "Alto": "#f0883e", "Medio": "#e3b341", "
 # ==============================================================
 
 def interpretar_macro(evento, real, previsto):
-    """Busca primero una interpretación puntual y curada para el evento
-    (INTERPRETACION_MACRO). Si no existe, cae a la interpretación
-    genérica de su categoría (CATEGORIA_INTERPRETACION), que cubre
-    automáticamente todos los eventos agregados en EVENTOS_EXTENDIDOS
-    y cualquier evento nuevo que se agregue a futuro."""
     info = INTERPRETACION_MACRO.get(evento)
     if not info:
         categoria = EVENTOS.get(evento, {}).get("categoria") if evento else None
@@ -469,24 +427,9 @@ def interpretar_macro(evento, real, previsto):
 
 
 def _calcular_analisis(previsto, anterior, real, polaridad="directa"):
-    """Calcula el análisis del dato frente a lo previsto y al dato anterior.
-
-    `polaridad` (ver EVENTOS[...]["polaridad"]) determina si un valor REAL
-    más alto que el previsto/anterior es una buena o mala noticia:
-      - "directa": más alto = mejor (PBI, PMI, ventas minoristas, empleo...).
-      - "inversa": más alto = peor (desempleo, inflación, tasas de interés,
-        costos laborales, rendimiento de subastas de deuda...).
-      - "neutral": evento cualitativo, no se emite juicio de bueno/malo.
-
-    El texto de vs_previsto / vs_anterior es SIEMPRE puramente factual
-    (dirección numérica, sin juicio de valor); el juicio de bueno/malo vive
-    exclusivamente en senal_previsto / senal_anterior / impacto_mercado, y
-    es ahí donde se aplica la polaridad.
-    """
     hay_prev, hay_ant, hay_real = previsto is not None, anterior is not None, real is not None
     vs_previsto = vs_anterior = senal_prev = senal_ant = impacto_mercado = ""
 
-    # ── Comparación factual (no juzga si es bueno o malo) ──
     if hay_real and hay_prev:
         if real > previsto:   vs_previsto = "📈 Por encima del previsto"
         elif real < previsto: vs_previsto = "📉 Por debajo del previsto"
@@ -497,7 +440,6 @@ def _calcular_analisis(previsto, anterior, real, polaridad="directa"):
         elif real < anterior: vs_anterior = "📉 Bajó vs. el dato anterior"
         else:                 vs_anterior = "➖ Sin cambios vs. el anterior"
 
-    # ── Eventos cualitativos: sin lectura de bueno/malo ──
     if polaridad == "neutral":
         if vs_previsto:
             senal_prev = "⚪ SIN LECTURA DE POLARIDAD"
@@ -509,9 +451,6 @@ def _calcular_analisis(previsto, anterior, real, polaridad="directa"):
                     senal_previsto=senal_prev, senal_anterior=senal_ant,
                     impacto_mercado=impacto_mercado)
 
-    # ── Juicio de bueno/malo, ajustado por polaridad ──
-    # signo = -1 invierte la comparación para eventos "inversa" (ej. un
-    # desempleo real > previsto es negativo, no positivo).
     signo = -1 if polaridad == "inversa" else 1
 
     if hay_real and hay_prev:
@@ -564,9 +503,6 @@ def _renglon_macro(label, texto):
 
 
 def _render_macro_grid(macro):
-    """Grilla completa de interpretación macro: divisas, bonos, acciones, oro,
-    cripto, política monetaria y régimen de mercado — siempre visible, no
-    escondida detrás de un badge genérico de 'bueno/malo para el mercado'."""
     st.markdown("###### 🔎 Por qué es bueno o malo, y para qué activos")
     g1, g2, g3, g4 = st.columns(4)
     with g1:
@@ -649,10 +585,6 @@ def _borrar_noticia(supabase, noticia_id):
 
 # ==============================================================
 #  RENDER — TAB REGISTRAR
-#  Solo ADMIN_EMAIL ve y usa el formulario de carga. El resto de los
-#  usuarios ve un aviso y puede pasar a la pestaña Historial. Esta es
-#  solo la barrera de UI: la protección real está en las políticas
-#  RLS de Supabase (insert/update/delete solo para tu email).
 # ==============================================================
 
 def _tab_registrar(supabase, user_id, es_admin):
@@ -692,7 +624,6 @@ def _tab_registrar(supabase, user_id, es_admin):
     with u2:
         notas = st.text_input("💬 Notas", key="cal_notas", placeholder="Observaciones adicionales...")
 
-    # ── análisis en vivo (se recalcula en cada rerun, como el JS del sidebar) ──
     st.markdown("#### 📈 Análisis automático")
     polaridad_evento = info_evento.get("polaridad", "directa") if info_evento else "directa"
     analisis = _calcular_analisis(previsto, anterior, real, polaridad_evento)
@@ -760,9 +691,6 @@ def _tab_registrar(supabase, user_id, es_admin):
 
 # ==============================================================
 #  RENDER — TAB CALENDARIO ECONÓMICO (solo lectura, para todos)
-#  Cada evento se muestra como tarjeta expandible con el análisis
-#  macro completo (no solo si fue "bueno" o "malo", sino para qué
-#  activo y por qué), tal como se ve en vivo al cargar un registro.
 # ==============================================================
 
 def _tab_historial(supabase):
@@ -837,151 +765,27 @@ def _tab_historial(supabase):
 
 
 # ==============================================================
-#  RENDER — TAB COMPARAR (registro puntual)
-#  Permite elegir dos registros ya cargados y compararlos lado a
-#  lado: puede ser el mismo país en dos fechas distintas (comparar
-#  contra el mes anterior) o dos países distintos para el mismo tipo
-#  de evento. El selector es genérico (País → Evento → Fecha) para
-#  cubrir ambos casos sin duplicar UI.
-# ==============================================================
-
-def _selector_registro(df, key_prefix, label):
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        paises = sorted(df["pais"].dropna().unique().tolist())
-        if not paises:
-            st.selectbox(f"País ({label})", ["—"], key=f"{key_prefix}_pais", disabled=True)
-            return None
-        pais = st.selectbox(f"País ({label})", paises, key=f"{key_prefix}_pais")
-
-    df_pais = df[df["pais"] == pais]
-    with col2:
-        eventos = sorted(df_pais["evento"].dropna().unique().tolist())
-        if not eventos:
-            st.selectbox(f"Evento ({label})", ["—"], key=f"{key_prefix}_evento", disabled=True)
-            return None
-        evento = st.selectbox(f"Evento ({label})", eventos, key=f"{key_prefix}_evento")
-
-    df_ev = df_pais[df_pais["evento"] == evento].sort_values("fecha", ascending=False)
-    with col3:
-        opciones_fecha = df_ev["fecha"].tolist()
-        if not opciones_fecha:
-            st.selectbox(f"Fecha ({label})", ["—"], key=f"{key_prefix}_fecha", disabled=True)
-            return None
-        fecha_sel = st.selectbox(f"Fecha ({label})", opciones_fecha, key=f"{key_prefix}_fecha")
-
-    return df_ev[df_ev["fecha"] == fecha_sel].iloc[0]
-
-
-def _tab_comparar(supabase):
-    st.caption(
-        "Elegí dos registros para comparar: el mismo país en dos meses distintos, "
-        "o dos países distintos para el mismo evento — lo que necesites."
-    )
-
-    filas = _obtener_registros(supabase, 200)
-    if not filas:
-        st.info("Todavía no hay registros cargados para comparar.")
-        return
-
-    df = pd.DataFrame(filas)
-
-    colA, colB = st.columns(2)
-    with colA:
-        st.markdown("#### 🅰️ Registro A")
-        fila_a = _selector_registro(df, "cmp_a", "A")
-    with colB:
-        st.markdown("#### 🅱️ Registro B")
-        fila_b = _selector_registro(df, "cmp_b", "B")
-
-    if fila_a is None or fila_b is None:
-        st.info("Cargá al menos dos registros (pueden ser del mismo país o de países distintos) para poder comparar.")
-        return
-
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    st.markdown("---")
-
-    ca, cb = st.columns(2)
-    for col, fila, etiqueta in [(ca, fila_a, "A"), (cb, fila_b, "B")]:
-        with col:
-            unidad = fila.get("unidad") or ""
-            impacto = fila.get("impacto_mercado") or "⚪ NEUTRO PARA EL MERCADO"
-            bg, fg = _impacto_estilo(impacto)
-            st.markdown(f"**{etiqueta} · {fila.get('pais','')} · {fila.get('fecha','')}**")
-            st.caption(fila.get("evento", ""))
-            st.markdown(
-                f'<div style="border-radius:10px;padding:10px 14px;margin-bottom:8px;'
-                f'background:{bg};border:1px solid {fg}55">'
-                f'<div style="font-size:10px;color:{fg};opacity:.8">Impacto para el Mercado</div>'
-                f'<div style="font-size:13px;font-weight:800;color:{fg}">{impacto}</div></div>',
-                unsafe_allow_html=True,
-            )
-            v1, v2, v3 = st.columns(3)
-            v1.metric("Previsto", f"{fila.get('previsto')} {unidad}" if fila.get("previsto") is not None else "—")
-            v2.metric("Anterior", f"{fila.get('anterior')} {unidad}" if fila.get("anterior") is not None else "—")
-            v3.metric("Real", f"{fila.get('real')} {unidad}" if fila.get("real") is not None else "—")
-
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    st.markdown("#### 🔁 Diferencia (B respecto de A)")
-    real_a, real_b = fila_a.get("real"), fila_b.get("real")
-    if real_a is not None and real_b is not None:
-        delta = real_b - real_a
-        pct = (delta / abs(real_a) * 100) if real_a not in (0, None) else None
-        color = "#3fb950" if delta > 0 else ("#f85149" if delta < 0 else "#8b949e")
-        texto_pct = f" ({pct:+.2f}%)" if pct is not None else ""
-        st.markdown(
-            f'<div style="text-align:center;border-radius:10px;padding:14px;'
-            f'background:#0d1117;border:1px solid #21262d">'
-            f'<div style="font-size:22px;font-weight:800;color:{color}">{delta:+.4f}{texto_pct}</div>'
-            f'<div style="font-size:11px;color:#6b7d9a;margin-top:4px">Valor REAL de B menos valor REAL de A</div></div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.info("Alguno de los dos registros no tiene valor REAL cargado; no se puede calcular la diferencia numérica.")
-
-    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-    cma, cmb = st.columns(2)
-    for col, fila, etiqueta in [(cma, fila_a, "A"), (cmb, fila_b, "B")]:
-        with col:
-            st.markdown(f"**Interpretación macro — Registro {etiqueta}**")
-            macro = {
-                "divisas": fila.get("divisas"), "bonos": fila.get("bonos"),
-                "acciones": fila.get("acciones"), "oro": fila.get("oro"),
-                "crypto": fila.get("criptomonedas"), "politica": fila.get("politica_monetaria"),
-                "riesgo": fila.get("regimen_mercado"), "lectura": fila.get("lectura_macro"),
-            }
-            _render_macro_grid(macro)
-
-
-# ==============================================================
-#  RENDER — TAB PAÍS VS PAÍS (nuevo)
-#  Toma TODOS los registros cargados de dos países, los agrupa por
-#  categoría (Inflación, Empleo, Actividad Económica, Comercio
-#  Exterior, Vivienda, Energía, etc.) y calcula, para cada categoría,
-#  un puntaje PONDERADO a partir de dos cosas de cada registro:
-#     1) su "impacto_mercado" (que YA viene corregido por la polaridad
-#        del evento — ver EVENTOS[...]["polaridad"] — así que un
-#        desempleo o una inflación que salen "mayor" ya puntúan como
-#        dato negativo, no positivo):
-#           🟢 BUEN DATO PARA EL MERCADO   -> +1.0
-#           🟡 BUEN DATO PARCIAL           -> +0.5
-#           ⚪ NEUTRO                       ->  0.0
-#           🟠 MAL DATO PARCIAL            -> -0.5
-#           🔴 MAL DATO PARA EL MERCADO    -> -1.0
-#     2) el peso relativo del evento según su "impacto" (Muy Alto /
-#        Alto / Medio / Bajo, definido en EVENTOS), para que un dato
-#        de altísimo impacto (ej. Nóminas no agrícolas) no pese lo
-#        mismo que uno de bajo impacto (ej. rig count de Baker
-#        Hughes) dentro de la misma categoría.
-#  Los eventos de polaridad "neutral" (comparecencias, actas,
-#  posicionamiento CFTC, Jackson Hole...) quedan afuera del cálculo:
-#  no aportan ni restan, porque no tienen una lectura de bueno/malo
-#  para la salud económica del país.
-#  El país con mayor puntaje ponderado en cada categoría "gana" esa
-#  categoría, y al final se cuenta cuántas categorías ganó cada uno.
+#  SCORING COMPARTIDO — categorías y activos financieros
+#  (usado tanto por el perfil de un país como por País vs País)
 # ==============================================================
 
 PESO_IMPACTO = {"Muy Alto": 3.0, "Alto": 2.0, "Medio": 1.0, "Bajo": 0.5}
+
+# Campos de activos tal como están guardados en la tabla de Supabase,
+# junto con su etiqueta legible.
+ASSET_FIELDS = [
+    ("divisas", "💱 Divisas / Moneda"),
+    ("bonos", "📜 Bonos"),
+    ("acciones", "📊 Acciones / Índices"),
+    ("oro", "🥇 Oro"),
+    ("criptomonedas", "₿ Criptomonedas"),
+]
+
+# Puntaje según el emoji con el que arranca cada texto de interpretación
+# macro (divisas/bonos/acciones/oro/cripto). Los diccionarios de arriba
+# son consistentes: 🟢 favorable, 🔴 desfavorable, 🟠 desfavorable parcial,
+# ⚪ sin impacto claro / sin datos.
+ASSET_EMOJI_SCORE = {"🟢": 1.0, "🟠": -0.5, "🔴": -1.0, "⚪": 0.0}
 
 
 def _signal_score(impacto_mercado):
@@ -995,6 +799,18 @@ def _signal_score(impacto_mercado):
         return 0.5
     if "MAL DATO PAR" in impacto_mercado:    # parcial
         return -0.5
+    return 0.0
+
+
+def _asset_score_from_text(texto):
+    """Convierte el texto de interpretación de un activo (ej. "🟢 Moneda
+    fuerte...") en un puntaje -1..+1 según el emoji con el que arranca."""
+    if not texto:
+        return 0.0
+    texto = texto.strip()
+    for emoji, score in ASSET_EMOJI_SCORE.items():
+        if texto.startswith(emoji):
+            return score
     return 0.0
 
 
@@ -1015,16 +831,202 @@ def _peso_de_evento(evento):
     return PESO_IMPACTO.get(info.get("impacto"), 1.0)
 
 
+def _promedio_ponderado_score(sub_df):
+    """Promedio del score de cada dato, ponderado por el impacto del
+    evento (Muy Alto/Alto/Medio/Bajo)."""
+    if sub_df.empty:
+        return None, 0
+    peso_total = sub_df["peso"].sum()
+    if peso_total == 0:
+        return None, len(sub_df)
+    return (sub_df["score"] * sub_df["peso"]).sum() / peso_total, len(sub_df)
+
+
+def _resumen_activos_pais(df_pais):
+    """Para cada activo financiero (divisas/moneda, bonos, acciones, oro,
+    cripto) calcula un puntaje ponderado -1..+1 a partir de TODOS los
+    registros cargados para ese país, ponderando cada dato por el impacto
+    de su evento — mismo criterio que se usa para las categorías."""
+    resultados = {}
+    for campo, _ in ASSET_FIELDS:
+        if df_pais.empty:
+            resultados[campo] = (None, 0)
+            continue
+        pesos = df_pais["peso"]
+        scores = df_pais[campo].apply(_asset_score_from_text)
+        peso_total = pesos.sum()
+        if peso_total == 0:
+            resultados[campo] = (None, 0)
+        else:
+            resultados[campo] = ((scores * pesos).sum() / peso_total, len(df_pais))
+    return resultados
+
+
+def _asset_verdict(score):
+    if score is None:
+        return "⚪", "Sin datos suficientes"
+    if score >= 0.5:
+        return "🟢", "Sesgo claramente positivo"
+    if score >= 0.15:
+        return "🟡", "Sesgo levemente positivo"
+    if score <= -0.5:
+        return "🔴", "Sesgo claramente negativo"
+    if score <= -0.15:
+        return "🟠", "Sesgo levemente negativo"
+    return "⚪", "Sesgo neutro / mixto"
+
+
+def _render_tarjeta_activo(nombre, score, n, destacar=False):
+    emoji, texto = _asset_verdict(score)
+    detalle = f"Puntaje ponderado: {score:+.2f} sobre {n} dato(s)" if score is not None else "Todavía no hay datos cargados para este activo"
+    borde = "#e3b341" if destacar else "#21262d"
+    st.markdown(
+        f'<div style="border-radius:10px;padding:12px 16px;margin-bottom:10px;'
+        f'background:#0d1117;border:1px solid #21262d;border-left:4px solid {borde}">'
+        f'<div style="font-size:11px;color:#6b7d9a;text-transform:uppercase;letter-spacing:.5px">{nombre}</div>'
+        f'<div style="font-size:15px;font-weight:800;color:#e6edf3">{emoji} {texto}</div>'
+        f'<div style="font-size:11px;color:#6b7d9a;margin-top:4px">{detalle}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _texto_resumen_pais(pais, categorias, df_pais_puntuable, moneda_score):
+    positivas, negativas = [], []
+    for cat in categorias:
+        sub = df_pais_puntuable[df_pais_puntuable["categoria"] == cat]
+        prom, _ = _promedio_ponderado_score(sub)
+        if prom is None:
+            continue
+        if prom >= 0.15:
+            positivas.append(cat)
+        elif prom <= -0.15:
+            negativas.append(cat)
+
+    partes = []
+    if positivas:
+        partes.append(f"muestra fortaleza en {', '.join(positivas)}")
+    if negativas:
+        partes.append(f"muestra debilidad en {', '.join(negativas)}")
+    cuerpo = " y ".join(partes) if partes else "muestra un panorama mixto, sin un sesgo claro en ninguna categoría"
+
+    if moneda_score is None:
+        moneda_txt = "todavía no hay datos suficientes para estimar el impacto sobre su moneda."
+    elif moneda_score >= 0.15:
+        moneda_txt = "el saldo de los datos macro favorece a su moneda."
+    elif moneda_score <= -0.15:
+        moneda_txt = "el saldo de los datos macro presiona a la baja a su moneda."
+    else:
+        moneda_txt = "el saldo de los datos macro no marca un sesgo claro sobre su moneda."
+
+    return f"📌 {pais} {cuerpo}. En cuanto al mercado de cambios, {moneda_txt}"
+
+
+# ==============================================================
+#  RENDER — TAB PERFIL DE PAÍS (reemplaza al viejo "Comparar" A/B)
+#  Elegís un país y ves, con todo lo cargado hasta ahora:
+#    1) cómo viene la economía categoría por categoría
+#    2) de qué forma esos datos impactan en cada activo financiero,
+#       empezando por su moneda
+# ==============================================================
+
+def _tab_perfil_pais(supabase):
+    st.caption(
+        "Elegí un país para ver cómo viene mostrándose su economía con todo lo "
+        "registrado hasta ahora, y de qué forma esos datos impactan en cada tipo "
+        "de activo financiero — empezando por su moneda."
+    )
+
+    filas = _obtener_registros(supabase, 500)
+    if not filas:
+        st.info("Todavía no hay registros cargados.")
+        return
+
+    df = pd.DataFrame(filas)
+    df["categoria"] = df["evento"].apply(_categoria_de_evento)
+    df["score"] = df["impacto_mercado"].apply(_signal_score)
+    df["peso"] = df["evento"].apply(_peso_de_evento)
+    df["es_neutral"] = df["evento"].apply(_es_evento_neutral)
+
+    paises_u = sorted(df["pais"].dropna().unique().tolist())
+    if not paises_u:
+        st.info("Todavía no hay países con registros cargados.")
+        return
+
+    pais = st.selectbox("🌎 País", paises_u, key="perfil_pais_sel")
+    df_pais_todo = df[df["pais"] == pais]
+    df_pais_puntuable = df_pais_todo[~df_pais_todo["es_neutral"]]
+
+    if df_pais_todo.empty:
+        st.info("Este país todavía no tiene registros cargados.")
+        return
+
+    st.markdown(f"#### 🧭 Panorama económico de {pais}")
+    st.caption(
+        f"Basado en {len(df_pais_todo)} evento(s) registrado(s) "
+        f"({len(df_pais_puntuable)} con lectura de bueno/malo)."
+    )
+
+    categorias = sorted(df_pais_puntuable["categoria"].unique().tolist())
+    if categorias:
+        for cat in categorias:
+            sub = df_pais_puntuable[df_pais_puntuable["categoria"] == cat]
+            prom, n = _promedio_ponderado_score(sub)
+            emoji, texto = _asset_verdict(prom)
+            col_cat, col_score, col_txt = st.columns([2, 1.4, 3])
+            with col_cat:
+                st.markdown(f"**{cat}**")
+            with col_score:
+                st.caption(f"{prom:+.2f}  ({n} dato{'s' if n != 1 else ''})" if prom is not None else "Sin datos")
+            with col_txt:
+                st.markdown(f"{emoji} {texto}")
+        st.markdown("<hr style='margin:6px 0;border-color:#21262d'>", unsafe_allow_html=True)
+    else:
+        st.info("Este país solo tiene eventos cualitativos cargados (sin lectura de bueno/malo por categoría).")
+
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    st.markdown("#### 💹 Cómo impactan estos datos en los activos financieros")
+
+    activos = _resumen_activos_pais(df_pais_todo)
+
+    moneda_score, moneda_n = activos.get("divisas", (None, 0))
+    _render_tarjeta_activo("💱 Su moneda (Divisas)", moneda_score, moneda_n, destacar=True)
+
+    resto = [c for c in ASSET_FIELDS if c[0] != "divisas"]
+    cols = st.columns(len(resto))
+    for col, (campo, nombre) in zip(cols, resto):
+        score, n = activos.get(campo, (None, 0))
+        with col:
+            _render_tarjeta_activo(nombre, score, n)
+
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    st.info(_texto_resumen_pais(pais, categorias, df_pais_puntuable, moneda_score))
+
+    st.caption(
+        "Metodología: cada dato puntúa 🟢+1 / 🟡+0.5 / 🟠−0.5 / 🔴−1 según su lectura para cada "
+        "activo (ya corregida por polaridad del evento), promediado ponderando por el impacto de "
+        "cada evento (Muy Alto pesa 3x, Alto 2x, Medio 1x, Bajo 0.5x)."
+    )
+
+
+# ==============================================================
+#  RENDER — TAB PAÍS VS PAÍS
+#  Compara todo lo cargado de dos países, categoría por categoría, y
+#  además de qué forma esos mismos datos impactan en cada activo
+#  financiero (divisas/moneda, bonos, acciones, oro y cripto) de cada
+#  país, para saber no solo quién viene "mejor" en lo económico sino
+#  qué activo de cada país se ve más favorecido o perjudicado.
+# ==============================================================
+
 def _tab_comparar_paises(supabase):
     st.caption(
         "Elegí dos países y compará, categoría por categoría, cuál viene "
-        "mostrando datos económicos más fuertes según todo lo registrado hasta ahora. "
+        "mostrando datos económicos más fuertes según todo lo registrado hasta ahora, "
+        "y además cómo impactan esos datos en cada activo financiero — incluida su moneda. "
         "El puntaje ya tiene en cuenta si 'mayor' es bueno o malo para cada indicador "
         "(desempleo, inflación y tasas puntúan al revés que PBI o PMI) y pondera más los "
         "eventos de mayor impacto. Los eventos cualitativos (comparecencias, actas, etc.) "
-        "no entran en el cálculo."
+        "no entran en el cálculo por categoría económica."
     )
-
 
     filas = _obtener_registros(supabase, 500)
     if not filas:
@@ -1037,8 +1039,6 @@ def _tab_comparar_paises(supabase):
     df["peso"] = df["evento"].apply(_peso_de_evento)
     df["es_neutral"] = df["evento"].apply(_es_evento_neutral)
 
-    # Los eventos cualitativos (sin lectura de bueno/malo) no compiten:
-    # se excluyen del cálculo de puntaje para no diluirlo con ceros.
     df_puntuable = df[~df["es_neutral"]].copy()
 
     paises_u = sorted(df["pais"].dropna().unique().tolist())
@@ -1057,60 +1057,103 @@ def _tab_comparar_paises(supabase):
     df_b = df_puntuable[df_puntuable["pais"] == pais_b]
 
     categorias = sorted(set(df_a["categoria"].unique().tolist()) | set(df_b["categoria"].unique().tolist()))
-    if not categorias:
-        st.info("No hay categorías con eventos puntuables en común todavía (comparecencias, actas y "
-                 "posicionamiento CFTC no cuentan para el puntaje).")
-        return
-
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    st.markdown(f"#### 📊 Resultado por categoría — {pais_a} vs {pais_b}")
-
-    def _promedio_ponderado(sub_df):
-        """Promedio del score de cada dato, ponderado por el impacto del
-        evento (Muy Alto/Alto/Medio/Bajo). Un dato de bajo impacto no puede
-        empatar el peso de uno de altísimo impacto dentro de la categoría."""
-        if sub_df.empty:
-            return None, 0
-        peso_total = sub_df["peso"].sum()
-        if peso_total == 0:
-            return None, len(sub_df)
-        return (sub_df["score"] * sub_df["peso"]).sum() / peso_total, len(sub_df)
 
     ganados_a = ganados_b = empates = 0
 
-    for cat in categorias:
-        sub_a = df_a[df_a["categoria"] == cat]
-        sub_b = df_b[df_b["categoria"] == cat]
-        prom_a, n_a = _promedio_ponderado(sub_a)
-        prom_b, n_b = _promedio_ponderado(sub_b)
+    if categorias:
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+        st.markdown(f"#### 📊 Resultado por categoría — {pais_a} vs {pais_b}")
 
-        if prom_a is None and prom_b is None:
+        for cat in categorias:
+            sub_a = df_a[df_a["categoria"] == cat]
+            sub_b = df_b[df_b["categoria"] == cat]
+            prom_a, n_a = _promedio_ponderado_score(sub_a)
+            prom_b, n_b = _promedio_ponderado_score(sub_b)
+
+            if prom_a is None and prom_b is None:
+                continue
+
+            if prom_a is None:
+                ganador = pais_b
+                ganados_b += 1
+            elif prom_b is None:
+                ganador = pais_a
+                ganados_a += 1
+            elif abs(prom_a - prom_b) < 1e-9:
+                ganador = "Empate"
+                empates += 1
+            elif prom_a > prom_b:
+                ganador = pais_a
+                ganados_a += 1
+            else:
+                ganador = pais_b
+                ganados_b += 1
+
+            col_cat, col_a, col_b, col_gan = st.columns([2, 2, 2, 1.6])
+            with col_cat:
+                st.markdown(f"**{cat}**")
+            with col_a:
+                txt_a = f"{prom_a:+.2f}  ({n_a} dato{'s' if n_a != 1 else ''})" if prom_a is not None else "Sin datos"
+                st.caption(f"{pais_a}: {txt_a}")
+            with col_b:
+                txt_b = f"{prom_b:+.2f}  ({n_b} dato{'s' if n_b != 1 else ''})" if prom_b is not None else "Sin datos"
+                st.caption(f"{pais_b}: {txt_b}")
+            with col_gan:
+                if ganador == "Empate":
+                    st.markdown("⚖️ Empate")
+                else:
+                    st.markdown(f"🏆 {ganador}")
+            st.markdown("<hr style='margin:4px 0;border-color:#21262d'>", unsafe_allow_html=True)
+    else:
+        st.info("No hay categorías con eventos puntuables en común todavía (comparecencias, actas y "
+                 "posicionamiento CFTC no cuentan para el puntaje por categoría).")
+
+    # ── Impacto en activos financieros ──
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    st.markdown(f"#### 💹 Impacto en activos financieros — {pais_a} vs {pais_b}")
+    st.caption(
+        "Mismo criterio de ponderación por impacto del evento, aplicado directamente sobre la "
+        "lectura de cada activo (divisas, bonos, acciones, oro y cripto) de cada país."
+    )
+
+    df_todos_a = df[df["pais"] == pais_a]
+    df_todos_b = df[df["pais"] == pais_b]
+    activos_a = _resumen_activos_pais(df_todos_a)
+    activos_b = _resumen_activos_pais(df_todos_b)
+
+    ganados_activos_a = ganados_activos_b = empates_activos = 0
+
+    for campo, nombre in ASSET_FIELDS:
+        score_a, n_a = activos_a.get(campo, (None, 0))
+        score_b, n_b = activos_b.get(campo, (None, 0))
+        if score_a is None and score_b is None:
             continue
 
-        if prom_a is None:
+        if score_a is None:
             ganador = pais_b
-            ganados_b += 1
-        elif prom_b is None:
+            ganados_activos_b += 1
+        elif score_b is None:
             ganador = pais_a
-            ganados_a += 1
-        elif abs(prom_a - prom_b) < 1e-9:
+            ganados_activos_a += 1
+        elif abs(score_a - score_b) < 1e-9:
             ganador = "Empate"
-            empates += 1
-        elif prom_a > prom_b:
+            empates_activos += 1
+        elif score_a > score_b:
             ganador = pais_a
-            ganados_a += 1
+            ganados_activos_a += 1
         else:
             ganador = pais_b
-            ganados_b += 1
+            ganados_activos_b += 1
 
-        col_cat, col_a, col_b, col_gan = st.columns([2, 2, 2, 1.6])
-        with col_cat:
-            st.markdown(f"**{cat}**")
+        etiqueta = f"**{nombre}**" if campo == "divisas" else nombre
+        col_act, col_a, col_b, col_gan = st.columns([2, 2, 2, 1.6])
+        with col_act:
+            st.markdown(etiqueta)
         with col_a:
-            txt_a = f"{prom_a:+.2f}  ({n_a} dato{'s' if n_a != 1 else ''})" if prom_a is not None else "Sin datos"
+            txt_a = f"{score_a:+.2f}  ({n_a} dato{'s' if n_a != 1 else ''})" if score_a is not None else "Sin datos"
             st.caption(f"{pais_a}: {txt_a}")
         with col_b:
-            txt_b = f"{prom_b:+.2f}  ({n_b} dato{'s' if n_b != 1 else ''})" if prom_b is not None else "Sin datos"
+            txt_b = f"{score_b:+.2f}  ({n_b} dato{'s' if n_b != 1 else ''})" if score_b is not None else "Sin datos"
             st.caption(f"{pais_b}: {txt_b}")
         with col_gan:
             if ganador == "Empate":
@@ -1119,12 +1162,25 @@ def _tab_comparar_paises(supabase):
                 st.markdown(f"🏆 {ganador}")
         st.markdown("<hr style='margin:4px 0;border-color:#21262d'>", unsafe_allow_html=True)
 
+    moneda_a, _ = activos_a.get("divisas", (None, 0))
+    moneda_b, _ = activos_b.get("divisas", (None, 0))
+    if moneda_a is not None and moneda_b is not None and abs(moneda_a - moneda_b) > 1e-9:
+        favorecido = pais_a if moneda_a > moneda_b else pais_b
+        st.success(f"💱 En cuanto al mercado de cambios, los datos macro vienen favoreciendo más a la moneda de **{favorecido}**.")
+    elif moneda_a is not None and moneda_b is not None:
+        st.info("💱 En cuanto al mercado de cambios, ambas monedas muestran un sesgo macro parejo.")
+
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     st.markdown("#### 🏁 Resultado general")
     r1, r2, r3 = st.columns(3)
     r1.metric(f"Categorías ganadas · {pais_a}", ganados_a)
     r2.metric(f"Categorías ganadas · {pais_b}", ganados_b)
     r3.metric("Empates", empates)
+
+    r4, r5, r6 = st.columns(3)
+    r4.metric(f"Activos favorables · {pais_a}", ganados_activos_a)
+    r5.metric(f"Activos favorables · {pais_b}", ganados_activos_b)
+    r6.metric("Activos parejos", empates_activos)
 
     if ganados_a > ganados_b:
         st.success(f"📈 En conjunto, **{pais_a}** viene mostrando datos económicos más fuertes que **{pais_b}** según lo registrado hasta ahora.")
@@ -1138,15 +1194,16 @@ def _tab_comparar_paises(supabase):
         "para la economía del país (ya corregido por polaridad: en desempleo, inflación, tasas de "
         "interés, costos laborales y rendimientos de deuda, 'mayor' puntúa negativo; en PBI, PMI, "
         "empleo creado, ventas y vivienda, 'mayor' puntúa positivo). Ese puntaje se promedia "
-        "ponderando por el impacto del evento (Muy Alto pesa 3x, Alto 2x, Medio 1x, Bajo 0.5x), y "
-        "los eventos cualitativos sin lectura de bueno/malo quedan afuera del cálculo."
+        "ponderando por el impacto del evento (Muy Alto pesa 3x, Alto 2x, Medio 1x, Bajo 0.5x). "
+        "Para el impacto en activos financieros se aplica la misma ponderación, pero directamente "
+        "sobre la lectura de cada activo (divisas, bonos, acciones, oro, cripto) en lugar del "
+        "veredicto general de bueno/malo, y los eventos cualitativos sin lectura de bueno/malo "
+        "quedan afuera del cálculo por categoría."
     )
 
 
 # ==============================================================
 #  RENDER — NOTICIAS (todos ven, solo admin publica/borra)
-#  Ahora vive en su propio entry point, separado del calendario
-#  (ver render_noticias más abajo).
 # ==============================================================
 
 def _tab_noticias(supabase, es_admin, user_id, user_email):
@@ -1187,7 +1244,6 @@ def _tab_noticias(supabase, es_admin, user_id, user_email):
         st.info("Todavía no hay noticias publicadas.")
         return
 
-    # Ordenar por fecha_noticia (si existe) y si no por created_at, ambas desc.
     def _clave_orden(n):
         return n.get("fecha_noticia") or (n.get("created_at") or "")
 
@@ -1244,10 +1300,11 @@ def render_calendario_economico(supabase, user_id, user_email):
         render_calendario_economico(supabase, USER_ID, st.session_state['usuario'].email)
 
     Muestra el calendario económico (carga de eventos + historial con
-    interpretación macro completa), una pestaña de comparación entre
-    dos registros cualquiera (mismo país en otro mes, u otro país) y
-    una pestaña de comparación país vs país agrupada por categoría.
-    Las noticias son un módulo aparte, ver render_noticias() más abajo.
+    interpretación macro completa), una pestaña de "Perfil de País" (cómo
+    está un país y cómo impacta en cada activo financiero) y una pestaña
+    de comparación país vs país agrupada por categoría y por activo
+    financiero. Las noticias son un módulo aparte, ver render_noticias()
+    más abajo.
     """
     es_admin = _es_admin(user_email)
 
@@ -1260,21 +1317,21 @@ def render_calendario_economico(supabase, user_id, user_email):
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
         Registro de eventos macro con interpretación automática completa
-        (divisas, bonos, acciones, oro y cripto), su historial y comparación
-        entre países o entre períodos.
+        (divisas, bonos, acciones, oro y cripto), su historial, el perfil
+        macro de cada país y su comparación frente a otros países.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    tab_reg, tab_cal, tab_cmp, tab_paises = st.tabs(
-        ["📝 Registrar", "📅 Calendario Económico", "🔀 Comparar", "🌍 País vs País"]
+    tab_reg, tab_cal, tab_perfil, tab_paises = st.tabs(
+        ["📝 Registrar", "📅 Calendario Económico", "🌎 Perfil de País", "🌍 País vs País"]
     )
     with tab_reg:
         _tab_registrar(supabase, user_id, es_admin)
     with tab_cal:
         _tab_historial(supabase)
-    with tab_cmp:
-        _tab_comparar(supabase)
+    with tab_perfil:
+        _tab_perfil_pais(supabase)
     with tab_paises:
         _tab_comparar_paises(supabase)
 
