@@ -1009,12 +1009,43 @@ def _tab_perfil_pais(supabase):
 
 
 # ==============================================================
+#  CALIFICACIÓN DE LA DIFERENCIA ENTRE DOS PAÍSES
+#  No alcanza con decir "quién gana": un +0.10 contra un -0.05 no es lo
+#  mismo que un +1.00 contra un -1.00. Esta escala traduce la distancia
+#  entre los dos puntajes (rango típico 0 a 2, ya que cada puntaje va de
+#  -1 a +1) en una lectura de qué tan marcada es la ventaja fundamental.
+# ==============================================================
+
+def _calificar_diferencia(diff_abs):
+    if diff_abs < 0.15:
+        return "prácticamente parejo"
+    if diff_abs < 0.5:
+        return "ventaja leve"
+    if diff_abs < 1.0:
+        return "ventaja clara"
+    return "ventaja muy fuerte"
+
+
+def _etiqueta_ganador(ganador, val_a, val_b):
+    """Arma el texto de la columna 'ganador' incluyendo qué tan fuerte es
+    la diferencia, no solo quién quedó arriba."""
+    if ganador == "Empate":
+        return "⚖️ Empate"
+    if val_a is None or val_b is None:
+        return f"🏆 {ganador} (único con datos)"
+    diff_abs = abs(val_a - val_b)
+    return f"🏆 {ganador} — {_calificar_diferencia(diff_abs)}"
+
+
+# ==============================================================
 #  RENDER — TAB PAÍS VS PAÍS
 #  Compara todo lo cargado de dos países, categoría por categoría, y
 #  además de qué forma esos mismos datos impactan en cada activo
 #  financiero (divisas/moneda, bonos, acciones, oro y cripto) de cada
 #  país, para saber no solo quién viene "mejor" en lo económico sino
-#  qué activo de cada país se ve más favorecido o perjudicado.
+#  qué activo de cada país se ve más favorecido o perjudicado — y con
+#  qué contundencia (fundamentalmente) según la magnitud de la
+#  diferencia entre los dos puntajes.
 # ==============================================================
 
 def _tab_comparar_paises(supabase):
@@ -1099,10 +1130,7 @@ def _tab_comparar_paises(supabase):
                 txt_b = f"{prom_b:+.2f}  ({n_b} dato{'s' if n_b != 1 else ''})" if prom_b is not None else "Sin datos"
                 st.caption(f"{pais_b}: {txt_b}")
             with col_gan:
-                if ganador == "Empate":
-                    st.markdown("⚖️ Empate")
-                else:
-                    st.markdown(f"🏆 {ganador}")
+                st.markdown(_etiqueta_ganador(ganador, prom_a, prom_b))
             st.markdown("<hr style='margin:4px 0;border-color:#21262d'>", unsafe_allow_html=True)
     else:
         st.info("No hay categorías con eventos puntuables en común todavía (comparecencias, actas y "
@@ -1156,19 +1184,39 @@ def _tab_comparar_paises(supabase):
             txt_b = f"{score_b:+.2f}  ({n_b} dato{'s' if n_b != 1 else ''})" if score_b is not None else "Sin datos"
             st.caption(f"{pais_b}: {txt_b}")
         with col_gan:
-            if ganador == "Empate":
-                st.markdown("⚖️ Empate")
-            else:
-                st.markdown(f"🏆 {ganador}")
+            st.markdown(_etiqueta_ganador(ganador, score_a, score_b))
         st.markdown("<hr style='margin:4px 0;border-color:#21262d'>", unsafe_allow_html=True)
 
     moneda_a, _ = activos_a.get("divisas", (None, 0))
     moneda_b, _ = activos_b.get("divisas", (None, 0))
-    if moneda_a is not None and moneda_b is not None and abs(moneda_a - moneda_b) > 1e-9:
-        favorecido = pais_a if moneda_a > moneda_b else pais_b
-        st.success(f"💱 En cuanto al mercado de cambios, los datos macro vienen favoreciendo más a la moneda de **{favorecido}**.")
-    elif moneda_a is not None and moneda_b is not None:
-        st.info("💱 En cuanto al mercado de cambios, ambas monedas muestran un sesgo macro parejo.")
+    if moneda_a is not None and moneda_b is not None:
+        diff = moneda_a - moneda_b
+        diff_abs = abs(diff)
+        if diff_abs < 0.15:
+            st.info(
+                "💱 En términos fundamentales, ambas monedas muestran un sesgo macro "
+                "prácticamente parejo — ninguna se ve claramente más fuerte que la otra por ahora."
+            )
+        else:
+            favorecido = pais_a if diff > 0 else pais_b
+            otro = pais_b if diff > 0 else pais_a
+            if diff_abs >= 1.0:
+                calif = "mucho más fuerte"
+            elif diff_abs >= 0.5:
+                calif = "claramente más fuerte"
+            else:
+                calif = "levemente más fuerte"
+            st.success(
+                f"💱 En términos fundamentales, la moneda de **{favorecido}** viene **{calif}** "
+                f"que la de **{otro}** según los datos macro cargados "
+                f"(diferencia de {diff_abs:.2f} puntos sobre una escala de 0 a 2)."
+            )
+    elif moneda_a is not None or moneda_b is not None:
+        unico = pais_a if moneda_a is not None else pais_b
+        st.info(
+            f"💱 Todavía solo hay datos de moneda cargados para **{unico}**; falta más información "
+            "del otro país para poder comparar la fortaleza fundamental entre ambas monedas."
+        )
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     st.markdown("#### 🏁 Resultado general")
@@ -1198,7 +1246,10 @@ def _tab_comparar_paises(supabase):
         "Para el impacto en activos financieros se aplica la misma ponderación, pero directamente "
         "sobre la lectura de cada activo (divisas, bonos, acciones, oro, cripto) en lugar del "
         "veredicto general de bueno/malo, y los eventos cualitativos sin lectura de bueno/malo "
-        "quedan afuera del cálculo por categoría."
+        "quedan afuera del cálculo por categoría. Además de decir quién queda arriba, cada fila "
+        "indica qué tan grande es esa diferencia (prácticamente parejo / ventaja leve / ventaja "
+        "clara / ventaja muy fuerte) según la distancia entre los dos puntajes, para distinguir un "
+        "dato ajustado de una diferencia fundamental real."
     )
 
 
