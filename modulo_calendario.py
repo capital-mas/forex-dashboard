@@ -405,6 +405,15 @@ CATEGORIA_INTERPRETACION = {
 
 IMPACTO_COLOR = {"Muy Alto": "#f85149", "Alto": "#f0883e", "Medio": "#e3b341", "Bajo": "#8b949e"}
 
+MESES_NOMBRE = {
+    1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+    7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
+}
+
+
+def _formato_mes(m):
+    return "Todos" if m == "Todos" else MESES_NOMBRE[m]
+
 
 # ==============================================================
 #  LÓGICA (portada 1:1 de interpretarMacro / guardarRegistro de GAS)
@@ -708,20 +717,39 @@ def _tab_historial(supabase):
         return
 
     df = pd.DataFrame(filas)
+    df["fecha_dt"] = pd.to_datetime(df["fecha"], errors="coerce").dt.date
 
-    fc1, fc2 = st.columns(2)
+    fc1, fc2, fc3 = st.columns([1.3, 1.3, 1.6])
     with fc1:
         paises_u = ["Todos"] + sorted(df["pais"].dropna().unique().tolist())
         f_pais = st.selectbox("Filtrar país", paises_u, key="cal_hist_f_pais")
     with fc2:
         impactos_u = ["Todos"] + sorted(df["impacto_mercado"].dropna().unique().tolist()) if "impacto_mercado" in df.columns else ["Todos"]
         f_imp = st.selectbox("Filtrar impacto", impactos_u, key="cal_hist_f_imp")
+    with fc3:
+        f_fechas = st.date_input(
+            "📅 Filtrar por fecha",
+            value=(),
+            key="cal_hist_f_fecha",
+            format="DD/MM/YYYY",
+            help="Elegí un día puntual, o dos fechas para filtrar por rango.",
+        )
 
     df_f = df.copy()
     if f_pais != "Todos":
         df_f = df_f[df_f["pais"] == f_pais]
     if f_imp != "Todos":
         df_f = df_f[df_f["impacto_mercado"] == f_imp]
+
+    if f_fechas:
+        if isinstance(f_fechas, (list, tuple)):
+            if len(f_fechas) == 1:
+                df_f = df_f[df_f["fecha_dt"] == f_fechas[0]]
+            elif len(f_fechas) == 2:
+                desde, hasta = f_fechas
+                df_f = df_f[(df_f["fecha_dt"] >= desde) & (df_f["fecha_dt"] <= hasta)]
+        else:
+            df_f = df_f[df_f["fecha_dt"] == f_fechas]
 
     st.caption(f"{len(df_f)} registros mostrados de {len(df)} totales")
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
@@ -953,12 +981,36 @@ def _tab_perfil_pais(supabase):
         return
 
     pais = st.selectbox("🌎 País", paises_u, key="perfil_pais_sel")
-    df_pais_todo = df[df["pais"] == pais]
-    df_pais_puntuable = df_pais_todo[~df_pais_todo["es_neutral"]]
+    df_pais_todo = df[df["pais"] == pais].copy()
 
     if df_pais_todo.empty:
         st.info("Este país todavía no tiene registros cargados.")
         return
+
+    df_pais_todo["fecha_dt"] = pd.to_datetime(df_pais_todo["fecha"], errors="coerce")
+
+    fp1, fp2 = st.columns(2)
+    with fp1:
+        anios_u = ["Todos"] + sorted(
+            df_pais_todo["fecha_dt"].dt.year.dropna().unique().astype(int).tolist(), reverse=True
+        )
+        f_anio = st.selectbox("📅 Filtrar por año", anios_u, key="perfil_f_anio")
+    with fp2:
+        f_mes = st.selectbox(
+            "🗓️ Filtrar por mes", ["Todos"] + list(range(1, 13)),
+            format_func=_formato_mes, key="perfil_f_mes",
+        )
+
+    if f_anio != "Todos":
+        df_pais_todo = df_pais_todo[df_pais_todo["fecha_dt"].dt.year == f_anio]
+    if f_mes != "Todos":
+        df_pais_todo = df_pais_todo[df_pais_todo["fecha_dt"].dt.month == f_mes]
+
+    if df_pais_todo.empty:
+        st.info("No hay registros de este país para el período seleccionado.")
+        return
+
+    df_pais_puntuable = df_pais_todo[~df_pais_todo["es_neutral"]]
 
     st.markdown(f"#### 🧭 Panorama económico de {pais}")
     st.caption(
@@ -1069,12 +1121,34 @@ def _tab_comparar_paises(supabase):
     df["score"] = df["impacto_mercado"].apply(_signal_score)
     df["peso"] = df["evento"].apply(_peso_de_evento)
     df["es_neutral"] = df["evento"].apply(_es_evento_neutral)
+    df["fecha_dt"] = pd.to_datetime(df["fecha"], errors="coerce")
+
+    fp1, fp2 = st.columns(2)
+    with fp1:
+        anios_u = ["Todos"] + sorted(
+            df["fecha_dt"].dt.year.dropna().unique().astype(int).tolist(), reverse=True
+        )
+        f_anio = st.selectbox("📅 Filtrar por año", anios_u, key="cmpp_f_anio")
+    with fp2:
+        f_mes = st.selectbox(
+            "🗓️ Filtrar por mes", ["Todos"] + list(range(1, 13)),
+            format_func=_formato_mes, key="cmpp_f_mes",
+        )
+
+    if f_anio != "Todos":
+        df = df[df["fecha_dt"].dt.year == f_anio]
+    if f_mes != "Todos":
+        df = df[df["fecha_dt"].dt.month == f_mes]
+
+    if df.empty:
+        st.info("No hay registros para el período seleccionado.")
+        return
 
     df_puntuable = df[~df["es_neutral"]].copy()
 
     paises_u = sorted(df["pais"].dropna().unique().tolist())
     if len(paises_u) < 2:
-        st.info("Necesitás registros de al menos dos países distintos para poder comparar.")
+        st.info("Necesitás registros de al menos dos países distintos (en el período elegido) para poder comparar.")
         return
 
     c1, c2 = st.columns(2)
