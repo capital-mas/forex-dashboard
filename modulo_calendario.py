@@ -958,16 +958,31 @@ def _tab_comparar(supabase):
 #  Toma TODOS los registros cargados de dos países, los agrupa por
 #  categoría (Inflación, Empleo, Actividad Económica, Comercio
 #  Exterior, Vivienda, Energía, etc.) y calcula, para cada categoría,
-#  un puntaje promedio a partir del "impacto_mercado" de cada
-#  registro:
-#     🟢 BUEN DATO PARA EL MERCADO   -> +1.0
-#     🟡 BUEN DATO PARCIAL           -> +0.5
-#     ⚪ NEUTRO                       ->  0.0
-#     🟠 MAL DATO PARCIAL            -> -0.5
-#     🔴 MAL DATO PARA EL MERCADO    -> -1.0
-#  El país con mayor puntaje promedio en cada categoría "gana" esa
+#  un puntaje PONDERADO a partir de dos cosas de cada registro:
+#     1) su "impacto_mercado" (que YA viene corregido por la polaridad
+#        del evento — ver EVENTOS[...]["polaridad"] — así que un
+#        desempleo o una inflación que salen "mayor" ya puntúan como
+#        dato negativo, no positivo):
+#           🟢 BUEN DATO PARA EL MERCADO   -> +1.0
+#           🟡 BUEN DATO PARCIAL           -> +0.5
+#           ⚪ NEUTRO                       ->  0.0
+#           🟠 MAL DATO PARCIAL            -> -0.5
+#           🔴 MAL DATO PARA EL MERCADO    -> -1.0
+#     2) el peso relativo del evento según su "impacto" (Muy Alto /
+#        Alto / Medio / Bajo, definido en EVENTOS), para que un dato
+#        de altísimo impacto (ej. Nóminas no agrícolas) no pese lo
+#        mismo que uno de bajo impacto (ej. rig count de Baker
+#        Hughes) dentro de la misma categoría.
+#  Los eventos de polaridad "neutral" (comparecencias, actas,
+#  posicionamiento CFTC, Jackson Hole...) quedan afuera del cálculo:
+#  no aportan ni restan, porque no tienen una lectura de bueno/malo
+#  para la salud económica del país.
+#  El país con mayor puntaje ponderado en cada categoría "gana" esa
 #  categoría, y al final se cuenta cuántas categorías ganó cada uno.
 # ==============================================================
+
+PESO_IMPACTO = {"Muy Alto": 3.0, "Alto": 2.0, "Medio": 1.0, "Bajo": 0.5}
+
 
 def _signal_score(impacto_mercado):
     if not impacto_mercado:
@@ -988,12 +1003,28 @@ def _categoria_de_evento(evento):
     return info["categoria"] if info else "Otros"
 
 
+def _es_evento_neutral(evento):
+    info = EVENTOS.get(evento)
+    return bool(info) and info.get("polaridad") == "neutral"
+
+
+def _peso_de_evento(evento):
+    info = EVENTOS.get(evento)
+    if not info:
+        return 1.0
+    return PESO_IMPACTO.get(info.get("impacto"), 1.0)
+
+
 def _tab_comparar_paises(supabase):
     st.caption(
         "Elegí dos países y compará, categoría por categoría, cuál viene "
         "mostrando datos económicos más fuertes según todo lo registrado hasta ahora. "
-        "El puntaje surge del impacto para el mercado de cada dato cargado."
+        "El puntaje ya tiene en cuenta si 'mayor' es bueno o malo para cada indicador "
+        "(desempleo, inflación y tasas puntúan al revés que PBI o PMI) y pondera más los "
+        "eventos de mayor impacto. Los eventos cualitativos (comparecencias, actas, etc.) "
+        "no entran en el cálculo."
     )
+
 
     filas = _obtener_registros(supabase, 500)
     if not filas:
@@ -1003,6 +1034,12 @@ def _tab_comparar_paises(supabase):
     df = pd.DataFrame(filas)
     df["categoria"] = df["evento"].apply(_categoria_de_evento)
     df["score"] = df["impacto_mercado"].apply(_signal_score)
+    df["peso"] = df["evento"].apply(_peso_de_evento)
+    df["es_neutral"] = df["evento"].apply(_es_evento_neutral)
+
+    # Los eventos cualitativos (sin lectura de bueno/malo) no compiten:
+    # se excluyen del cálculo de puntaje para no diluirlo con ceros.
+    df_puntuable = df[~df["es_neutral"]].copy()
 
     paises_u = sorted(df["pais"].dropna().unique().tolist())
     if len(paises_u) < 2:
@@ -1016,25 +1053,36 @@ def _tab_comparar_paises(supabase):
         opciones_b = [p for p in paises_u if p != pais_a] or paises_u
         pais_b = st.selectbox("🅱️ País B", opciones_b, index=0, key="cmpp_pais_b")
 
-    df_a = df[df["pais"] == pais_a]
-    df_b = df[df["pais"] == pais_b]
+    df_a = df_puntuable[df_puntuable["pais"] == pais_a]
+    df_b = df_puntuable[df_puntuable["pais"] == pais_b]
 
     categorias = sorted(set(df_a["categoria"].unique().tolist()) | set(df_b["categoria"].unique().tolist()))
     if not categorias:
-        st.info("No hay categorías en común para comparar todavía.")
+        st.info("No hay categorías con eventos puntuables en común todavía (comparecencias, actas y "
+                 "posicionamiento CFTC no cuentan para el puntaje).")
         return
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
     st.markdown(f"#### 📊 Resultado por categoría — {pais_a} vs {pais_b}")
+
+    def _promedio_ponderado(sub_df):
+        """Promedio del score de cada dato, ponderado por el impacto del
+        evento (Muy Alto/Alto/Medio/Bajo). Un dato de bajo impacto no puede
+        empatar el peso de uno de altísimo impacto dentro de la categoría."""
+        if sub_df.empty:
+            return None, 0
+        peso_total = sub_df["peso"].sum()
+        if peso_total == 0:
+            return None, len(sub_df)
+        return (sub_df["score"] * sub_df["peso"]).sum() / peso_total, len(sub_df)
 
     ganados_a = ganados_b = empates = 0
 
     for cat in categorias:
         sub_a = df_a[df_a["categoria"] == cat]
         sub_b = df_b[df_b["categoria"] == cat]
-        n_a, n_b = len(sub_a), len(sub_b)
-        prom_a = sub_a["score"].mean() if n_a else None
-        prom_b = sub_b["score"].mean() if n_b else None
+        prom_a, n_a = _promedio_ponderado(sub_a)
+        prom_b, n_b = _promedio_ponderado(sub_b)
 
         if prom_a is None and prom_b is None:
             continue
@@ -1086,9 +1134,12 @@ def _tab_comparar_paises(supabase):
         st.info("📊 Ambos países muestran un desempeño económico parejo según lo registrado hasta ahora.")
 
     st.caption(
-        "Nota: el puntaje se basa en si cada dato salió mejor o peor que lo previsto/anterior, "
-        "no evalúa si 'mayor' es intrínsecamente bueno o malo para ese indicador puntual "
-        "(por ejemplo, en tasa de desempleo 'mayor' ya se marca como dato negativo en el cálculo base)."
+        "Metodología: cada dato puntúa 🟢+1 / 🟡+0.5 / 🟠−0.5 / 🔴−1 según si fue mejor o peor "
+        "para la economía del país (ya corregido por polaridad: en desempleo, inflación, tasas de "
+        "interés, costos laborales y rendimientos de deuda, 'mayor' puntúa negativo; en PBI, PMI, "
+        "empleo creado, ventas y vivienda, 'mayor' puntúa positivo). Ese puntaje se promedia "
+        "ponderando por el impacto del evento (Muy Alto pesa 3x, Alto 2x, Medio 1x, Bajo 0.5x), y "
+        "los eventos cualitativos sin lectura de bueno/malo quedan afuera del cálculo."
     )
 
 
