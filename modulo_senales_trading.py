@@ -77,6 +77,32 @@ LOTES_FOREX_PRESETS = {
     "Nano (1 lote = 100 unidades)":         100.0,
 }
 
+# Tabla de referencia: a mayor apalancamiento usado, menor % de capital
+# conviene arriesgar por operación (porque los movimientos de precio
+# necesarios para liquidar el margen son cada vez más chicos). Son
+# valores de referencia / buenas prácticas, no un límite impuesto por
+# la app — el usuario puede elegir el % que quiera.
+TABLA_RIESGO_APALANCAMIENTO = [
+    (2,   10.0),
+    (5,   8.0),
+    (10,  6.0),
+    (20,  5.0),
+    (30,  3.0),
+    (50,  2.0),
+    (75,  1.5),
+    (100, 1.0),
+    (125, 0.5),
+]
+
+
+def _riesgo_recomendado_por_apalancamiento(apalancamiento):
+    """Devuelve el % de riesgo máximo recomendado (de referencia) para
+    un apalancamiento dado, según TABLA_RIESGO_APALANCAMIENTO."""
+    for tope_apalancamiento, riesgo_recomendado in TABLA_RIESGO_APALANCAMIENTO:
+        if apalancamiento <= tope_apalancamiento:
+            return riesgo_recomendado
+    return TABLA_RIESGO_APALANCAMIENTO[-1][1]
+
 
 def _es_admin(user_email):
     return bool(user_email) and user_email.strip().lower() == ADMIN_EMAIL.strip().lower()
@@ -511,77 +537,114 @@ def _tab_senales(supabase, es_admin):
 # ==============================================================
 
 def _gestor_riesgo():
-    st.markdown("#### 🛡️ Gestor de Riesgo — Calculadora de tamaño de posición")
-    st.caption(
-        "Definí ANTES de operar cuánto estás dispuesto a perder si se toca el Stop Loss. "
-        "Ingresá tu capital, el % de riesgo, y el precio de entrada/SL — la calculadora te "
-        "dice el tamaño de posición correcto, tanto en modo apalancamiento como en lotes."
-    )
+    st.markdown("#### 🛡️ Gestor de Riesgo")
+    st.caption("Contestá 4 preguntas y te decimos qué tamaño de posición usar, sin cálculos manuales.")
 
-    modo_riesgo = st.radio("Modo de cálculo", ["📐 Por apalancamiento", "📦 Por lotes"],
+    modo_riesgo = st.radio("¿Cómo operás?", ["📐 Con apalancamiento", "📦 Con lotes"],
                             horizontal=True, key="gr_modo")
 
-    rc1, rc2, rc3 = st.columns(3)
+    st.markdown("**1. ¿Cuánta plata tenés y cuánto estás dispuesto a perder por operación?**")
+    rc1, rc2 = st.columns(2)
     with rc1:
         capital_gr = st.number_input("💰 Capital total (USD)", min_value=100.0, value=1000.0,
                                       step=100.0, key="gr_capital")
     with rc2:
-        riesgo_pct = st.slider("⚠️ Riesgo por operación (%)", 0.1, 20.0, 1.0, step=0.1, key="gr_riesgo_pct")
-    with rc3:
-        tipo_gr = st.selectbox("Tipo de operación", ["🟢 LARGO (Compra)", "🔴 CORTO (Venta)"], key="gr_tipo")
+        riesgo_pct = st.slider("⚠️ % que aceptás perder si el trade sale mal", 0.1, 20.0, 1.0,
+                                step=0.1, key="gr_riesgo_pct",
+                                help="Lo habitual en gestión de riesgo es entre 1% y 2% por operación.")
 
-    rp1, rp2 = st.columns(2)
+    st.markdown("**2. ¿Qué operación estás por hacer?**")
+    rp0, rp1, rp2 = st.columns(3)
+    with rp0:
+        tipo_gr = st.selectbox("Tipo", ["🟢 LARGO (Compra)", "🔴 CORTO (Venta)"], key="gr_tipo")
     with rp1:
         entrada_gr = st.number_input("Precio de entrada", min_value=0.0, format="%.5f", key="gr_entrada")
     with rp2:
         sl_gr = st.number_input("🛑 Stop Loss", min_value=0.0, format="%.5f", key="gr_sl")
 
     if entrada_gr <= 0 or sl_gr <= 0:
-        st.info("Completá precio de entrada y Stop Loss para calcular.")
+        st.info("👆 Completá el precio de entrada y el Stop Loss para ver el resultado.")
         return
 
     es_largo_gr = "LARGO" in tipo_gr.upper()
     ok_niveles_gr = (sl_gr < entrada_gr) if es_largo_gr else (sl_gr > entrada_gr)
     if not ok_niveles_gr:
-        st.warning("⚠️ Revisá los niveles: para LARGO el SL va debajo de la entrada; para CORTO, arriba.")
+        st.warning("⚠️ Revisá los niveles: en un LARGO el Stop Loss va por debajo de la entrada; "
+                   "en un CORTO, por arriba.")
         return
 
     riesgo_usd = capital_gr * riesgo_pct / 100
     distancia_precio = abs(entrada_gr - sl_gr)
     distancia_pct = distancia_precio / entrada_gr * 100
 
-    st.markdown(
-        f'<div style="border-radius:10px;padding:10px 14px;margin:10px 0;'
-        f'background:rgba(227,179,65,0.10);border:1px solid #e3b34155">'
-        f'<div style="font-size:11px;color:#e3b341">Monto en riesgo si se toca el SL</div>'
-        f'<div style="font-size:18px;font-weight:800;color:#e3b341">${riesgo_usd:,.2f} '
-        f'<span style="font-size:12px;font-weight:400;color:#8b949e">'
-        f'(distancia al SL: {distancia_pct:.2f}% · ${distancia_precio:,.5f})</span></div></div>',
-        unsafe_allow_html=True,
-    )
+    st.info(f"📌 Con estos datos, estás dispuesto a perder **${riesgo_usd:,.2f}** si el precio "
+            f"llega al Stop Loss (que está a un {distancia_pct:.2f}% de la entrada).")
 
-    if modo_riesgo == "📐 Por apalancamiento":
+    st.markdown("**3. Elegí el apalancamiento y mirá el resultado**"
+                 if modo_riesgo == "📐 Con apalancamiento"
+                 else "**3. Elegí el tamaño del lote y mirá el resultado**")
+
+    if modo_riesgo == "📐 Con apalancamiento":
         apalancamiento_gr = st.number_input("Apalancamiento a usar (x)", min_value=1.0, max_value=125.0,
                                              value=1.0, step=1.0, key="gr_apalancamiento")
+        riesgo_recomendado_gr = _riesgo_recomendado_por_apalancamiento(apalancamiento_gr)
+        if riesgo_pct > riesgo_recomendado_gr:
+            st.caption(f"💡 Con {apalancamiento_gr:.0f}x, lo recomendable es arriesgar como máximo "
+                       f"{riesgo_recomendado_gr:.1f}% por operación (elegiste {riesgo_pct:.1f}%).")
+
         nominal_recomendado = riesgo_usd / (distancia_pct / 100)
         margen_necesario = nominal_recomendado / apalancamiento_gr
         pct_capital_margen = margen_necesario / capital_gr * 100 if capital_gr else 0
+        alcanza = margen_necesario <= capital_gr
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Tamaño de posición (nominal)", f"${nominal_recomendado:,.2f}")
-        m2.metric("Margen necesario", f"${margen_necesario:,.2f}")
-        m3.metric("% del capital usado como margen", f"{pct_capital_margen:.1f}%")
+        if alcanza:
+            st.success(
+                f"✅ **Podés abrir esta operación.** Usá una posición de **${nominal_recomendado:,.2f}** "
+                f"(a {apalancamiento_gr:.0f}x eso te consume **${margen_necesario:,.2f}** de tu capital, "
+                f"el {pct_capital_margen:.1f}%). Si el precio llega al Stop Loss, perdés como máximo "
+                f"los **${riesgo_usd:,.2f}** que definiste."
+            )
+        else:
+            apalancamiento_minimo = min(125.0, nominal_recomendado / capital_gr)
+            st.error(
+                f"🚫 **No te alcanza el capital con {apalancamiento_gr:.0f}x.** Necesitarías "
+                f"${margen_necesario:,.2f} y solo tenés ${capital_gr:,.2f}. "
+                f"Probá con al menos **{apalancamiento_minimo:.1f}x** de apalancamiento, "
+                f"o bajá el % de riesgo del paso 1."
+            )
 
-        if margen_necesario > capital_gr:
-            st.error("🚫 El margen necesario supera tu capital total. Bajá el % de riesgo o "
-                      "subí el apalancamiento para esta operación.")
+        with st.expander("Ver el detalle del cálculo"):
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Tamaño de la posición", f"${nominal_recomendado:,.2f}")
+            m2.metric("Capital que usás (margen)", f"${margen_necesario:,.2f}")
+            m3.metric("% de tu capital que ocupa", f"{pct_capital_margen:.1f}%")
+            st.caption(
+                "El tamaño de la posición no depende del apalancamiento: siempre necesitás exponer "
+                "ese monto en dólares para que la pérdida al tocar el SL sea igual al riesgo que "
+                "definiste. El apalancamiento solo cambia cuánto capital propio (margen) necesitás "
+                "inmovilizar para abrir esa posición: a más apalancamiento, menos capital usado."
+            )
 
-        st.caption(
-            "El tamaño nominal de la posición NO depende del apalancamiento: siempre necesitás "
-            "exponer ese monto en dólares para que la pérdida al tocar el SL sea igual al riesgo "
-            "que definiste. El apalancamiento solo cambia cuánto margen (capital propio) "
-            "necesitás inmovilizar para abrir esa posición."
-        )
+        with st.expander("📋 Tabla de referencia: riesgo recomendado según apalancamiento"):
+            st.caption(
+                "Cuanto más apalancamiento usás, menos % de tu capital conviene arriesgar por "
+                "operación — hace falta un movimiento de precio cada vez más chico para llegar a "
+                "esa pérdida. Calculado con TU precio de entrada y SL actuales. Es una referencia, "
+                "no un límite de la app."
+            )
+            filas_apal = []
+            for tope, riesgo_tier in TABLA_RIESGO_APALANCAMIENTO:
+                riesgo_usd_tier = capital_gr * riesgo_tier / 100
+                nominal_tier = riesgo_usd_tier / (distancia_pct / 100) if distancia_pct else 0
+                margen_tier = nominal_tier / tope if tope else 0
+                filas_apal.append(
+                    f"| Hasta {tope:.0f}x | {riesgo_tier:.1f}% (${riesgo_usd_tier:,.2f}) | "
+                    f"${nominal_tier:,.2f} | ${margen_tier:,.2f} |"
+                )
+            st.markdown(
+                "| Apalancamiento | Riesgo máx. recomendado | Posición | Margen necesario |\n"
+                "|---|---|---|---|\n" + "\n".join(filas_apal)
+            )
 
     else:
         cat_gr = st.selectbox("🏷️ Categoría del activo", CATEGORIAS, key="gr_categoria")
@@ -590,7 +653,7 @@ def _gestor_riesgo():
         preset_fx_gr = None
         if cat_gr == "💱 Forex":
             preset_fx_gr = st.selectbox(
-                "Preset de lote Forex (tamaños comunes de bróker)",
+                "Tamaño de lote de tu bróker",
                 list(LOTES_FOREX_PRESETS.keys()) + ["Personalizado"],
                 key="gr_lote_fx_preset",
             )
@@ -602,35 +665,79 @@ def _gestor_riesgo():
             unidades_por_lote_gr = st.number_input(
                 f"Unidades por lote — {cat_gr}", min_value=0.01, value=float(default_upl),
                 step=1.0, key="gr_unidades_lote",
-                help="Cuántas unidades del activo representa 1 lote completo en tu bróker.")
+                help="Cuántas unidades del activo representa 1 lote completo en tu bróker. "
+                     "Si no lo sabés, dejalo en el valor sugerido.")
         with upl2:
             apalancamiento_gr_lotes = st.number_input(
-                "Apalancamiento disponible (x, solo para estimar el margen)",
-                min_value=1.0, max_value=125.0, value=1.0, step=1.0, key="gr_apalancamiento_lotes")
+                "Apalancamiento disponible (x)", min_value=1.0, max_value=125.0,
+                value=1.0, step=1.0, key="gr_apalancamiento_lotes",
+                help="Se usa solo para calcular cuánto capital necesitás bloquear.")
+
+        riesgo_recomendado_lotes = _riesgo_recomendado_por_apalancamiento(apalancamiento_gr_lotes)
+        if riesgo_pct > riesgo_recomendado_lotes:
+            st.caption(f"💡 Con {apalancamiento_gr_lotes:.0f}x, lo recomendable es arriesgar como "
+                       f"máximo {riesgo_recomendado_lotes:.1f}% por operación (elegiste {riesgo_pct:.1f}%).")
 
         lotes_recomendados = (riesgo_usd / (distancia_precio * unidades_por_lote_gr)
                                if distancia_precio > 0 and unidades_por_lote_gr > 0 else 0)
         unidades_totales = lotes_recomendados * unidades_por_lote_gr
         nominal_lotes = unidades_totales * entrada_gr
         margen_lotes = nominal_lotes / apalancamiento_gr_lotes if apalancamiento_gr_lotes else nominal_lotes
+        alcanza_lotes = margen_lotes <= capital_gr
 
-        l1, l2, l3 = st.columns(3)
-        l1.metric("Lotes recomendados", f"{lotes_recomendados:,.2f}")
-        l2.metric("Unidades totales", f"{unidades_totales:,.2f}")
-        l3.metric("Margen necesario (aprox.)", f"${margen_lotes:,.2f}")
+        if alcanza_lotes:
+            st.success(
+                f"✅ **Podés abrir esta operación.** Usá **{lotes_recomendados:,.2f} lotes** "
+                f"({unidades_totales:,.2f} unidades). Con {apalancamiento_gr_lotes:.0f}x de "
+                f"apalancamiento, eso te consume **${margen_lotes:,.2f}** de tu capital. Si el precio "
+                f"llega al Stop Loss, perdés como máximo los **${riesgo_usd:,.2f}** que definiste."
+            )
+        else:
+            apalancamiento_minimo_lotes = min(125.0, nominal_lotes / capital_gr) if capital_gr else 125.0
+            st.error(
+                f"🚫 **No te alcanza el capital con {apalancamiento_gr_lotes:.0f}x.** Necesitarías "
+                f"${margen_lotes:,.2f} y solo tenés ${capital_gr:,.2f}. Probá con al menos "
+                f"**{apalancamiento_minimo_lotes:.1f}x**, usá menos lotes, o bajá el % de riesgo del paso 1."
+            )
 
-        if margen_lotes > capital_gr:
-            st.error("🚫 El margen necesario para ese tamaño de lote supera tu capital total. "
-                      "Bajá el % de riesgo, la cantidad de lotes o subí el apalancamiento.")
+        with st.expander("Ver el detalle del cálculo"):
+            l1, l2, l3 = st.columns(3)
+            l1.metric("Lotes recomendados", f"{lotes_recomendados:,.2f}")
+            l2.metric("Unidades totales", f"{unidades_totales:,.2f}")
+            l3.metric("Capital que usás (margen)", f"${margen_lotes:,.2f}")
+            st.caption(
+                "La cantidad de lotes se calcula para que, si el precio llega al Stop Loss, la "
+                "pérdida en dólares sea exactamente el monto en riesgo definido en el paso 1. El "
+                "apalancamiento acá solo se usa para estimar el capital necesario — la ganancia o "
+                "pérdida en dólares no cambia con el apalancamiento, igual que en un bróker real."
+            )
 
-        st.caption(
-            "La cantidad de lotes se calcula para que, si el precio llega al Stop Loss, la "
-            "pérdida en dólares sea exactamente el monto en riesgo definido arriba. El "
-            "apalancamiento acá solo se usa para estimar el margen — el P&L en dólares no "
-            "cambia con el apalancamiento, igual que en un bróker real."
-        )
+        with st.expander("📋 Tabla de referencia: lotes recomendados según apalancamiento"):
+            st.caption(
+                "Misma lógica que en el modo por apalancamiento, pero traducida a lotes: cuanto "
+                "más apalancamiento usás, menos % de tu capital conviene arriesgar, y eso te da "
+                "una cantidad de lotes distinta. Calculado con TU entrada, SL y unidades por lote "
+                "actuales. Es una referencia, no un límite de la app."
+            )
+            filas_lotes = []
+            for tope, riesgo_tier in TABLA_RIESGO_APALANCAMIENTO:
+                riesgo_usd_tier = capital_gr * riesgo_tier / 100
+                lotes_tier = (riesgo_usd_tier / (distancia_precio * unidades_por_lote_gr)
+                              if distancia_precio > 0 and unidades_por_lote_gr > 0 else 0)
+                unidades_tier = lotes_tier * unidades_por_lote_gr
+                margen_tier = (unidades_tier * entrada_gr) / tope if tope else 0
+                filas_lotes.append(
+                    f"| Hasta {tope:.0f}x | {riesgo_tier:.1f}% (${riesgo_usd_tier:,.2f}) | "
+                    f"{lotes_tier:,.2f} lotes | ${margen_tier:,.2f} |"
+                )
+            st.markdown(
+                "| Apalancamiento | Riesgo máx. recomendado | Lotes recomendados | Margen necesario |\n"
+                "|---|---|---|---|\n" + "\n".join(filas_lotes)
+            )
 
-    st.divider()
+
+def _tab_gestor_riesgo():
+    _gestor_riesgo()
 
 
 # ==============================================================
@@ -640,11 +747,6 @@ def _gestor_riesgo():
 def _tab_simulador(supabase):
     st.caption("Simulá cuánto hubieras ganado o perdido replicando las señales publicadas, "
                "con tu propio capital y el apalancamiento definido en cada señal.")
-
-    with st.expander("🛡️ Gestor de Riesgo — Calculadora de tamaño de posición", expanded=True):
-        _gestor_riesgo()
-
-    st.markdown("#### 📊 Simulación sobre señales publicadas")
 
     senales = _obtener_senales(supabase, 200)
     if not senales:
@@ -906,10 +1008,15 @@ def render_senales_trading(supabase, user_id, user_email):
     </div>
     """, unsafe_allow_html=True)
 
-    tab_pub, tab_hist, tab_sim = st.tabs(["📢 Publicar Señal", "📋 Señales y Resultados", "🧮 Simulador de Capital"])
+    tab_pub, tab_hist, tab_riesgo, tab_sim = st.tabs([
+        "📢 Publicar Señal", "📋 Señales y Resultados",
+        "🛡️ Gestor de Riesgo", "🧮 Simulador de Capital",
+    ])
     with tab_pub:
         _tab_publicar(supabase, user_id, user_email, es_admin)
     with tab_hist:
         _tab_senales(supabase, es_admin)
+    with tab_riesgo:
+        _tab_gestor_riesgo()
     with tab_sim:
         _tab_simulador(supabase)
