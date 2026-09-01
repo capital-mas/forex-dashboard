@@ -3,6 +3,44 @@
 #  Puerto 1:1 de la lógica que estaba en Google Apps Script/Sheets.
 #  Se integra como un módulo nativo más de app.py (mismo patrón que
 #  modulo_opciones.py / finanzas_ui.py).
+#
+#  ── Cambios de esta versión ──────────────────────────────────
+#  1) EVENTOS ampliado: se agregaron todos los tipos de dato que
+#     aparecen en el calendario económico real (PMI de distintos
+#     países, subastas de deuda, comparecencias de bancos centrales,
+#     PIB mensual/anualizado, comercio exterior, vivienda, energía,
+#     posicionamiento CFTC, etc.), cada uno con su categoría, unidad
+#     e impacto — ver EVENTOS_EXTENDIDOS más abajo.
+#  2) Interpretación macro por categoría (CATEGORIA_INTERPRETACION):
+#     los eventos curados a mano que ya tenías siguen funcionando
+#     igual. Los eventos nuevos usan una interpretación genérica
+#     según su categoría, así no hace falta escribir una entrada
+#     manual por cada uno (y cualquier evento que agregues a futuro
+#     ya tiene interpretación automática con solo asignarle categoría).
+#  3) Nueva pestaña "🌍 País vs País": compara todo lo cargado de dos
+#     países, categoría por categoría, y dice cuál viene mostrando
+#     datos económicos más fuertes.
+#  4) POLARIDAD ECONÓMICA (criterio de analista, corrige un sesgo real
+#     del cálculo anterior): antes, "real > previsto" se marcaba SIEMPRE
+#     como "buen dato", lo cual es incorrecto para media tabla de
+#     eventos. Un desempleo, unas peticiones de subsidio, una inflación
+#     o una tasa de interés que salen MÁS ALTAS de lo esperado son
+#     malas noticias económicas, no buenas. Cada evento ahora tiene un
+#     campo "polaridad":
+#       - "directa"  → un dato más alto de lo esperado es positivo
+#                       (PBI, PMI, ventas minoristas, empleo creado...).
+#       - "inversa"  → un dato más alto de lo esperado es negativo
+#                       (desempleo, inflación, tasas, costos laborales,
+#                       rendimiento de subastas de deuda...).
+#       - "neutral"  → evento cualitativo sin una lectura clara de
+#                       "bueno/malo" (comparecencias, actas, Jackson
+#                       Hole, posicionamiento CFTC, informes sin cifra
+#                       comparable).
+#     _calcular_analisis() usa este campo para no confundir "el número
+#     fue más alto" con "es un buen dato". El texto de comparación
+#     (vs_previsto / vs_anterior) queda puramente factual (📈/📉), y la
+#     lectura de "bueno/malo" (impacto_mercado) es la que se ajusta
+#     según la polaridad de cada evento.
 # ==============================================================
 
 import streamlit as st
@@ -37,37 +75,190 @@ PAISES = [
 ]
 
 EVENTOS = {
-    "IPC (inflación general)":               {"categoria": "Inflación",            "unidad": "%",         "impacto": "Alto"},
-    "IPC núcleo (Core CPI)":                  {"categoria": "Inflación",            "unidad": "%",         "impacto": "Alto"},
-    "PPI (precios al productor)":             {"categoria": "Inflación",            "unidad": "%",         "impacto": "Medio"},
-    "PCE / PCE núcleo (EE. UU.)":             {"categoria": "Inflación",            "unidad": "%",         "impacto": "Muy Alto"},
-    "Decisión de tasas de interés (banco central)": {"categoria": "Política Monetaria", "unidad": "%",    "impacto": "Muy Alto"},
-    "Nóminas no agrícolas (NFP, EE. UU.)":    {"categoria": "Empleo",               "unidad": "K",         "impacto": "Muy Alto"},
-    "Tasa de desempleo":                      {"categoria": "Empleo",               "unidad": "%",         "impacto": "Alto"},
-    "PMI manufacturero":                      {"categoria": "Actividad Económica",  "unidad": "Pts",       "impacto": "Alto"},
-    "Ventas minoristas (headline)":           {"categoria": "Consumo",              "unidad": "%",         "impacto": "Alto"},
-    "Inventarios de petróleo crudo (EIA)":    {"categoria": "Energía",              "unidad": "M Barriles","impacto": "Medio"},
-    "ADP empleo privado":                     {"categoria": "Empleo",               "unidad": "K",         "impacto": "Alto"},
-    "Peticiones iniciales de desempleo":      {"categoria": "Empleo",               "unidad": "K",         "impacto": "Alto"},
-    "JOLTS ofertas laborales":                {"categoria": "Empleo",               "unidad": "M",         "impacto": "Alto"},
-    "Ingresos promedio por hora":             {"categoria": "Empleo",               "unidad": "%",         "impacto": "Muy Alto"},
-    "PMI servicios":                          {"categoria": "Actividad Económica",  "unidad": "Pts",       "impacto": "Alto"},
-    "PMI compuesto":                          {"categoria": "Actividad Económica",  "unidad": "Pts",       "impacto": "Alto"},
-    "ISM manufacturero":                      {"categoria": "Actividad Económica",  "unidad": "Pts",       "impacto": "Muy Alto"},
-    "ISM servicios":                          {"categoria": "Actividad Económica",  "unidad": "Pts",       "impacto": "Muy Alto"},
-    "PIB trimestral":                         {"categoria": "Crecimiento",          "unidad": "%",         "impacto": "Muy Alto"},
-    "Pedidos de bienes duraderos":            {"categoria": "Industria",            "unidad": "%",         "impacto": "Alto"},
-    "Producción industrial":                  {"categoria": "Industria",            "unidad": "%",         "impacto": "Medio"},
-    "Confianza del consumidor":               {"categoria": "Consumo",              "unidad": "Pts",       "impacto": "Alto"},
-    "Confianza Universidad Michigan":         {"categoria": "Consumo",              "unidad": "Pts",       "impacto": "Alto"},
-    "Ventas de viviendas nuevas":             {"categoria": "Vivienda",             "unidad": "K",         "impacto": "Medio"},
-    "Ventas de viviendas existentes":         {"categoria": "Vivienda",             "unidad": "M",         "impacto": "Medio"},
-    "Permisos de construcción":               {"categoria": "Vivienda",             "unidad": "K",         "impacto": "Medio"},
-    "Inicios de viviendas":                   {"categoria": "Vivienda",             "unidad": "K",         "impacto": "Medio"},
-    "FOMC Minutes":                           {"categoria": "Política Monetaria",   "unidad": "",          "impacto": "Muy Alto"},
-    "Conferencia de prensa de la Fed":        {"categoria": "Política Monetaria",   "unidad": "",          "impacto": "Muy Alto"},
-    "Dot Plot de la Fed":                     {"categoria": "Política Monetaria",   "unidad": "",          "impacto": "Muy Alto"},
+    "IPC (inflación general)":               {"categoria": "Inflación",            "unidad": "%",         "impacto": "Alto",     "polaridad": "inversa"},
+    "IPC núcleo (Core CPI)":                  {"categoria": "Inflación",            "unidad": "%",         "impacto": "Alto",     "polaridad": "inversa"},
+    "PPI (precios al productor)":             {"categoria": "Inflación",            "unidad": "%",         "impacto": "Medio",    "polaridad": "inversa"},
+    "PCE / PCE núcleo (EE. UU.)":             {"categoria": "Inflación",            "unidad": "%",         "impacto": "Muy Alto", "polaridad": "inversa"},
+    "Decisión de tasas de interés (banco central)": {"categoria": "Política Monetaria", "unidad": "%",    "impacto": "Muy Alto", "polaridad": "inversa"},
+    "Nóminas no agrícolas (NFP, EE. UU.)":    {"categoria": "Empleo",               "unidad": "K",         "impacto": "Muy Alto", "polaridad": "directa"},
+    "Tasa de desempleo":                      {"categoria": "Empleo",               "unidad": "%",         "impacto": "Alto",     "polaridad": "inversa"},
+    "PMI manufacturero":                      {"categoria": "Actividad Económica",  "unidad": "Pts",       "impacto": "Alto",     "polaridad": "directa"},
+    "Ventas minoristas (headline)":           {"categoria": "Consumo",              "unidad": "%",         "impacto": "Alto",     "polaridad": "directa"},
+    "Inventarios de petróleo crudo (EIA)":    {"categoria": "Energía",              "unidad": "M Barriles","impacto": "Medio",    "polaridad": "directa"},
+    "ADP empleo privado":                     {"categoria": "Empleo",               "unidad": "K",         "impacto": "Alto",     "polaridad": "directa"},
+    "Peticiones iniciales de desempleo":      {"categoria": "Empleo",               "unidad": "K",         "impacto": "Alto",     "polaridad": "inversa"},
+    "JOLTS ofertas laborales":                {"categoria": "Empleo",               "unidad": "M",         "impacto": "Alto",     "polaridad": "directa"},
+    "Ingresos promedio por hora":             {"categoria": "Empleo",               "unidad": "%",         "impacto": "Muy Alto", "polaridad": "inversa"},
+    "PMI servicios":                          {"categoria": "Actividad Económica",  "unidad": "Pts",       "impacto": "Alto",     "polaridad": "directa"},
+    "PMI compuesto":                          {"categoria": "Actividad Económica",  "unidad": "Pts",       "impacto": "Alto",     "polaridad": "directa"},
+    "ISM manufacturero":                      {"categoria": "Actividad Económica",  "unidad": "Pts",       "impacto": "Muy Alto", "polaridad": "directa"},
+    "ISM servicios":                          {"categoria": "Actividad Económica",  "unidad": "Pts",       "impacto": "Muy Alto", "polaridad": "directa"},
+    "PIB trimestral":                         {"categoria": "Crecimiento",          "unidad": "%",         "impacto": "Muy Alto", "polaridad": "directa"},
+    "Pedidos de bienes duraderos":            {"categoria": "Industria",            "unidad": "%",         "impacto": "Alto",     "polaridad": "directa"},
+    "Producción industrial":                  {"categoria": "Industria",            "unidad": "%",         "impacto": "Medio",    "polaridad": "directa"},
+    "Confianza del consumidor":               {"categoria": "Consumo",              "unidad": "Pts",       "impacto": "Alto",     "polaridad": "directa"},
+    "Confianza Universidad Michigan":         {"categoria": "Consumo",              "unidad": "Pts",       "impacto": "Alto",     "polaridad": "directa"},
+    "Ventas de viviendas nuevas":             {"categoria": "Vivienda",             "unidad": "K",         "impacto": "Medio",    "polaridad": "directa"},
+    "Ventas de viviendas existentes":         {"categoria": "Vivienda",             "unidad": "M",         "impacto": "Medio",    "polaridad": "directa"},
+    "Permisos de construcción":               {"categoria": "Vivienda",             "unidad": "K",         "impacto": "Medio",    "polaridad": "directa"},
+    "Inicios de viviendas":                   {"categoria": "Vivienda",             "unidad": "K",         "impacto": "Medio",    "polaridad": "directa"},
+    "FOMC Minutes":                           {"categoria": "Política Monetaria",   "unidad": "",          "impacto": "Muy Alto", "polaridad": "neutral"},
+    "Conferencia de prensa de la Fed":        {"categoria": "Política Monetaria",   "unidad": "",          "impacto": "Muy Alto", "polaridad": "neutral"},
+    "Dot Plot de la Fed":                     {"categoria": "Política Monetaria",   "unidad": "",          "impacto": "Muy Alto", "polaridad": "neutral"},
 }
+
+# ==============================================================
+#  EVENTOS ADICIONALES — cobertura ampliada a partir de todos los
+#  tipos de dato que aparecen en el calendario económico real
+#  (PMIs de distintos países, comercio exterior, vivienda, energía,
+#  subastas de deuda, comparecencias, posicionamiento CFTC, etc.)
+# ==============================================================
+EVENTOS_EXTENDIDOS = {
+    # ---- Comercio Exterior ----
+    # Balanza/cuenta corriente: números "más altos" (más superávit o
+    # menos déficit) son mejores → directa. Precio de importación =
+    # inflación importada → inversa. Precio de exportación = mejores
+    # términos de intercambio para el país → directa.
+    "Balanza comercial":                              {"categoria": "Comercio Exterior", "unidad": "B", "impacto": "Alto",  "polaridad": "directa"},
+    "Exportaciones (Anual)":                          {"categoria": "Comercio Exterior", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Importaciones (Anual)":                          {"categoria": "Comercio Exterior", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Balanza comercial de bienes":                    {"categoria": "Comercio Exterior", "unidad": "B", "impacto": "Medio", "polaridad": "directa"},
+    "Balanza comercial no comunitaria":               {"categoria": "Comercio Exterior", "unidad": "B", "impacto": "Bajo",  "polaridad": "directa"},
+    "Cuenta corriente":                               {"categoria": "Comercio Exterior", "unidad": "B", "impacto": "Medio", "polaridad": "directa"},
+    "Índice de precios de exportación":               {"categoria": "Comercio Exterior", "unidad": "%", "impacto": "Bajo",  "polaridad": "directa"},
+    "Índice de Precios de Importación":               {"categoria": "Comercio Exterior", "unidad": "%", "impacto": "Bajo",  "polaridad": "inversa"},
+    "Inversión en activos extranjeros":               {"categoria": "Comercio Exterior", "unidad": "B", "impacto": "Bajo",  "polaridad": "directa"},
+    "Flujos de capital en productos a largo plazo":   {"categoria": "Comercio Exterior", "unidad": "B", "impacto": "Bajo",  "polaridad": "directa"},
+
+    # ---- Industria ----
+    # Inventarios: la señal es ambigua (puede ser reposición sana o
+    # señal de demanda floja) → se dejan en "neutral" para no forzar
+    # una lectura de bueno/malo que no está clara.
+    "Gasto en construcción":                          {"categoria": "Industria", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Pedidos de fábrica":                              {"categoria": "Industria", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Producción manufacturera":                       {"categoria": "Industria", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Inventarios de negocios":                        {"categoria": "Industria", "unidad": "%", "impacto": "Bajo",  "polaridad": "neutral"},
+    "Inventarios de los minoristas exc. automóviles": {"categoria": "Industria", "unidad": "%", "impacto": "Bajo",  "polaridad": "neutral"},
+    "Obras de construcción realizadas":               {"categoria": "Industria", "unidad": "%", "impacto": "Bajo",  "polaridad": "directa"},
+    "Índice de Producción Industrial (China)":        {"categoria": "Industria", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+
+    # ---- Empleo ----
+    # Regla del analista: los indicadores de CANTIDAD de empleo (más
+    # empleos creados, más vacantes, más participación) son "directa".
+    # Los de DESEMPLEO/costo laboral (más desempleo, más solicitudes,
+    # más costo salarial de lo esperado) son "inversa".
+    "Costes laborales unitarios":                     {"categoria": "Empleo", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
+    "Productividad no agrícola":                      {"categoria": "Empleo", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Renovaciones de los subsidios por desempleo":    {"categoria": "Empleo", "unidad": "K", "impacto": "Medio", "polaridad": "inversa"},
+    "Nóminas privadas no agrícolas":                  {"categoria": "Empleo", "unidad": "K", "impacto": "Alto",  "polaridad": "directa"},
+    "Tasa de participación laboral":                  {"categoria": "Empleo", "unidad": "%", "impacto": "Bajo",  "polaridad": "directa"},
+    "Tasa de desempleo U6":                           {"categoria": "Empleo", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
+    "Evolución del desempleo (Claimant Count)":       {"categoria": "Empleo", "unidad": "K", "impacto": "Alto",  "polaridad": "inversa"},
+    "Ingresos medios de los trabajadores (con bonus)":{"categoria": "Empleo", "unidad": "%", "impacto": "Alto",  "polaridad": "inversa"},
+    "Productividad laboral":                          {"categoria": "Empleo", "unidad": "%", "impacto": "Bajo",  "polaridad": "directa"},
+    "Índice de costes salariales":                    {"categoria": "Empleo", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
+    "Tasa de desempleo de China":                     {"categoria": "Empleo", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
+    "Cambio del desempleo en Alemania":               {"categoria": "Empleo", "unidad": "K", "impacto": "Medio", "polaridad": "inversa"},
+    "Evolución del número de empleos a tiempo completo": {"categoria": "Empleo", "unidad": "K", "impacto": "Medio", "polaridad": "directa"},
+    "Cambio del empleo":                              {"categoria": "Empleo", "unidad": "K", "impacto": "Alto",  "polaridad": "directa"},
+    "Variación semanal del empleo según ADP":         {"categoria": "Empleo", "unidad": "K", "impacto": "Medio", "polaridad": "directa"},
+    "Referencia salarial (no desestacionalizada)":    {"categoria": "Empleo", "unidad": "K", "impacto": "Bajo",  "polaridad": "neutral"},
+
+    # ---- Actividad Económica (PMIs regionales/sectoriales) ----
+    "PMI de la construcción":                         {"categoria": "Actividad Económica", "unidad": "Pts", "impacto": "Medio", "polaridad": "directa"},
+    "PMI de Ivey":                                    {"categoria": "Actividad Económica", "unidad": "Pts", "impacto": "Medio", "polaridad": "directa"},
+    "Índice manufacturero Empire State":              {"categoria": "Actividad Económica", "unidad": "Pts", "impacto": "Medio", "polaridad": "directa"},
+    "Índice manufacturero de la Fed de Filadelfia":   {"categoria": "Actividad Económica", "unidad": "Pts", "impacto": "Medio", "polaridad": "directa"},
+    "Informe de empleo de la Fed de Filadelfia":      {"categoria": "Actividad Económica", "unidad": "Pts", "impacto": "Bajo",  "polaridad": "directa"},
+    "PMI de Chicago":                                 {"categoria": "Actividad Económica", "unidad": "Pts", "impacto": "Medio", "polaridad": "directa"},
+
+    # ---- Sentimiento Empresarial ----
+    "Índice NAB de confianza empresarial":            {"categoria": "Sentimiento Empresarial", "unidad": "Pts", "impacto": "Medio", "polaridad": "directa"},
+    "Índice ZEW de confianza inversora":              {"categoria": "Sentimiento Empresarial", "unidad": "Pts", "impacto": "Alto",  "polaridad": "directa"},
+    "Índice Ifo de confianza empresarial":            {"categoria": "Sentimiento Empresarial", "unidad": "Pts", "impacto": "Alto",  "polaridad": "directa"},
+    "Indicadores adelantados del KOF":                {"categoria": "Sentimiento Empresarial", "unidad": "Pts", "impacto": "Bajo",  "polaridad": "directa"},
+
+    # ---- Consumo ----
+    "Índice Gfk de clima de consumo":                 {"categoria": "Consumo", "unidad": "Pts", "impacto": "Medio", "polaridad": "directa"},
+    "Confianza del consumidor de la SECO":            {"categoria": "Consumo", "unidad": "Pts", "impacto": "Medio", "polaridad": "directa"},
+    "Ventas mayoristas":                              {"categoria": "Consumo", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Expectativas del consumidor de la Universidad de Michigan": {"categoria": "Consumo", "unidad": "Pts", "impacto": "Medio", "polaridad": "directa"},
+    "Gasto personal":                                 {"categoria": "Consumo", "unidad": "%", "impacto": "Alto", "polaridad": "directa"},
+    "Ventas minoristas subyacentes":                  {"categoria": "Consumo", "unidad": "%", "impacto": "Alto", "polaridad": "directa"},
+    "Previsiones de ventas de la industria minorista":{"categoria": "Consumo", "unidad": "%", "impacto": "Bajo", "polaridad": "directa"},
+
+    # ---- Vivienda ----
+    # El tipo hipotecario es una TASA: más alta = crédito más caro =
+    # peor para el sector → inversa. El resto son indicadores de
+    # actividad/precio de venta, donde más alto = sector más fuerte.
+    "Índice Halifax de precios de la vivienda":       {"categoria": "Vivienda", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Hipotecas sobre viviendas":                      {"categoria": "Vivienda", "unidad": "%", "impacto": "Bajo",  "polaridad": "directa"},
+    "Venta de viviendas pendientes":                  {"categoria": "Vivienda", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Precios de Vivienda S&P/Case-Shiller":           {"categoria": "Vivienda", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Tipo hipotecario":                               {"categoria": "Vivienda", "unidad": "%", "impacto": "Bajo",  "polaridad": "inversa"},
+    "Índice de precios de viviendas nuevas":          {"categoria": "Vivienda", "unidad": "%", "impacto": "Bajo",  "polaridad": "directa"},
+
+    # ---- Política Monetaria / Crédito / Fiscal ----
+    # Tasa del PBoC: igual que cualquier tasa de interés, más alta =
+    # restrictivo = inversa. Balance fiscal: "más alto" (menos
+    # negativo/superávit mayor) = mejor → directa (ver corrección de
+    # signo en CATEGORIA_INTERPRETACION más abajo).
+    "Balance general de la Fed":                      {"categoria": "Política Monetaria", "unidad": "B", "impacto": "Medio", "polaridad": "directa"},
+    "Nuevos préstamos (China)":                       {"categoria": "Crédito", "unidad": "B", "impacto": "Alto", "polaridad": "directa"},
+    "Tasa de préstamo preferencial del PBoC":         {"categoria": "Política Monetaria", "unidad": "%", "impacto": "Alto", "polaridad": "inversa"},
+    "Balance presupuestario federal":                 {"categoria": "Política Fiscal", "unidad": "B", "impacto": "Medio", "polaridad": "directa"},
+    "Actas de la reunión de política monetaria (Banco Central)": {"categoria": "Política Monetaria", "unidad": "", "impacto": "Alto", "polaridad": "neutral"},
+
+    # ---- Inflación (adicionales) ----
+    "Expectativas de inflación":                      {"categoria": "Inflación", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
+    "Expectativas de inflación de la Universidad de Michigan": {"categoria": "Inflación", "unidad": "%", "impacto": "Alto", "polaridad": "inversa"},
+    "Previsiones de inflación a 5 años (Universidad de Michigan)": {"categoria": "Inflación", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
+    "IPC subyacente de Tokio":                        {"categoria": "Inflación", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
+    "Índice de precios de bienes y servicios del PIB (Deflactor)": {"categoria": "Inflación", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
+
+    # ---- Crecimiento (adicionales) ----
+    "PIB mensual":                                    {"categoria": "Crecimiento", "unidad": "%", "impacto": "Alto", "polaridad": "directa"},
+    "PIB anualizado (Trimestral)":                    {"categoria": "Crecimiento", "unidad": "%", "impacto": "Alto", "polaridad": "directa"},
+    "Inversión empresarial":                          {"categoria": "Crecimiento", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Gasto en capital fijo (China)":                  {"categoria": "Crecimiento", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Nuevas inversiones privadas en bienes de capital": {"categoria": "Crecimiento", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Índice principal de EE.UU. (Leading Index)":     {"categoria": "Crecimiento", "unidad": "%", "impacto": "Medio", "polaridad": "directa"},
+    "Resultado bruto de explotación de las empresas": {"categoria": "Crecimiento", "unidad": "%", "impacto": "Bajo", "polaridad": "directa"},
+
+    # ---- Energía ----
+    # Se mantiene consistente con la lectura ya curada de "Inventarios
+    # de petróleo crudo (EIA)": más oferta/inventario = presión
+    # bajista sobre el precio del crudo = desinflacionario = directa
+    # (bueno para el mercado en general, aunque sea malo puntualmente
+    # para el sector energético).
+    "Reservas semanales de crudo del API":            {"categoria": "Energía", "unidad": "M Barriles", "impacto": "Medio", "polaridad": "directa"},
+    "Número de plataformas petrolíferas (Baker Hughes)": {"categoria": "Energía", "unidad": "u", "impacto": "Bajo", "polaridad": "directa"},
+    "Informe mensual de la AIE":                      {"categoria": "Energía", "unidad": "", "impacto": "Bajo", "polaridad": "neutral"},
+    "Informe mensual de la OPEP":                     {"categoria": "Energía", "unidad": "", "impacto": "Bajo", "polaridad": "neutral"},
+    "Previsión energética a corto plazo de la EIA":   {"categoria": "Energía", "unidad": "", "impacto": "Bajo", "polaridad": "neutral"},
+
+    # ---- Agricultura ----
+    "Informe WASDE":                                  {"categoria": "Agricultura", "unidad": "", "impacto": "Bajo", "polaridad": "neutral"},
+
+    # ---- Deuda pública ----
+    # Subasta de deuda: rendimiento más alto de lo esperado = el
+    # mercado exige más prima por el riesgo = inversa.
+    "Subasta de deuda pública":                       {"categoria": "Deuda Pública", "unidad": "%", "impacto": "Medio", "polaridad": "inversa"},
+
+    # ---- Posicionamiento especulativo (CFTC) ----
+    # No es un dato de "salud económica": es posicionamiento de
+    # traders. Se deja neutral para no mezclarlo con el puntaje de
+    # fortaleza económica del comparador país vs país.
+    "Posiciones netas especulativas (CFTC)":          {"categoria": "Posicionamiento Especulativo", "unidad": "K", "impacto": "Bajo", "polaridad": "neutral"},
+
+    # ---- Comentarios de funcionarios / eventos especiales ----
+    "Comparecencia de funcionario de banco central":  {"categoria": "Comentarios de Funcionarios", "unidad": "", "impacto": "Medio", "polaridad": "neutral"},
+    "Rueda de prensa de la NBS":                       {"categoria": "Comentarios de Funcionarios", "unidad": "", "impacto": "Medio", "polaridad": "neutral"},
+    "Declaraciones de Trump, presidente de EE.UU.":   {"categoria": "Comentarios Políticos", "unidad": "", "impacto": "Alto", "polaridad": "neutral"},
+    "Simposio de Jackson Hole":                       {"categoria": "Evento Especial", "unidad": "", "impacto": "Alto", "polaridad": "neutral"},
+}
+
+EVENTOS.update(EVENTOS_EXTENDIDOS)
 
 # Diccionario de interpretación macro (idéntico al de Apps Script).
 # Se deja completo para no perder cobertura de eventos.
@@ -174,6 +365,81 @@ INTERPRETACION_MACRO = {
     },
 }
 
+
+# ==============================================================
+#  INTERPRETACIÓN MACRO GENÉRICA POR CATEGORÍA (fallback)
+#  Se usa para cualquier evento que no tenga una entrada propia en
+#  INTERPRETACION_MACRO. Cubre todos los eventos agregados en
+#  EVENTOS_EXTENDIDOS y cualquier evento futuro: solo hace falta
+#  asignarle una categoría existente para que ya tenga lectura macro.
+# ==============================================================
+CATEGORIA_INTERPRETACION = {
+    "Inflación": {
+        "mayor": {"divisas": "🟢 Moneda fuerte por sorpresa inflacionaria", "bonos": "🔴 Caída de bonos soberanos", "acciones": "🔴 Presión sobre acciones", "oro": "🟢 Oro favorecido como cobertura", "crypto": "🔴 Presión sobre criptomonedas", "politica": "📈 Presión hacia una política monetaria más restrictiva", "riesgo": "🔴 Risk-off", "lectura": "El dato de inflación sorprende al alza y reaviva la presión sobre el banco central."},
+        "menor": {"divisas": "🔴 Moneda debilitada", "bonos": "🟢 Suba de bonos", "acciones": "🟢 Positivo para acciones", "oro": "🔴 Menor necesidad de cobertura", "crypto": "🟢 Mejora del apetito por riesgo", "politica": "📉 Espacio para una política monetaria más flexible", "riesgo": "🟢 Risk-on", "lectura": "El dato de inflación sorprende a la baja y mejora el entorno financiero."},
+    },
+    "Empleo": {
+        "mayor": {"divisas": "🟢 Moneda fortalecida por mercado laboral sólido", "bonos": "🔴 Rendimientos al alza", "acciones": "🟠 Riesgo de tasas más altas por más tiempo", "oro": "🔴 Oro debilitado", "crypto": "🔴 Menor apetito por riesgo", "politica": "📈 Mercado laboral firme, riesgo de tasas altas prolongadas", "riesgo": "⚠️ Mercado cauteloso", "lectura": "El dato laboral sorprende positivamente y muestra un mercado de trabajo firme."},
+        "menor": {"divisas": "🔴 Moneda debilitada", "bonos": "🟢 Recuperación de bonos", "acciones": "🟢 Impulso para acciones por expectativa de recortes", "oro": "🟢 Oro favorecido", "crypto": "🟢 Mejora del apetito por riesgo", "politica": "📉 Mayor probabilidad de flexibilización monetaria", "riesgo": "🟢 Risk-on", "lectura": "El dato laboral decepciona y sugiere un mercado de trabajo enfriándose."},
+    },
+    "Actividad Económica": {
+        "mayor": {"divisas": "🟢 Fortaleza económica", "bonos": "🔴 Rendimientos al alza", "acciones": "🟢 Ambiente favorable para acciones", "oro": "🔴 Menor necesidad defensiva", "crypto": "🟢 Mayor apetito por riesgo", "politica": "📈 Actividad económica en expansión", "riesgo": "🟢 Expansión económica", "lectura": "El indicador de actividad supera lo esperado y confirma expansión."},
+        "menor": {"divisas": "🔴 Debilidad económica", "bonos": "🟢 Bonos demandados", "acciones": "🔴 Riesgo de desaceleración", "oro": "🟢 Búsqueda de refugio", "crypto": "🔴 Debilidad de activos de riesgo", "politica": "📉 Mayor probabilidad de estímulo", "riesgo": "🔴 Contracción económica", "lectura": "El indicador de actividad decepciona y sugiere pérdida de impulso."},
+    },
+    "Consumo": {
+        "mayor": {"divisas": "🟢 Consumo interno sólido", "bonos": "🔴 Rendimientos en alza", "acciones": "🟢 Positivo para el consumo discrecional", "oro": "🔴 Menor cobertura necesaria", "crypto": "🟢 Mayor apetito por riesgo", "politica": "📈 Riesgo de presión inflacionaria por demanda", "riesgo": "🟢 Risk-on", "lectura": "El consumo sorprende al alza y sostiene el crecimiento económico."},
+        "menor": {"divisas": "🔴 Consumo débil", "bonos": "🟢 Bonos favorecidos", "acciones": "🔴 Riesgo para el consumo discrecional", "oro": "🟢 Mayor búsqueda defensiva", "crypto": "🔴 Debilidad de activos de riesgo", "politica": "📉 Menor presión monetaria", "riesgo": "🔴 Risk-off", "lectura": "El consumo decepciona y enciende alertas sobre la demanda interna."},
+    },
+    "Crecimiento": {
+        "mayor": {"divisas": "🟢 Fortaleza del crecimiento", "bonos": "🔴 Bonos presionados", "acciones": "🟢 Crecimiento sólido favorece acciones", "oro": "🔴 Menor necesidad defensiva", "crypto": "🟢 Mayor apetito por riesgo", "politica": "📈 Economía sobrecalentada", "riesgo": "🟢 Risk-on", "lectura": "El dato de crecimiento supera expectativas."},
+        "menor": {"divisas": "🔴 Debilidad del crecimiento", "bonos": "🟢 Rally de bonos", "acciones": "🔴 Riesgo de desaceleración/recesión", "oro": "🟢 Refugio favorecido", "crypto": "🔴 Debilidad especulativa", "politica": "📉 Posible estímulo monetario", "riesgo": "🔴 Risk-off", "lectura": "El dato de crecimiento decepciona y enciende alertas de desaceleración."},
+    },
+    "Industria": {
+        "mayor": {"divisas": "🟢 Fortaleza industrial", "bonos": "🔴 Rendimientos al alza", "acciones": "🟢 Positivo para industriales", "oro": "🔴 Menor refugio", "crypto": "🟢 Ambiente favorable", "politica": "📈 Actividad industrial en expansión", "riesgo": "🟢 Risk-on", "lectura": "La actividad industrial sorprende positivamente."},
+        "menor": {"divisas": "🔴 Debilidad industrial", "bonos": "🟢 Bonos favorecidos", "acciones": "🔴 Riesgo para el sector industrial", "oro": "🟢 Mayor cobertura defensiva", "crypto": "🔴 Risk-off", "politica": "📉 Debilidad económica", "riesgo": "🔴 Contracción", "lectura": "La actividad industrial decepciona."},
+    },
+    "Vivienda": {
+        "mayor": {"divisas": "🟢 Mercado inmobiliario fuerte", "bonos": "🔴 Rendimientos al alza", "acciones": "🟢 Positivo para constructoras", "oro": "🔴 Menor demanda refugio", "crypto": "🟢 Ambiente favorable", "politica": "📈 Sector inmobiliario firme", "riesgo": "🟢 Risk-on", "lectura": "El indicador inmobiliario sorprende al alza."},
+        "menor": {"divisas": "🔴 Debilidad inmobiliaria", "bonos": "🟢 Bonos favorecidos", "acciones": "🔴 Riesgo para constructoras", "oro": "🟢 Refugio favorecido", "crypto": "🔴 Debilidad especulativa", "politica": "📉 Sector inmobiliario debilitado", "riesgo": "🔴 Risk-off", "lectura": "El indicador inmobiliario decepciona."},
+    },
+    "Comercio Exterior": {
+        "mayor": {"divisas": "🟢 Moneda favorecida por mejora comercial", "bonos": "⚪ Impacto limitado", "acciones": "🟢 Positivo para exportadoras", "oro": "⚪ Impacto limitado", "crypto": "⚪ Impacto limitado", "politica": "📈 Sector externo saludable", "riesgo": "🟢 Levemente positivo", "lectura": "La balanza comercial mejora respecto de lo esperado."},
+        "menor": {"divisas": "🔴 Moneda presionada por deterioro comercial", "bonos": "⚪ Impacto limitado", "acciones": "🔴 Riesgo para exportadoras", "oro": "⚪ Impacto limitado", "crypto": "⚪ Impacto limitado", "politica": "📉 Deterioro del sector externo", "riesgo": "🔴 Levemente negativo", "lectura": "La balanza comercial se deteriora más de lo esperado."},
+    },
+    "Sentimiento Empresarial": {
+        "mayor": {"divisas": "🟢 Confianza empresarial en alza", "bonos": "🔴 Rendimientos al alza", "acciones": "🟢 Ambiente favorable para acciones", "oro": "🔴 Menor refugio", "crypto": "🟢 Mayor apetito por riesgo", "politica": "📈 Expectativas económicas favorables", "riesgo": "🟢 Risk-on", "lectura": "La confianza empresarial mejora más de lo esperado."},
+        "menor": {"divisas": "🔴 Confianza empresarial deteriorada", "bonos": "🟢 Bonos favorecidos", "acciones": "🔴 Riesgo de desaceleración", "oro": "🟢 Refugio favorecido", "crypto": "🔴 Risk-off", "politica": "📉 Expectativas económicas más débiles", "riesgo": "🔴 Aversión al riesgo", "lectura": "La confianza empresarial cae más de lo esperado."},
+    },
+    "Energía": {
+        "mayor": {"divisas": "🔴 Debilidad de monedas petroleras (mayor oferta)", "bonos": "🟢 Menor presión inflacionaria", "acciones": "🔴 Debilidad del sector energético", "oro": "🔴 Menor temor inflacionario", "crypto": "🟢 Riesgo moderadamente positivo", "politica": "📉 Menor presión inflacionaria por energía", "riesgo": "🟢 Ambiente más estable", "lectura": "El dato energético sugiere mayor oferta/holgura de lo esperado."},
+        "menor": {"divisas": "🟢 Fortaleza de monedas ligadas a commodities", "bonos": "🔴 Riesgo inflacionario", "acciones": "🟢 Energéticas favorecidas", "oro": "🟢 Cobertura inflacionaria", "crypto": "🔴 Riesgo inflacionario", "politica": "📈 Mayor presión inflacionaria por energía", "riesgo": "⚠️ Mayor volatilidad", "lectura": "El dato energético sugiere mayor ajuste de oferta de lo esperado."},
+    },
+    "Política Monetaria": {
+        "mayor": {"divisas": "🟢 Sesgo más restrictivo favorece la moneda", "bonos": "🔴 Presión sobre bonos", "acciones": "🔴 Presión sobre acciones", "oro": "🔴 Oro debilitado en el corto plazo", "crypto": "🔴 Menor liquidez para activos de riesgo", "politica": "📈 Sesgo monetario más restrictivo", "riesgo": "🔴 Risk-off", "lectura": "El dato de política monetaria resulta más restrictivo de lo esperado."},
+        "menor": {"divisas": "🔴 Sesgo más expansivo debilita la moneda", "bonos": "🟢 Bonos favorecidos", "acciones": "🟢 Impulso para acciones", "oro": "🟢 Oro favorecido", "crypto": "🟢 Mayor liquidez favorable", "politica": "📉 Sesgo monetario más expansivo", "riesgo": "🟢 Risk-on", "lectura": "El dato de política monetaria resulta más expansivo de lo esperado."},
+    },
+    "Política Fiscal": {
+        # Nota de signo: el balance fiscal se carga como número negativo
+        # cuando hay déficit (ej. real=-432B). Por eso "mayor" (número más
+        # alto, es decir déficit MENOR o superávit) es la mejora, y "menor"
+        # (número más bajo, déficit MÁS negativo) es el deterioro.
+        "mayor": {"divisas": "🟢 Mejora la percepción fiscal", "bonos": "🟢 Menor emisión relativa favorece bonos", "acciones": "⚪ Impacto mixto", "oro": "🔴 Menor necesidad de cobertura", "crypto": "⚪ Impacto limitado", "politica": "📈 Mejora de las cuentas públicas", "riesgo": "🟢 Menor riesgo fiscal", "lectura": "El resultado fiscal es mejor (déficit menor al esperado) de lo esperado."},
+        "menor": {"divisas": "🔴 Mayor déficit genera cautela sobre la moneda", "bonos": "🔴 Mayor emisión presiona bonos", "acciones": "⚪ Impacto mixto", "oro": "🟢 Cobertura ante riesgo fiscal", "crypto": "⚪ Impacto limitado", "politica": "📉 Deterioro de las cuentas públicas", "riesgo": "🔴 Riesgo fiscal", "lectura": "El resultado fiscal es peor (déficit mayor al esperado)."},
+    },
+    "Crédito": {
+        "mayor": {"divisas": "⚪ Impacto mixto", "bonos": "🔴 Riesgo de sobrecalentamiento crediticio", "acciones": "🟢 Mayor liquidez favorece activos de riesgo", "oro": "⚪ Impacto limitado", "crypto": "🟢 Mayor liquidez disponible", "politica": "📈 Fuerte expansión del crédito", "riesgo": "🟢 Risk-on de corto plazo", "lectura": "El crédito se expande más de lo esperado."},
+        "menor": {"divisas": "⚪ Impacto mixto", "bonos": "🟢 Menor riesgo de sobrecalentamiento", "acciones": "🔴 Menor liquidez disponible", "oro": "⚪ Impacto limitado", "crypto": "🔴 Menor liquidez disponible", "politica": "📉 Contracción del crédito", "riesgo": "🔴 Menor impulso crediticio", "lectura": "El crédito se expande menos de lo esperado."},
+    },
+    "Deuda Pública": {
+        "mayor": {"divisas": "🟢 Mayor rendimiento atrae capitales", "bonos": "🔴 Mayor rendimiento exigido, precio de bonos a la baja", "acciones": "🔴 Costo de financiamiento más alto", "oro": "🔴 Mayor costo de oportunidad para el oro", "crypto": "🔴 Menor apetito por riesgo", "politica": "📈 El mercado exige mayor prima por el riesgo de la deuda", "riesgo": "⚠️ Mercado de bonos exigente", "lectura": "La subasta se colocó con un rendimiento mayor al esperado."},
+        "menor": {"divisas": "🔴 Menor rendimiento resta atractivo", "bonos": "🟢 Buena demanda, precio de bonos al alza", "acciones": "🟢 Menor costo de financiamiento", "oro": "🟢 Menor costo de oportunidad", "crypto": "🟢 Mayor apetito por riesgo", "politica": "📉 Buena demanda por la deuda soberana", "riesgo": "🟢 Mercado de bonos tranquilo", "lectura": "La subasta se colocó con un rendimiento menor al esperado, señal de buena demanda."},
+    },
+    "Posicionamiento Especulativo": {
+        "mayor": {"divisas": "⚪ Posicionamiento más largo/alcista neto", "bonos": "⚪ Impacto limitado", "acciones": "⚪ Impacto limitado", "oro": "⚪ Impacto limitado", "crypto": "⚪ Impacto limitado", "politica": "⚪ No aplica", "riesgo": "⚠️ Posicionamiento extendido, riesgo de corrección técnica", "lectura": "Los especuladores aumentan su posición neta larga más de lo esperado."},
+        "menor": {"divisas": "⚪ Posicionamiento más corto/bajista neto", "bonos": "⚪ Impacto limitado", "acciones": "⚪ Impacto limitado", "oro": "⚪ Impacto limitado", "crypto": "⚪ Impacto limitado", "politica": "⚪ No aplica", "riesgo": "⚠️ Posicionamiento más defensivo", "lectura": "Los especuladores reducen (o acortan) su posición neta larga más de lo esperado."},
+    },
+}
+
 IMPACTO_COLOR = {"Muy Alto": "#f85149", "Alto": "#f0883e", "Medio": "#e3b341", "Bajo": "#8b949e"}
 
 
@@ -182,7 +448,16 @@ IMPACTO_COLOR = {"Muy Alto": "#f85149", "Alto": "#f0883e", "Medio": "#e3b341", "
 # ==============================================================
 
 def interpretar_macro(evento, real, previsto):
+    """Busca primero una interpretación puntual y curada para el evento
+    (INTERPRETACION_MACRO). Si no existe, cae a la interpretación
+    genérica de su categoría (CATEGORIA_INTERPRETACION), que cubre
+    automáticamente todos los eventos agregados en EVENTOS_EXTENDIDOS
+    y cualquier evento nuevo que se agregue a futuro."""
     info = INTERPRETACION_MACRO.get(evento)
+    if not info:
+        categoria = EVENTOS.get(evento, {}).get("categoria") if evento else None
+        info = CATEGORIA_INTERPRETACION.get(categoria)
+
     vacio = {"divisas": "⚪ Sin interpretación", "bonos": "⚪ Sin interpretación",
              "acciones": "⚪ Sin interpretación", "oro": "⚪ Sin interpretación",
              "crypto": "⚪ Sin interpretación", "politica": "⚪ Sin interpretación",
@@ -193,24 +468,68 @@ def interpretar_macro(evento, real, previsto):
     return info.get(resultado, vacio)
 
 
-def _calcular_analisis(previsto, anterior, real):
+def _calcular_analisis(previsto, anterior, real, polaridad="directa"):
+    """Calcula el análisis del dato frente a lo previsto y al dato anterior.
+
+    `polaridad` (ver EVENTOS[...]["polaridad"]) determina si un valor REAL
+    más alto que el previsto/anterior es una buena o mala noticia:
+      - "directa": más alto = mejor (PBI, PMI, ventas minoristas, empleo...).
+      - "inversa": más alto = peor (desempleo, inflación, tasas de interés,
+        costos laborales, rendimiento de subastas de deuda...).
+      - "neutral": evento cualitativo, no se emite juicio de bueno/malo.
+
+    El texto de vs_previsto / vs_anterior es SIEMPRE puramente factual
+    (dirección numérica, sin juicio de valor); el juicio de bueno/malo vive
+    exclusivamente en senal_previsto / senal_anterior / impacto_mercado, y
+    es ahí donde se aplica la polaridad.
+    """
     hay_prev, hay_ant, hay_real = previsto is not None, anterior is not None, real is not None
     vs_previsto = vs_anterior = senal_prev = senal_ant = impacto_mercado = ""
 
+    # ── Comparación factual (no juzga si es bueno o malo) ──
     if hay_real and hay_prev:
-        if real > previsto:   vs_previsto, senal_prev = "✅ Mayor al previsto", "🔺 POSITIVO"
-        elif real < previsto: vs_previsto, senal_prev = "❌ Menor al previsto", "🔻 NEGATIVO"
-        else:                 vs_previsto, senal_prev = "➖ Igual al previsto", "⚖️ NEUTRO"
+        if real > previsto:   vs_previsto = "📈 Por encima del previsto"
+        elif real < previsto: vs_previsto = "📉 Por debajo del previsto"
+        else:                 vs_previsto = "➖ En línea con el previsto"
 
     if hay_real and hay_ant:
-        if real > anterior:   vs_anterior, senal_ant = "✅ Subió vs anterior", "📈 TENDENCIA ALCISTA"
-        elif real < anterior: vs_anterior, senal_ant = "❌ Bajó vs anterior", "📉 TENDENCIA BAJISTA"
-        else:                 vs_anterior, senal_ant = "➖ Sin cambio", "➡️ LATERAL"
+        if real > anterior:   vs_anterior = "📈 Subió vs. el dato anterior"
+        elif real < anterior: vs_anterior = "📉 Bajó vs. el dato anterior"
+        else:                 vs_anterior = "➖ Sin cambios vs. el anterior"
 
-    mej_p = hay_real and hay_prev and real > previsto
-    mej_a = hay_real and hay_ant and real > anterior
-    peor_p = hay_real and hay_prev and real < previsto
-    peor_a = hay_real and hay_ant and real < anterior
+    # ── Eventos cualitativos: sin lectura de bueno/malo ──
+    if polaridad == "neutral":
+        if vs_previsto:
+            senal_prev = "⚪ SIN LECTURA DE POLARIDAD"
+        if vs_anterior:
+            senal_ant = "⚪ SIN LECTURA DE POLARIDAD"
+        if hay_prev or hay_ant:
+            impacto_mercado = "⚪ NEUTRO / EVENTO CUALITATIVO"
+        return dict(vs_previsto=vs_previsto, vs_anterior=vs_anterior,
+                    senal_previsto=senal_prev, senal_anterior=senal_ant,
+                    impacto_mercado=impacto_mercado)
+
+    # ── Juicio de bueno/malo, ajustado por polaridad ──
+    # signo = -1 invierte la comparación para eventos "inversa" (ej. un
+    # desempleo real > previsto es negativo, no positivo).
+    signo = -1 if polaridad == "inversa" else 1
+
+    if hay_real and hay_prev:
+        diff = (real - previsto) * signo
+        if diff > 0:   senal_prev = "🔺 POSITIVO"
+        elif diff < 0: senal_prev = "🔻 NEGATIVO"
+        else:          senal_prev = "⚖️ NEUTRO"
+
+    if hay_real and hay_ant:
+        diff = (real - anterior) * signo
+        if diff > 0:   senal_ant = "📈 TENDENCIA POSITIVA"
+        elif diff < 0: senal_ant = "📉 TENDENCIA NEGATIVA"
+        else:          senal_ant = "➡️ LATERAL"
+
+    mej_p = hay_real and hay_prev and (real - previsto) * signo > 0
+    mej_a = hay_real and hay_ant and (real - anterior) * signo > 0
+    peor_p = hay_real and hay_prev and (real - previsto) * signo < 0
+    peor_a = hay_real and hay_ant and (real - anterior) * signo < 0
 
     if hay_prev or hay_ant:
         if mej_p and mej_a:       impacto_mercado = "🟢 BUEN DATO PARA EL MERCADO"
@@ -278,7 +597,8 @@ def _render_macro_grid(macro):
 
 def _guardar_registro(supabase, datos, user_id):
     real, previsto, anterior = datos.get("real"), datos.get("previsto"), datos.get("anterior")
-    analisis = _calcular_analisis(previsto, anterior, real)
+    polaridad = EVENTOS.get(datos["evento"], {}).get("polaridad", "directa")
+    analisis = _calcular_analisis(previsto, anterior, real, polaridad)
     macro = interpretar_macro(datos["evento"], real, previsto)
     row = {
         "user_id": user_id,
@@ -374,7 +694,13 @@ def _tab_registrar(supabase, user_id, es_admin):
 
     # ── análisis en vivo (se recalcula en cada rerun, como el JS del sidebar) ──
     st.markdown("#### 📈 Análisis automático")
-    analisis = _calcular_analisis(previsto, anterior, real)
+    polaridad_evento = info_evento.get("polaridad", "directa") if info_evento else "directa"
+    analisis = _calcular_analisis(previsto, anterior, real, polaridad_evento)
+
+    if info_evento and info_evento.get("polaridad") == "inversa":
+        st.caption("↕️ Polaridad **inversa**: un dato por encima de lo previsto se lee como negativo para la economía (ej. desempleo, inflación, tasas).")
+    elif info_evento and info_evento.get("polaridad") == "neutral":
+        st.caption("⚪ Evento cualitativo: no se emite juicio automático de bueno/malo.")
 
     ac1, ac2, ac3, ac4 = st.columns(4)
     for col, label, val in [
@@ -511,7 +837,7 @@ def _tab_historial(supabase):
 
 
 # ==============================================================
-#  RENDER — TAB COMPARAR (nuevo)
+#  RENDER — TAB COMPARAR (registro puntual)
 #  Permite elegir dos registros ya cargados y compararlos lado a
 #  lado: puede ser el mismo país en dos fechas distintas (comparar
 #  contra el mes anterior) o dos países distintos para el mismo tipo
@@ -628,6 +954,145 @@ def _tab_comparar(supabase):
 
 
 # ==============================================================
+#  RENDER — TAB PAÍS VS PAÍS (nuevo)
+#  Toma TODOS los registros cargados de dos países, los agrupa por
+#  categoría (Inflación, Empleo, Actividad Económica, Comercio
+#  Exterior, Vivienda, Energía, etc.) y calcula, para cada categoría,
+#  un puntaje promedio a partir del "impacto_mercado" de cada
+#  registro:
+#     🟢 BUEN DATO PARA EL MERCADO   -> +1.0
+#     🟡 BUEN DATO PARCIAL           -> +0.5
+#     ⚪ NEUTRO                       ->  0.0
+#     🟠 MAL DATO PARCIAL            -> -0.5
+#     🔴 MAL DATO PARA EL MERCADO    -> -1.0
+#  El país con mayor puntaje promedio en cada categoría "gana" esa
+#  categoría, y al final se cuenta cuántas categorías ganó cada uno.
+# ==============================================================
+
+def _signal_score(impacto_mercado):
+    if not impacto_mercado:
+        return 0.0
+    if "BUEN DATO PARA" in impacto_mercado:
+        return 1.0
+    if "MAL DATO PARA" in impacto_mercado:
+        return -1.0
+    if "BUEN DATO PAR" in impacto_mercado:   # parcial
+        return 0.5
+    if "MAL DATO PAR" in impacto_mercado:    # parcial
+        return -0.5
+    return 0.0
+
+
+def _categoria_de_evento(evento):
+    info = EVENTOS.get(evento)
+    return info["categoria"] if info else "Otros"
+
+
+def _tab_comparar_paises(supabase):
+    st.caption(
+        "Elegí dos países y compará, categoría por categoría, cuál viene "
+        "mostrando datos económicos más fuertes según todo lo registrado hasta ahora. "
+        "El puntaje surge del impacto para el mercado de cada dato cargado."
+    )
+
+    filas = _obtener_registros(supabase, 500)
+    if not filas:
+        st.info("Todavía no hay registros cargados para comparar.")
+        return
+
+    df = pd.DataFrame(filas)
+    df["categoria"] = df["evento"].apply(_categoria_de_evento)
+    df["score"] = df["impacto_mercado"].apply(_signal_score)
+
+    paises_u = sorted(df["pais"].dropna().unique().tolist())
+    if len(paises_u) < 2:
+        st.info("Necesitás registros de al menos dos países distintos para poder comparar.")
+        return
+
+    c1, c2 = st.columns(2)
+    with c1:
+        pais_a = st.selectbox("🅰️ País A", paises_u, index=0, key="cmpp_pais_a")
+    with c2:
+        opciones_b = [p for p in paises_u if p != pais_a] or paises_u
+        pais_b = st.selectbox("🅱️ País B", opciones_b, index=0, key="cmpp_pais_b")
+
+    df_a = df[df["pais"] == pais_a]
+    df_b = df[df["pais"] == pais_b]
+
+    categorias = sorted(set(df_a["categoria"].unique().tolist()) | set(df_b["categoria"].unique().tolist()))
+    if not categorias:
+        st.info("No hay categorías en común para comparar todavía.")
+        return
+
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    st.markdown(f"#### 📊 Resultado por categoría — {pais_a} vs {pais_b}")
+
+    ganados_a = ganados_b = empates = 0
+
+    for cat in categorias:
+        sub_a = df_a[df_a["categoria"] == cat]
+        sub_b = df_b[df_b["categoria"] == cat]
+        n_a, n_b = len(sub_a), len(sub_b)
+        prom_a = sub_a["score"].mean() if n_a else None
+        prom_b = sub_b["score"].mean() if n_b else None
+
+        if prom_a is None and prom_b is None:
+            continue
+
+        if prom_a is None:
+            ganador = pais_b
+            ganados_b += 1
+        elif prom_b is None:
+            ganador = pais_a
+            ganados_a += 1
+        elif abs(prom_a - prom_b) < 1e-9:
+            ganador = "Empate"
+            empates += 1
+        elif prom_a > prom_b:
+            ganador = pais_a
+            ganados_a += 1
+        else:
+            ganador = pais_b
+            ganados_b += 1
+
+        col_cat, col_a, col_b, col_gan = st.columns([2, 2, 2, 1.6])
+        with col_cat:
+            st.markdown(f"**{cat}**")
+        with col_a:
+            txt_a = f"{prom_a:+.2f}  ({n_a} dato{'s' if n_a != 1 else ''})" if prom_a is not None else "Sin datos"
+            st.caption(f"{pais_a}: {txt_a}")
+        with col_b:
+            txt_b = f"{prom_b:+.2f}  ({n_b} dato{'s' if n_b != 1 else ''})" if prom_b is not None else "Sin datos"
+            st.caption(f"{pais_b}: {txt_b}")
+        with col_gan:
+            if ganador == "Empate":
+                st.markdown("⚖️ Empate")
+            else:
+                st.markdown(f"🏆 {ganador}")
+        st.markdown("<hr style='margin:4px 0;border-color:#21262d'>", unsafe_allow_html=True)
+
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    st.markdown("#### 🏁 Resultado general")
+    r1, r2, r3 = st.columns(3)
+    r1.metric(f"Categorías ganadas · {pais_a}", ganados_a)
+    r2.metric(f"Categorías ganadas · {pais_b}", ganados_b)
+    r3.metric("Empates", empates)
+
+    if ganados_a > ganados_b:
+        st.success(f"📈 En conjunto, **{pais_a}** viene mostrando datos económicos más fuertes que **{pais_b}** según lo registrado hasta ahora.")
+    elif ganados_b > ganados_a:
+        st.success(f"📈 En conjunto, **{pais_b}** viene mostrando datos económicos más fuertes que **{pais_a}** según lo registrado hasta ahora.")
+    else:
+        st.info("📊 Ambos países muestran un desempeño económico parejo según lo registrado hasta ahora.")
+
+    st.caption(
+        "Nota: el puntaje se basa en si cada dato salió mejor o peor que lo previsto/anterior, "
+        "no evalúa si 'mayor' es intrínsecamente bueno o malo para ese indicador puntual "
+        "(por ejemplo, en tasa de desempleo 'mayor' ya se marca como dato negativo en el cálculo base)."
+    )
+
+
+# ==============================================================
 #  RENDER — NOTICIAS (todos ven, solo admin publica/borra)
 #  Ahora vive en su propio entry point, separado del calendario
 #  (ver render_noticias más abajo).
@@ -728,8 +1193,9 @@ def render_calendario_economico(supabase, user_id, user_email):
         render_calendario_economico(supabase, USER_ID, st.session_state['usuario'].email)
 
     Muestra el calendario económico (carga de eventos + historial con
-    interpretación macro completa) y una pestaña de comparación entre
-    dos registros cualquiera (mismo país en otro mes, u otro país).
+    interpretación macro completa), una pestaña de comparación entre
+    dos registros cualquiera (mismo país en otro mes, u otro país) y
+    una pestaña de comparación país vs país agrupada por categoría.
     Las noticias son un módulo aparte, ver render_noticias() más abajo.
     """
     es_admin = _es_admin(user_email)
@@ -749,13 +1215,17 @@ def render_calendario_economico(supabase, user_id, user_email):
     </div>
     """, unsafe_allow_html=True)
 
-    tab_reg, tab_cal, tab_cmp = st.tabs(["📝 Registrar", "📅 Calendario Económico", "🔀 Comparar"])
+    tab_reg, tab_cal, tab_cmp, tab_paises = st.tabs(
+        ["📝 Registrar", "📅 Calendario Económico", "🔀 Comparar", "🌍 País vs País"]
+    )
     with tab_reg:
         _tab_registrar(supabase, user_id, es_admin)
     with tab_cal:
         _tab_historial(supabase)
     with tab_cmp:
         _tab_comparar(supabase)
+    with tab_paises:
+        _tab_comparar_paises(supabase)
 
 
 def render_noticias(supabase, user_id, user_email):
