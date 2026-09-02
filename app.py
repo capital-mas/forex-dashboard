@@ -40,7 +40,6 @@ from modulo_volatilidad_y_analisis_tecnico import (
 )
 from modulo_pares_cointegracion import modulo_pares_cointegracion
 from modulo_cot import modulo_cot
-modulo_cot(supabase, USER_ID, st.session_state['usuario'].email)
 
 ZONA_AR = ZoneInfo("America/Argentina/Buenos_Aires")
 
