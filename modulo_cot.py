@@ -301,6 +301,40 @@ def _cot_clasificar_percentil(pct):
     return 'EXTREME LONG', C_GREEN
 
 
+def _cot_clasificar_divergencia(pct_mm, pct_producer):
+    """MÓDULO 3 — Divergencias Comerciales vs. Especuladores.
+    Cruza el percentil del Managed Money Net con el percentil del
+    Producer/Merchant Net (misma métrica que usamos para el 'estado
+    de posicionamiento', pero aplicada a la industria real) para
+    detectar si hay un choque de posturas entre especuladores y
+    comerciales. Devuelve (tag, texto, color)."""
+    if pct_mm is None or pct_producer is None:
+        return None, None, C_MUTED
+    if pct_mm <= 15 and pct_producer >= 80:
+        return (
+            'DIVERGENCIA ALCISTA DE SUELO',
+            f"Los fondos especulativos están en sobreventa extrema (percentil {pct_mm:.0f}%) mientras los "
+            f"comerciales frenaron sus ventas o están comprando (percentil {pct_producer:.0f}%). Esto sugiere "
+            "que la economía real está absorbiendo oferta a precios baratos: el mercado podría estar "
+            "preparando un piso.",
+            C_GREEN,
+        )
+    if pct_mm >= 85 and pct_producer <= 20:
+        return (
+            'DIVERGENCIA BAJISTA DE TECHO',
+            f"Los fondos especulativos están eufóricos comprando (percentil {pct_mm:.0f}%) mientras los "
+            f"comerciales están fijando ventas masivas a futuro (percentil {pct_producer:.0f}%). Esto sugiere "
+            "que la oferta real le está poniendo un techo al precio.",
+            C_RED,
+        )
+    return (
+        'SIN DIVERGENCIA RELEVANTE',
+        f"El percentil del Managed Money ({pct_mm:.0f}%) y el del Producer/Merchant ({pct_producer:.0f}%) no "
+        "muestran un choque extremo de posturas entre especuladores y comerciales en este momento.",
+        C_MUTED,
+    )
+
+
 def _cot_consistencia(net_series, lookback=4):
     """Fracción de semanas recientes que se movieron en la misma dirección."""
     diffs = net_series.diff().dropna().tail(lookback)
@@ -569,7 +603,30 @@ def _cot_guia_aprendizaje(r):
                 "así que no se puede etiquetar con confianza como dinero fresco ni como cobertura."
             )
 
-    # ---- 3) Qué vigilar en el Open Interest la próxima semana ----
+    # ---- 3) Divergencia activa entre la Industria y los Fondos ----
+    partes_divergencia = []
+    pct_producer = r.get('pct_producer')
+    div_tag = r.get('divergencia_tag')
+    div_texto = r.get('divergencia_texto')
+    if pct is None or pct_producer is None:
+        partes_divergencia.append(
+            "Todavía no hay al menos 5 semanas cargadas para calcular el percentil histórico del "
+            "Producer/Merchant Net, así que no se puede evaluar una divergencia con los Fondos de forma confiable."
+        )
+    else:
+        partes_divergencia.append(
+            "Comparo el percentil histórico del Managed Money Net contra el percentil histórico del "
+            "Producer/Merchant Net (Módulo 3): un choque extremo entre ambos —fondos muy sobrecomprados/"
+            "sobrevendidos mientras la industria real hace exactamente lo contrario— es una señal de que el "
+            "lado 'informado' (la industria, que opera con el producto físico) podría estar anticipando un "
+            "giro que los especuladores todavía no ven."
+        )
+        if div_tag == 'SIN DIVERGENCIA RELEVANTE':
+            partes_divergencia.append(f"Por ahora no hay ese choque: {div_texto}")
+        elif div_tag:
+            partes_divergencia.append(f"<b>{div_tag}</b>: {div_texto}")
+
+    # ---- 4) Qué vigilar en el Open Interest la próxima semana ----
     partes_vigilar = []
     if pd.isna(net_chg) or pd.isna(oi_chg):
         partes_vigilar.append(
@@ -622,7 +679,8 @@ def _cot_guia_aprendizaje(r):
       <div class="interp-header">💡 Guía de Aprendizaje Semanal — {r['commodity']}</div>
       <p><b>1. Por qué se clasificó así esta semana</b><br>{' '.join(partes_fase)}</p>
       <p><b>2. Dinero fresco vs. cobertura (Short Covering / Long Liquidation)</b><br>{' '.join(partes_oi)}</p>
-      <p><b>3. Qué vigilar en el Open Interest la próxima semana</b><br>{' '.join(partes_vigilar)}</p>
+      <p><b>3. Divergencia activa entre la Industria y los Fondos</b><br>{' '.join(partes_divergencia)}</p>
+      <p><b>4. Qué vigilar en el Open Interest la próxima semana</b><br>{' '.join(partes_vigilar)}</p>
     </div>
     """
 
@@ -648,6 +706,10 @@ def _cot_resumen_commodity(df_commodity):
     score_label, score_color, score_emoji = _cot_clasificar_score(score)
 
     señal = _cot_señal_final(score, cambio_interp, pct_class)
+
+    # MÓDULO 3 — Divergencias Comerciales vs. Especuladores
+    pct_producer = _cot_percentil(df['Producer Net']) if n >= 5 else None
+    divergencia_tag, divergencia_texto, divergencia_color = _cot_clasificar_divergencia(pct, pct_producer)
 
     texto = _cot_texto_interpretacion(
         df_commodity['Commodity'].iloc[0], fila, tendencia, pct, pct_class, oi_texto, n
@@ -675,6 +737,10 @@ def _cot_resumen_commodity(df_commodity):
         score_emoji=score_emoji,
         señal_final=señal,
         texto=texto,
+        pct_producer=pct_producer,
+        divergencia_tag=divergencia_tag,
+        divergencia_texto=divergencia_texto,
+        divergencia_color=divergencia_color,
         df=df,
     )
 
@@ -894,12 +960,17 @@ def _cot_tab_general():
     n_alcista = sum(1 for r in resumenes if r['score'] is not None and r['score'] > 60)
     n_bajista = sum(1 for r in resumenes if r['score'] is not None and r['score'] < 40)
     n_extremo = sum(1 for r in resumenes if r['pct_class'] in ('EXTREME LONG', 'EXTREME SHORT'))
+    n_divergencia = sum(
+        1 for r in resumenes
+        if r.get('divergencia_tag') in ('DIVERGENCIA ALCISTA DE SUELO', 'DIVERGENCIA BAJISTA DE TECHO')
+    )
 
     _cot_kpi_cards([
         ('Commodities cargados', str(len(resumenes)), 'Con al menos 1 semana', C_ACENT),
         ('🟢 Sesgo alcista', str(n_alcista), 'COT Score > 60', C_GREEN),
         ('🔴 Sesgo bajista', str(n_bajista), 'COT Score < 40', C_RED),
         ('⚡ Extremos', str(n_extremo), 'Percentil ≤10% o ≥90%', C_YELLOW),
+        ('🔀 Divergencias', str(n_divergencia), 'Fondos vs. Comerciales', C_LGREEN),
     ])
 
     filas = []
@@ -918,6 +989,7 @@ def _cot_tab_general():
             'Estado': r['pct_class'],
             'COT Score': r['score'] if r['score'] is not None else np.nan,
             'Señal Final': r['señal_final'],
+            'Divergencia': r.get('divergencia_tag') or 'N/A',
             'Semanas': r['n_semanas'],
         })
 
@@ -941,10 +1013,19 @@ def _cot_tab_general():
         }
         return f'color:{colores.get(v, "#e6edf3")};font-weight:700'
 
+    def _color_divergencia(v):
+        colores = {
+            'DIVERGENCIA ALCISTA DE SUELO': C_GREEN,
+            'DIVERGENCIA BAJISTA DE TECHO': C_RED,
+            'SIN DIVERGENCIA RELEVANTE': C_MUTED,
+        }
+        return f'color:{colores.get(v, "#6b7d9a")};font-weight:700'
+
     _map = 'map' if hasattr(df_tabla.style, 'map') else 'applymap'
     styled = (df_tabla.style
               .pipe(lambda s: getattr(s, _map)(_color_score, subset=['COT Score']))
               .pipe(lambda s: getattr(s, _map)(_color_estado, subset=['Estado']))
+              .pipe(lambda s: getattr(s, _map)(_color_divergencia, subset=['Divergencia']))
               .format({'COT Score': lambda v: f'{v:.0f}' if pd.notna(v) else 'N/A'})
               .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
               .set_table_styles([
@@ -999,6 +1080,17 @@ def _cot_tab_individual():
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Divergencia Comerciales vs. Especuladores (Módulo 3) ──
+    div_tag = r.get('divergencia_tag')
+    if div_tag in ('DIVERGENCIA ALCISTA DE SUELO', 'DIVERGENCIA BAJISTA DE TECHO'):
+        div_emoji = '🟢' if div_tag == 'DIVERGENCIA ALCISTA DE SUELO' else '🔴'
+        st.markdown(f"""
+        <div class="interp-card" style="border-left:3px solid {r['divergencia_color']}">
+          <div class="interp-header">{div_emoji} {div_tag}</div>
+          {r['divergencia_texto']}
+        </div>
+        """, unsafe_allow_html=True)
+
     c1, c2, c3 = st.columns(3)
     with c1: st.metric('MM Long', _fmt_n(r['mm_long']))
     with c2: st.metric('MM Short', _fmt_n(r['mm_short']))
@@ -1037,7 +1129,7 @@ def _cot_tab_individual():
 
     # ── Complementarios: Producer/Merchant, Swap Dealers, Other Reportables ──
     with st.expander('👥 Producer/Merchant, Swap Dealers y Other Reportables (contexto)', expanded=False):
-        st.caption('Se muestran como información complementaria. El Producer/Merchant suele usar futuros para cobertura (hedging) y no se interpreta como señal direccional.')
+        st.caption('El Producer/Merchant se usa además para el análisis de divergencias (Módulo 3, ver Guía de Aprendizaje Semanal); Swap Dealers y Other Reportables son puramente contexto y no se interpretan como señal direccional.')
         fila = r['df'].iloc[-1]
         cc1, cc2, cc3 = st.columns(3)
         with cc1:
@@ -1046,6 +1138,8 @@ def _cot_tab_individual():
             st.write(f"Short: {_fmt_n(fila.get('Producer/Merchant Short'))}")
             st.write(f"Spread: {_fmt_n(fila.get('Producer/Merchant Spread'))}")
             st.write(f"Net: {_fmt_n(fila.get('Producer Net'))}")
+            if r.get('pct_producer') is not None:
+                st.write(f"Percentil histórico: {r['pct_producer']:.0f}%")
         with cc2:
             st.markdown('**Swap Dealers**')
             st.write(f"Long: {_fmt_n(fila.get('Swap Dealers Long'))}")
