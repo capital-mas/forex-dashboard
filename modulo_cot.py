@@ -457,6 +457,176 @@ def _cot_texto_interpretacion(commodity, fila_actual, tendencia, pct, pct_class,
     return ' '.join(partes)
 
 
+def _cot_guia_aprendizaje(r):
+    """MÓDULO 4 — Explicación didáctica y paso a paso.
+    Genera el texto de la sección '💡 Guía de Aprendizaje Semanal',
+    reutilizando exactamente las mismas variables ya calculadas para el
+    resto del informe (percentil, tendencia, cruce Long/Short, cruce
+    Net+OI) para que el razonamiento sea 100% trazable y auditable por
+    el usuario, sin introducir ningún criterio nuevo ni usar precio."""
+    fila = r['df'].iloc[-1]
+    net_chg = fila.get('MM Net Chg')
+    oi_chg = fila.get('OI Chg')
+    tendencia = r['tendencia']
+    pct = r['percentil']
+    pct_class = r['pct_class']
+    cambio_interp = r['cambio_interp']
+    n = r['n_semanas']
+
+    # ---- 1) Por qué se clasificó en esa fase / estado ----
+    partes_fase = []
+    if n < 3:
+        partes_fase.append(
+            f"Con solo {n} semana(s) cargada(s) todavía no alcanza para hablar de una 'fase' de mercado: "
+            "la tendencia recién se calcula a partir de 3 semanas y el percentil de posicionamiento a "
+            "partir de 5, para no confundir el ruido de una sola semana con un giro real."
+        )
+    else:
+        if pct is not None:
+            if pct_class == 'EXTREME LONG':
+                partes_fase.append(
+                    f"Se ubica en una posible zona de <b>techo / saturación compradora</b>: el Managed Money "
+                    f"Net actual está en el percentil {pct:.0f}% de todo el historial cargado, es decir, "
+                    "casi nunca estuvo más comprado que ahora. No implica que vaya a girar de inmediato, "
+                    "pero sí que queda poco margen para que entren compradores nuevos: el potencial alcista "
+                    "'de sorpresa' se va agotando."
+                )
+            elif pct_class == 'EXTREME SHORT':
+                partes_fase.append(
+                    f"Se ubica en una posible zona de <b>piso / saturación vendedora</b>: el percentil "
+                    f"{pct:.0f}% indica que el posicionamiento vendedor está entre los más extremos del "
+                    "historial disponible. Es la zona típica donde, ante cualquier catalizador, se dispara "
+                    "un short covering violento."
+                )
+            elif pct_class in ('HIGH POSITIONING', 'LOW POSITIONING'):
+                partes_fase.append(
+                    f"El percentil {pct:.0f}% ubica el posicionamiento en zona {pct_class}, es decir, "
+                    "sesgado pero sin llegar todavía a un extremo histórico: corresponde a una fase de "
+                    "acumulación/distribución en curso, no a un pico o piso ya confirmado."
+                )
+            else:
+                partes_fase.append(
+                    f"El percentil {pct:.0f}% cae en zona NORMAL (entre 30% y 70% del historial): el "
+                    "posicionamiento actual no es, por sí solo, una señal fuerte de extremo — no hay "
+                    "sobrecompra ni sobreventa de fondos especulativos."
+                )
+        if tendencia:
+            partes_fase.append(
+                f"La pendiente del Managed Money Net en las últimas semanas (regresión lineal simple sobre "
+                f"la serie neta) es {tendencia.lower()}. Uso la pendiente y no el último dato suelto "
+                "justamente para distinguir una fase sostenida de un rebote de una sola semana."
+            )
+        if cambio_interp:
+            partes_fase.append(
+                f"El cruce Long/Short de esta última semana ({cambio_interp}) confirma en qué lado se movió "
+                "el flujo: nunca miro el neto solo, sino si subieron los largos, bajaron los cortos, o "
+                "ambos a la vez — eso es lo que separa una 'acumulación fuerte' de un simple 'cierre de "
+                "posiciones'."
+            )
+
+    # ---- 2) Dinero fresco vs. cobertura (Short Covering / Long Liquidation) ----
+    partes_oi = []
+    if pd.isna(net_chg) or pd.isna(oi_chg):
+        partes_oi.append(
+            "Todavía no hay dos semanas consecutivas completas para cruzar el cambio del Net con el cambio "
+            "del Open Interest, que es el dato clave (Módulo 2, Paso C) para distinguir dinero fresco de "
+            "simple cobertura."
+        )
+    else:
+        partes_oi.append(
+            "Aplico la regla del Módulo 2 (Paso C): cruzo el signo del cambio semanal del Managed Money Net "
+            "con el signo del cambio del Open Interest — no alcanza con mirar el Net solo, porque el mismo "
+            "movimiento de Net puede significar cosas opuestas según lo que haga el Open Interest."
+        )
+        if net_chg > 0 and oi_chg > 0:
+            partes_oi.append(
+                f"Esta semana el Net subió ({net_chg:+,.0f}) y el Open Interest también subió ({oi_chg:+,.0f}): "
+                "esa combinación es la firma de <b>dinero fresco entrando a comprar</b> — se abren contratos "
+                "nuevos, no es gente recomprando posiciones vendedoras."
+            )
+        elif net_chg < 0 and oi_chg > 0:
+            partes_oi.append(
+                f"Esta semana el Net bajó ({net_chg:+,.0f}) y el Open Interest subió ({oi_chg:+,.0f}): "
+                "esa combinación es la firma de <b>dinero fresco entrando a vender</b> — se abren posiciones "
+                "vendedoras nuevas, no solo se cierran compras existentes."
+            )
+        elif net_chg > 0 and oi_chg < 0:
+            partes_oi.append(
+                f"Esta semana el Net subió ({net_chg:+,.0f}) pero el Open Interest bajó ({oi_chg:+,.0f}): "
+                "esa combinación es la firma clásica de <b>short covering</b>. El Net mejora porque se están "
+                "cerrando posiciones vendedoras (recompra), no porque entren compradores nuevos con "
+                "convicción — es una mejora más frágil de lo que parece a primera vista."
+            )
+        elif net_chg < 0 and oi_chg < 0:
+            partes_oi.append(
+                f"Esta semana el Net bajó ({net_chg:+,.0f}) y el Open Interest también bajó ({oi_chg:+,.0f}): "
+                "esa combinación es la firma de <b>long liquidation</b>. Son compradores cerrando posiciones "
+                "(capitulación), no vendedores nuevos entrando con fuerza."
+            )
+        else:
+            partes_oi.append(
+                "El cruce de esta semana no dio una combinación direccional clara (algún valor quedó neutro), "
+                "así que no se puede etiquetar con confianza como dinero fresco ni como cobertura."
+            )
+
+    # ---- 3) Qué vigilar en el Open Interest la próxima semana ----
+    partes_vigilar = []
+    if pd.isna(net_chg) or pd.isna(oi_chg):
+        partes_vigilar.append(
+            "Por ahora, con el historial disponible, lo primero es simplemente sumar más semanas: recién "
+            "con 3 se puede calcular la tendencia y con 5 el percentil de posicionamiento."
+        )
+    else:
+        if net_chg > 0 and oi_chg < 0:
+            partes_vigilar.append(
+                "Como el diagnóstico actual es short covering, vigilá si el próximo reporte muestra el Open "
+                "Interest <b>volviendo a subir</b> mientras el Net sigue mejorando: eso confirmaría que, "
+                "después de cerrar cortos, empieza a entrar compra nueva de verdad. Si en cambio el Open "
+                "Interest sigue cayendo mientras el Net se estanca o retrocede, el rally se está quedando "
+                "sin combustible (ya no quedan cortos por cerrar)."
+            )
+        elif net_chg < 0 and oi_chg < 0:
+            partes_vigilar.append(
+                "Como el diagnóstico actual es long liquidation, vigilá si el Open Interest <b>deja de caer "
+                "y empieza a subir</b> junto con un Net que deja de retroceder: eso marcaría el fin de la "
+                "capitulación. Si el Open Interest sigue en baja y el Net sigue perforando mínimos, la "
+                "liquidación de largos todavía no terminó."
+            )
+        elif net_chg > 0 and oi_chg > 0:
+            partes_vigilar.append(
+                "Como el diagnóstico actual es entrada de dinero fresco comprador, la alerta sería que el "
+                "Open Interest empiece a crecer mucho más rápido que el Net (o que el Net se aplane): "
+                "conviene revisar ahí si ese nuevo interés abierto lo está tomando el lado vendedor (Swap "
+                "Dealers u Other Reportables como contraparte), lo que moderaría la lectura alcista."
+            )
+        elif net_chg < 0 and oi_chg > 0:
+            partes_vigilar.append(
+                "Como el diagnóstico actual es entrada de dinero fresco vendedor, vigilá si el Open Interest "
+                "sigue expandiéndose semana a semana junto con nuevas bajas del Net: eso confirmaría una "
+                "tendencia bajista con respaldo institucional real, no solo el ruido de una semana."
+            )
+        else:
+            partes_vigilar.append(
+                "Vigilá el próximo cruce Net/Open Interest: todavía no dio una combinación direccional clara "
+                "como para anticipar qué mirar puntualmente."
+            )
+    if pct_class in ('EXTREME LONG', 'EXTREME SHORT') and pct is not None:
+        partes_vigilar.append(
+            f"Además, al estar en {pct_class} (percentil {pct:.0f}%), cualquier próximo reporte que muestre "
+            "el Net empezando a revertir —aunque sea de forma leve— desde este extremo es una alerta "
+            "temprana de agotamiento de la fase actual."
+        )
+
+    return f"""
+    <div class="interp-card">
+      <div class="interp-header">💡 Guía de Aprendizaje Semanal — {r['commodity']}</div>
+      <p><b>1. Por qué se clasificó así esta semana</b><br>{' '.join(partes_fase)}</p>
+      <p><b>2. Dinero fresco vs. cobertura (Short Covering / Long Liquidation)</b><br>{' '.join(partes_oi)}</p>
+      <p><b>3. Qué vigilar en el Open Interest la próxima semana</b><br>{' '.join(partes_vigilar)}</p>
+    </div>
+    """
+
+
 def _cot_resumen_commodity(df_commodity):
     """Procesa todas las semanas de un commodity y devuelve un dict con
     el resumen final + la serie completa (para graficar)."""
@@ -860,6 +1030,10 @@ def _cot_tab_individual():
             )
     else:
         st.info('Se necesitan al menos 2 semanas cargadas para graficar la evolución.')
+
+    # ── Guía de Aprendizaje Semanal (Módulo 4 — explicación didáctica) ──
+    with st.expander('💡 Guía de Aprendizaje Semanal', expanded=False):
+        st.markdown(_cot_guia_aprendizaje(r), unsafe_allow_html=True)
 
     # ── Complementarios: Producer/Merchant, Swap Dealers, Other Reportables ──
     with st.expander('👥 Producer/Merchant, Swap Dealers y Other Reportables (contexto)', expanded=False):
