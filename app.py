@@ -6471,6 +6471,7 @@ _OPCIONES_SUB_LARGO = {
     '📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
     '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
     '📐 Top-Down Cuantitativo': 'tdc',
+    '📑 Análisis COT': 'cot',
 }
 
 with st.container(key='nav_pills_wrap'):
@@ -6741,9 +6742,9 @@ with st.container(key='nav_mobile_wrap'):
                   '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
                   '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones'},
         'largo': {'📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
-                  '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
-                  '📐 Top-Down Cuantitativo': 'tdc'},
-    }
+          '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
+          '📐 Top-Down Cuantitativo': 'tdc', '📑 Análisis COT': 'cot'
+    },
     _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '🏠 Inicio')
     if st.session_state.get('nav_mobile_h') != _label_h_actual:
         st.session_state['nav_mobile_h'] = _label_h_actual
@@ -6856,6 +6857,7 @@ titulos = {
     'resumen':     ('Resumen Top-Down', '🎯', 'Vista ejecutiva multi-nivel — macro a micro'),
     'fundamental': ('Análisis Fundamental', '📊', 'Ratios financieros · Benchmarks por sector · Señales de valuación'),
     'tdc': ('Top-Down Cuantitativo (Mediano/Largo Plazo)', '📐', 'Percentil histórico MP/LP — modelo Top-Down original'),
+    'cot': ('Análisis COT — Commitment of Traders', '📑', 'Posicionamiento de Managed Money — 100% datos manuales, sin precio'),
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
     'senales': ('Señales de Trading', '🎯', 'Publicación de señales y simulador de capital'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
@@ -7282,7 +7284,7 @@ elif HORIZONTE == 'corto':
 
 
 elif HORIZONTE == 'largo':
-    if MODULO in ('fundamental', 'tdc'):
+    if MODULO in ('fundamental', 'tdc', 'cot'):
         pass  # handled by modulo_fundamental() / modulo_topdown_cuantitativo() below
     else:
         ind_disp = list(ACCIONES_POR_INDUSTRIA.keys())
@@ -7887,7 +7889,9 @@ if HORIZONTE == 'largo' and MODULO == 'fundamental':
 if HORIZONTE == 'largo' and MODULO == 'tdc':
     modulo_topdown_cuantitativo()
 
-
+if HORIZONTE == 'largo' and MODULO == 'cot':
+    modulo_cot()
+    
 # ==============================================================
 #  FOOTER
 # ==============================================================
