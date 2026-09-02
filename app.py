@@ -39,6 +39,7 @@ from modulo_volatilidad_y_analisis_tecnico import (
     modulo_analisis_tecnico,
 )
 from modulo_pares_cointegracion import modulo_pares_cointegracion
+from modulo_cot import modulo_cot
 
 ZONA_AR = ZoneInfo("America/Argentina/Buenos_Aires")
 
