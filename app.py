@@ -6743,8 +6743,8 @@ with st.container(key='nav_mobile_wrap'):
                   '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones'},
         'largo': {'📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
                   '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
-                  '📐 Top-Down Cuantitativo': 'tdc', '📑 Análisis COT': 'cot'
-    },
+                  '📐 Top-Down Cuantitativo': 'tdc', '📑 Análisis COT': 'cot'},
+    }    
     _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '🏠 Inicio')
     if st.session_state.get('nav_mobile_h') != _label_h_actual:
         st.session_state['nav_mobile_h'] = _label_h_actual
