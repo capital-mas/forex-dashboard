@@ -1,8 +1,51 @@
 # ==============================================================
 #  MÓDULO COT (Commitment of Traders) — Análisis de Posicionamiento
-#  100% basado en datos cargados manualmente por el usuario.
-#  NO descarga datos de CFTC. NO usa precio. NO usa internet.
+#  Los datos se cargan manualmente por el usuario y se persisten en
+#  Supabase (tabla "cot_data"), además de mantenerse en session_state
+#  para que la UI responda rápido dentro de la sesión.
+#  NO descarga datos de CFTC. NO usa precio. NO usa internet salvo
+#  para hablar con tu propio proyecto Supabase.
 #
+#  ------------------------------------------------------------
+#  CONFIGURACIÓN NECESARIA
+#  ------------------------------------------------------------
+#  1) Instalar el cliente de Supabase:
+#         pip install supabase
+#
+#  2) Crear la tabla en Supabase (SQL Editor de tu proyecto):
+#
+#     create table if not exists cot_data (
+#       id                        bigint generated always as identity primary key,
+#       commodity                 text        not null,
+#       report_date               date        not null,
+#       open_interest             numeric,
+#       producer_merchant_long    numeric,
+#       producer_merchant_short   numeric,
+#       producer_merchant_spread  numeric,
+#       swap_dealers_long         numeric,
+#       swap_dealers_short        numeric,
+#       swap_dealers_spread       numeric,
+#       managed_money_long        numeric,
+#       managed_money_short       numeric,
+#       managed_money_spread      numeric,
+#       other_reportables_long    numeric,
+#       other_reportables_short   numeric,
+#       other_reportables_spread  numeric,
+#       unique (commodity, report_date)
+#     );
+#
+#     -- Si vas a usar la ANON key desde la app, habilitá RLS con una
+#     -- policy que permita lo que necesites (lectura/escritura), o
+#     -- usá directamente la SERVICE ROLE key desde un entorno seguro
+#     -- (no la expongas en un cliente público).
+#
+#  3) Cargar las credenciales en .streamlit/secrets.toml (local) o en
+#     "Secrets" si estás en Streamlit Community Cloud:
+#
+#     SUPABASE_URL = "https://TU-PROYECTO.supabase.co"
+#     SUPABASE_KEY = "tu-api-key"
+#
+#  ------------------------------------------------------------
 #  Cómo integrarlo a tu app principal (analizador.py):
 #
 #    from modulo_cot import modulo_cot
@@ -24,6 +67,12 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+
+try:
+    from supabase import create_client, Client
+    _SUPABASE_SDK_OK = True
+except Exception:
+    _SUPABASE_SDK_OK = False
 
 # ------------------------------------------------------------------
 #  PALETA — coherente con el resto de Capital+
@@ -62,14 +111,31 @@ COT_COLUMNAS = [
 
 COT_COLUMNAS_NUMERICAS = [c for c in COT_COLUMNAS if c not in ('Report Date', 'Commodity')]
 
+# Mapeo columnas del DataFrame <-> columnas de la tabla en Supabase
+SUPABASE_TABLE = 'cot_data'
+
+COT_COL_TO_DB = {
+    'Report Date': 'report_date',
+    'Commodity': 'commodity',
+    'Open Interest': 'open_interest',
+    'Producer/Merchant Long': 'producer_merchant_long',
+    'Producer/Merchant Short': 'producer_merchant_short',
+    'Producer/Merchant Spread': 'producer_merchant_spread',
+    'Swap Dealers Long': 'swap_dealers_long',
+    'Swap Dealers Short': 'swap_dealers_short',
+    'Swap Dealers Spread': 'swap_dealers_spread',
+    'Managed Money Long': 'managed_money_long',
+    'Managed Money Short': 'managed_money_short',
+    'Managed Money Spread': 'managed_money_spread',
+    'Other Reportables Long': 'other_reportables_long',
+    'Other Reportables Short': 'other_reportables_short',
+    'Other Reportables Spread': 'other_reportables_spread',
+}
+DB_COL_TO_COT = {v: k for k, v in COT_COL_TO_DB.items()}
+
 
 def _cot_template_df():
     return pd.DataFrame(columns=COT_COLUMNAS)
-
-
-def _cot_init_state():
-    if 'cot_data' not in st.session_state:
-        st.session_state['cot_data'] = _cot_template_df()
 
 
 def _cot_normalizar(df):
@@ -101,6 +167,165 @@ def _cot_merge(df_existente, df_nuevo):
     combinado = combinado.drop_duplicates(subset=['Commodity', 'Report Date'], keep='last')
     combinado = combinado.sort_values(['Commodity', 'Report Date']).reset_index(drop=True)
     return combinado
+
+
+# ------------------------------------------------------------------
+#  PERSISTENCIA EN SUPABASE
+# ------------------------------------------------------------------
+
+@st.cache_resource(show_spinner=False)
+def _cot_supabase_client():
+    """Crea (una sola vez por proceso) el cliente de Supabase a partir
+    de st.secrets. Devuelve None si falta el SDK, faltan credenciales,
+    o falla la conexión — en ese caso el módulo sigue funcionando solo
+    con session_state, sin persistencia."""
+    if not _SUPABASE_SDK_OK:
+        return None
+    try:
+        url = st.secrets['SUPABASE_URL']
+        key = st.secrets['SUPABASE_KEY']
+    except Exception:
+        return None
+    try:
+        return create_client(url, key)
+    except Exception:
+        return None
+
+
+def _cot_df_to_records(df):
+    """Convierte un DataFrame (columnas del formato COT_COLUMNAS) a una
+    lista de dicts con nombres de columna aptos para Supabase."""
+    df = _cot_normalizar(df)
+    if df.empty:
+        return []
+    df = df.copy()
+    df['Report Date'] = df['Report Date'].dt.strftime('%Y-%m-%d')
+    registros = []
+    for _, fila in df.iterrows():
+        reg = {}
+        for col_df, col_db in COT_COL_TO_DB.items():
+            valor = fila.get(col_df)
+            if col_db in ('report_date', 'commodity'):
+                reg[col_db] = valor
+            else:
+                reg[col_db] = None if pd.isna(valor) else float(valor)
+        registros.append(reg)
+    return registros
+
+
+def _cot_records_to_df(registros):
+    if not registros:
+        return _cot_template_df()
+    filas = []
+    for reg in registros:
+        fila = {}
+        for col_db, col_df in DB_COL_TO_COT.items():
+            fila[col_df] = reg.get(col_db)
+        filas.append(fila)
+    df = pd.DataFrame(filas, columns=COT_COLUMNAS)
+    return _cot_normalizar(df)
+
+
+def _cot_cargar_desde_supabase():
+    """Trae todo el dataset guardado en Supabase. Devuelve None si no
+    hay conexión disponible (para distinguir de 'conectado pero vacío')."""
+    client = _cot_supabase_client()
+    if client is None:
+        return None
+    try:
+        resp = client.table(SUPABASE_TABLE).select('*').execute()
+        st.session_state['cot_supabase_error'] = None
+        return _cot_records_to_df(resp.data)
+    except Exception as e:
+        st.session_state['cot_supabase_error'] = str(e)
+        return None
+
+
+def _cot_guardar_supabase_upsert(df_nuevo):
+    """Sube/actualiza (upsert) solo las filas nuevas o modificadas,
+    usando (commodity, report_date) como clave de conflicto. Se usa
+    para altas puntuales (form) e importación de CSV."""
+    client = _cot_supabase_client()
+    if client is None:
+        return False
+    registros = _cot_df_to_records(df_nuevo)
+    if not registros:
+        return False
+    try:
+        client.table(SUPABASE_TABLE).upsert(
+            registros, on_conflict='commodity,report_date'
+        ).execute()
+        st.session_state['cot_supabase_error'] = None
+        return True
+    except Exception as e:
+        st.session_state['cot_supabase_error'] = str(e)
+        return False
+
+
+def _cot_reemplazar_supabase(df_completo):
+    """Reemplaza TODO el contenido de la tabla en Supabase por
+    df_completo. Se usa cuando se edita la tabla completa (num_rows=
+    'dynamic'), porque ahí puede haber filas borradas y un upsert no
+    alcanza para reflejar eso en Supabase."""
+    client = _cot_supabase_client()
+    if client is None:
+        return False
+    try:
+        client.table(SUPABASE_TABLE).delete().neq('commodity', '__nunca_va_a_matchear__').execute()
+        registros = _cot_df_to_records(df_completo)
+        if registros:
+            client.table(SUPABASE_TABLE).insert(registros).execute()
+        st.session_state['cot_supabase_error'] = None
+        return True
+    except Exception as e:
+        st.session_state['cot_supabase_error'] = str(e)
+        return False
+
+
+def _cot_borrar_todo_supabase():
+    client = _cot_supabase_client()
+    if client is None:
+        return False
+    try:
+        client.table(SUPABASE_TABLE).delete().neq('commodity', '__nunca_va_a_matchear__').execute()
+        st.session_state['cot_supabase_error'] = None
+        return True
+    except Exception as e:
+        st.session_state['cot_supabase_error'] = str(e)
+        return False
+
+
+def _cot_init_state():
+    if 'cot_data' not in st.session_state:
+        df_nube = _cot_cargar_desde_supabase()
+        st.session_state['cot_data'] = df_nube if df_nube is not None else _cot_template_df()
+        st.session_state['cot_supabase_conectado'] = df_nube is not None
+
+
+def _cot_banner_estado_supabase():
+    conectado = st.session_state.get('cot_supabase_conectado', False)
+    error = st.session_state.get('cot_supabase_error')
+    if conectado and not error:
+        st.markdown(
+            '<div class="info-banner" style="border-left:3px solid #3fb950">'
+            '☁️ Conectado a Supabase — todo lo que cargues, edites o borres se guarda automáticamente.'
+            '</div>', unsafe_allow_html=True,
+        )
+    elif error:
+        st.markdown(
+            f'<div class="info-banner" style="border-left:3px solid #f85149">'
+            f'⚠️ No se pudo sincronizar con Supabase ({error}). Los datos siguen funcionando en esta sesión, '
+            f'pero no se están guardando en la nube — revisá la conexión / credenciales.'
+            f'</div>', unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="info-banner" style="border-left:3px solid #e3b341">'
+            '⚠️ Supabase no está configurado (faltan SUPABASE_URL / SUPABASE_KEY en st.secrets, o falta '
+            'instalar <code>supabase</code>). Los datos solo se guardan en esta sesión del navegador y se '
+            'pierden al cerrarla.'
+            '</div>', unsafe_allow_html=True,
+        )
 
 
 # ------------------------------------------------------------------
@@ -457,6 +682,8 @@ def _cot_fig_evolucion(df, columna, titulo, color):
 # ------------------------------------------------------------------
 
 def _cot_tab_carga():
+    _cot_banner_estado_supabase()
+
     st.markdown("""
     <div class="info-banner">
       Los datos NO se descargan automáticamente. Cargá vos las semanas de cada commodity
@@ -532,7 +759,11 @@ def _cot_tab_carga():
                 'Other Reportables Long': oth_l, 'Other Reportables Short': oth_s, 'Other Reportables Spread': oth_sp,
             }])
             st.session_state['cot_data'] = _cot_merge(st.session_state['cot_data'], fila_nueva)
-            st.success(f'Semana del {fecha} agregada para {nombre_commodity.strip()}.')
+            guardado_ok = _cot_guardar_supabase_upsert(fila_nueva)
+            if guardado_ok:
+                st.success(f'Semana del {fecha} agregada para {nombre_commodity.strip()} y sincronizada con Supabase.')
+            else:
+                st.warning(f'Semana del {fecha} agregada localmente, pero no se pudo guardar en Supabase.')
             st.rerun()
 
     # ── Importar CSV propio ─────────────────────────────────────
@@ -552,7 +783,11 @@ def _cot_tab_carga():
                 st.dataframe(df_csv.head(10), use_container_width=True)
                 if st.button('✅ Importar al dataset', key='cot_import_csv'):
                     st.session_state['cot_data'] = _cot_merge(st.session_state['cot_data'], df_csv[COT_COLUMNAS])
-                    st.success(f'{len(df_csv)} filas importadas/actualizadas.')
+                    guardado_ok = _cot_guardar_supabase_upsert(df_csv[COT_COLUMNAS])
+                    if guardado_ok:
+                        st.success(f'{len(df_csv)} filas importadas/actualizadas y sincronizadas con Supabase.')
+                    else:
+                        st.warning(f'{len(df_csv)} filas importadas localmente, pero no se pudo sincronizar con Supabase.')
                     st.rerun()
 
     # ── Editor de tabla completa ─────────────────────────────────
@@ -575,12 +810,22 @@ def _cot_tab_carga():
         if st.button('💾 Guardar cambios de la tabla', use_container_width=True, key='cot_guardar_tabla'):
             df_norm = _cot_normalizar(editado)
             st.session_state['cot_data'] = df_norm
-            st.success('Cambios guardados.')
+            # Se usa reemplazo completo (no upsert) porque desde acá también
+            # se pueden borrar filas, y eso hay que reflejarlo en Supabase.
+            guardado_ok = _cot_reemplazar_supabase(df_norm)
+            if guardado_ok:
+                st.success('Cambios guardados localmente y sincronizados con Supabase.')
+            else:
+                st.warning('Cambios guardados localmente. No se pudo sincronizar con Supabase: revisá la conexión.')
             st.rerun()
     with cg2:
         if st.button('🗑️ Borrar TODOS los datos cargados', use_container_width=True, key='cot_borrar_todo'):
             st.session_state['cot_data'] = _cot_template_df()
-            st.warning('Se borraron todos los datos COT cargados.')
+            borrado_ok = _cot_borrar_todo_supabase()
+            if borrado_ok:
+                st.warning('Se borraron todos los datos COT cargados (local y Supabase).')
+            else:
+                st.warning('Se borraron los datos localmente, pero no se pudo confirmar el borrado en Supabase.')
             st.rerun()
 
 
