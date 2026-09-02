@@ -7890,7 +7890,7 @@ if HORIZONTE == 'largo' and MODULO == 'tdc':
     modulo_topdown_cuantitativo()
 
 if HORIZONTE == 'largo' and MODULO == 'cot':
-    modulo_cot()
+    modulo_cot(supabase, USER_ID, st.session_state["usuario"].email)
     
 # ==============================================================
 #  FOOTER
