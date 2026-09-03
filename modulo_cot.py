@@ -877,8 +877,9 @@ def _cot_tab_carga(supabase, es_admin):
             except Exception as e:
                 st.error(f'❌ Error al guardar en Supabase: {e}')
 
-    # ── Importar CSV propio ─────────────────────────────────────
-    st.markdown('<div class="sec-title">📂 Importar CSV</div>', unsafe_allow_html=True)
+    # ── Importar CSV propio (carga masiva) ─────────────────────
+    st.markdown('<div class="sec-title">📂 Importar CSV (carga masiva)</div>', unsafe_allow_html=True)
+    st.caption('Subí un CSV con varias filas (una por semana/commodity). Usá la plantilla de arriba para respetar el formato exacto de columnas.')
     archivo = st.file_uploader('Subí un CSV con las columnas de la plantilla', type=['csv'], key='cot_uploader')
     if archivo is not None:
         try:
@@ -886,16 +887,63 @@ def _cot_tab_carga(supabase, es_admin):
         except Exception as e:
             st.error(f'No se pudo leer el archivo: {e}')
             df_csv = None
+
         if df_csv is not None:
             faltantes = [c for c in COT_COLUMNAS if c not in df_csv.columns]
             if faltantes:
                 st.error(f'Faltan columnas requeridas: {", ".join(faltantes)}')
             else:
-                st.dataframe(df_csv.head(10), use_container_width=True)
-                if st.button('✅ Importar al dataset', key='cot_import_csv'):
+                df_csv = df_csv[COT_COLUMNAS].copy()
+
+                # --- Validación fila por fila ---
+                fechas_parseadas = pd.to_datetime(df_csv['Report Date'], errors='coerce')
+                commodities_ok = df_csv['Commodity'].astype(str).str.strip().str.len() > 0
+                filas_invalidas = df_csv[fechas_parseadas.isna() | ~commodities_ok]
+                df_validas = df_csv[~(fechas_parseadas.isna() | ~commodities_ok)].copy()
+
+                # --- Duplicados dentro del mismo CSV (misma semana+commodity repetida) ---
+                clave = (
+                    df_validas['Commodity'].astype(str).str.strip() + '|' +
+                    fechas_parseadas[df_validas.index].dt.strftime('%Y-%m-%d')
+                )
+                dup_mask = clave.duplicated(keep='last')
+                n_dup_internos = int(dup_mask.sum())
+
+                # --- Nuevas vs. actualizaciones respecto a lo ya cargado en Supabase ---
+                df_existente = st.session_state['cot_data']
+                if not df_existente.empty:
+                    clave_existente = set(
+                        df_existente['Commodity'].astype(str).str.strip() + '|' +
+                        pd.to_datetime(df_existente['Report Date']).dt.strftime('%Y-%m-%d')
+                    )
+                else:
+                    clave_existente = set()
+
+                claves_finales = clave[~dup_mask]
+                n_actualiza = int(claves_finales.isin(clave_existente).sum())
+                n_nuevas = len(claves_finales) - n_actualiza
+
+                # --- Resumen antes de confirmar ---
+                c_r1, c_r2, c_r3, c_r4 = st.columns(4)
+                c_r1.metric('Filas válidas', len(claves_finales))
+                c_r2.metric('Semanas nuevas', n_nuevas)
+                c_r3.metric('Semanas a actualizar', n_actualiza)
+                c_r4.metric('Filas inválidas', len(filas_invalidas))
+
+                if n_dup_internos > 0:
+                    st.warning(f'⚠️ {n_dup_internos} fila(s) duplicada(s) dentro del mismo CSV (misma semana+commodity). Se usará la última de cada grupo.')
+
+                if not filas_invalidas.empty:
+                    st.error(f'❌ {len(filas_invalidas)} fila(s) con "Report Date" o "Commodity" inválido — no se importarán:')
+                    st.dataframe(filas_invalidas, use_container_width=True)
+
+                st.markdown('**Vista previa de filas a importar:**')
+                st.dataframe(df_validas.head(15), use_container_width=True)
+
+                if st.button(f'✅ Importar {len(claves_finales)} fila(s) al dataset', key='cot_import_csv', disabled=df_validas.empty):
                     try:
-                        _cot_guardar_upsert(supabase, df_csv[COT_COLUMNAS])
-                        st.success(f'{len(df_csv)} filas importadas/actualizadas.')
+                        _cot_guardar_upsert(supabase, df_validas)
+                        st.success(f'{n_nuevas} semana(s) nueva(s) agregada(s) y {n_actualiza} actualizada(s).')
                         st.rerun()
                     except Exception as e:
                         st.error(f'❌ Error al importar a Supabase: {e}')
