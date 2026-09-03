@@ -11,3 +11,4 @@ scipy
 streamlit-autorefresh
 statsmodels
 hmmlearn
+xlsxwriter
