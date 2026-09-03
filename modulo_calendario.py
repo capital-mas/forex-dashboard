@@ -572,10 +572,33 @@ def _guardar_registro(supabase, datos, user_id):
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _obtener_registros(_supabase, limite=100):
-    res = (_supabase.table(TABLA_REGISTRO).select("*")
-           .order("created_at", desc=True).limit(limite).execute())
-    return res.data or []
+def _obtener_registros(_supabase, limite=None):
+    """Trae TODOS los registros paginando con .range(), sin importar
+    cuántos haya (Supabase/PostgREST limita cada request a ~1000 filas,
+    así que acá se van pidiendo de a tandas hasta agotarlos).
+
+    El parámetro 'limite' se mantiene por compatibilidad con código viejo:
+    si se pasa un número, corta ahí; si se deja en None (default), trae todo.
+    """
+    PAGINA = 1000
+    todas = []
+    desde = 0
+    while True:
+        hasta = desde + PAGINA - 1
+        res = (_supabase.table(TABLA_REGISTRO).select("*")
+               .order("created_at", desc=True)
+               .range(desde, hasta).execute())
+        lote = res.data or []
+        todas.extend(lote)
+
+        if limite is not None and len(todas) >= limite:
+            return todas[:limite]
+
+        if len(lote) < PAGINA:
+            break  # ya no hay más filas
+        desde += PAGINA
+
+    return todas
 
 
 @st.cache_data(ttl=120, show_spinner=False)
