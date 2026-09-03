@@ -41,8 +41,14 @@
 #     (vs_previsto / vs_anterior) queda puramente factual (📈/📉), y la
 #     lectura de "bueno/malo" (impacto_mercado) es la que se ajusta
 #     según la polaridad de cada evento.
+#  5) NUEVO: pestaña "📦 Carga Masiva" — permite subir muchos eventos
+#     de una sola vez desde un Excel/CSV, con plantilla descargable
+#     (incluye hojas de referencia con los países y eventos válidos),
+#     validación fila por fila antes de tocar la base, y un insert
+#     único a Supabase en lugar de uno por fila.
 # ==============================================================
 
+import io
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
@@ -696,6 +702,278 @@ def _tab_registrar(supabase, user_id, es_admin):
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error al guardar: {e}")
+
+
+# ==============================================================
+#  CARGA MASIVA
+#  Permite subir muchos eventos de una sola vez desde un Excel/CSV,
+#  con plantilla descargable (incluye hojas de referencia con los
+#  países y eventos válidos), validación fila por fila antes de
+#  tocar la base, y un insert único a Supabase.
+# ==============================================================
+
+COLUMNAS_PLANTILLA = ["fecha", "pais", "evento", "previsto", "anterior", "real", "unidad", "notas"]
+
+
+def _generar_plantilla_excel():
+    """Arma el .xlsx de plantilla con una fila de ejemplo y dos hojas
+    de referencia (países y eventos válidos) para copiar/pegar."""
+    ejemplo = pd.DataFrame([
+        {
+            "fecha": "15/01/2026",
+            "pais": "Estados Unidos",
+            "evento": "IPC (inflación general)",
+            "previsto": 3.1,
+            "anterior": 3.0,
+            "real": "",
+            "unidad": "%",
+            "notas": "",
+        }
+    ], columns=COLUMNAS_PLANTILLA)
+
+    ref_paises = pd.DataFrame({"Países válidos": PAISES})
+    ref_eventos = pd.DataFrame({
+        "Eventos válidos": list(EVENTOS.keys()),
+        "Categoría": [EVENTOS[e]["categoria"] for e in EVENTOS],
+        "Impacto": [EVENTOS[e]["impacto"] for e in EVENTOS],
+        "Unidad sugerida": [EVENTOS[e]["unidad"] for e in EVENTOS],
+        "Polaridad": [EVENTOS[e]["polaridad"] for e in EVENTOS],
+    })
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        ejemplo.to_excel(writer, sheet_name="Carga", index=False)
+        ref_paises.to_excel(writer, sheet_name="Países válidos", index=False)
+        ref_eventos.to_excel(writer, sheet_name="Eventos válidos", index=False)
+
+        wb = writer.book
+        fmt_header = wb.add_format({"bold": True, "bg_color": "#0d1117", "font_color": "#e6edf3"})
+
+        ws = writer.sheets["Carga"]
+        for col_num, col_name in enumerate(COLUMNAS_PLANTILLA):
+            ws.write(0, col_num, col_name, fmt_header)
+            ws.set_column(col_num, col_num, 24)
+
+        for hoja in ("Países válidos", "Eventos válidos"):
+            ws2 = writer.sheets[hoja]
+            ws2.set_column(0, 4, 26)
+
+    buffer.seek(0)
+    return buffer
+
+
+def _parsear_fecha_masiva(valor):
+    if pd.isna(valor) or str(valor).strip() == "":
+        return None, "Fecha vacía"
+    if isinstance(valor, datetime):
+        return valor.date(), None
+    if isinstance(valor, date):
+        return valor, None
+    texto = str(valor).strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(texto, fmt).date(), None
+        except ValueError:
+            continue
+    return None, f"Formato de fecha no reconocido: '{texto}'"
+
+
+def _num_o_none(valor):
+    """None si viene vacío, 'ERROR' si viene algo no numérico,
+    o el float correspondiente."""
+    if pd.isna(valor) or str(valor).strip() == "":
+        return None
+    try:
+        return float(str(valor).replace(",", "."))
+    except ValueError:
+        return "ERROR"
+
+
+def _validar_fila_masiva(row):
+    """Valida una fila del archivo subido. Devuelve (errores, datos)
+    donde datos es el dict listo para _guardar_registro / _guardar_registros_masivo,
+    o None si hay errores."""
+    errores = []
+
+    fecha, err_fecha = _parsear_fecha_masiva(row.get("fecha"))
+    if err_fecha:
+        errores.append(err_fecha)
+
+    pais = str(row.get("pais") or "").strip()
+    if not pais:
+        errores.append("País vacío")
+    elif pais not in PAISES:
+        errores.append(f"País no reconocido: '{pais}'")
+
+    evento = str(row.get("evento") or "").strip()
+    if not evento:
+        errores.append("Evento vacío")
+    elif evento not in EVENTOS:
+        errores.append(f"Evento no reconocido: '{evento}'")
+
+    previsto = _num_o_none(row.get("previsto"))
+    anterior = _num_o_none(row.get("anterior"))
+    real = _num_o_none(row.get("real"))
+    for nombre, val in [("previsto", previsto), ("anterior", anterior), ("real", real)]:
+        if val == "ERROR":
+            errores.append(f"Valor numérico inválido en '{nombre}'")
+
+    unidad = str(row.get("unidad") or "").strip()
+    notas = str(row.get("notas") or "").strip()
+
+    if errores:
+        return errores, None
+
+    datos = dict(
+        fecha=fecha,
+        pais=pais,
+        evento=evento,
+        relevancia=EVENTOS[evento]["impacto"],
+        previsto=None if previsto == "ERROR" else previsto,
+        anterior=None if anterior == "ERROR" else anterior,
+        real=None if real == "ERROR" else real,
+        unidad=unidad or EVENTOS[evento]["unidad"],
+        notas=notas,
+    )
+    return [], datos
+
+
+def _guardar_registros_masivo(supabase, lista_datos, user_id):
+    """Igual que _guardar_registro pero arma todas las filas primero
+    y hace un insert por lote a Supabase (mucho más rápido que insertar
+    de a una cuando son decenas o cientos de eventos)."""
+    filas = []
+    for datos in lista_datos:
+        real, previsto, anterior = datos.get("real"), datos.get("previsto"), datos.get("anterior")
+        polaridad = EVENTOS.get(datos["evento"], {}).get("polaridad", "directa")
+        analisis = _calcular_analisis(previsto, anterior, real, polaridad)
+        macro = interpretar_macro(datos["evento"], real, previsto)
+        filas.append({
+            "user_id": user_id,
+            "fecha": str(datos["fecha"]),
+            "pais": datos["pais"],
+            "evento": datos["evento"],
+            "relevancia": datos.get("relevancia", ""),
+            "previsto": previsto, "anterior": anterior, "real": real,
+            "unidad": datos.get("unidad", ""),
+            "vs_previsto": analisis["vs_previsto"], "vs_anterior": analisis["vs_anterior"],
+            "senal_previsto": analisis["senal_previsto"], "senal_anterior": analisis["senal_anterior"],
+            "impacto_mercado": analisis["impacto_mercado"],
+            "divisas": macro["divisas"], "bonos": macro["bonos"], "acciones": macro["acciones"],
+            "oro": macro["oro"], "criptomonedas": macro["crypto"],
+            "politica_monetaria": macro["politica"], "regimen_mercado": macro["riesgo"],
+            "lectura_macro": macro["lectura"], "notas": datos.get("notas", ""),
+        })
+
+    if not filas:
+        return 0
+
+    # Se trocea en lotes de 500 por si algún día subís miles de filas
+    # de una sola vez y el payload queda muy pesado.
+    LOTE = 500
+    for i in range(0, len(filas), LOTE):
+        supabase.table(TABLA_REGISTRO).insert(filas[i:i + LOTE]).execute()
+
+    return len(filas)
+
+
+def _tab_carga_masiva(supabase, user_id, es_admin):
+    if not es_admin:
+        st.info("🔒 Solo el administrador puede hacer carga masiva de eventos.")
+        return
+
+    st.caption(
+        "Cargá muchos eventos económicos de una sola vez desde un Excel o CSV. "
+        "Descargá la plantilla, completala (una fila por evento) y subila acá abajo. "
+        "Antes de guardar nada te muestro una vista previa con los errores detectados, "
+        "para que puedas corregir el archivo y volver a subirlo."
+    )
+
+    st.download_button(
+        "⬇️ Descargar plantilla (Excel)",
+        data=_generar_plantilla_excel(),
+        file_name="plantilla_carga_masiva_calendario.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="cal_masiva_plantilla",
+    )
+
+    st.caption(
+        "Columnas obligatorias: **fecha** (DD/MM/AAAA), **pais**, **evento**. "
+        "Opcionales: **previsto**, **anterior**, **real**, **unidad**, **notas**. "
+        "El país y el evento tienen que coincidir EXACTO con las hojas "
+        "*Países válidos* / *Eventos válidos* de la plantilla — de ahí podés "
+        "copiar y pegar los nombres para evitar errores de tipeo."
+    )
+
+    archivo = st.file_uploader(
+        "📤 Subir archivo (.xlsx o .csv)", type=["xlsx", "csv"], key="cal_masiva_uploader"
+    )
+    if archivo is None:
+        return
+
+    try:
+        if archivo.name.lower().endswith(".csv"):
+            df_masivo = pd.read_csv(archivo)
+        else:
+            df_masivo = pd.read_excel(archivo, sheet_name=0)
+    except Exception as e:
+        st.error(f"❌ No pude leer el archivo: {e}")
+        return
+
+    faltantes = [c for c in COLUMNAS_PLANTILLA if c not in df_masivo.columns]
+    if faltantes:
+        st.error(f"❌ Al archivo le faltan estas columnas obligatorias: {', '.join(faltantes)}")
+        return
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown(f"#### 🔍 Vista previa — {len(df_masivo)} fila(s) detectadas")
+
+    filas_ok, filas_error = [], []
+    for idx, row in df_masivo.iterrows():
+        errores, datos = _validar_fila_masiva(row)
+        if errores:
+            filas_error.append({"Fila (Excel)": idx + 2, "Errores": "; ".join(errores)})
+        else:
+            filas_ok.append(datos)
+
+    c1, c2 = st.columns(2)
+    c1.metric("✅ Filas válidas", len(filas_ok))
+    c2.metric("❌ Filas con error", len(filas_error))
+
+    if filas_error:
+        st.warning(
+            "Estas filas NO se van a importar hasta que corrijas el archivo original "
+            "y lo vuelvas a subir (la numeración de fila corresponde a la planilla, "
+            "contando el encabezado como fila 1):"
+        )
+        st.dataframe(pd.DataFrame(filas_error), use_container_width=True, hide_index=True)
+
+    if filas_ok:
+        vista = pd.DataFrame([
+            {
+                "Fecha": d["fecha"], "País": d["pais"], "Evento": d["evento"],
+                "Previsto": d["previsto"], "Anterior": d["anterior"], "Real": d["real"],
+                "Unidad": d["unidad"], "Notas": d["notas"],
+            }
+            for d in filas_ok
+        ])
+        st.markdown("##### Filas listas para importar")
+        st.dataframe(vista, use_container_width=True, hide_index=True)
+
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        if st.button(
+            f"💾 Confirmar e importar {len(filas_ok)} evento(s)",
+            type="primary", use_container_width=True, key="cal_masiva_btn_confirmar",
+        ):
+            try:
+                n = _guardar_registros_masivo(supabase, filas_ok, user_id)
+                _obtener_registros.clear()
+                st.success(f"✅ Se importaron {n} evento(s) correctamente.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error al importar: {e}")
+    else:
+        st.info("No hay filas válidas para importar todavía.")
 
 
 # ==============================================================
@@ -1424,12 +1702,12 @@ def render_calendario_economico(supabase, user_id, user_email):
         from modulo_calendario import render_calendario_economico
         render_calendario_economico(supabase, USER_ID, st.session_state['usuario'].email)
 
-    Muestra el calendario económico (carga de eventos + historial con
-    interpretación macro completa), una pestaña de "Perfil de País" (cómo
-    está un país y cómo impacta en cada activo financiero) y una pestaña
-    de comparación país vs país agrupada por categoría y por activo
-    financiero. Las noticias son un módulo aparte, ver render_noticias()
-    más abajo.
+    Muestra el calendario económico (carga de eventos + carga masiva +
+    historial con interpretación macro completa), una pestaña de "Perfil
+    de País" (cómo está un país y cómo impacta en cada activo financiero)
+    y una pestaña de comparación país vs país agrupada por categoría y
+    por activo financiero. Las noticias son un módulo aparte, ver
+    render_noticias() más abajo.
     """
     es_admin = _es_admin(user_email)
 
@@ -1442,17 +1720,21 @@ def render_calendario_economico(supabase, user_id, user_email):
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
         Registro de eventos macro con interpretación automática completa
-        (divisas, bonos, acciones, oro y cripto), su historial, el perfil
-        macro de cada país y su comparación frente a otros países.
+        (divisas, bonos, acciones, oro y cripto), carga masiva desde
+        Excel/CSV, su historial, el perfil macro de cada país y su
+        comparación frente a otros países.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    tab_reg, tab_cal, tab_perfil, tab_paises = st.tabs(
-        ["📝 Registrar", "📅 Calendario Económico", "🌎 Perfil de País", "🌍 País vs País"]
+    tab_reg, tab_masiva, tab_cal, tab_perfil, tab_paises = st.tabs(
+        ["📝 Registrar", "📦 Carga Masiva", "📅 Calendario Económico",
+         "🌎 Perfil de País", "🌍 País vs País"]
     )
     with tab_reg:
         _tab_registrar(supabase, user_id, es_admin)
+    with tab_masiva:
+        _tab_carga_masiva(supabase, user_id, es_admin)
     with tab_cal:
         _tab_historial(supabase)
     with tab_perfil:
