@@ -53,11 +53,22 @@
 #     fechas directo en la query de Supabase (columna 'fecha'), para
 #     no traer de más cuando la tabla crezca mucho — usado en la
 #     pestaña de Historial.
+#  7) NUEVO: edición y borrado de eventos ya cargados, directamente
+#     desde "Historial" (solo admin) — por si se cargó un país, evento
+#     o valor equivocado. Editar recalcula análisis + interpretación
+#     macro con los valores nuevos antes de guardar.
+#  8) NUEVO: interpretación "de analista senior" mucho más completa en
+#     "Perfil de País" y "País vs País" — gráficos (barras por
+#     categoría, radar de activos) + un párrafo narrativo generado con
+#     lenguaje de research macro (no solo "sesgo positivo/negativo"),
+#     que menciona el dato más relevante, la categoría más fuerte/débil
+#     y la implicancia para cada activo.
 # ==============================================================
 
 import io
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
 from datetime import date, datetime
 
 # ⚠️ Cambiá esto por tu email real (el mismo con el que iniciás sesión
@@ -578,6 +589,37 @@ def _guardar_registro(supabase, datos, user_id):
     return analisis, macro
 
 
+def _actualizar_registro(supabase, registro_id, datos):
+    """Recalcula análisis + interpretación macro con los valores nuevos
+    y actualiza la fila existente en Supabase (usado por la edición de
+    eventos ya cargados, desde Historial)."""
+    real, previsto, anterior = datos.get("real"), datos.get("previsto"), datos.get("anterior")
+    polaridad = EVENTOS.get(datos["evento"], {}).get("polaridad", "directa")
+    analisis = _calcular_analisis(previsto, anterior, real, polaridad)
+    macro = interpretar_macro(datos["evento"], real, previsto)
+    row = {
+        "fecha": str(datos["fecha"]),
+        "pais": datos["pais"],
+        "evento": datos["evento"],
+        "relevancia": EVENTOS.get(datos["evento"], {}).get("impacto", datos.get("relevancia", "")),
+        "previsto": previsto, "anterior": anterior, "real": real,
+        "unidad": datos.get("unidad", ""),
+        "vs_previsto": analisis["vs_previsto"], "vs_anterior": analisis["vs_anterior"],
+        "senal_previsto": analisis["senal_previsto"], "senal_anterior": analisis["senal_anterior"],
+        "impacto_mercado": analisis["impacto_mercado"],
+        "divisas": macro["divisas"], "bonos": macro["bonos"], "acciones": macro["acciones"],
+        "oro": macro["oro"], "criptomonedas": macro["crypto"],
+        "politica_monetaria": macro["politica"], "regimen_mercado": macro["riesgo"],
+        "lectura_macro": macro["lectura"], "notas": datos.get("notas", ""),
+    }
+    supabase.table(TABLA_REGISTRO).update(row).eq("id", registro_id).execute()
+    return analisis, macro
+
+
+def _borrar_registro(supabase, registro_id):
+    supabase.table(TABLA_REGISTRO).delete().eq("id", registro_id).execute()
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def _obtener_registros(_supabase, limite=None, fecha_desde=None, fecha_hasta=None):
     """Trae registros paginando con .range() (Supabase/PostgREST limita
@@ -1016,13 +1058,103 @@ def _tab_carga_masiva(supabase, user_id, es_admin):
 
 
 # ==============================================================
-#  RENDER — TAB CALENDARIO ECONÓMICO (solo lectura, para todos)
+#  RENDER — TAB CALENDARIO ECONÓMICO (solo lectura para no-admin;
+#  el admin puede además editar o eliminar cada registro)
 # ==============================================================
 
-def _tab_historial(supabase):
+def _form_editar_registro(supabase, row):
+    """Formulario de edición para un registro existente. Vive dentro
+    del expander de Historial, debajo del detalle del evento. Al
+    guardar, recalcula análisis + interpretación macro y refresca."""
+    registro_id = row["id"]
+    key_pref = f"cal_edit_{registro_id}"
+
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    st.markdown("###### ✏️ Editar este evento")
+
+    e1, e2 = st.columns(2)
+    with e1:
+        try:
+            fecha_actual = datetime.strptime(str(row.get("fecha")), "%Y-%m-%d").date()
+        except Exception:
+            fecha_actual = date.today()
+        fecha_edit = st.date_input("📅 Fecha", value=fecha_actual, key=f"{key_pref}_fecha")
+    with e2:
+        pais_actual = row.get("pais") or ""
+        idx_pais = PAISES.index(pais_actual) if pais_actual in PAISES else 0
+        pais_edit = st.selectbox("🌍 País", PAISES, index=idx_pais, key=f"{key_pref}_pais")
+
+    eventos_lista = list(EVENTOS.keys())
+    evento_actual = row.get("evento") or ""
+    idx_evento = eventos_lista.index(evento_actual) if evento_actual in eventos_lista else 0
+    evento_edit = st.selectbox("📊 Evento económico", eventos_lista, index=idx_evento, key=f"{key_pref}_evento")
+
+    n1, n2, n3 = st.columns(3)
+    with n1:
+        previsto_edit = st.number_input("PREVISTO", value=row.get("previsto"), format="%.4f", key=f"{key_pref}_previsto")
+    with n2:
+        anterior_edit = st.number_input("ANTERIOR", value=row.get("anterior"), format="%.4f", key=f"{key_pref}_anterior")
+    with n3:
+        real_edit = st.number_input("REAL ★", value=row.get("real"), format="%.4f", key=f"{key_pref}_real")
+
+    u1, u2 = st.columns([1, 2])
+    unidades_disp = ["%", "pts", "k", "M", "B", "USD", "índice", "otro"]
+    with u1:
+        unidad_actual = row.get("unidad") or "%"
+        idx_unidad = unidades_disp.index(unidad_actual) if unidad_actual in unidades_disp else 0
+        unidad_edit = st.selectbox("📐 Unidad", unidades_disp, index=idx_unidad, key=f"{key_pref}_unidad")
+    with u2:
+        notas_edit = st.text_input("💬 Notas", value=row.get("notas") or "", key=f"{key_pref}_notas")
+
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("💾 Guardar cambios", type="primary", use_container_width=True, key=f"{key_pref}_btn_guardar"):
+            datos = dict(
+                fecha=fecha_edit, pais=pais_edit, evento=evento_edit,
+                previsto=previsto_edit, anterior=anterior_edit, real=real_edit,
+                unidad=unidad_edit, notas=notas_edit,
+            )
+            try:
+                _actualizar_registro(supabase, registro_id, datos)
+                _obtener_registros.clear()
+                st.success("✅ Evento actualizado.")
+                st.session_state.pop(f"cal_hist_editando_{registro_id}", None)
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error al actualizar: {e}")
+    with b2:
+        if st.button("✖️ Cancelar", use_container_width=True, key=f"{key_pref}_btn_cancelar"):
+            st.session_state.pop(f"cal_hist_editando_{registro_id}", None)
+            st.rerun()
+
+
+def _confirmar_borrado_registro(supabase, row):
+    registro_id = row["id"]
+    st.warning(
+        f"¿Seguro que querés eliminar **{row.get('evento','')}** de **{row.get('pais','')}** "
+        f"({row.get('fecha','')})? Esta acción no se puede deshacer."
+    )
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("🗑️ Sí, eliminar", type="primary", use_container_width=True, key=f"cal_del_{registro_id}_confirmar"):
+            try:
+                _borrar_registro(supabase, registro_id)
+                _obtener_registros.clear()
+                st.success("✅ Evento eliminado.")
+                st.session_state.pop(f"cal_hist_borrando_{registro_id}", None)
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error al eliminar: {e}")
+    with b2:
+        if st.button("✖️ Cancelar", use_container_width=True, key=f"cal_del_{registro_id}_cancelar"):
+            st.session_state.pop(f"cal_hist_borrando_{registro_id}", None)
+            st.rerun()
+
+
+def _tab_historial(supabase, es_admin=False):
     top1, top2 = st.columns([3, 1])
     with top1:
-        st.caption("Todos los eventos económicos cargados (solo lectura)")
+        st.caption("Todos los eventos económicos cargados" + (" (el admin puede editar o eliminar cada evento)" if es_admin else " (solo lectura)"))
     with top2:
         if st.button("↺ Actualizar", use_container_width=True, key="cal_hist_refresh"):
             _obtener_registros.clear()
@@ -1082,6 +1214,7 @@ def _tab_historial(supabase):
         bg, fg = _impacto_estilo(impacto)
         real, previsto, anterior = row.get("real"), row.get("previsto"), row.get("anterior")
         unidad = row.get("unidad") or ""
+        registro_id = row.get("id")
 
         titulo = f"{row.get('fecha','')} · {row.get('pais','')} · {row.get('evento','')}"
         with st.expander(titulo):
@@ -1113,6 +1246,26 @@ def _tab_historial(supabase):
 
             if row.get("notas"):
                 st.markdown(f"**Notas:** {row['notas']}")
+
+            if es_admin and registro_id is not None:
+                st.markdown("<hr style='margin:10px 0;border-color:#21262d'>", unsafe_allow_html=True)
+                key_editando = f"cal_hist_editando_{registro_id}"
+                key_borrando = f"cal_hist_borrando_{registro_id}"
+
+                if st.session_state.get(key_editando):
+                    _form_editar_registro(supabase, row)
+                elif st.session_state.get(key_borrando):
+                    _confirmar_borrado_registro(supabase, row)
+                else:
+                    ba1, ba2 = st.columns(2)
+                    with ba1:
+                        if st.button("✏️ Editar", use_container_width=True, key=f"cal_hist_btn_editar_{registro_id}"):
+                            st.session_state[key_editando] = True
+                            st.rerun()
+                    with ba2:
+                        if st.button("🗑️ Eliminar", use_container_width=True, key=f"cal_hist_btn_eliminar_{registro_id}"):
+                            st.session_state[key_borrando] = True
+                            st.rerun()
 
 
 # ==============================================================
@@ -1273,18 +1426,227 @@ def _texto_resumen_pais(pais, categorias, df_pais_puntuable, moneda_score):
 
 
 # ==============================================================
+#  INFORME "SENIOR ANALYST" — narrativa larga + gráficos
+#  Usado por Perfil de País y País vs País para dar una lectura
+#  mucho más completa y profesional que el resumen de una línea.
+# ==============================================================
+
+def _chart_barras_categorias(nombres, valores, colores, titulo):
+    fig = go.Figure(go.Bar(
+        x=valores, y=nombres, orientation="h",
+        marker=dict(color=colores),
+        text=[f"{v:+.2f}" for v in valores],
+        textposition="outside",
+    ))
+    fig.update_layout(
+        title=titulo,
+        xaxis=dict(range=[-1.2, 1.2], title="Puntaje ponderado (−1 a +1)", zerolinecolor="#3a3a3a"),
+        yaxis=dict(autorange="reversed"),
+        height=max(260, 46 * len(nombres)),
+        margin=dict(l=10, r=10, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6edf3"),
+    )
+    return fig
+
+
+def _color_de_score(score):
+    if score is None:
+        return "#6b7d9a"
+    if score >= 0.5:
+        return "#2ea043"
+    if score >= 0.15:
+        return "#d4a72c"
+    if score <= -0.5:
+        return "#f85149"
+    if score <= -0.15:
+        return "#f0883e"
+    return "#6b7d9a"
+
+
+def _chart_radar_activos(activos, nombre_serie, color):
+    labels = [nombre for _, nombre in ASSET_FIELDS]
+    valores = [activos.get(campo, (0.0, 0))[0] or 0.0 for campo, _ in ASSET_FIELDS]
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=valores + [valores[0]], theta=labels + [labels[0]],
+        fill="toself", name=nombre_serie, line=dict(color=color),
+    ))
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[-1, 1], color="#8b949e"),
+            angularaxis=dict(color="#e6edf3"),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        showlegend=True,
+        height=380,
+        margin=dict(l=30, r=30, t=30, b=30),
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6edf3"),
+    )
+    return fig
+
+
+def _dato_mas_reciente_relevante(df_pais):
+    """Devuelve la fila del dato puntuable de mayor impacto y más
+    reciente, para citarlo en el informe como 'lo último a destacar'."""
+    if df_pais.empty:
+        return None
+    orden = {"Muy Alto": 3, "Alto": 2, "Medio": 1, "Bajo": 0}
+    df_ordenable = df_pais.copy()
+    df_ordenable["peso_orden"] = df_ordenable["evento"].apply(
+        lambda e: orden.get(EVENTOS.get(e, {}).get("impacto"), 0)
+    )
+    df_ordenable = df_ordenable.sort_values(
+        by=["fecha_dt", "peso_orden"], ascending=[False, False]
+    )
+    return df_ordenable.iloc[0] if not df_ordenable.empty else None
+
+
+def _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos):
+    """Arma un informe narrativo de varios párrafos, con tono de
+    research/analista senior, a partir de los puntajes ya calculados."""
+    moneda_score, moneda_n = activos.get("divisas", (None, 0))
+
+    # Categoría más fuerte / más débil
+    scores_cat = []
+    for cat in categorias:
+        sub = df_pais_puntuable[df_pais_puntuable["categoria"] == cat]
+        prom, n = _promedio_ponderado_score(sub)
+        if prom is not None:
+            scores_cat.append((cat, prom, n))
+    scores_cat.sort(key=lambda x: x[1], reverse=True)
+
+    parrafos = []
+
+    # Párrafo 1: panorama general
+    n_total, n_punt = len(df_pais_todo), len(df_pais_puntuable)
+    if scores_cat:
+        mejor_cat, mejor_val, mejor_n = scores_cat[0]
+        peor_cat, peor_val, peor_n = scores_cat[-1]
+        if len(scores_cat) == 1:
+            parrafos.append(
+                f"Con {n_total} evento(s) registrado(s) para {pais} ({n_punt} con lectura cuantitativa), "
+                f"la única categoría con información suficiente es **{mejor_cat}**, que promedia un "
+                f"puntaje de {mejor_val:+.2f} sobre {mejor_n} dato(s). Todavía no hay cobertura como para "
+                f"trazar un panorama comparativo entre sectores de la economía."
+            )
+        else:
+            parrafos.append(
+                f"Con {n_total} evento(s) registrado(s) para {pais} ({n_punt} con lectura cuantitativa), "
+                f"el frente más sólido es **{mejor_cat}** (puntaje {mejor_val:+.2f} sobre {mejor_n} dato(s)), "
+                f"mientras que el punto más débil del panorama macro pasa por **{peor_cat}** "
+                f"({peor_val:+.2f} sobre {peor_n} dato(s)). "
+                + ("La dispersión entre ambos extremos sugiere una economía con sectores a distintas "
+                   "velocidades, más que un ciclo homogéneo." if (mejor_val - peor_val) > 0.6 else
+                   "La distancia entre ambos extremos es moderada, compatible con un ciclo relativamente "
+                   "parejo entre sectores.")
+            )
+    else:
+        parrafos.append(
+            f"{pais} todavía no cuenta con eventos cuantitativos (con lectura de bueno/malo) suficientes "
+            "como para armar un panorama por categoría; los registros cargados hasta ahora son cualitativos "
+            "(comparecencias, actas u otros eventos sin cifra comparable)."
+        )
+
+    # Párrafo 2: dato más relevante reciente
+    dato_top = _dato_mas_reciente_relevante(df_pais_puntuable)
+    if dato_top is not None:
+        signo = dato_top.get("senal_previsto") or dato_top.get("senal_anterior") or ""
+        parrafos.append(
+            f"El dato de mayor jerarquía informativa cargado hasta el momento es **{dato_top.get('evento')}** "
+            f"({dato_top.get('fecha')}), con una lectura de *{dato_top.get('impacto_mercado') or 'sin impacto claro'}* "
+            + (f"y señal {signo.lower()}" if signo else "") + ". "
+            "Este tipo de sorpresas —por encima o por debajo del consenso— suele ser lo primero que el mercado "
+            "reacomoda en el precio, por lo que conviene monitorear si el próximo dato de la misma serie confirma "
+            "o corrige la tendencia."
+        )
+
+    # Párrafo 3: implicancia en moneda / activos
+    if moneda_score is not None:
+        if moneda_score >= 0.5:
+            lectura_moneda = (
+                f"El balance de los fundamentos macro es **claramente favorable** para la moneda de {pais} "
+                f"(+{moneda_score:.2f}); en un contexto así, lo habitual es ver flujos que buscan aprovechar "
+                "el diferencial de tasas o de crecimiento relativo frente a otras economías."
+            )
+        elif moneda_score >= 0.15:
+            lectura_moneda = (
+                f"El sesgo fundamental sobre la moneda de {pais} es **levemente positivo** (+{moneda_score:.2f}); "
+                "no alcanza para hablar de una tendencia consolidada, pero inclina la balanza a favor en el margen."
+            )
+        elif moneda_score <= -0.5:
+            lectura_moneda = (
+                f"El cuadro macro presiona **claramente a la baja** sobre la moneda de {pais} ({moneda_score:.2f}); "
+                "este tipo de deterioro suele preceder o acompañar salidas de capital y mayor volatilidad cambiaria."
+            )
+        elif moneda_score <= -0.15:
+            lectura_moneda = (
+                f"Se observa un sesgo **levemente negativo** sobre la moneda de {pais} ({moneda_score:.2f}), "
+                "más ligado a un deterioro incipiente que a una tendencia bajista firme."
+            )
+        else:
+            lectura_moneda = (
+                f"El saldo neto sobre la moneda de {pais} es **prácticamente neutro** ({moneda_score:+.2f}); "
+                "los datos publicados se compensan entre sí y no ofrecen, por ahora, un driver fundamental claro "
+                "en una u otra dirección."
+            )
+        parrafos.append(lectura_moneda)
+    else:
+        parrafos.append(
+            f"Todavía no hay eventos con impacto directo sobre divisas cargados para {pais}, por lo que "
+            "no es posible emitir una lectura fundamental sobre su moneda con la información disponible."
+        )
+
+    return parrafos
+
+
+def _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos):
+    st.markdown("#### 🧑‍💼 Lectura de analista senior")
+    for p in _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos):
+        st.markdown(p)
+
+    g1, g2 = st.columns(2)
+    with g1:
+        if categorias:
+            nombres, valores = [], []
+            for cat in categorias:
+                sub = df_pais_puntuable[df_pais_puntuable["categoria"] == cat]
+                prom, _ = _promedio_ponderado_score(sub)
+                if prom is not None:
+                    nombres.append(cat)
+                    valores.append(prom)
+            if nombres:
+                orden = sorted(zip(nombres, valores), key=lambda x: x[1])
+                nombres, valores = [x[0] for x in orden], [x[1] for x in orden]
+                colores = [_color_de_score(v) for v in valores]
+                st.plotly_chart(
+                    _chart_barras_categorias(nombres, valores, colores, f"Puntaje por categoría — {pais}"),
+                    use_container_width=True, key=f"perfil_chart_barras_{pais}",
+                )
+    with g2:
+        st.plotly_chart(
+            _chart_radar_activos(activos, pais, "#3a7bd5"),
+            use_container_width=True, key=f"perfil_chart_radar_{pais}",
+        )
+
+
+# ==============================================================
 #  RENDER — TAB PERFIL DE PAÍS (reemplaza al viejo "Comparar" A/B)
 #  Elegís un país y ves, con todo lo cargado hasta ahora:
 #    1) cómo viene la economía categoría por categoría
 #    2) de qué forma esos datos impactan en cada activo financiero,
 #       empezando por su moneda
+#    3) un informe narrativo de analista senior + gráficos
 # ==============================================================
 
 def _tab_perfil_pais(supabase):
     st.caption(
         "Elegí un país para ver cómo viene mostrándose su economía con todo lo "
-        "registrado hasta ahora, y de qué forma esos datos impactan en cada tipo "
-        "de activo financiero — empezando por su moneda."
+        "registrado hasta ahora, de qué forma esos datos impactan en cada tipo "
+        "de activo financiero — empezando por su moneda — y un informe narrativo "
+        "de análisis fundamental con gráficos."
     )
 
     filas = _obtener_registros(supabase)
@@ -1376,6 +1738,9 @@ def _tab_perfil_pais(supabase):
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     st.info(_texto_resumen_pais(pais, categorias, df_pais_puntuable, moneda_score))
 
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos)
+
     st.caption(
         "Metodología: cada dato puntúa 🟢+1 / 🟡+0.5 / 🟠−0.5 / 🔴−1 según su lectura para cada "
         "activo (ya corregida por polaridad del evento), promediado ponderando por el impacto de "
@@ -1412,6 +1777,131 @@ def _etiqueta_ganador(ganador, val_a, val_b):
     return f"🏆 {ganador} — {_calificar_diferencia(diff_abs)}"
 
 
+def _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
+                                   ganados_a, ganados_b, empates):
+    """Informe narrativo de analista senior para la comparación entre
+    dos países, resaltando el diferencial más marcado categoría por
+    categoría y la implicancia relativa sobre cada moneda."""
+    parrafos = []
+
+    diffs = []
+    for cat in categorias:
+        prom_a, n_a = _promedio_ponderado_score(df_a[df_a["categoria"] == cat])
+        prom_b, n_b = _promedio_ponderado_score(df_b[df_b["categoria"] == cat])
+        if prom_a is not None and prom_b is not None:
+            diffs.append((cat, prom_a - prom_b, prom_a, prom_b))
+
+    if diffs:
+        diffs.sort(key=lambda x: abs(x[1]), reverse=True)
+        cat_top, diff_top, val_a_top, val_b_top = diffs[0]
+        favorito = pais_a if diff_top > 0 else pais_b
+        calif = _calificar_diferencia(abs(diff_top))
+        parrafos.append(
+            f"La diferencia fundamental más marcada entre ambas economías aparece en **{cat_top}**, donde "
+            f"{favorito} muestra una {calif} ({val_a_top:+.2f} vs. {val_b_top:+.2f}). "
+            + (f"Si el resto de las categorías se mantiene sin cambios, ese sector debería seguir siendo el "
+               f"principal argumento a favor de {favorito} en la comparación relativa." if calif != "prácticamente parejo"
+               else "Sin embargo, la distancia es chica y no alcanza para hablar de una ventaja estructural.")
+        )
+    else:
+        parrafos.append(
+            f"Todavía no hay categorías con datos cuantitativos en común entre {pais_a} y {pais_b} como "
+            "para identificar dónde está la mayor brecha fundamental."
+        )
+
+    if ganados_a != ganados_b:
+        lider = pais_a if ganados_a > ganados_b else pais_b
+        rezagado = pais_b if ganados_a > ganados_b else pais_a
+        n_lider = max(ganados_a, ganados_b)
+        n_rezagado = min(ganados_a, ganados_b)
+        parrafos.append(
+            f"En el conteo agregado por categoría, **{lider}** se impone en {n_lider} de "
+            f"{n_lider + n_rezagado + empates} categoría(s) comparables frente a {n_rezagado} de {rezagado} "
+            f"({empates} empate(s)). Esto sugiere que la fortaleza relativa de {lider} no depende de un solo "
+            "dato aislado, sino que se sostiene en más de un frente de la economía."
+        )
+    else:
+        parrafos.append(
+            f"El conteo agregado por categoría queda parejo entre {pais_a} y {pais_b} "
+            f"({ganados_a} categoría(s) cada uno, {empates} empate(s)), lo que describe un cuadro "
+            "fundamental sin un favorito claro por ahora."
+        )
+
+    moneda_a, _ = activos_a.get("divisas", (None, 0))
+    moneda_b, _ = activos_b.get("divisas", (None, 0))
+    if moneda_a is not None and moneda_b is not None:
+        diff_m = moneda_a - moneda_b
+        if abs(diff_m) < 0.15:
+            parrafos.append(
+                "En el mercado de cambios, ninguna de las dos monedas parte con una ventaja fundamental "
+                "clara según lo cargado hasta ahora — el diferencial de tasas/crecimiento relativo no "
+                "alcanza, por sí solo, para anticipar un ganador en el cruce entre ambas divisas."
+            )
+        else:
+            favorito_m = pais_a if diff_m > 0 else pais_b
+            calif_m = _calificar_diferencia(abs(diff_m))
+            parrafos.append(
+                f"Trasladado al cruce cambiario, el diferencial fundamental favorece a la moneda de "
+                f"**{favorito_m}** ({calif_m}), en línea con el resultado agregado por categoría."
+            )
+
+    return parrafos
+
+
+def _render_informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
+                                          ganados_a, ganados_b, empates):
+    st.markdown("#### 🧑‍💼 Lectura de analista senior")
+    for p in _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
+                                            ganados_a, ganados_b, empates):
+        st.markdown(p)
+
+    g1, g2 = st.columns(2)
+    with g1:
+        nombres_cat, dif_valores = [], []
+        for cat in categorias:
+            prom_a, _ = _promedio_ponderado_score(df_a[df_a["categoria"] == cat])
+            prom_b, _ = _promedio_ponderado_score(df_b[df_b["categoria"] == cat])
+            if prom_a is not None and prom_b is not None:
+                nombres_cat.append(cat)
+                dif_valores.append(prom_a - prom_b)
+        if nombres_cat:
+            orden = sorted(zip(nombres_cat, dif_valores), key=lambda x: x[1])
+            nombres_cat, dif_valores = [x[0] for x in orden], [x[1] for x in orden]
+            colores = ["#3a7bd5" if v >= 0 else "#f0883e" for v in dif_valores]
+            fig = go.Figure(go.Bar(
+                x=dif_valores, y=nombres_cat, orientation="h",
+                marker=dict(color=colores),
+                text=[f"{v:+.2f}" for v in dif_valores], textposition="outside",
+            ))
+            fig.update_layout(
+                title=f"Diferencial por categoría ({pais_a} − {pais_b})",
+                xaxis=dict(range=[-2, 2], title=f"◀ favorece a {pais_b}   |   favorece a {pais_a} ▶", zerolinecolor="#3a3a3a"),
+                yaxis=dict(autorange="reversed"),
+                height=max(260, 46 * len(nombres_cat)),
+                margin=dict(l=10, r=10, t=40, b=40),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#e6edf3"),
+            )
+            st.plotly_chart(fig, use_container_width=True, key=f"cmpp_chart_diff_{pais_a}_{pais_b}")
+    with g2:
+        labels = [nombre for _, nombre in ASSET_FIELDS]
+        valores_a = [activos_a.get(campo, (0.0, 0))[0] or 0.0 for campo, _ in ASSET_FIELDS]
+        valores_b = [activos_b.get(campo, (0.0, 0))[0] or 0.0 for campo, _ in ASSET_FIELDS]
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatterpolar(r=valores_a + [valores_a[0]], theta=labels + [labels[0]],
+                                        fill="toself", name=pais_a, line=dict(color="#3a7bd5")))
+        fig2.add_trace(go.Scatterpolar(r=valores_b + [valores_b[0]], theta=labels + [labels[0]],
+                                        fill="toself", name=pais_b, line=dict(color="#f0883e")))
+        fig2.update_layout(
+            title=f"Activos financieros — {pais_a} vs {pais_b}",
+            polar=dict(radialaxis=dict(visible=True, range=[-1, 1], color="#8b949e"),
+                       angularaxis=dict(color="#e6edf3"), bgcolor="rgba(0,0,0,0)"),
+            showlegend=True, height=420, margin=dict(l=30, r=30, t=40, b=30),
+            paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#e6edf3"),
+        )
+        st.plotly_chart(fig2, use_container_width=True, key=f"cmpp_chart_radar_{pais_a}_{pais_b}")
+
+
 # ==============================================================
 #  RENDER — TAB PAÍS VS PAÍS
 #  Compara todo lo cargado de dos países, categoría por categoría, y
@@ -1427,7 +1917,8 @@ def _tab_comparar_paises(supabase):
     st.caption(
         "Elegí dos países y compará, categoría por categoría, cuál viene "
         "mostrando datos económicos más fuertes según todo lo registrado hasta ahora, "
-        "y además cómo impactan esos datos en cada activo financiero — incluida su moneda. "
+        "cómo impactan esos datos en cada activo financiero — incluida su moneda — y "
+        "un informe narrativo de análisis fundamental comparado. "
         "El puntaje ya tiene en cuenta si 'mayor' es bueno o malo para cada indicador "
         "(desempleo, inflación y tasas puntúan al revés que PBI o PMI) y pondera más los "
         "eventos de mayor impacto. Los eventos cualitativos (comparecencias, actas, etc.) "
@@ -1634,6 +2125,12 @@ def _tab_comparar_paises(supabase):
     else:
         st.info("📊 Ambos países muestran un desempeño económico parejo según lo registrado hasta ahora.")
 
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    _render_informe_analista_comparacion(
+        pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
+        ganados_a, ganados_b, empates,
+    )
+
     st.caption(
         "Metodología: cada dato puntúa 🟢+1 / 🟡+0.5 / 🟠−0.5 / 🔴−1 según si fue mejor o peor "
         "para la economía del país (ya corregido por polaridad: en desempleo, inflación, tasas de "
@@ -1748,11 +2245,12 @@ def render_calendario_economico(supabase, user_id, user_email):
         render_calendario_economico(supabase, USER_ID, st.session_state['usuario'].email)
 
     Muestra el calendario económico (carga de eventos + carga masiva +
-    historial con interpretación macro completa), una pestaña de "Perfil
-    de País" (cómo está un país y cómo impacta en cada activo financiero)
-    y una pestaña de comparación país vs país agrupada por categoría y
-    por activo financiero. Las noticias son un módulo aparte, ver
-    render_noticias() más abajo.
+    historial con interpretación macro completa, editable/eliminable
+    por el admin), una pestaña de "Perfil de País" (cómo está un país,
+    cómo impacta en cada activo financiero, e informe de analista
+    senior con gráficos) y una pestaña de comparación país vs país
+    agrupada por categoría, por activo financiero e informe comparado.
+    Las noticias son un módulo aparte, ver render_noticias() más abajo.
     """
     es_admin = _es_admin(user_email)
 
@@ -1766,8 +2264,9 @@ def render_calendario_economico(supabase, user_id, user_email):
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
         Registro de eventos macro con interpretación automática completa
         (divisas, bonos, acciones, oro y cripto), carga masiva desde
-        Excel/CSV, su historial, el perfil macro de cada país y su
-        comparación frente a otros países.
+        Excel/CSV, su historial editable, el perfil macro de cada país
+        con informe de analista senior, y su comparación frente a otros
+        países.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1781,7 +2280,7 @@ def render_calendario_economico(supabase, user_id, user_email):
     with tab_masiva:
         _tab_carga_masiva(supabase, user_id, es_admin)
     with tab_cal:
-        _tab_historial(supabase)
+        _tab_historial(supabase, es_admin)
     with tab_perfil:
         _tab_perfil_pais(supabase)
     with tab_paises:
