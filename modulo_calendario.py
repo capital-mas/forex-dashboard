@@ -46,6 +46,13 @@
 #     (incluye hojas de referencia con los países y eventos válidos),
 #     validación fila por fila antes de tocar la base, y un insert
 #     único a Supabase en lugar de uno por fila.
+#  6) FIX carga de datos: _obtener_registros ahora pagina con .range()
+#     en vez de un .limit() fijo, así trae SIEMPRE el total real de
+#     registros sin importar cuántos haya (antes Historial se cortaba
+#     en 100 aunque hubiera más). Además admite filtrar por rango de
+#     fechas directo en la query de Supabase (columna 'fecha'), para
+#     no traer de más cuando la tabla crezca mucho — usado en la
+#     pestaña de Historial.
 # ==============================================================
 
 import io
@@ -572,22 +579,31 @@ def _guardar_registro(supabase, datos, user_id):
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _obtener_registros(_supabase, limite=None):
-    """Trae TODOS los registros paginando con .range(), sin importar
-    cuántos haya (Supabase/PostgREST limita cada request a ~1000 filas,
-    así que acá se van pidiendo de a tandas hasta agotarlos).
+def _obtener_registros(_supabase, limite=None, fecha_desde=None, fecha_hasta=None):
+    """Trae registros paginando con .range() (Supabase/PostgREST limita
+    cada request a ~1000 filas, así que se piden de a tandas hasta
+    agotarlos, sin importar cuántos haya en total).
 
-    El parámetro 'limite' se mantiene por compatibilidad con código viejo:
-    si se pasa un número, corta ahí; si se deja en None (default), trae todo.
+    - limite: si se pasa un número, corta ahí el total acumulado.
+      Si se deja en None (default), trae todo.
+    - fecha_desde / fecha_hasta: si se pasan (objetos date), filtran
+      directo en la query de Supabase (columna 'fecha'), así no hace
+      falta traer registros que después se van a descartar en pandas.
+      Muy útil cuando la tabla crece mucho.
     """
     PAGINA = 1000
     todas = []
     desde = 0
     while True:
         hasta = desde + PAGINA - 1
-        res = (_supabase.table(TABLA_REGISTRO).select("*")
-               .order("created_at", desc=True)
-               .range(desde, hasta).execute())
+        q = (_supabase.table(TABLA_REGISTRO).select("*")
+             .order("created_at", desc=True))
+        if fecha_desde:
+            q = q.gte("fecha", str(fecha_desde))
+        if fecha_hasta:
+            q = q.lte("fecha", str(fecha_hasta))
+        res = q.range(desde, hasta).execute()
+
         lote = res.data or []
         todas.extend(lote)
 
@@ -1012,29 +1028,42 @@ def _tab_historial(supabase):
             _obtener_registros.clear()
             st.rerun()
 
-    filas = _obtener_registros(supabase, 100)
+    # El filtro de fecha se resuelve ANTES de pedir los datos, así el
+    # rango se manda directo a la query de Supabase (más rápido cuando
+    # la tabla crece mucho, en vez de traer todo y filtrar en pandas).
+    f_fechas = st.date_input(
+        "📅 Filtrar por fecha",
+        value=(),
+        key="cal_hist_f_fecha",
+        format="DD/MM/YYYY",
+        help="Elegí un día puntual, o dos fechas para filtrar por rango. Dejalo vacío para ver todo.",
+    )
+
+    fecha_desde = fecha_hasta = None
+    if f_fechas:
+        if isinstance(f_fechas, (list, tuple)):
+            if len(f_fechas) == 1:
+                fecha_desde = fecha_hasta = f_fechas[0]
+            elif len(f_fechas) == 2:
+                fecha_desde, fecha_hasta = f_fechas
+        else:
+            fecha_desde = fecha_hasta = f_fechas
+
+    filas = _obtener_registros(supabase, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta)
     if not filas:
-        st.info("Todavía no hay registros cargados.")
+        st.info("No hay registros para el período seleccionado." if fecha_desde else "Todavía no hay registros cargados.")
         return
 
     df = pd.DataFrame(filas)
     df["fecha_dt"] = pd.to_datetime(df["fecha"], errors="coerce").dt.date
 
-    fc1, fc2, fc3 = st.columns([1.3, 1.3, 1.6])
+    fc1, fc2 = st.columns(2)
     with fc1:
         paises_u = ["Todos"] + sorted(df["pais"].dropna().unique().tolist())
         f_pais = st.selectbox("Filtrar país", paises_u, key="cal_hist_f_pais")
     with fc2:
         impactos_u = ["Todos"] + sorted(df["impacto_mercado"].dropna().unique().tolist()) if "impacto_mercado" in df.columns else ["Todos"]
         f_imp = st.selectbox("Filtrar impacto", impactos_u, key="cal_hist_f_imp")
-    with fc3:
-        f_fechas = st.date_input(
-            "📅 Filtrar por fecha",
-            value=(),
-            key="cal_hist_f_fecha",
-            format="DD/MM/YYYY",
-            help="Elegí un día puntual, o dos fechas para filtrar por rango.",
-        )
 
     df_f = df.copy()
     if f_pais != "Todos":
@@ -1042,17 +1071,10 @@ def _tab_historial(supabase):
     if f_imp != "Todos":
         df_f = df_f[df_f["impacto_mercado"] == f_imp]
 
-    if f_fechas:
-        if isinstance(f_fechas, (list, tuple)):
-            if len(f_fechas) == 1:
-                df_f = df_f[df_f["fecha_dt"] == f_fechas[0]]
-            elif len(f_fechas) == 2:
-                desde, hasta = f_fechas
-                df_f = df_f[(df_f["fecha_dt"] >= desde) & (df_f["fecha_dt"] <= hasta)]
-        else:
-            df_f = df_f[df_f["fecha_dt"] == f_fechas]
-
-    st.caption(f"{len(df_f)} registros mostrados de {len(df)} totales")
+    st.caption(
+        f"{len(df_f)} registros mostrados de {len(df)} totales"
+        + (" en el período seleccionado" if fecha_desde else "")
+    )
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
     for _, row in df_f.iterrows():
@@ -1265,7 +1287,7 @@ def _tab_perfil_pais(supabase):
         "de activo financiero — empezando por su moneda."
     )
 
-    filas = _obtener_registros(supabase, 500)
+    filas = _obtener_registros(supabase)
     if not filas:
         st.info("Todavía no hay registros cargados.")
         return
@@ -1412,7 +1434,7 @@ def _tab_comparar_paises(supabase):
         "no entran en el cálculo por categoría económica."
     )
 
-    filas = _obtener_registros(supabase, 500)
+    filas = _obtener_registros(supabase)
     if not filas:
         st.info("Todavía no hay registros cargados para comparar.")
         return
