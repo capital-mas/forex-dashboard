@@ -427,6 +427,37 @@ CATEGORIA_INTERPRETACION = {
     },
 }
 
+# ==============================================================
+#  EXPLICACIÓN EN LENGUAJE SIMPLE DE CADA CATEGORÍA — para que el
+#  informe narrativo no de por sentado que el lector sabe qué mide
+#  cada categoría ni qué significa "un dato mejor" en cada caso.
+# ==============================================================
+CATEGORIA_EXPLICACION = {
+    "Inflación": "mide cuánto suben los precios; acá \"mejor\" significa que la inflación salió más baja de lo esperado",
+    "Empleo": "mide la fortaleza del mercado laboral; acá \"mejor\" significa más empleo creado o menos desempleo del esperado",
+    "Actividad Económica": "mide el pulso de fábricas y servicios (PMI/ISM); acá \"mejor\" significa mayor expansión de la actividad",
+    "Consumo": "mide cuánto gasta y cuánto confía el consumidor; acá \"mejor\" significa consumidores más activos o confiados",
+    "Crecimiento": "mide la expansión total de la economía (PBI); acá \"mejor\" significa que el país creció más de lo previsto",
+    "Industria": "mide la producción de fábricas y pedidos industriales; acá \"mejor\" significa mayor actividad industrial",
+    "Vivienda": "mide la actividad del sector inmobiliario; acá \"mejor\" significa más ventas, permisos o inicios de obra",
+    "Comercio Exterior": "mide el balance entre lo que el país exporta e importa; acá \"mejor\" significa mayor superávit comercial",
+    "Sentimiento Empresarial": "mide qué tan optimistas están las empresas sobre el futuro; acá \"mejor\" significa mayor confianza",
+    "Energía": "mide oferta y demanda de petróleo y combustibles; la lectura de \"mejor/peor\" depende del indicador puntual",
+    "Política Monetaria": "agrupa eventos ligados a decisiones o comunicación del banco central",
+    "Política Fiscal": "mide el resultado de las cuentas públicas del gobierno (déficit o superávit)",
+    "Crédito": "mide qué tan rápido se expande el crédito bancario en la economía",
+    "Deuda Pública": "mide el resultado de las subastas de deuda del gobierno (tasa que exige el mercado)",
+    "Posicionamiento Especulativo": "mide cómo están posicionados los especuladores en el mercado de futuros",
+    "Agricultura": "mide oferta y demanda de productos agrícolas",
+}
+
+
+def _explicacion_categoria(categoria):
+    return CATEGORIA_EXPLICACION.get(
+        categoria, "agrupa datos económicos relacionados con este sector"
+    )
+
+
 IMPACTO_COLOR = {"Muy Alto": "#f85149", "Alto": "#f0883e", "Medio": "#e3b341", "Bajo": "#8b949e"}
 
 MESES_NOMBRE = {
@@ -1504,7 +1535,199 @@ def _dato_mas_reciente_relevante(df_pais):
     return df_ordenable.iloc[0] if not df_ordenable.empty else None
 
 
-def _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos):
+# ── Evolución mes a mes (¿mejoró o empeoró respecto al mes anterior?) ──
+
+def _serie_mensual(df_puntuable):
+    """Agrupa un df puntuable por período (año-mes) y devuelve el
+    puntaje ponderado de cada mes, ordenado cronológicamente. Se usa
+    tanto a nivel país completo como por categoría."""
+    if df_puntuable.empty:
+        return pd.DataFrame(columns=["periodo", "score", "n"])
+    df = df_puntuable.copy()
+    df["periodo"] = df["fecha_dt"].dt.to_period("M")
+    filas = []
+    for periodo, sub in df.groupby("periodo"):
+        prom, n = _promedio_ponderado_score(sub)
+        filas.append({"periodo": periodo, "score": prom, "n": n})
+    return pd.DataFrame(filas).sort_values("periodo").reset_index(drop=True)
+
+
+def _comparar_ultimos_meses(serie_mensual):
+    """A partir de una serie mensual ya armada, compara el último
+    período con datos contra el anterior. Devuelve None si no hay
+    ningún período, o un dict con lo que haya disponible."""
+    if serie_mensual.empty:
+        return None
+    ultimo = serie_mensual.iloc[-1]
+    resultado = {
+        "periodo_actual": ultimo["periodo"], "score_actual": ultimo["score"], "n_actual": ultimo["n"],
+        "periodo_anterior": None, "score_anterior": None, "n_anterior": None, "diff": None,
+    }
+    if len(serie_mensual) >= 2:
+        anterior = serie_mensual.iloc[-2]
+        resultado["periodo_anterior"] = anterior["periodo"]
+        resultado["score_anterior"] = anterior["score"]
+        resultado["n_anterior"] = anterior["n"]
+        if ultimo["score"] is not None and anterior["score"] is not None:
+            resultado["diff"] = ultimo["score"] - anterior["score"]
+    return resultado
+
+
+def _periodo_legible(periodo):
+    return f"{MESES_NOMBRE.get(periodo.month, periodo.month)} {periodo.year}"
+
+
+def _movimientos_mensuales_por_categoria(df_puntuable_completo):
+    """Para cada categoría con datos en al menos dos meses distintos,
+    devuelve (categoria, score_actual, score_anterior, diff), para
+    poder señalar cuál fue la que más mejoró o empeoró en el margen."""
+    if df_puntuable_completo.empty:
+        return []
+    resultados = []
+    for cat in sorted(df_puntuable_completo["categoria"].unique().tolist()):
+        sub = df_puntuable_completo[df_puntuable_completo["categoria"] == cat]
+        serie = _serie_mensual(sub)
+        comp = _comparar_ultimos_meses(serie)
+        if comp and comp["score_actual"] is not None and comp["score_anterior"] is not None:
+            resultados.append((cat, comp["score_actual"], comp["score_anterior"], comp["diff"]))
+    return resultados
+
+
+def _texto_evolucion_mensual(pais, df_puntuable_completo):
+    """Párrafo narrativo: ¿el conjunto de datos del país mejoró o
+    empeoró respecto al mes anterior? Usa TODO el historial cargado
+    (no el recorte por año/mes que haya elegido el usuario en el
+    filtro), porque comparar meses requiere ver más de un período."""
+    if df_puntuable_completo.empty:
+        return (f"Todavía no hay eventos cuantitativos cargados para {pais} como para evaluar "
+                "su evolución mes a mes.")
+
+    serie = _serie_mensual(df_puntuable_completo)
+    comp = _comparar_ultimos_meses(serie)
+    if comp is None:
+        return (f"Todavía no hay suficientes meses distintos cargados para {pais} "
+                "como para evaluar su evolución mes a mes.")
+    if comp["periodo_anterior"] is None:
+        return (f"Por ahora los datos de {pais} están concentrados en un solo mes "
+                f"({_periodo_legible(comp['periodo_actual'])}), así que todavía no se puede decir "
+                "si la economía viene mejorando o empeorando mes a mes; hace falta cargar al menos "
+                "un mes más para tener ese contraste.")
+
+    p_act, p_ant = _periodo_legible(comp["periodo_actual"]), _periodo_legible(comp["periodo_anterior"])
+    s_act, s_ant, diff = comp["score_actual"], comp["score_anterior"], comp["diff"]
+
+    if diff is None:
+        base = f"No hay suficiente información comparable entre {p_ant} y {p_act} para {pais}."
+    elif diff >= 0.15:
+        base = (f"Comparando {p_ant} ({s_ant:+.2f}) contra {p_act} ({s_act:+.2f}), el conjunto de datos "
+                f"de {pais} **mejoró** respecto al mes anterior ({diff:+.2f} puntos) — el saldo de "
+                "sorpresas económicas viene siendo más favorable.")
+    elif diff <= -0.15:
+        base = (f"Comparando {p_ant} ({s_ant:+.2f}) contra {p_act} ({s_act:+.2f}), el conjunto de datos "
+                f"de {pais} **empeoró** respecto al mes anterior ({diff:+.2f} puntos) — el saldo de "
+                "sorpresas económicas viene siendo más desfavorable.")
+    else:
+        base = (f"Comparando {p_ant} ({s_ant:+.2f}) contra {p_act} ({s_act:+.2f}), el panorama de {pais} "
+                f"se mantiene **prácticamente sin cambios** de un mes a otro ({diff:+.2f} puntos).")
+
+    movimientos = _movimientos_mensuales_por_categoria(df_puntuable_completo)
+    if movimientos:
+        movimientos.sort(key=lambda x: abs(x[3]), reverse=True)
+        cat, s_a, s_p, d = movimientos[0]
+        if abs(d) >= 0.1:
+            verbo = "mejoró" if d > 0 else "empeoró"
+            base += (f" La categoría que más {verbo} en el margen fue **{cat}** "
+                     f"({s_p:+.2f} → {s_a:+.2f}), que {_explicacion_categoria(cat)}.")
+
+    return base
+
+
+# ── Implicancia sobre tasas de interés a futuro ──
+
+# Categorías cuyo puntaje ya viene "corregido" para que positivo =
+# economía fuerte / inflación alta (o sea, hay que invertir el signo
+# para que "positivo" signifique lo mismo que en el resto: presión
+# hacia una política monetaria más dura).
+_CATS_HAWKISH_INVERTIR = ["Inflación"]
+# Categorías donde un puntaje positivo (economía fuerte) ya apunta
+# directo hacia una política monetaria más dura, sin invertir signo.
+_CATS_HAWKISH_DIRECTO = ["Empleo", "Crecimiento", "Actividad Económica", "Consumo", "Industria", "Sentimiento Empresarial"]
+
+
+def _outlook_tasas(df_puntuable_completo):
+    """Heurística simple de research: combina inflación (invertida),
+    empleo, crecimiento, actividad, consumo, industria y sentimiento
+    empresarial en un único puntaje -1..+1. Positivo = la economía
+    empuja hacia una política monetaria más dura (tasas más altas o
+    sin apuro para bajarlas); negativo = empuja hacia una política
+    más laxa (más margen para recortar tasas)."""
+    aportes, pesos, detalle = [], [], []
+
+    for cat in _CATS_HAWKISH_INVERTIR:
+        sub = df_puntuable_completo[df_puntuable_completo["categoria"] == cat]
+        prom, n = _promedio_ponderado_score(sub)
+        if prom is not None:
+            aportes.append(-prom * n)
+            pesos.append(n)
+            detalle.append((cat, -prom, n))
+
+    for cat in _CATS_HAWKISH_DIRECTO:
+        sub = df_puntuable_completo[df_puntuable_completo["categoria"] == cat]
+        prom, n = _promedio_ponderado_score(sub)
+        if prom is not None:
+            aportes.append(prom * n)
+            pesos.append(n)
+            detalle.append((cat, prom, n))
+
+    if not pesos or sum(pesos) == 0:
+        return None
+    return sum(aportes) / sum(pesos), detalle
+
+
+def _texto_outlook_tasas(pais, resultado_outlook):
+    if resultado_outlook is None:
+        return (f"Todavía no hay suficientes datos de inflación, empleo, crecimiento, actividad, "
+                f"consumo o industria de {pais} como para estimar qué implica esta información "
+                "para sus tasas de interés a futuro.")
+
+    hawkish_score, _detalle = resultado_outlook
+
+    if hawkish_score >= 0.4:
+        lectura = (
+            "el conjunto de datos empuja con fuerza hacia una política monetaria **más restrictiva**: "
+            "una economía firme (empleo, crecimiento y/o actividad sólidos) combinada con presión "
+            "inflacionaria le da poco margen al banco central para bajar tasas, y aumenta la "
+            "probabilidad de que se mantengan altas por más tiempo o incluso suban."
+        )
+    elif hawkish_score >= 0.15:
+        lectura = (
+            "el sesgo es moderadamente **hacia tasas más altas, o al menos sin apuro para recortar**: "
+            "los datos no muestran ni una economía débil ni una inflación totalmente controlada."
+        )
+    elif hawkish_score <= -0.4:
+        lectura = (
+            "el conjunto de datos abre la puerta con fuerza a una política monetaria **más laxa**: "
+            "la combinación de actividad o empleo débil con inflación contenida le da margen al "
+            "banco central para recortes de tasas más marcados o más próximos en el tiempo."
+        )
+    elif hawkish_score <= -0.15:
+        lectura = (
+            "el sesgo es moderadamente **hacia tasas más bajas**: empieza a aparecer cierta "
+            "debilidad económica y/o alivio inflacionario que amplía el margen de maniobra del "
+            "banco central."
+        )
+    else:
+        lectura = (
+            "el balance entre inflación, empleo, crecimiento y actividad es **mixto**, sin un sesgo "
+            "claro sobre la dirección de las tasas de interés a futuro."
+        )
+
+    return (f"En cuanto a la implicancia sobre las **tasas de interés a futuro**, {lectura} "
+            f"(puntaje combinado: {hawkish_score:+.2f}, sobre una escala de −1 a +1).")
+
+
+def _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos,
+                            df_puntuable_completo=None):
     """Arma un informe narrativo de varios párrafos, con tono de
     research/analista senior, a partir de los puntajes ya calculados."""
     moneda_score, moneda_n = activos.get("divisas", (None, 0))
@@ -1528,16 +1751,17 @@ def _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, ac
         if len(scores_cat) == 1:
             parrafos.append(
                 f"Con {n_total} evento(s) registrado(s) para {pais} ({n_punt} con lectura cuantitativa), "
-                f"la única categoría con información suficiente es **{mejor_cat}**, que promedia un "
-                f"puntaje de {mejor_val:+.2f} sobre {mejor_n} dato(s). Todavía no hay cobertura como para "
+                f"la única categoría con información suficiente es **{mejor_cat}** (que {_explicacion_categoria(mejor_cat)}), "
+                f"con un puntaje de {mejor_val:+.2f} sobre {mejor_n} dato(s). Todavía no hay cobertura como para "
                 f"trazar un panorama comparativo entre sectores de la economía."
             )
         else:
             parrafos.append(
                 f"Con {n_total} evento(s) registrado(s) para {pais} ({n_punt} con lectura cuantitativa), "
-                f"el frente más sólido es **{mejor_cat}** (puntaje {mejor_val:+.2f} sobre {mejor_n} dato(s)), "
+                f"el frente más sólido es **{mejor_cat}** (puntaje {mejor_val:+.2f} sobre {mejor_n} dato(s)) "
+                f"— esta categoría {_explicacion_categoria(mejor_cat)} —, "
                 f"mientras que el punto más débil del panorama macro pasa por **{peor_cat}** "
-                f"({peor_val:+.2f} sobre {peor_n} dato(s)). "
+                f"({peor_val:+.2f} sobre {peor_n} dato(s)), que {_explicacion_categoria(peor_cat)}. "
                 + ("La dispersión entre ambos extremos sugiere una economía con sectores a distintas "
                    "velocidades, más que un ciclo homogéneo." if (mejor_val - peor_val) > 0.6 else
                    "La distancia entre ambos extremos es moderada, compatible con un ciclo relativamente "
@@ -1554,11 +1778,12 @@ def _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, ac
     dato_top = _dato_mas_reciente_relevante(df_pais_puntuable)
     if dato_top is not None:
         signo = dato_top.get("senal_previsto") or dato_top.get("senal_anterior") or ""
+        cat_top_dato = _categoria_de_evento(dato_top.get("evento"))
         parrafos.append(
             f"El dato de mayor jerarquía informativa cargado hasta el momento es **{dato_top.get('evento')}** "
             f"({dato_top.get('fecha')}), con una lectura de *{dato_top.get('impacto_mercado') or 'sin impacto claro'}* "
-            + (f"y señal {signo.lower()}" if signo else "") + ". "
-            "Este tipo de sorpresas —por encima o por debajo del consenso— suele ser lo primero que el mercado "
+            + (f"y señal {signo.lower()}" if signo else "") + f". En criollo: este indicador {_explicacion_categoria(cat_top_dato)}, "
+            "y este tipo de sorpresas —por encima o por debajo del consenso— suele ser lo primero que el mercado "
             "reacomoda en el precio, por lo que conviene monitorear si el próximo dato de la misma serie confirma "
             "o corrige la tendencia."
         )
@@ -1599,12 +1824,23 @@ def _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, ac
             "no es posible emitir una lectura fundamental sobre su moneda con la información disponible."
         )
 
+    # Párrafo 4: evolución mes a mes (¿mejoró o empeoró?) — usa TODO el
+    # historial cargado del país, independiente del filtro de año/mes
+    # que haya elegido el usuario más arriba en la pantalla.
+    base_evolucion = df_puntuable_completo if df_puntuable_completo is not None else df_pais_puntuable
+    parrafos.append(_texto_evolucion_mensual(pais, base_evolucion))
+
+    # Párrafo 5: implicancia sobre tasas de interés a futuro
+    parrafos.append(_texto_outlook_tasas(pais, _outlook_tasas(base_evolucion)))
+
     return parrafos
 
 
-def _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos):
-    st.markdown("#### 🧑‍💼 Lectura de analista senior")
-    for p in _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos):
+def _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos,
+                                   df_puntuable_completo=None):
+    st.markdown("#### 📖 Lectura")
+    for p in _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos,
+                                     df_puntuable_completo):
         st.markdown(p)
 
     g1, g2 = st.columns(2)
@@ -1674,6 +1910,11 @@ def _tab_perfil_pais(supabase):
 
     df_pais_todo["fecha_dt"] = pd.to_datetime(df_pais_todo["fecha"], errors="coerce")
 
+    # Se guarda el historial completo del país (sin el recorte por año/mes
+    # de abajo) porque la evolución mes a mes y el outlook de tasas
+    # necesitan ver más de un período para poder comparar.
+    df_pais_puntuable_completo = df_pais_todo[~df_pais_todo["es_neutral"]].copy()
+
     fp1, fp2 = st.columns(2)
     with fp1:
         anios_u = ["Todos"] + sorted(
@@ -1739,12 +1980,15 @@ def _tab_perfil_pais(supabase):
     st.info(_texto_resumen_pais(pais, categorias, df_pais_puntuable, moneda_score))
 
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-    _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos)
+    _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos,
+                                   df_puntuable_completo=df_pais_puntuable_completo)
 
     st.caption(
         "Metodología: cada dato puntúa 🟢+1 / 🟡+0.5 / 🟠−0.5 / 🔴−1 según su lectura para cada "
         "activo (ya corregida por polaridad del evento), promediado ponderando por el impacto de "
-        "cada evento (Muy Alto pesa 3x, Alto 2x, Medio 1x, Bajo 0.5x)."
+        "cada evento (Muy Alto pesa 3x, Alto 2x, Medio 1x, Bajo 0.5x). La evolución mes a mes y el "
+        "outlook de tasas de interés se calculan sobre todo el historial cargado del país, "
+        "independientemente del filtro de año/mes elegido arriba."
     )
 
 
@@ -1778,11 +2022,16 @@ def _etiqueta_ganador(ganador, val_a, val_b):
 
 
 def _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
-                                   ganados_a, ganados_b, empates):
-    """Informe narrativo de analista senior para la comparación entre
-    dos países, resaltando el diferencial más marcado categoría por
-    categoría y la implicancia relativa sobre cada moneda."""
+                                   ganados_a, ganados_b, empates,
+                                   df_full_a=None, df_full_b=None):
+    """Informe narrativo para la comparación entre dos países,
+    resaltando el diferencial más marcado categoría por categoría, la
+    implicancia relativa sobre cada moneda, quién viene mejorando más
+    mes a mes y qué implica el conjunto de datos de cada uno sobre sus
+    tasas de interés a futuro."""
     parrafos = []
+    df_full_a = df_full_a if df_full_a is not None else df_a
+    df_full_b = df_full_b if df_full_b is not None else df_b
 
     diffs = []
     for cat in categorias:
@@ -1797,7 +2046,8 @@ def _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activo
         favorito = pais_a if diff_top > 0 else pais_b
         calif = _calificar_diferencia(abs(diff_top))
         parrafos.append(
-            f"La diferencia fundamental más marcada entre ambas economías aparece en **{cat_top}**, donde "
+            f"La diferencia fundamental más marcada entre ambas economías aparece en **{cat_top}** "
+            f"(que {_explicacion_categoria(cat_top)}), donde "
             f"{favorito} muestra una {calif} ({val_a_top:+.2f} vs. {val_b_top:+.2f}). "
             + (f"Si el resto de las categorías se mantiene sin cambios, ese sector debería seguir siendo el "
                f"principal argumento a favor de {favorito} en la comparación relativa." if calif != "prácticamente parejo"
@@ -1845,14 +2095,75 @@ def _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activo
                 f"**{favorito_m}** ({calif_m}), en línea con el resultado agregado por categoría."
             )
 
+    # Evolución mes a mes de cada país (usa todo el historial cargado
+    # de cada uno, no el recorte de año/mes elegido en la pantalla).
+    comp_a = _comparar_ultimos_meses(_serie_mensual(df_full_a))
+    comp_b = _comparar_ultimos_meses(_serie_mensual(df_full_b))
+    diff_a = comp_a["diff"] if comp_a else None
+    diff_b = comp_b["diff"] if comp_b else None
+
+    if diff_a is None and diff_b is None:
+        parrafos.append(
+            f"Todavía no hay al menos dos meses distintos cargados para {pais_a} y/o {pais_b} como "
+            "para comparar cuál de las dos economías viene mejorando más rápido mes a mes."
+        )
+    else:
+        partes_evol = []
+        for pais_x, comp_x, diff_x in [(pais_a, comp_a, diff_a), (pais_b, comp_b, diff_b)]:
+            if diff_x is None:
+                partes_evol.append(f"{pais_x} todavía no tiene dos meses comparables")
+            elif diff_x >= 0.15:
+                partes_evol.append(f"{pais_x} mejoró ({diff_x:+.2f}) respecto al mes previo")
+            elif diff_x <= -0.15:
+                partes_evol.append(f"{pais_x} empeoró ({diff_x:+.2f}) respecto al mes previo")
+            else:
+                partes_evol.append(f"{pais_x} se mantuvo estable ({diff_x:+.2f}) respecto al mes previo")
+        texto_evol = " y ".join(partes_evol) + "."
+        if diff_a is not None and diff_b is not None:
+            if diff_a > diff_b + 0.1:
+                texto_evol += f" En el margen, {pais_a} viene mejorando más rápido que {pais_b}."
+            elif diff_b > diff_a + 0.1:
+                texto_evol += f" En el margen, {pais_b} viene mejorando más rápido que {pais_a}."
+            else:
+                texto_evol += " El ritmo de mejora (o deterioro) reciente es parecido entre ambos."
+        parrafos.append(f"En cuanto a la evolución mes a mes, {texto_evol}")
+
+    # Implicancia comparada sobre tasas de interés a futuro
+    outlook_a = _outlook_tasas(df_full_a)
+    outlook_b = _outlook_tasas(df_full_b)
+    hawkish_a = outlook_a[0] if outlook_a else None
+    hawkish_b = outlook_b[0] if outlook_b else None
+    if hawkish_a is None and hawkish_b is None:
+        parrafos.append(
+            f"Todavía no hay datos suficientes de inflación, empleo, crecimiento o actividad de "
+            f"{pais_a} y {pais_b} como para comparar la implicancia sobre sus tasas de interés a futuro."
+        )
+    else:
+        def _describir_outlook(pais_x, score_x):
+            if score_x is None:
+                return f"{pais_x} no tiene datos suficientes para estimar su outlook de tasas"
+            if score_x >= 0.15:
+                return f"{pais_x} muestra un sesgo hacia tasas más altas o sin apuro para recortar ({score_x:+.2f})"
+            if score_x <= -0.15:
+                return f"{pais_x} muestra un sesgo hacia tasas más bajas ({score_x:+.2f})"
+            return f"{pais_x} muestra un balance mixto sin sesgo claro sobre tasas ({score_x:+.2f})"
+
+        parrafos.append(
+            "En cuanto a política monetaria futura, " + _describir_outlook(pais_a, hawkish_a) + ", mientras que "
+            + _describir_outlook(pais_b, hawkish_b) + ". "
+            + ("Esto sugiere un diferencial de tasas que podría ampliarse a favor de la moneda con el sesgo "
+               "más restrictivo, todo lo demás constante." if hawkish_a is not None and hawkish_b is not None else "")
+        )
+
     return parrafos
 
 
 def _render_informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
-                                          ganados_a, ganados_b, empates):
-    st.markdown("#### 🧑‍💼 Lectura de analista senior")
+                                          ganados_a, ganados_b, empates,
+                                          df_full_a=None, df_full_b=None):
+    st.markdown("#### 📖 Lectura")
     for p in _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
-                                            ganados_a, ganados_b, empates):
+                                            ganados_a, ganados_b, empates, df_full_a, df_full_b):
         st.markdown(p)
 
     g1, g2 = st.columns(2)
@@ -1936,6 +2247,11 @@ def _tab_comparar_paises(supabase):
     df["peso"] = df["evento"].apply(_peso_de_evento)
     df["es_neutral"] = df["evento"].apply(_es_evento_neutral)
     df["fecha_dt"] = pd.to_datetime(df["fecha"], errors="coerce")
+
+    # Se guarda el histórico completo (sin el recorte por año/mes de
+    # abajo) porque la evolución mes a mes y el outlook de tasas de
+    # cada país necesitan ver más de un período para poder comparar.
+    df_puntuable_completo_global = df[~df["es_neutral"]].copy()
 
     fp1, fp2 = st.columns(2)
     with fp1:
@@ -2125,10 +2441,13 @@ def _tab_comparar_paises(supabase):
     else:
         st.info("📊 Ambos países muestran un desempeño económico parejo según lo registrado hasta ahora.")
 
+    df_full_a = df_puntuable_completo_global[df_puntuable_completo_global["pais"] == pais_a]
+    df_full_b = df_puntuable_completo_global[df_puntuable_completo_global["pais"] == pais_b]
+
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     _render_informe_analista_comparacion(
         pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
-        ganados_a, ganados_b, empates,
+        ganados_a, ganados_b, empates, df_full_a, df_full_b,
     )
 
     st.caption(
