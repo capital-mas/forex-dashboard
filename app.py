@@ -3732,6 +3732,12 @@ def render_perfil_empresa(ticker, key_suffix=''):
     ubicacion = ', '.join(x for x in [perfil.get('ciudad'), perfil.get('pais')] if x) or 'N/D'
     exchange = perfil.get('exchange') or 'N/D'
     ceo = perfil.get('ceo') or 'N/D'
+    nombre_safe = escape_html(perfil['nombre'])
+    sector_safe = escape_html(perfil.get('sector') or 'N/D')
+    industria_safe = escape_html(perfil.get('industria_yahoo') or 'N/D')
+    exchange_safe = escape_html(exchange)
+    ceo_safe = escape_html(ceo)
+    ubicacion_safe = escape_html(ubicacion)
     if perfil.get('semana52_min') and perfil.get('semana52_max'):
         pct_max_txt = f"{perfil['pct_desde_max52']:+.1f}%" if perfil.get('pct_desde_max52') is not None else ''
         pct_min_txt = f"{perfil['pct_desde_min52']:+.1f}%" if perfil.get('pct_desde_min52') is not None else ''
@@ -3745,7 +3751,7 @@ def render_perfil_empresa(ticker, key_suffix=''):
     pct_inst = _fmt_pct(perfil.get('pct_institucional'))
     pct_ins  = _fmt_pct(perfil.get('pct_insiders'))
     website_html = (
-        f'<a href="{perfil["website"]}" target="_blank" style="color:#3a7bd5;text-decoration:none">{perfil["website"]}</a>'
+        f'<a href="{escape_html(perfil["website"])}" target="_blank" style="color:#3a7bd5;text-decoration:none">{escape_html(perfil["website"])}</a>'
         if perfil.get('website') else 'N/D'
     )
 
@@ -3753,8 +3759,8 @@ def render_perfil_empresa(ticker, key_suffix=''):
     <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #3a7bd5;
          border-radius:12px;padding:20px 24px;margin-bottom:16px">
       <div style="text-align:center;margin-bottom:14px">
-        <div style="font-size:17px;font-weight:700;color:#e6edf3">{perfil['nombre']} <span style="color:#6b7d9a;font-size:12px">({ticker})</span></div>
-        <div style="font-size:12px;color:#f5f7fa;margin-top:2px">{perfil.get('sector') or 'N/D'} · {perfil.get('industria_yahoo') or 'N/D'} · {exchange}</div>
+        <div style="font-size:17px;font-weight:700;color:#e6edf3">{nombre_safe} <span style="color:#6b7d9a;font-size:12px">({ticker})</span></div>
+        <div style="font-size:12px;color:#f5f7fa;margin-top:2px">{sector_safe} · {industria_safe} · {exchange_safe}</div>
       </div>
       <div class="kpi-card-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px">
         <div><div class="kpi-metric-label">Market Cap</div><div class="kpi-metric-value">{mc}</div></div>
@@ -3766,13 +3772,13 @@ def render_perfil_empresa(ticker, key_suffix=''):
         <div><div class="kpi-metric-label">Rango 52 sem.</div><div class="kpi-metric-value" style="font-size:14px">{rango52}</div></div>
         <div><div class="kpi-metric-label">% Institucional</div><div class="kpi-metric-value">{pct_inst}</div></div>
         <div><div class="kpi-metric-label">% Insiders</div><div class="kpi-metric-value">{pct_ins}</div></div>
-        <div><div class="kpi-metric-label">CEO</div><div class="kpi-metric-value" style="font-size:13px">{ceo}</div></div>
+        <div><div class="kpi-metric-label">CEO</div><div class="kpi-metric-value" style="font-size:13px">{ceo_safe}</div></div>
       </div>
-      <div style="font-size:12px;color:#6b7d9a;margin-bottom:14px">🌐 Sitio web: {website_html}</div>
+      <div style="font-size:12px;color:#6b7d9a;margin-bottom:14px">🌐 Sitio web: {ubicacion_safe}</div>
       <div style="font-size:11px;font-weight:700;color:#6CC24A;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">
         🏢 A qué se dedica / Modelo de negocio
       </div>
-      <div style="font-size:13px;color:#f5f7fa;line-height:1.7">{perfil['descripcion']}</div>
+      <div style="font-size:13px;color:#f5f7fa;line-height:1.7">{escape_html(perfil['descripcion'])}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -4105,12 +4111,14 @@ def modulo_comparador():
     with c_btn:
         st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
         if st.button('➕ Agregar', use_container_width=True, key='comp_add_btn'):
+            nuevo_valido = validar_ticker(nuevo)
             lista = st.session_state['comparador_tickers']
-            if nuevo and nuevo not in lista and len(lista) < 5:
-                lista.append(nuevo)
+            if nuevo_valido and nuevo_valido not in lista and len(lista) < 5:
+                lista.append(nuevo_valido)
                 st.session_state['comp_run_flag'] = False
                 st.rerun()
-
+            elif nuevo and not nuevo_valido:
+                st.warning('⚠️ Símbolo inválido.')
     if st.session_state['comparador_tickers']:
         st.markdown('<div style="margin:10px 0 4px 0;font-size:11px;color:#6b7d9a">Activos seleccionados (clic para quitar):</div>', unsafe_allow_html=True)
         lista = st.session_state['comparador_tickers']
@@ -4582,9 +4590,12 @@ def modulo_optimizador():
     with c_btn:
         st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
         if st.button('➕ Agregar', use_container_width=True, key='opt_add_btn'):
-            if nuevo_opt and nuevo_opt not in st.session_state['opt_tickers'] and len(st.session_state['opt_tickers']) < 15:
-                st.session_state['opt_tickers'].append(nuevo_opt)
+            nuevo_opt_valido = validar_ticker(nuevo_opt)
+            if nuevo_opt_valido and nuevo_opt_valido not in st.session_state['opt_tickers'] and len(st.session_state['opt_tickers']) < 15:
+                st.session_state['opt_tickers'].append(nuevo_opt_valido)
                 st.rerun()
+            elif nuevo_opt and not nuevo_opt_valido:
+                st.warning('⚠️ Símbolo inválido.')
 
     if st.session_state['opt_tickers']:
         st.markdown('<div style="margin:10px 0 4px 0;font-size:11px;color:#6b7d9a">Activos en la cartera (clic para quitar):</div>', unsafe_allow_html=True)
