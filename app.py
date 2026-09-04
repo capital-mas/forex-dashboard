@@ -1535,7 +1535,10 @@ def selector_ticker_autocomplete(key, prefill='', label='Buscar activo'):
             'Símbolo manual', value=prefill, key=f'{key}_manual',
             placeholder='Ej: NVDA · BTC-USD · EURUSD=X · GC=F',
         )
-        return manual.strip().upper()
+        val = validar_ticker(manual)
+        if manual.strip() and val is None:
+            st.warning('⚠️ Símbolo inválido. Solo letras, números, punto, guión, = y ^ (máx. 15 caracteres).')
+        return val or ''
     val = UNIVERSO_MAPA.get(elegido, elegido)
     return val.strip().upper()
 
