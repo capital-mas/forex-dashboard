@@ -41,6 +41,36 @@ from modulo_volatilidad_y_analisis_tecnico import (
 from modulo_pares_cointegracion import modulo_pares_cointegracion
 from modulo_cot import modulo_cot
 
+import re
+import html
+
+# ==============================================================
+#  SEGURIDAD — validación y sanitización de inputs de usuario
+# ==============================================================
+
+# Cubre: NVDA, BTC-USD, EURUSD=X, ^GSPC, GC=F, DLK.DE, BRK-B, etc.
+_TICKER_REGEX = re.compile(r'^[A-Z0-9\.\-=\^]{1,15}$')
+
+def validar_ticker(raw: str) -> str | None:
+    """Sanitiza y valida un ticker ingresado por el usuario.
+    Devuelve el ticker normalizado (mayúsculas, sin espacios) o None si es inválido.
+    Usar SIEMPRE antes de: (1) pasarlo a yfinance, (2) guardarlo/leerlo de Supabase,
+    (3) interpolarlo en cualquier st.markdown(unsafe_allow_html=True)."""
+    if not raw:
+        return None
+    t = raw.strip().upper()
+    if not _TICKER_REGEX.match(t):
+        return None
+    return t
+
+def escape_html(texto) -> str:
+    """Escapa cualquier string antes de meterlo en un f-string con unsafe_allow_html=True.
+    Usar para: nombres de empresa, descripciones, texto libre que venga de fuentes externas
+    (Yahoo Finance) o de inputs de usuario."""
+    if texto is None:
+        return ''
+    return html.escape(str(texto), quote=True)
+    
 ZONA_AR = ZoneInfo("America/Argentina/Buenos_Aires")
 
 def ahora_ar():
