@@ -41,7 +41,6 @@ from modulo_volatilidad_y_analisis_tecnico import (
 from modulo_pares_cointegracion import modulo_pares_cointegracion
 from modulo_cot import modulo_cot
 from modulo_tff import modulo_tff
-modulo_tff(supabase, USER_ID, st.session_state['usuario'].email)
 
 import re
 import html
@@ -6523,6 +6522,7 @@ _OPCIONES_SUB_LARGO = {
     '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
     '📐 Top-Down Cuantitativo': 'tdc',
     '📑 Análisis COT': 'cot',
+    '📑 Análisis TFF': 'tff',
 }
 
 with st.container(key='nav_pills_wrap'):
@@ -6794,7 +6794,7 @@ with st.container(key='nav_mobile_wrap'):
                   '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones'},
         'largo': {'📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
                   '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
-                  '📐 Top-Down Cuantitativo': 'tdc', '📑 Análisis COT': 'cot'},
+                  '📐 Top-Down Cuantitativo': 'tdc', '📑 Análisis COT': 'cot', '📑 Análisis TFF': 'tff'},
     }    
     _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '🏠 Inicio')
     if st.session_state.get('nav_mobile_h') != _label_h_actual:
@@ -6909,6 +6909,7 @@ titulos = {
     'fundamental': ('Análisis Fundamental', '📊', 'Ratios financieros · Benchmarks por sector · Señales de valuación'),
     'tdc': ('Top-Down Cuantitativo (Mediano/Largo Plazo)', '📐', 'Percentil histórico MP/LP — modelo Top-Down original'),
     'cot': ('Análisis COT — Commitment of Traders', '📑', 'Posicionamiento de Managed Money — 100% datos manuales, sin precio'),
+    'tff': ('Análisis TFF — Traders in Financial Futures', '📑', 'Posicionamiento Asset Manager vs. Leveraged Funds — índices, forex y cripto'),
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
     'senales': ('Señales de Trading', '🎯', 'Publicación de señales y simulador de capital'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
@@ -7942,6 +7943,9 @@ if HORIZONTE == 'largo' and MODULO == 'tdc':
 
 if HORIZONTE == 'largo' and MODULO == 'cot':
     modulo_cot(supabase, USER_ID, st.session_state["usuario"].email)
+
+if HORIZONTE == 'largo' and MODULO == 'tff':
+    modulo_tff(supabase, USER_ID, st.session_state["usuario"].email)    
     
 # ==============================================================
 #  FOOTER
