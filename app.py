@@ -40,6 +40,8 @@ from modulo_volatilidad_y_analisis_tecnico import (
 )
 from modulo_pares_cointegracion import modulo_pares_cointegracion
 from modulo_cot import modulo_cot
+from modulo_tff import modulo_tff
+modulo_tff(supabase, USER_ID, st.session_state['usuario'].email)
 
 import re
 import html
