@@ -3853,7 +3853,12 @@ def modulo_buscador():
 
 
 def _renderizar_buscador(ticker):
-    st.markdown(f'<div class="sec-title">Resultados para: {ticker}</div>', unsafe_allow_html=True)
+    ticker = validar_ticker(ticker)
+    if ticker is None:
+        st.error('Símbolo inválido.')
+        return
+
+    st.markdown(f'<div class="sec-title">Resultados para: {escape_html(ticker)}</div>', unsafe_allow_html=True)
 
     industria = TICKER_INDUSTRY.get(ticker, 'Externo / Manual')
 
