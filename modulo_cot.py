@@ -745,6 +745,31 @@ def _cot_resumen_commodity(df_commodity):
     )
 
 
+def _cot_resumenes_historicos(df_commodity):
+    """Devuelve la LISTA de resúmenes semana a semana para un commodity,
+    en orden cronológico (el más viejo primero).
+
+    Reutiliza `_cot_resumen_commodity` con una ventana EXPANSIVA: para
+    la semana N se pasa únicamente el historial hasta esa semana
+    inclusive (df_commodity.iloc[:N+1]), nunca datos futuros. Así, el
+    percentil, la tendencia y el COT Score de "la semana pasada" en
+    esta lista son los que esa semana realmente tenía en ese momento,
+    no un percentil recalculado con el historial completo actual. Esto
+    es lo que permite ver cómo fue *evolucionando* la lectura, no solo
+    la foto de hoy.
+    """
+    df = df_commodity.sort_values('Report Date').reset_index(drop=True)
+    n = len(df)
+    if n == 0:
+        return []
+    historial = []
+    for i in range(n):
+        r = _cot_resumen_commodity(df.iloc[:i + 1])
+        if r:
+            historial.append(r)
+    return historial
+
+
 # ------------------------------------------------------------------
 #  HELPERS DE UI (reutilizan clases CSS ya definidas en la app)
 # ------------------------------------------------------------------
@@ -1090,6 +1115,49 @@ def _cot_tab_general():
 #  TAB 3 — ANÁLISIS INDIVIDUAL — visible para todos
 # ------------------------------------------------------------------
 
+def _cot_evolucion_signo(valor_actual, valor_previo):
+    """Flecha simple para marcar si un número mejoró, empeoró o quedó
+    igual respecto de la semana anterior en la lista de evolución."""
+    if valor_actual is None or valor_previo is None or pd.isna(valor_actual) or pd.isna(valor_previo):
+        return ''
+    if valor_actual > valor_previo:
+        return ' <span style="color:#3fb950">▲</span>'
+    if valor_actual < valor_previo:
+        return ' <span style="color:#f85149">▼</span>'
+    return ' <span style="color:#6b7d9a">→</span>'
+
+
+def _cot_tarjeta_evolucion(r, r_prev):
+    """Tarjeta compacta con el resumen de UNA semana puntual, pensada
+    para listarse una debajo de otra en la línea de tiempo de
+    evolución del análisis (no reemplaza el resumen completo de la
+    semana más reciente que ya se muestra arriba en la pestaña)."""
+    fecha_txt = r['fecha'].strftime('%Y-%m-%d') if pd.notna(r['fecha']) else 'N/A'
+    score_txt = f"{r['score']:.0f}" if r['score'] is not None else 'N/A'
+    score_flecha = _cot_evolucion_signo(r['score'], r_prev['score'] if r_prev else None)
+    net_flecha = _cot_evolucion_signo(r['mm_net'], r_prev['mm_net'] if r_prev else None)
+    pct_txt = f"{r['percentil']:.0f}%" if r['percentil'] is not None else 'N/A'
+    div_tag = r.get('divergencia_tag')
+    div_html = ''
+    if div_tag and div_tag not in ('SIN DIVERGENCIA RELEVANTE',):
+        div_html = f'<div style="margin-top:4px;color:{r["divergencia_color"]};font-size:11px;font-weight:700">🔀 {div_tag}</div>'
+
+    return f"""
+    <div class="interp-card" style="border-left:3px solid {r['score_color']}; margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <div class="interp-header" style="margin-bottom:0">{r['score_emoji']} {fecha_txt} · {r['señal_final']}</div>
+        <div style="font-size:11px;color:#6b7d9a">
+          COT Score: <b style="color:{r['score_color']}">{score_txt}</b>{score_flecha}
+          &nbsp;|&nbsp; MM Net: {_fmt_n(r['mm_net'])}{net_flecha}
+          &nbsp;|&nbsp; Percentil: {pct_txt}
+        </div>
+      </div>
+      <div style="font-size:12.5px;margin-top:6px;line-height:1.6">{r['texto']}</div>
+      {div_html}
+    </div>
+    """
+
+
 def _cot_tab_individual():
     df = st.session_state['cot_data']
     if df.empty:
@@ -1209,6 +1277,71 @@ def _cot_tab_individual():
         df_show = r['df'][cols_show].copy()
         df_show['Report Date'] = df_show['Report Date'].dt.strftime('%Y-%m-%d')
         st.dataframe(df_show, use_container_width=True, height=min(400, len(df_show) * 36 + 60))
+
+    # ── NUEVO: Evolución del análisis por rango de fechas ─────────
+    st.markdown('<div class="sec-title">🕒 Evolución del Análisis (rango de fechas)</div>', unsafe_allow_html=True)
+    st.caption(
+        'Elegí un rango de semanas para ver, una debajo de la otra, el resumen que el sistema fue '
+        'largando en cada reporte de esas fechas — así podés seguir cómo cambió la lectura semana a '
+        'semana, no solo la foto de la última semana.'
+    )
+
+    fechas_disponibles = sorted(grupo['Report Date'].dropna().unique())
+    if len(fechas_disponibles) < 2:
+        st.info('Necesitás al menos 2 semanas cargadas de este commodity para ver una evolución por rango de fechas.')
+        return
+
+    fecha_min = pd.Timestamp(fechas_disponibles[0]).date()
+    fecha_max = pd.Timestamp(fechas_disponibles[-1]).date()
+    # Por defecto mostramos las últimas ~8 semanas cargadas (o todo el
+    # historial si hay menos de 8), para no saturar la vista.
+    idx_default_ini = max(0, len(fechas_disponibles) - 8)
+    default_ini = pd.Timestamp(fechas_disponibles[idx_default_ini]).date()
+
+    cf1, cf2 = st.columns(2)
+    with cf1:
+        rango_ini = st.date_input(
+            'Desde', value=default_ini, min_value=fecha_min, max_value=fecha_max,
+            key=f'cot_evo_desde_{commodity_sel}',
+        )
+    with cf2:
+        rango_fin = st.date_input(
+            'Hasta', value=fecha_max, min_value=fecha_min, max_value=fecha_max,
+            key=f'cot_evo_hasta_{commodity_sel}',
+        )
+
+    if rango_ini > rango_fin:
+        st.error('La fecha "Desde" no puede ser posterior a la fecha "Hasta".')
+        return
+
+    # Historial completo con ventana expansiva (nunca mira al futuro),
+    # y después nos quedamos solo con las semanas dentro del rango
+    # elegido para mostrarlas.
+    historial = _cot_resumenes_historicos(grupo)
+    historial_filtrado = [
+        h for h in historial
+        if pd.Timestamp(rango_ini) <= h['fecha'] <= pd.Timestamp(rango_fin)
+    ]
+
+    if not historial_filtrado:
+        st.warning('No hay semanas cargadas dentro del rango de fechas elegido.')
+        return
+
+    st.caption(f'Mostrando {len(historial_filtrado)} semana(s), de la más vieja a la más reciente.')
+
+    orden = st.radio(
+        'Orden', ['Más vieja primero', 'Más reciente primero'],
+        horizontal=True, key=f'cot_evo_orden_{commodity_sel}', label_visibility='collapsed',
+    )
+    lista_a_mostrar = historial_filtrado if orden == 'Más vieja primero' else list(reversed(historial_filtrado))
+
+    for i, h in enumerate(lista_a_mostrar):
+        if orden == 'Más vieja primero':
+            h_prev = historial_filtrado[i - 1] if i > 0 else None
+        else:
+            pos_original = len(historial_filtrado) - 1 - i
+            h_prev = historial_filtrado[pos_original - 1] if pos_original > 0 else None
+        st.markdown(_cot_tarjeta_evolucion(h, h_prev), unsafe_allow_html=True)
 
 
 # ------------------------------------------------------------------
