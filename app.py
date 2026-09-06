@@ -6775,8 +6775,16 @@ def _mobile_cambiar_horizonte():
     st.session_state.pop('nav_mobile_m', None)
 
 def _mobile_cambiar_modulo():
-    h_actual = st.session_state['nav_horizonte']
-    st.session_state['nav_modulo'] = _OPCIONES_MODULO_MOBILE[h_actual][st.session_state['nav_mobile_m']]
+    h_actual = st.session_state.get('nav_horizonte')
+    mods_disp = _OPCIONES_MODULO_MOBILE.get(h_actual)
+    if not mods_disp:
+        # nav_horizonte ya no tiene sub-módulos (ej: cambió a 'inicio', 'buscador', etc.)
+        # este callback quedó "viejo" -> lo ignoramos en vez de romper la app
+        return
+    label_sel = st.session_state.get('nav_mobile_m')
+    if label_sel not in mods_disp:
+        return
+    st.session_state['nav_modulo'] = mods_disp[label_sel]
 
 with st.container(key='nav_mobile_wrap'):
     _OPCIONES_HORIZONTE_MOBILE = {
