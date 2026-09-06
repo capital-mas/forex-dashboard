@@ -6766,7 +6766,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def _mobile_cambiar_horizonte():
-    nuevo_h = _OPCIONES_HORIZONTE_MOBILE[st.session_state['nav_mobile_h']]
+    label_h = st.session_state.get('nav_mobile_h')
+    nuevo_h = _OPCIONES_HORIZONTE_MOBILE.get(label_h)
+    if nuevo_h is None:
+        # valor inesperado/desincronizado -> no rompemos la app
+        return
     st.session_state['nav_horizonte'] = nuevo_h
     if nuevo_h in _OPCIONES_MODULO_MOBILE:
         st.session_state['nav_modulo'] = list(_OPCIONES_MODULO_MOBILE[nuevo_h].values())[0]
