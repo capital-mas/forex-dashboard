@@ -1877,6 +1877,23 @@ def _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categor
 #    3) un informe narrativo de analista senior + gráficos
 # ==============================================================
 
+@st.cache_data(ttl=120, show_spinner=False)
+def _df_registros_procesado(_supabase):
+    """Trae los registros y les agrega categoria/score/peso/es_neutral/fecha_dt
+    ya calculados, todo cacheado 2 min. Evita que Perfil de País y País vs País
+    vuelvan a recorrer con .apply() todo el historial en cada interacción
+    (cambiar país, cambiar filtro de año/mes, etc.)."""
+    filas = _obtener_registros(_supabase)
+    if not filas:
+        return pd.DataFrame()
+    df = pd.DataFrame(filas)
+    df["categoria"] = df["evento"].map(lambda e: EVENTOS.get(e, {}).get("categoria", "Otros"))
+    df["peso"] = df["evento"].map(lambda e: PESO_IMPACTO.get(EVENTOS.get(e, {}).get("impacto"), 1.0))
+    df["es_neutral"] = df["evento"].map(lambda e: EVENTOS.get(e, {}).get("polaridad") == "neutral")
+    df["score"] = df["impacto_mercado"].map(_signal_score)
+    df["fecha_dt"] = pd.to_datetime(df["fecha"], errors="coerce")
+    return df
+
 def _tab_perfil_pais(supabase):
     st.caption(
         "Elegí un país para ver cómo viene mostrándose su economía con todo lo "
@@ -1885,16 +1902,10 @@ def _tab_perfil_pais(supabase):
         "de análisis fundamental con gráficos."
     )
 
-    filas = _obtener_registros(supabase)
-    if not filas:
+    df = _df_registros_procesado(supabase)
+    if df.empty:
         st.info("Todavía no hay registros cargados.")
         return
-
-    df = pd.DataFrame(filas)
-    df["categoria"] = df["evento"].apply(_categoria_de_evento)
-    df["score"] = df["impacto_mercado"].apply(_signal_score)
-    df["peso"] = df["evento"].apply(_peso_de_evento)
-    df["es_neutral"] = df["evento"].apply(_es_evento_neutral)
 
     paises_u = sorted(df["pais"].dropna().unique().tolist())
     if not paises_u:
@@ -1908,7 +1919,6 @@ def _tab_perfil_pais(supabase):
         st.info("Este país todavía no tiene registros cargados.")
         return
 
-    df_pais_todo["fecha_dt"] = pd.to_datetime(df_pais_todo["fecha"], errors="coerce")
 
     # Se guarda el historial completo del país (sin el recorte por año/mes
     # de abajo) porque la evolución mes a mes y el outlook de tasas
@@ -2236,17 +2246,10 @@ def _tab_comparar_paises(supabase):
         "no entran en el cálculo por categoría económica."
     )
 
-    filas = _obtener_registros(supabase)
-    if not filas:
+    df = _df_registros_procesado(supabase)
+    if df.empty:
         st.info("Todavía no hay registros cargados para comparar.")
         return
-
-    df = pd.DataFrame(filas)
-    df["categoria"] = df["evento"].apply(_categoria_de_evento)
-    df["score"] = df["impacto_mercado"].apply(_signal_score)
-    df["peso"] = df["evento"].apply(_peso_de_evento)
-    df["es_neutral"] = df["evento"].apply(_es_evento_neutral)
-    df["fecha_dt"] = pd.to_datetime(df["fecha"], errors="coerce")
 
     # Se guarda el histórico completo (sin el recorte por año/mes de
     # abajo) porque la evolución mes a mes y el outlook de tasas de
@@ -2590,19 +2593,23 @@ def render_calendario_economico(supabase, user_id, user_email):
     </div>
     """, unsafe_allow_html=True)
 
-    tab_reg, tab_masiva, tab_cal, tab_perfil, tab_paises = st.tabs(
-        ["📝 Registrar", "📦 Carga Masiva", "📅 Calendario Económico",
-         "🌎 Perfil de País", "🌍 País vs País"]
+        _OPCIONES_CAL = ["📝 Registrar", "📦 Carga Masiva", "📅 Calendario Económico",
+                      "🌎 Perfil de País", "🌍 País vs País"]
+    _seccion_cal = st.radio(
+        "Sección del calendario", _OPCIONES_CAL, horizontal=True,
+        label_visibility="collapsed", key="cal_seccion_activa",
     )
-    with tab_reg:
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    if _seccion_cal == _OPCIONES_CAL[0]:
         _tab_registrar(supabase, user_id, es_admin)
-    with tab_masiva:
+    elif _seccion_cal == _OPCIONES_CAL[1]:
         _tab_carga_masiva(supabase, user_id, es_admin)
-    with tab_cal:
+    elif _seccion_cal == _OPCIONES_CAL[2]:
         _tab_historial(supabase, es_admin)
-    with tab_perfil:
+    elif _seccion_cal == _OPCIONES_CAL[3]:
         _tab_perfil_pais(supabase)
-    with tab_paises:
+    elif _seccion_cal == _OPCIONES_CAL[4]:
         _tab_comparar_paises(supabase)
 
 
