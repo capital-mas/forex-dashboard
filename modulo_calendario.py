@@ -1238,9 +1238,28 @@ def _tab_historial(supabase, es_admin=False):
         f"{len(df_f)} registros mostrados de {len(df)} totales"
         + (" en el período seleccionado" if fecha_desde else "")
     )
+
+    POR_PAGINA = 20
+    total_paginas = max(1, -(-len(df_f) // POR_PAGINA))  # redondeo hacia arriba
+    if "cal_hist_pagina" not in st.session_state:
+        st.session_state["cal_hist_pagina"] = 1
+    # si cambió el filtro y la página quedó fuera de rango, la reacomodamos
+    if st.session_state["cal_hist_pagina"] > total_paginas:
+        st.session_state["cal_hist_pagina"] = 1
+
+    pcol1, pcol2, pcol3 = st.columns([1, 2, 1])
+    with pcol2:
+        pagina = st.number_input(
+            "Página", min_value=1, max_value=total_paginas,
+            step=1, key="cal_hist_pagina",
+        )
+    ini = (pagina - 1) * POR_PAGINA
+    df_pagina = df_f.iloc[ini:ini + POR_PAGINA]
+    st.caption(f"Mostrando {ini + 1}–{min(ini + POR_PAGINA, len(df_f))} · Página {pagina} de {total_paginas}")
+
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-    for _, row in df_f.iterrows():
+    for _, row in df_pagina.iterrows():
         impacto = row.get("impacto_mercado") or "⚪ NEUTRO PARA EL MERCADO"
         bg, fg = _impacto_estilo(impacto)
         real, previsto, anterior = row.get("real"), row.get("previsto"), row.get("anterior")
