@@ -809,7 +809,7 @@ def _tab_registrar(supabase, user_id, es_admin):
                              unidad=unidad, notas=notas)
                 try:
                     _guardar_registro(supabase, datos, user_id)
-                    _obtener_registros.clear()
+                    _df_registros_procesado.clear()
                     st.success("✅ Registro guardado.")
                     st.rerun()
                 except Exception as e:
