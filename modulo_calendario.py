@@ -2612,7 +2612,7 @@ def render_calendario_economico(supabase, user_id, user_email):
     </div>
     """, unsafe_allow_html=True)
 
-        _OPCIONES_CAL = ["📝 Registrar", "📦 Carga Masiva", "📅 Calendario Económico",
+    _OPCIONES_CAL = ["📝 Registrar", "📦 Carga Masiva", "📅 Calendario Económico",
                       "🌎 Perfil de País", "🌍 País vs País"]
     _seccion_cal = st.radio(
         "Sección del calendario", _OPCIONES_CAL, horizontal=True,
