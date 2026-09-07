@@ -7348,7 +7348,7 @@ elif HORIZONTE == 'corto':
 
 
 elif HORIZONTE == 'largo':
-    if MODULO in ('fundamental', 'tdc', 'cot'):
+    if MODULO in ('fundamental', 'tdc', 'cot', 'tff'):
         pass  # handled by modulo_fundamental() / modulo_topdown_cuantitativo() below
     else:
         ind_disp = list(ACCIONES_POR_INDUSTRIA.keys())
