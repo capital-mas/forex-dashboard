@@ -1079,7 +1079,7 @@ def _tab_carga_masiva(supabase, user_id, es_admin):
         ):
             try:
                 n = _guardar_registros_masivo(supabase, filas_ok, user_id)
-                _obtener_registros.clear()
+                _df_registros_procesado.clear()
                 st.success(f"✅ Se importaron {n} evento(s) correctamente.")
                 st.rerun()
             except Exception as e:
@@ -1147,7 +1147,7 @@ def _form_editar_registro(supabase, row):
             )
             try:
                 _actualizar_registro(supabase, registro_id, datos)
-                _obtener_registros.clear()
+                _df_registros_procesado.clear()
                 st.success("✅ Evento actualizado.")
                 st.session_state.pop(f"cal_hist_editando_{registro_id}", None)
                 st.rerun()
@@ -1170,7 +1170,7 @@ def _confirmar_borrado_registro(supabase, row):
         if st.button("🗑️ Sí, eliminar", type="primary", use_container_width=True, key=f"cal_del_{registro_id}_confirmar"):
             try:
                 _borrar_registro(supabase, registro_id)
-                _obtener_registros.clear()
+                _df_registros_procesado.clear()
                 st.success("✅ Evento eliminado.")
                 st.session_state.pop(f"cal_hist_borrando_{registro_id}", None)
                 st.rerun()
@@ -1188,7 +1188,7 @@ def _tab_historial(supabase, es_admin=False):
         st.caption("Todos los eventos económicos cargados" + (" (el admin puede editar o eliminar cada evento)" if es_admin else " (solo lectura)"))
     with top2:
         if st.button("↺ Actualizar", use_container_width=True, key="cal_hist_refresh"):
-            _obtener_registros.clear()
+            _df_registros_procesado.clear()
             st.rerun()
 
     # El filtro de fecha se resuelve ANTES de pedir los datos, así el
