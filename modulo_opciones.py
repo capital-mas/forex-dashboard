@@ -402,7 +402,7 @@ GLOSARIO_GRIEGAS = {
     'Theta': 'Cuánto vale la opción por día, solo por el paso del tiempo (negativo si comprás prima, a favor si vendés prima).',
     'Vega': 'Cuánto cambia el precio de la opción si la volatilidad implícita sube o baja 1 punto porcentual. Comprar = Vega positiva; vender = Vega negativa.',
     'Rho': 'Cuánto cambia el precio de la opción si la tasa de interés sube o baja 1 punto porcentual.',
-    'Apalancamiento (Lambda)': 'Lambda = Delta * S / Precio_opción. Cuántas veces más se mueve, en %, la opción respecto del subyacente.',
+    'Efecto Palanca': 'Efecto Palanca = Delta * S / Precio_opción. Cuántas veces más se mueve, en %, la opción respecto del subyacente.',
 }
 
 
@@ -468,8 +468,8 @@ def calcular_tamano_posicion(analisis, patas, capital, pct_riesgo, mult=100):
     riesgo_maximo = capital * pct_riesgo
     L = [f"Capital: {capital:,.2f} · Riesgo máx. por operación: {pct_riesgo:.1%} → {riesgo_maximo:,.2f}"]
     if analisis["perdida_ilimitada"]:
-        L.append("⚠️ Pérdida ILIMITADA (pata vendida sin cobertura). No se puede fijar tamaño por 'pérdida máxima'. "
-                  "Evaluá agregar una pata de protección (ej. Short Strangle → Iron Condor).")
+        L.append("⚠️ Pérdida ILIMITADA (opción vendida sin cobertura). No se puede fijar tamaño por 'pérdida máxima'. "
+                  "Evaluá agregar una opción de protección (ej. Short Strangle → Iron Condor).")
     else:
         perdida_x_contrato = abs(analisis["perdida_max"]) * mult
         if perdida_x_contrato <= 0:
@@ -649,7 +649,7 @@ def modulo_opciones():
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
       <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🎲 Valuación de Opciones</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Elegí una estrategia del catálogo, cargá bid/ask de cada pata y obtené precio teórico,
+        Elegí una estrategia del catálogo, cargá bid/ask de cada opción y obtené precio teórico,
         volatilidad implícita, griegas, liquidez/slippage, payoff, escenarios de repricing y
         tamaño de posición sugerido. Modelo <b style="color:#f0883e">Binomial (americana)</b> o
         <b style="color:#3a7bd5">Black-Scholes (europea)</b> según el estilo de ejercicio.
@@ -781,9 +781,9 @@ def modulo_opciones():
     estrategia = next(e for e in CATALOGO_ESTRATEGIAS if e['id'] == st.session_state['opc_estrategia_id'])
     st.success(f"Estrategia activa: **{estrategia['nombre']}** — {estrategia['descripcion']}")
 
-    # ── PASO 3: cargar patas (strike, bid, ask) ─────────────────────────
+    # ── PASO 3: cargar opciones (strike, bid, ask) ─────────────────────────
     st.markdown('---')
-    st.markdown('### 3️⃣ Cargá Strike, Bid y Ask de cada pata')
+    st.markdown('### 3️⃣ Cargá Strike, Bid y Ask de cada opción')
 
     vencimiento_str = st.session_state['opc_vto'].strftime('%Y-%m-%d')
     cadena_disponible = vencimiento_str in vtos_reales if vtos_reales else False
@@ -794,7 +794,7 @@ def modulo_opciones():
         with st.expander('📡 Ver cadena completa de opciones (Yahoo Finance)', expanded=False):
             render_tabla_cadena_opciones(cadena, S)
     elif vtos_reales and not cadena_disponible:
-        st.caption('⚠️ El vencimiento elegido no está en la cadena real — carga manual para todas las patas.')
+        st.caption('⚠️ El vencimiento elegido no está en la cadena real — carga manual para todas las opciones.')
 
     patas_input = []
     cols_patas = st.columns(len(estrategia['patas']))
@@ -803,7 +803,7 @@ def modulo_opciones():
         with col:
             tipo_txt = 'Call' if spec['tipo'] == 'C' else 'Put'
             accion_txt = 'COMPRÁS' if spec['accion'] == 'comprar' else 'VENDÉS'
-            st.markdown(f"**Pata {i+1}: {tipo_txt} — {accion_txt}**")
+            st.markdown(f"**Opción {i+1}: {tipo_txt} — {accion_txt}**")
 
             lado_df = None
             if cadena and spec.get('mismo_strike_que') is None:
@@ -815,15 +815,15 @@ def modulo_opciones():
 
             if spec.get('mismo_strike_que') is not None:
                 strike = strikes_previos[spec['mismo_strike_que']]
-                st.caption(f'Mismo strike que pata {spec["mismo_strike_que"]+1}: {strike:.2f}')
-                bid = st.number_input(f'Bid pata {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
-                ask = st.number_input(f'Ask pata {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
+                st.caption(f'Mismo strike que opción {spec["mismo_strike_que"]+1}: {strike:.2f}')
+                bid = st.number_input(f'Bid opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
+                ask = st.number_input(f'Ask opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
 
             elif usar_cadena_pata:
                 strikes_disp = lado_df['strike'].tolist()
                 fila_atm = _opc_fila_strike_mas_cercano(lado_df, S)
                 idx_def = strikes_disp.index(float(fila_atm['strike'])) if fila_atm is not None else 0
-                strike = st.selectbox(f'Strike pata {i+1} (cadena real)', strikes_disp,
+                strike = st.selectbox(f'Strike opción {i+1} (cadena real)', strikes_disp,
                                        index=idx_def, key=f'opc_strike_cadena_{i}')
                 fila_sel = lado_df[lado_df['strike'] == strike].iloc[0]
                 bid_def = float(fila_sel['bid']) if pd.notna(fila_sel['bid']) else 0.0
@@ -831,14 +831,14 @@ def modulo_opciones():
                 iv_txt = f"{fila_sel['impliedVolatility']:.1%}" if pd.notna(fila_sel['impliedVolatility']) else 'N/D'
                 oi_txt = int(fila_sel['openInterest']) if pd.notna(fila_sel['openInterest']) else 0
                 st.caption(f"IV mercado: {iv_txt} · OI: {oi_txt} · {'🟢 ITM' if fila_sel['inTheMoney'] else '⚪ OTM'}")
-                bid = st.number_input(f'Bid pata {i+1}', min_value=0.0, value=bid_def, step=0.01, key=f'opc_bid_{i}')
-                ask = st.number_input(f'Ask pata {i+1}', min_value=0.0, value=ask_def, step=0.01, key=f'opc_ask_{i}')
+                bid = st.number_input(f'Bid opción {i+1}', min_value=0.0, value=bid_def, step=0.01, key=f'opc_bid_{i}')
+                ask = st.number_input(f'Ask opción {i+1}', min_value=0.0, value=ask_def, step=0.01, key=f'opc_ask_{i}')
 
             else:
-                strike = st.number_input(f'Strike pata {i+1}', min_value=0.01,
+                strike = st.number_input(f'Strike opción {i+1}', min_value=0.01,
                                           value=round(S, 2), step=0.5, key=f'opc_strike_{i}')
-                bid = st.number_input(f'Bid pata {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
-                ask = st.number_input(f'Ask pata {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
+                bid = st.number_input(f'Bid opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
+                ask = st.number_input(f'Ask opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
 
             strikes_previos[i] = strike
             patas_input.append({'tipo': spec['tipo'], 'accion': spec['accion'], 'strike': strike,
@@ -847,7 +847,7 @@ def modulo_opciones():
     calcular = st.button('▶ Calcular', type='primary', key='opc_btn_calcular')
     if calcular:
         if any(p['ask'] <= 0 for p in patas_input):
-            st.error('Cargá Bid y Ask (> 0) de todas las patas antes de calcular.')
+            st.error('Cargá Bid y Ask (> 0) de todas las opciones antes de calcular.')
             return
         st.session_state['opc_calculado'] = True
         st.session_state['opc_patas_data'] = patas_input
@@ -870,7 +870,7 @@ def modulo_opciones():
         accion_desc = 'comprada' if pata['accion'] == 'comprar' else 'vendida'
         tipo_desc = 'Call' if tipo == 'C' else 'Put'
         filas.append({
-            'Pata': f'{tipo_desc} {accion_desc}', 'Strike': K, 'Bid': pata['bid'], 'Ask': pata['ask'],
+            'Opción': f'{tipo_desc} {accion_desc}', 'Strike': K, 'Bid': pata['bid'], 'Ask': pata['ask'],
             'Mid': round(mid, 2), 'Spread': round(spread_abs, 2),
             'Spread %': f'{spread_pct:.1%}' if not np.isnan(spread_pct) else 'N/D',
             'Liquidez': senal_liq, 'Precio Teórico': round(precio_teorico, 2),
@@ -878,19 +878,19 @@ def modulo_opciones():
             'Vol. Implícita': f'{vol_impl:.2%}' if not np.isnan(vol_impl) else 'N/D',
             'Delta': round(letras['Delta'], 3), 'Gamma': round(letras['Gamma'], 4),
             'Theta': round(letras['Theta'], 4), 'Vega': round(letras['Vega'], 4), 'Rho': round(letras['Rho'], 4),
-            'Lambda': round(lam, 2) if not np.isnan(lam) else 'N/D', 'Señal': senal,
+            'Efecto Palanca': round(lam, 2) if not np.isnan(lam) else 'N/D', 'Señal': senal,
             '_tipo': tipo, '_strike': K, '_iv': vol_impl,
         })
     df_filas = pd.DataFrame(filas)
 
     st.markdown('---')
-    st.markdown('### 📊 Valuación y liquidez de cada pata')
-    st.dataframe(df_filas[['Pata', 'Strike', 'Bid', 'Ask', 'Mid', 'Spread', 'Spread %', 'Liquidez',
+    st.markdown('### 📊 Valuación y liquidez de cada opción')
+    st.dataframe(df_filas[['Opción', 'Strike', 'Bid', 'Ask', 'Mid', 'Spread', 'Spread %', 'Liquidez',
                             'Precio Teórico', 'Vol. Histórica', 'Vol. Implícita', 'Señal']],
                  use_container_width=True, hide_index=True)
 
-    st.markdown('### 📊 Griegas de cada pata')
-    st.dataframe(df_filas[['Pata', 'Delta', 'Gamma', 'Theta', 'Vega', 'Rho', 'Lambda']],
+    st.markdown('### 📊 Griegas de cada opción')
+    st.dataframe(df_filas[['Opción', 'Delta', 'Gamma', 'Theta', 'Vega', 'Rho', 'Efecto Palanca']],
                  use_container_width=True, hide_index=True)
 
     ok_par, msg_par = verificar_paridad_put_call(filas)
@@ -908,10 +908,10 @@ def modulo_opciones():
     with cl3: st.metric('Slippage', f'{slippage:.2f}/acción', f'{slippage*mult:.2f} por contrato')
     patas_iliquidas = [f for f in filas if '🔴' in f['Liquidez'] or '🟠' in f['Liquidez']]
     if patas_iliquidas:
-        st.warning('⚠️ Patas con liquidez media/baja — priorizá orden límite: ' +
-                   ', '.join(f"{f['Pata']} K={f['Strike']}" for f in patas_iliquidas))
+        st.warning('⚠️ Opciones con liquidez media/baja — priorizá orden límite: ' +
+                   ', '.join(f"{f['Opción']} K={f['Strike']}" for f in patas_iliquidas))
     else:
-        st.success('✅ Todas las patas tienen buena liquidez.')
+        st.success('✅ Todas las opciones tienen buena liquidez.')
 
     # ── resultado de la estrategia completa ─────────────────────────────
     analisis = analizar_payoff_estrategia(patas)
@@ -962,7 +962,7 @@ def modulo_opciones():
                 precio_rep = float(precio_opcion(pata['tipo'], S_T, pata['strike'], T, r, sigma, q, estilo))
             except Exception:
                 precio_rep = float('nan')
-            fila[f'Pata {i}'] = round(precio_rep, 2)
+            fila[f'Opción {i}'] = round(precio_rep, 2)
             v_total += precio_rep if pata['accion'] == 'comprar' else -precio_rep
         fila['P&L hoy'] = round(v_total - costo_teorico, 2)
         fila['P&L vencimiento'] = round(payoff_total(patas, S_T), 2)
@@ -1009,7 +1009,7 @@ def modulo_opciones():
         valor_con_tiempo += signo * p_con_t
         for g in NOMBRES_GRIEGAS: totales_g_sim[g] += signo * letras_sim[g]
         filas_sim.append({
-            'Pata': f'{tipo_desc} {accion_desc} K={pata["strike"]:.2f}',
+            'Opción': f'{tipo_desc} {accion_desc} K={pata["strike"]:.2f}',
             'Precio (sin pasar tiempo)': round(p_sin_t, 2),
             f'Precio ({dias_sim}d pasados)': round(p_con_t, 2),
             'Efecto tiempo ($)': round(p_con_t - p_sin_t, 2),
@@ -1036,7 +1036,7 @@ def modulo_opciones():
         with gc:
             st.metric(f'{g} neto', f'{totales_g_sim[g]:.4f}')
 
-    if st.button('🔄 Reiniciar (nueva estrategia / nuevas patas)', key='opc_reset'):
+    if st.button('🔄 Reiniciar (nueva estrategia / nuevas opciones)', key='opc_reset'):
         for k in list(st.session_state.keys()):
             if k.startswith('opc_'):
                 del st.session_state[k]
