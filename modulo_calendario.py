@@ -535,6 +535,25 @@ def interpretar_macro(evento, real, previsto):
              "riesgo": "⚪ Sin interpretación", "lectura": "No existe interpretación cargada para este evento."}
     if not info or real is None or previsto is None:
         return vacio
+
+    # BUGFIX: antes, "resultado = 'mayor' if real > previsto else 'menor'"
+    # mandaba el caso Real == Previsto directo a la rama "menor" (como si
+    # el dato hubiera salido POR DEBAJO de lo esperado), generando una
+    # lectura macro que contradecía al resto de la pantalla (que sí
+    # marca correctamente "➖ En línea con el previsto" / "⚖️ NEUTRO").
+    # Ahora, cuando no hay sorpresa vs. lo previsto, se devuelve una
+    # interpretación neutra explícita en lugar de inventar una dirección.
+    if real == previsto:
+        en_linea = {campo: "⚪ Sin sorpresa vs. lo previsto" for campo in
+                    ("divisas", "bonos", "acciones", "oro", "crypto", "politica", "riesgo")}
+        en_linea["lectura"] = (
+            "El dato salió exactamente en línea con lo previsto: no hubo sorpresa respecto al "
+            "consenso, así que por sí solo no aporta una dirección clara para el mercado. El resto "
+            "de la lectura (bueno/malo) que ves arriba depende de la comparación contra el dato "
+            "anterior, no de este valor esperado."
+        )
+        return en_linea
+
     resultado = "mayor" if real > previsto else "menor"
     return info.get(resultado, vacio)
 
