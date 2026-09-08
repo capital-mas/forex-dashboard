@@ -1943,8 +1943,9 @@ def _chart_evolucion_categorias(df_puntuable_completo, max_categorias=5):
     return fig
 
 
-def _chart_evolucion_comparada(serie_a, serie_b, nombre_a, nombre_b):
-    """Overlay de la evolución mensual de dos países, para País vs País."""
+def _chart_evolucion_comparada(serie_a, serie_b, nombre_a, nombre_b, titulo=None):
+    """Overlay de la evolución mensual de dos países (o de dos países
+    dentro de una misma categoría), para País vs País."""
     sa = serie_a.dropna(subset=["score"]) if serie_a is not None else pd.DataFrame()
     sb = serie_b.dropna(subset=["score"]) if serie_b is not None else pd.DataFrame()
     if sa.empty and sb.empty:
@@ -1962,7 +1963,7 @@ def _chart_evolucion_comparada(serie_a, serie_b, nombre_a, nombre_b):
         ))
     fig.add_hline(y=0, line_dash="dot", line_color="#3a3a3a")
     fig.update_layout(
-        title=f"Evolución mensual comparada — {nombre_a} vs {nombre_b}",
+        title=titulo or f"Evolución mensual comparada — {nombre_a} vs {nombre_b}",
         yaxis=dict(title="Puntaje ponderado", range=[-1.15, 1.15], zerolinecolor="#3a3a3a", color="#e6edf3"),
         xaxis=dict(color="#e6edf3"),
         height=360,
@@ -2570,21 +2571,6 @@ def _render_informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b,
         )
         st.plotly_chart(fig2, use_container_width=True, key=f"cmpp_chart_radar_{pais_a}_{pais_b}")
 
-    # Evolución mensual comparada — overlay de ambos países.
-    df_full_a = df_full_a if df_full_a is not None else df_a
-    df_full_b = df_full_b if df_full_b is not None else df_b
-    fig_evol_cmp = _chart_evolucion_comparada(
-        _serie_mensual(df_full_a), _serie_mensual(df_full_b), pais_a, pais_b,
-    )
-    if fig_evol_cmp is not None:
-        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-        st.plotly_chart(fig_evol_cmp, use_container_width=True, key=f"cmpp_chart_evol_{pais_a}_{pais_b}")
-    else:
-        st.info(
-            f"Todavía no hay al menos dos meses distintos cargados para {pais_a} y/o {pais_b} "
-            "como para graficar su evolución mensual comparada."
-        )
-
 
 # ==============================================================
 #  RENDER — TAB PAÍS VS PAÍS
@@ -2838,19 +2824,48 @@ def _tab_comparar_paises(supabase):
     df_full_a = df_puntuable_completo_global[df_puntuable_completo_global["pais"] == pais_a]
     df_full_b = df_puntuable_completo_global[df_puntuable_completo_global["pais"] == pais_b]
 
-    # ── Evolución mensual comparada (visible antes del informe) ──
+    # ── Evolución mensual comparada, categoría por categoría ──
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-    st.markdown(f"#### 📈 Evolución mensual — {pais_a} vs {pais_b}")
-    fig_evol_top = _chart_evolucion_comparada(
-        _serie_mensual(df_full_a), _serie_mensual(df_full_b), pais_a, pais_b,
+    st.markdown(f"#### 📈 Evolución mensual por categoría — {pais_a} vs {pais_b}")
+    st.caption(
+        "Elegí una categoría para ver cómo vino evolucionando mes a mes en cada país. Se calcula "
+        "sobre todo el historial cargado de cada uno (no se ve afectado por el filtro de año/mes "
+        "elegido arriba), para poder comparar un período contra otro de forma consistente."
     )
-    if fig_evol_top is not None:
-        st.plotly_chart(fig_evol_top, use_container_width=True, key=f"cmpp_panorama_evol_{pais_a}_{pais_b}")
-    else:
-        st.info(
-            f"Todavía no hay al menos dos meses distintos cargados para {pais_a} y/o {pais_b} "
-            "como para graficar su evolución mensual comparada."
+
+    categorias_evol = sorted(
+        set(df_full_a["categoria"].unique().tolist()) | set(df_full_b["categoria"].unique().tolist())
+    )
+    if categorias_evol:
+        conteos_cat = {
+            cat: len(df_full_a[df_full_a["categoria"] == cat]) + len(df_full_b[df_full_b["categoria"] == cat])
+            for cat in categorias_evol
+        }
+        cat_default = max(conteos_cat, key=conteos_cat.get)
+        idx_default = categorias_evol.index(cat_default)
+        cat_elegida = st.selectbox(
+            "📂 Categoría a graficar", categorias_evol, index=idx_default, key="cmpp_evol_cat_sel",
         )
+        st.caption(f"ℹ️ {cat_elegida}: {_explicacion_categoria(cat_elegida)}.")
+
+        sub_a_cat = df_full_a[df_full_a["categoria"] == cat_elegida]
+        sub_b_cat = df_full_b[df_full_b["categoria"] == cat_elegida]
+        fig_evol_cat_cmp = _chart_evolucion_comparada(
+            _serie_mensual(sub_a_cat), _serie_mensual(sub_b_cat), pais_a, pais_b,
+            titulo=f"Evolución mensual — {cat_elegida} ({pais_a} vs {pais_b})",
+        )
+        if fig_evol_cat_cmp is not None:
+            st.plotly_chart(
+                fig_evol_cat_cmp, use_container_width=True,
+                key=f"cmpp_evol_cat_{pais_a}_{pais_b}_{cat_elegida}",
+            )
+        else:
+            st.info(
+                f"Todavía no hay al menos dos meses distintos cargados en **{cat_elegida}** para "
+                f"{pais_a} y/o {pais_b} como para graficar su evolución comparada en esta categoría."
+            )
+    else:
+        st.info("Todavía no hay categorías con eventos puntuables cargados para estos dos países.")
 
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     _render_informe_analista_comparacion(
