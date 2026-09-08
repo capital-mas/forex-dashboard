@@ -63,6 +63,14 @@
 #     lenguaje de research macro (no solo "sesgo positivo/negativo"),
 #     que menciona el dato más relevante, la categoría más fuerte/débil
 #     y la implicancia para cada activo.
+#  9) NUEVO (esta versión): panorama económico graficado (barras por
+#     categoría visibles apenas se elige el país), gráficos de
+#     evolución mensual (general y por categoría, incluyendo la
+#     comparación entre dos países), e informe de analista mucho más
+#     completo: agrega volatilidad de las sorpresas económicas y
+#     racha de meses consecutivos mejorando/empeorando, además de lo
+#     ya existente (categoría más fuerte/débil, dato más relevante,
+#     impacto en la moneda, evolución mes a mes y outlook de tasas).
 # ==============================================================
 
 import io
@@ -1745,11 +1753,174 @@ def _texto_outlook_tasas(pais, resultado_outlook):
             f"(puntaje combinado: {hawkish_score:+.2f}, sobre una escala de −1 a +1).")
 
 
+# ── Volatilidad y racha (para un informe más profesional) ──
+
+def _volatilidad_score(serie_mensual):
+    """Desvío estándar del puntaje mensual — mide qué tan errático o
+    estable viene siendo el flujo de sorpresas económicas mes a mes.
+    Un valor bajo describe un ciclo consistente; uno alto, un ciclo
+    con datos contradictorios de un mes a otro."""
+    if serie_mensual.empty:
+        return None, 0
+    datos = serie_mensual["score"].dropna()
+    if len(datos) < 2:
+        return None, len(datos)
+    return float(datos.std()), len(datos)
+
+
+def _texto_volatilidad(volatilidad, n_meses):
+    if volatilidad is None:
+        return None
+    if volatilidad < 0.25:
+        calif = "**baja** — el ciclo de sorpresas viene siendo consistente mes a mes"
+    elif volatilidad < 0.55:
+        calif = "**moderada** — conviven meses buenos y flojos sin un patrón demasiado errático"
+    else:
+        calif = "**alta** — el flujo de datos viene siendo contradictorio de un mes a otro, lo que resta previsibilidad a la lectura"
+    return f"La volatilidad del puntaje mensual es {calif} (desvío estándar {volatilidad:.2f} sobre {n_meses} mes(es) con datos)."
+
+
+def _racha_actual(serie_mensual):
+    """Cuenta cuántos meses consecutivos (desde el más reciente hacia
+    atrás) el puntaje viene moviéndose en la misma dirección."""
+    datos = serie_mensual["score"].dropna().tolist()
+    if len(datos) < 2:
+        return 0, None
+    diffs = [datos[i] - datos[i - 1] for i in range(1, len(datos))]
+    racha, direccion = 0, None
+    for d in reversed(diffs):
+        signo = "mejora" if d > 0.05 else ("empeora" if d < -0.05 else None)
+        if signo is None:
+            break
+        if direccion is None:
+            direccion = signo
+            racha = 1
+        elif signo == direccion:
+            racha += 1
+        else:
+            break
+    return racha, direccion
+
+
+def _texto_racha(racha, direccion, pais):
+    if not racha or not direccion:
+        return None
+    verbo = "mejorando" if direccion == "mejora" else "empeorando"
+    plural = "meses consecutivos" if racha > 1 else "mes"
+    return (f"Además, {pais} lleva **{racha} {plural} {verbo}** en su puntaje agregado, lo que "
+            + ("es un indicio de que el ciclo actual tiene continuidad, más allá del dato puntual "
+               "del último mes." if racha >= 2 else
+               "todavía es un movimiento reciente y conviene confirmarlo con el próximo dato."))
+
+
+def _chart_evolucion_mensual(serie_mensual, nombre_serie, color, titulo=None):
+    """Línea de tiempo con el puntaje ponderado mes a mes."""
+    if serie_mensual is None or serie_mensual.empty:
+        return None
+    sm = serie_mensual.dropna(subset=["score"])
+    if sm.empty:
+        return None
+    x = [_periodo_legible(p) for p in sm["periodo"]]
+    y = sm["score"].tolist()
+    n = sm["n"].tolist()
+    fig = go.Figure(go.Scatter(
+        x=x, y=y, mode="lines+markers",
+        line=dict(color=color, width=3),
+        marker=dict(size=9, color=[_color_de_score(v) for v in y], line=dict(width=1, color="#0d1117")),
+        text=[f"{n_i} dato(s)" for n_i in n],
+        hovertemplate="%{x}<br>Puntaje: %{y:+.2f}<br>%{text}<extra></extra>",
+    ))
+    fig.add_hline(y=0, line_dash="dot", line_color="#3a3a3a")
+    fig.update_layout(
+        title=titulo or f"Evolución mensual — {nombre_serie}",
+        xaxis=dict(title="", color="#e6edf3"),
+        yaxis=dict(title="Puntaje ponderado (−1 a +1)", range=[-1.15, 1.15], zerolinecolor="#3a3a3a", color="#e6edf3"),
+        height=320,
+        margin=dict(l=10, r=10, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6edf3"),
+        showlegend=False,
+    )
+    return fig
+
+
+def _chart_evolucion_categorias(df_puntuable_completo, max_categorias=5):
+    """Multi-línea con la evolución mensual de las categorías con más
+    datos, para ver a simple vista qué sectores vienen mejorando o
+    empeorando el ciclo."""
+    if df_puntuable_completo is None or df_puntuable_completo.empty:
+        return None
+    categorias = df_puntuable_completo["categoria"].value_counts().index.tolist()[:max_categorias]
+    palette = ["#3a7bd5", "#e3b341", "#2ea043", "#f0883e", "#a371f7", "#f85149"]
+    fig = go.Figure()
+    tuvo_datos = False
+    for i, cat in enumerate(categorias):
+        sub = df_puntuable_completo[df_puntuable_completo["categoria"] == cat]
+        serie = _serie_mensual(sub).dropna(subset=["score"])
+        if len(serie) < 2:
+            continue
+        tuvo_datos = True
+        fig.add_trace(go.Scatter(
+            x=[_periodo_legible(p) for p in serie["periodo"]], y=serie["score"].tolist(),
+            mode="lines+markers", name=cat,
+            line=dict(color=palette[i % len(palette)], width=2.5), marker=dict(size=6),
+        ))
+    if not tuvo_datos:
+        return None
+    fig.add_hline(y=0, line_dash="dot", line_color="#3a3a3a")
+    fig.update_layout(
+        title="Evolución mensual por categoría",
+        yaxis=dict(title="Puntaje ponderado", range=[-1.15, 1.15], zerolinecolor="#3a3a3a", color="#e6edf3"),
+        xaxis=dict(color="#e6edf3"),
+        height=360,
+        margin=dict(l=10, r=10, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6edf3"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
+def _chart_evolucion_comparada(serie_a, serie_b, nombre_a, nombre_b):
+    """Overlay de la evolución mensual de dos países, para País vs País."""
+    sa = serie_a.dropna(subset=["score"]) if serie_a is not None else pd.DataFrame()
+    sb = serie_b.dropna(subset=["score"]) if serie_b is not None else pd.DataFrame()
+    if sa.empty and sb.empty:
+        return None
+    fig = go.Figure()
+    if not sa.empty:
+        fig.add_trace(go.Scatter(
+            x=[_periodo_legible(p) for p in sa["periodo"]], y=sa["score"].tolist(),
+            mode="lines+markers", name=nombre_a, line=dict(color="#3a7bd5", width=3), marker=dict(size=8),
+        ))
+    if not sb.empty:
+        fig.add_trace(go.Scatter(
+            x=[_periodo_legible(p) for p in sb["periodo"]], y=sb["score"].tolist(),
+            mode="lines+markers", name=nombre_b, line=dict(color="#f0883e", width=3), marker=dict(size=8),
+        ))
+    fig.add_hline(y=0, line_dash="dot", line_color="#3a3a3a")
+    fig.update_layout(
+        title=f"Evolución mensual comparada — {nombre_a} vs {nombre_b}",
+        yaxis=dict(title="Puntaje ponderado", range=[-1.15, 1.15], zerolinecolor="#3a3a3a", color="#e6edf3"),
+        xaxis=dict(color="#e6edf3"),
+        height=360,
+        margin=dict(l=10, r=10, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6edf3"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
 def _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos,
                             df_puntuable_completo=None):
     """Arma un informe narrativo de varios párrafos, con tono de
     research/analista senior, a partir de los puntajes ya calculados."""
     moneda_score, moneda_n = activos.get("divisas", (None, 0))
+    base_evolucion = df_puntuable_completo if df_puntuable_completo is not None else df_pais_puntuable
 
     # Categoría más fuerte / más débil
     scores_cat = []
@@ -1846,10 +2017,20 @@ def _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, ac
     # Párrafo 4: evolución mes a mes (¿mejoró o empeoró?) — usa TODO el
     # historial cargado del país, independiente del filtro de año/mes
     # que haya elegido el usuario más arriba en la pantalla.
-    base_evolucion = df_puntuable_completo if df_puntuable_completo is not None else df_pais_puntuable
     parrafos.append(_texto_evolucion_mensual(pais, base_evolucion))
 
-    # Párrafo 5: implicancia sobre tasas de interés a futuro
+    # Párrafo 5: volatilidad y racha — le dan al informe un vistazo de
+    # "calidad" del ciclo, no solo de dirección.
+    serie_general = _serie_mensual(base_evolucion)
+    volatilidad, n_meses_vol = _volatilidad_score(serie_general)
+    texto_vol = _texto_volatilidad(volatilidad, n_meses_vol)
+    racha, direccion = _racha_actual(serie_general)
+    texto_racha = _texto_racha(racha, direccion, pais)
+    extra = " ".join([t for t in [texto_vol, texto_racha] if t])
+    if extra:
+        parrafos.append(extra)
+
+    # Párrafo 6: implicancia sobre tasas de interés a futuro
     parrafos.append(_texto_outlook_tasas(pais, _outlook_tasas(base_evolucion)))
 
     return parrafos
@@ -1857,43 +2038,41 @@ def _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, ac
 
 def _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos,
                                    df_puntuable_completo=None):
-    st.markdown("#### 📖 Lectura")
+    st.markdown("#### 🧠 Informe de analista senior")
     for p in _informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos,
                                      df_puntuable_completo):
         st.markdown(p)
 
+    base_evolucion = df_puntuable_completo if df_puntuable_completo is not None else df_pais_puntuable
+    serie_general = _serie_mensual(base_evolucion)
+
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     g1, g2 = st.columns(2)
     with g1:
-        if categorias:
-            nombres, valores = [], []
-            for cat in categorias:
-                sub = df_pais_puntuable[df_pais_puntuable["categoria"] == cat]
-                prom, _ = _promedio_ponderado_score(sub)
-                if prom is not None:
-                    nombres.append(cat)
-                    valores.append(prom)
-            if nombres:
-                orden = sorted(zip(nombres, valores), key=lambda x: x[1])
-                nombres, valores = [x[0] for x in orden], [x[1] for x in orden]
-                colores = [_color_de_score(v) for v in valores]
-                st.plotly_chart(
-                    _chart_barras_categorias(nombres, valores, colores, f"Puntaje por categoría — {pais}"),
-                    use_container_width=True, key=f"perfil_chart_barras_{pais}",
-                )
-    with g2:
         st.plotly_chart(
             _chart_radar_activos(activos, pais, "#3a7bd5"),
             use_container_width=True, key=f"perfil_chart_radar_{pais}",
         )
+    with g2:
+        fig_evol = _chart_evolucion_mensual(serie_general, pais, "#3a7bd5", titulo=f"Evolución mensual — {pais}")
+        if fig_evol is not None:
+            st.plotly_chart(fig_evol, use_container_width=True, key=f"perfil_chart_evol_{pais}")
+        else:
+            st.info("Todavía no hay al menos dos meses distintos cargados como para graficar la evolución mensual.")
+
+    fig_evol_cat = _chart_evolucion_categorias(base_evolucion)
+    if fig_evol_cat is not None:
+        st.plotly_chart(fig_evol_cat, use_container_width=True, key=f"perfil_chart_evol_cat_{pais}")
 
 
 # ==============================================================
 #  RENDER — TAB PERFIL DE PAÍS (reemplaza al viejo "Comparar" A/B)
 #  Elegís un país y ves, con todo lo cargado hasta ahora:
-#    1) cómo viene la economía categoría por categoría
+#    1) cómo viene la economía categoría por categoría, con gráfico
 #    2) de qué forma esos datos impactan en cada activo financiero,
 #       empezando por su moneda
-#    3) un informe narrativo de analista senior + gráficos
+#    3) evolución mensual (general y por categoría) con gráficos
+#    4) un informe narrativo de analista senior + gráficos adicionales
 # ==============================================================
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -1917,8 +2096,8 @@ def _tab_perfil_pais(supabase):
     st.caption(
         "Elegí un país para ver cómo viene mostrándose su economía con todo lo "
         "registrado hasta ahora, de qué forma esos datos impactan en cada tipo "
-        "de activo financiero — empezando por su moneda — y un informe narrativo "
-        "de análisis fundamental con gráficos."
+        "de activo financiero — empezando por su moneda —, cómo evolucionó mes "
+        "a mes, y un informe narrativo de análisis fundamental con gráficos."
     )
 
     df = _df_registros_procesado(supabase)
@@ -1986,6 +2165,28 @@ def _tab_perfil_pais(supabase):
                 st.caption(f"{prom:+.2f}  ({n} dato{'s' if n != 1 else ''})" if prom is not None else "Sin datos")
             with col_txt:
                 st.markdown(f"{emoji} {texto}")
+
+        # Gráfico de barras del panorama, visible apenas se elige el
+        # país — antes este gráfico solo aparecía más abajo, en el
+        # informe de analista.
+        nombres_panorama, valores_panorama = [], []
+        for cat in categorias:
+            sub = df_pais_puntuable[df_pais_puntuable["categoria"] == cat]
+            prom, _ = _promedio_ponderado_score(sub)
+            if prom is not None:
+                nombres_panorama.append(cat)
+                valores_panorama.append(prom)
+        if nombres_panorama:
+            orden = sorted(zip(nombres_panorama, valores_panorama), key=lambda x: x[1])
+            nombres_panorama, valores_panorama = [x[0] for x in orden], [x[1] for x in orden]
+            colores_panorama = [_color_de_score(v) for v in valores_panorama]
+            st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+            st.plotly_chart(
+                _chart_barras_categorias(nombres_panorama, valores_panorama, colores_panorama,
+                                          f"Panorama por categoría — {pais}"),
+                use_container_width=True, key=f"panorama_barras_{pais}",
+            )
+
         st.markdown("<hr style='margin:6px 0;border-color:#21262d'>", unsafe_allow_html=True)
     else:
         st.info("Este país solo tiene eventos cualitativos cargados (sin lectura de bueno/malo por categoría).")
@@ -2008,6 +2209,26 @@ def _tab_perfil_pais(supabase):
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     st.info(_texto_resumen_pais(pais, categorias, df_pais_puntuable, moneda_score))
 
+    # ── Evolución mensual (general y por categoría) ──
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    st.markdown(f"#### 📈 Evolución mensual de {pais}")
+    st.caption(
+        "Puntaje ponderado agregado de cada mes, calculado con TODO el historial "
+        "cargado del país (no se ve afectado por el filtro de año/mes elegido arriba), "
+        "para poder comparar un período contra otro de forma consistente."
+    )
+    serie_general_pais = _serie_mensual(df_pais_puntuable_completo)
+    fig_evol_general = _chart_evolucion_mensual(serie_general_pais, pais, "#3a7bd5",
+                                                  titulo=f"Puntaje mensual agregado — {pais}")
+    if fig_evol_general is not None:
+        st.plotly_chart(fig_evol_general, use_container_width=True, key=f"panorama_evol_general_{pais}")
+    else:
+        st.info("Todavía no hay al menos dos meses distintos cargados para este país como para graficar su evolución.")
+
+    fig_evol_cat_pais = _chart_evolucion_categorias(df_pais_puntuable_completo)
+    if fig_evol_cat_pais is not None:
+        st.plotly_chart(fig_evol_cat_pais, use_container_width=True, key=f"panorama_evol_cat_{pais}")
+
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos,
                                    df_puntuable_completo=df_pais_puntuable_completo)
@@ -2015,9 +2236,10 @@ def _tab_perfil_pais(supabase):
     st.caption(
         "Metodología: cada dato puntúa 🟢+1 / 🟡+0.5 / 🟠−0.5 / 🔴−1 según su lectura para cada "
         "activo (ya corregida por polaridad del evento), promediado ponderando por el impacto de "
-        "cada evento (Muy Alto pesa 3x, Alto 2x, Medio 1x, Bajo 0.5x). La evolución mes a mes y el "
-        "outlook de tasas de interés se calculan sobre todo el historial cargado del país, "
-        "independientemente del filtro de año/mes elegido arriba."
+        "cada evento (Muy Alto pesa 3x, Alto 2x, Medio 1x, Bajo 0.5x). La evolución mensual, la "
+        "volatilidad, la racha de meses consecutivos y el outlook de tasas de interés se calculan "
+        "sobre todo el historial cargado del país, independientemente del filtro de año/mes elegido "
+        "arriba."
     )
 
 
@@ -2056,8 +2278,8 @@ def _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activo
     """Informe narrativo para la comparación entre dos países,
     resaltando el diferencial más marcado categoría por categoría, la
     implicancia relativa sobre cada moneda, quién viene mejorando más
-    mes a mes y qué implica el conjunto de datos de cada uno sobre sus
-    tasas de interés a futuro."""
+    mes a mes (con volatilidad y racha de cada uno) y qué implica el
+    conjunto de datos de cada uno sobre sus tasas de interés a futuro."""
     parrafos = []
     df_full_a = df_full_a if df_full_a is not None else df_a
     df_full_b = df_full_b if df_full_b is not None else df_b
@@ -2125,9 +2347,12 @@ def _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activo
             )
 
     # Evolución mes a mes de cada país (usa todo el historial cargado
-    # de cada uno, no el recorte de año/mes elegido en la pantalla).
-    comp_a = _comparar_ultimos_meses(_serie_mensual(df_full_a))
-    comp_b = _comparar_ultimos_meses(_serie_mensual(df_full_b))
+    # de cada uno, no el recorte de año/mes elegido en la pantalla),
+    # más volatilidad y racha para describir la "calidad" del ciclo.
+    serie_full_a = _serie_mensual(df_full_a)
+    serie_full_b = _serie_mensual(df_full_b)
+    comp_a = _comparar_ultimos_meses(serie_full_a)
+    comp_b = _comparar_ultimos_meses(serie_full_b)
     diff_a = comp_a["diff"] if comp_a else None
     diff_b = comp_b["diff"] if comp_b else None
 
@@ -2156,6 +2381,31 @@ def _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activo
             else:
                 texto_evol += " El ritmo de mejora (o deterioro) reciente es parecido entre ambos."
         parrafos.append(f"En cuanto a la evolución mes a mes, {texto_evol}")
+
+    # Volatilidad y racha comparadas
+    vol_a, nmv_a = _volatilidad_score(serie_full_a)
+    vol_b, nmv_b = _volatilidad_score(serie_full_b)
+    racha_a, dir_a = _racha_actual(serie_full_a)
+    racha_b, dir_b = _racha_actual(serie_full_b)
+    partes_calidad = []
+    if vol_a is not None and vol_b is not None:
+        if abs(vol_a - vol_b) >= 0.1:
+            mas_volatil = pais_a if vol_a > vol_b else pais_b
+            mas_estable = pais_b if vol_a > vol_b else pais_a
+            partes_calidad.append(
+                f"el ciclo de {mas_estable} viene siendo más consistente mes a mes que el de {mas_volatil} "
+                f"(desvíos de {min(vol_a, vol_b):.2f} vs. {max(vol_a, vol_b):.2f} respectivamente)"
+            )
+        else:
+            partes_calidad.append(
+                f"ambos países muestran una consistencia mes a mes similar (desvíos de {vol_a:.2f} y {vol_b:.2f})"
+            )
+    for pais_x, racha_x, dir_x in [(pais_a, racha_a, dir_a), (pais_b, racha_b, dir_b)]:
+        if racha_x and dir_x:
+            verbo = "mejorando" if dir_x == "mejora" else "empeorando"
+            partes_calidad.append(f"{pais_x} lleva {racha_x} mes(es) consecutivo(s) {verbo}")
+    if partes_calidad:
+        parrafos.append(("En términos de calidad del ciclo, " + "; ".join(partes_calidad) + ".").capitalize())
 
     # Implicancia comparada sobre tasas de interés a futuro
     outlook_a = _outlook_tasas(df_full_a)
@@ -2190,7 +2440,7 @@ def _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activo
 def _render_informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
                                           ganados_a, ganados_b, empates,
                                           df_full_a=None, df_full_b=None):
-    st.markdown("#### 📖 Lectura")
+    st.markdown("#### 🧠 Informe de analista senior")
     for p in _informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
                                             ganados_a, ganados_b, empates, df_full_a, df_full_b):
         st.markdown(p)
@@ -2241,6 +2491,21 @@ def _render_informe_analista_comparacion(pais_a, pais_b, categorias, df_a, df_b,
         )
         st.plotly_chart(fig2, use_container_width=True, key=f"cmpp_chart_radar_{pais_a}_{pais_b}")
 
+    # Evolución mensual comparada — overlay de ambos países.
+    df_full_a = df_full_a if df_full_a is not None else df_a
+    df_full_b = df_full_b if df_full_b is not None else df_b
+    fig_evol_cmp = _chart_evolucion_comparada(
+        _serie_mensual(df_full_a), _serie_mensual(df_full_b), pais_a, pais_b,
+    )
+    if fig_evol_cmp is not None:
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        st.plotly_chart(fig_evol_cmp, use_container_width=True, key=f"cmpp_chart_evol_{pais_a}_{pais_b}")
+    else:
+        st.info(
+            f"Todavía no hay al menos dos meses distintos cargados para {pais_a} y/o {pais_b} "
+            "como para graficar su evolución mensual comparada."
+        )
+
 
 # ==============================================================
 #  RENDER — TAB PAÍS VS PAÍS
@@ -2257,8 +2522,9 @@ def _tab_comparar_paises(supabase):
     st.caption(
         "Elegí dos países y compará, categoría por categoría, cuál viene "
         "mostrando datos económicos más fuertes según todo lo registrado hasta ahora, "
-        "cómo impactan esos datos en cada activo financiero — incluida su moneda — y "
-        "un informe narrativo de análisis fundamental comparado. "
+        "cómo impactan esos datos en cada activo financiero — incluida su moneda —, "
+        "cómo evolucionó cada uno mes a mes, y un informe narrativo de análisis "
+        "fundamental comparado. "
         "El puntaje ya tiene en cuenta si 'mayor' es bueno o malo para cada indicador "
         "(desempleo, inflación y tasas puntúan al revés que PBI o PMI) y pondera más los "
         "eventos de mayor impacto. Los eventos cualitativos (comparecencias, actas, etc.) "
@@ -2358,6 +2624,33 @@ def _tab_comparar_paises(supabase):
             with col_gan:
                 st.markdown(_etiqueta_ganador(ganador, prom_a, prom_b))
             st.markdown("<hr style='margin:4px 0;border-color:#21262d'>", unsafe_allow_html=True)
+
+        # Gráfico comparativo por categoría — visible apenas se ven los
+        # resultados, no solo dentro del informe de analista más abajo.
+        nombres_cmp, val_a_cmp, val_b_cmp = [], [], []
+        for cat in categorias:
+            prom_a, _ = _promedio_ponderado_score(df_a[df_a["categoria"] == cat])
+            prom_b, _ = _promedio_ponderado_score(df_b[df_b["categoria"] == cat])
+            if prom_a is not None or prom_b is not None:
+                nombres_cmp.append(cat)
+                val_a_cmp.append(prom_a if prom_a is not None else 0.0)
+                val_b_cmp.append(prom_b if prom_b is not None else 0.0)
+        if nombres_cmp:
+            fig_barras_cmp = go.Figure()
+            fig_barras_cmp.add_trace(go.Bar(y=nombres_cmp, x=val_a_cmp, name=pais_a, orientation="h", marker=dict(color="#3a7bd5")))
+            fig_barras_cmp.add_trace(go.Bar(y=nombres_cmp, x=val_b_cmp, name=pais_b, orientation="h", marker=dict(color="#f0883e")))
+            fig_barras_cmp.update_layout(
+                title=f"Panorama por categoría — {pais_a} vs {pais_b}",
+                barmode="group",
+                xaxis=dict(range=[-1.2, 1.2], title="Puntaje ponderado (−1 a +1)", zerolinecolor="#3a3a3a"),
+                yaxis=dict(autorange="reversed"),
+                height=max(280, 50 * len(nombres_cmp)),
+                margin=dict(l=10, r=10, t=40, b=10),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#e6edf3"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            )
+            st.plotly_chart(fig_barras_cmp, use_container_width=True, key=f"cmpp_panorama_barras_{pais_a}_{pais_b}")
     else:
         st.info("No hay categorías con eventos puntuables en común todavía (comparecencias, actas y "
                  "posicionamiento CFTC no cuentan para el puntaje por categoría).")
@@ -2466,6 +2759,20 @@ def _tab_comparar_paises(supabase):
     df_full_a = df_puntuable_completo_global[df_puntuable_completo_global["pais"] == pais_a]
     df_full_b = df_puntuable_completo_global[df_puntuable_completo_global["pais"] == pais_b]
 
+    # ── Evolución mensual comparada (visible antes del informe) ──
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    st.markdown(f"#### 📈 Evolución mensual — {pais_a} vs {pais_b}")
+    fig_evol_top = _chart_evolucion_comparada(
+        _serie_mensual(df_full_a), _serie_mensual(df_full_b), pais_a, pais_b,
+    )
+    if fig_evol_top is not None:
+        st.plotly_chart(fig_evol_top, use_container_width=True, key=f"cmpp_panorama_evol_{pais_a}_{pais_b}")
+    else:
+        st.info(
+            f"Todavía no hay al menos dos meses distintos cargados para {pais_a} y/o {pais_b} "
+            "como para graficar su evolución mensual comparada."
+        )
+
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     _render_informe_analista_comparacion(
         pais_a, pais_b, categorias, df_a, df_b, activos_a, activos_b,
@@ -2481,10 +2788,12 @@ def _tab_comparar_paises(supabase):
         "Para el impacto en activos financieros se aplica la misma ponderación, pero directamente "
         "sobre la lectura de cada activo (divisas, bonos, acciones, oro, cripto) en lugar del "
         "veredicto general de bueno/malo, y los eventos cualitativos sin lectura de bueno/malo "
-        "quedan afuera del cálculo por categoría. Además de decir quién queda arriba, cada fila "
-        "indica qué tan grande es esa diferencia (prácticamente parejo / ventaja leve / ventaja "
-        "clara / ventaja muy fuerte) según la distancia entre los dos puntajes, para distinguir un "
-        "dato ajustado de una diferencia fundamental real."
+        "quedan afuera del cálculo por categoría. La evolución mensual, la volatilidad y la racha "
+        "de cada país se calculan sobre todo su historial cargado, independientemente del filtro "
+        "de año/mes elegido arriba. Además de decir quién queda arriba, cada fila indica qué tan "
+        "grande es esa diferencia (prácticamente parejo / ventaja leve / ventaja clara / ventaja "
+        "muy fuerte) según la distancia entre los dos puntajes, para distinguir un dato ajustado de "
+        "una diferencia fundamental real."
     )
 
 
@@ -2588,10 +2897,12 @@ def render_calendario_economico(supabase, user_id, user_email):
     Muestra el calendario económico (carga de eventos + carga masiva +
     historial con interpretación macro completa, editable/eliminable
     por el admin), una pestaña de "Perfil de País" (cómo está un país,
-    cómo impacta en cada activo financiero, e informe de analista
-    senior con gráficos) y una pestaña de comparación país vs país
-    agrupada por categoría, por activo financiero e informe comparado.
-    Las noticias son un módulo aparte, ver render_noticias() más abajo.
+    graficado por categoría y en el tiempo, cómo impacta en cada activo
+    financiero, e informe de analista senior con gráficos) y una
+    pestaña de comparación país vs país agrupada por categoría, por
+    activo financiero, con evolución mensual comparada e informe
+    narrativo. Las noticias son un módulo aparte, ver render_noticias()
+    más abajo.
     """
     es_admin = _es_admin(user_email)
 
@@ -2606,8 +2917,8 @@ def render_calendario_economico(supabase, user_id, user_email):
         Registro de eventos macro con interpretación automática completa
         (divisas, bonos, acciones, oro y cripto), carga masiva desde
         Excel/CSV, su historial editable, el perfil macro de cada país
-        con informe de analista senior, y su comparación frente a otros
-        países.
+        con gráficos de panorama y evolución mensual, un informe de
+        analista senior, y su comparación frente a otros países.
       </div>
     </div>
     """, unsafe_allow_html=True)
