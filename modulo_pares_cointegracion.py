@@ -520,16 +520,32 @@ PARES_SECTORES = {
         },
     },
 
-        # ============================================================
-    #  GRUPOS NUEVOS — índices
     # ============================================================
-    "indices": {
-        "benchmark": "SPY",
-        "empresas": ["QQQ", "DIA", "IWM", "MDY", "VTI", "EFA", "EEM", "ACWI", "VEA", "VWO"],
+    #  GRUPO NUEVO — Índices/mercados por país (ETFs, todo en USD)
+    #  Benchmark: ACWI (mercado mundial completo)
+    # ============================================================
+    "Índices Mundiales": {
+        "benchmark": "ACWI",
+        "empresas": [
+            # América
+            "SPY", "EWC", "ARGT", "EWZ", "EWW", "ECH", "EPU",
+            # Europa
+            "EWU", "EWG", "EWQ", "EWI", "EWP", "EWN", "EWL", "EWD",
+            # Asia-Pacífico
+            "EWJ", "EWY", "MCHI", "INDA", "EWT", "EWH", "EWS", "EWA",
+            # Otros emergentes
+            "EZA", "TUR", "EPOL", "EIDO", "THD", "EPHE", "VNM", "KSA", "EIS",
+        ],
         "tickers": {
-            "SPY": "SPY", "QQQ": "QQQ", "DIA": "DIA", "IWM": "IWM", "MDY": "MDY",
-            "VTI": "VTI", "EFA": "EFA", "EEM": "EEM", "ACWI": "ACWI", "VEA": "VEA",
-            "VWO": "VWO",
+            "ACWI": "ACWI",
+            "SPY": "SPY", "EWC": "EWC", "ARGT": "ARGT", "EWZ": "EWZ",
+            "EWW": "EWW", "ECH": "ECH", "EPU": "EPU",
+            "EWU": "EWU", "EWG": "EWG", "EWQ": "EWQ", "EWI": "EWI",
+            "EWP": "EWP", "EWN": "EWN", "EWL": "EWL", "EWD": "EWD",
+            "EWJ": "EWJ", "EWY": "EWY", "MCHI": "MCHI", "INDA": "INDA",
+            "EWT": "EWT", "EWH": "EWH", "EWS": "EWS", "EWA": "EWA",
+            "EZA": "EZA", "TUR": "TUR", "EPOL": "EPOL", "EIDO": "EIDO",
+            "THD": "THD", "EPHE": "EPHE", "VNM": "VNM", "KSA": "KSA", "EIS": "EIS",
         },
     },
 
