@@ -688,7 +688,7 @@ def _guardar_registro(supabase, datos, user_id):
     real, previsto, anterior = datos.get("real"), datos.get("previsto"), datos.get("anterior")
     polaridad = EVENTOS.get(datos["evento"], {}).get("polaridad", "directa")
     analisis = _calcular_analisis(previsto, anterior, real, polaridad)
-    macro = interpretar_macro(datos["evento"], real, previsto)
+    macro = interpretar_macro(datos["evento"], real, previsto, anterior)
     row = {
         "user_id": user_id,
         "fecha": str(datos["fecha"]),
@@ -716,7 +716,7 @@ def _actualizar_registro(supabase, registro_id, datos):
     real, previsto, anterior = datos.get("real"), datos.get("previsto"), datos.get("anterior")
     polaridad = EVENTOS.get(datos["evento"], {}).get("polaridad", "directa")
     analisis = _calcular_analisis(previsto, anterior, real, polaridad)
-    macro = interpretar_macro(datos["evento"], real, previsto)
+    macro = interpretar_macro(datos["evento"], real, previsto, anterior)
     row = {
         "fecha": str(datos["fecha"]),
         "pais": datos["pais"],
@@ -806,7 +806,7 @@ def _recalcular_fila(row):
     polaridad = EVENTOS.get(evento, {}).get("polaridad", "directa")
 
     analisis = _calcular_analisis(previsto, anterior, real, polaridad)
-    macro = interpretar_macro(evento, real, previsto)
+    macro = interpretar_macro(evento, real, previsto, anterior)
 
     nuevo = {
         "vs_previsto": analisis["vs_previsto"], "vs_anterior": analisis["vs_anterior"],
@@ -943,7 +943,7 @@ def _tab_registrar(supabase, user_id, es_admin):
     )
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    macro = interpretar_macro(evento, real, previsto) if evento else interpretar_macro(None, None, None)
+    macro = interpretar_macro(evento, real, previsto, anterior) if evento else interpretar_macro(None, None, None)
     _render_macro_grid(macro)
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
@@ -1114,7 +1114,7 @@ def _guardar_registros_masivo(supabase, lista_datos, user_id):
         real, previsto, anterior = datos.get("real"), datos.get("previsto"), datos.get("anterior")
         polaridad = EVENTOS.get(datos["evento"], {}).get("polaridad", "directa")
         analisis = _calcular_analisis(previsto, anterior, real, polaridad)
-        macro = interpretar_macro(datos["evento"], real, previsto)
+        macro = interpretar_macro(datos["evento"], real, previsto, anterior)
         filas.append({
             "user_id": user_id,
             "fecha": str(datos["fecha"]),
