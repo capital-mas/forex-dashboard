@@ -519,6 +519,47 @@ PARES_SECTORES = {
             "BTDR": "BTDR", "IREN": "IREN", "CAN": "CAN", "WULF": "WULF",
         },
     },
+
+        # ============================================================
+    #  GRUPOS NUEVOS — índices
+    # ============================================================
+    "Índices": {
+        "benchmark": "SPY",
+        "empresas": ["QQQ", "DIA", "IWM", "MDY", "VTI", "EFA", "EEM", "ACWI", "VEA", "VWO"],
+        "tickers": {
+            "SPY": "SPY", "QQQ": "QQQ", "DIA": "DIA", "IWM": "IWM", "MDY": "MDY",
+            "VTI": "VTI", "EFA": "EFA", "EEM": "EEM", "ACWI": "ACWI", "VEA": "VEA",
+            "VWO": "VWO",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — commodities
+    # ============================================================
+    "Commodities": {
+        "benchmark": "DBC",
+        "empresas": ["USO", "UNG", "GLD", "SLV", "PPLT", "PALL", "CPER", "DBA",
+                     "CORN", "WEAT", "SOYB", "UGA"],
+        "tickers": {
+            "DBC": "DBC", "USO": "USO", "UNG": "UNG", "GLD": "GLD", "SLV": "SLV",
+            "PPLT": "PPLT", "PALL": "PALL", "CPER": "CPER", "DBA": "DBA",
+            "CORN": "CORN", "WEAT": "WEAT", "SOYB": "SOYB", "UGA": "UGA",
+        },
+    },
+
+    # ============================================================
+    #  GRUPOS NUEVOS — rotación sectorial (ETFs SPDR vs SPY)
+    # ============================================================
+    "ETFs Sectoriales": {
+        "benchmark": "SPY",
+        "empresas": ["XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLU",
+                     "XLRE", "XLC", "XLB"],
+        "tickers": {
+            "SPY": "SPY", "XLK": "XLK", "XLF": "XLF", "XLE": "XLE", "XLV": "XLV",
+            "XLY": "XLY", "XLP": "XLP", "XLI": "XLI", "XLU": "XLU", "XLRE": "XLRE",
+            "XLC": "XLC", "XLB": "XLB",
+        },
+    },
 }
 
 
