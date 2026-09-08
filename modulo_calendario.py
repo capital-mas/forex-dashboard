@@ -466,6 +466,47 @@ def _explicacion_categoria(categoria):
     )
 
 
+_POLARIDAD_EXPLICACION = {
+    "directa": "un dato por ENCIMA de lo previsto se lee como positivo para la economía (y por debajo, como negativo)",
+    "inversa": "un dato por ENCIMA de lo previsto se lee como negativo para la economía (y por debajo, como positivo) — es el caso típico de desempleo, inflación, tasas o costos",
+    "neutral": "es un evento cualitativo (comparecencia, actas, etc.) sin una lectura automática de bueno/malo",
+}
+
+
+def _detalle_eventos_categoria(sub_df):
+    """Arma una tabla legible con cada evento puntuable que compone una
+    categoría — de qué se trata cada uno, qué criterio de polaridad se
+    le aplicó y qué puntaje individual terminó aportando al promedio.
+    Es el desglose que justifica el puntaje agregado que se ve arriba."""
+    if sub_df.empty:
+        return pd.DataFrame(columns=["Fecha", "Evento", "Impacto", "Previsto", "Anterior", "Real",
+                                      "Unidad", "Criterio aplicado", "Lectura", "Puntaje", "Peso"])
+    df_ord = sub_df.sort_values("fecha_dt", ascending=False)
+    filas = []
+    for _, r in df_ord.iterrows():
+        evento = r.get("evento")
+        info = EVENTOS.get(evento, {})
+        polaridad = info.get("polaridad", "directa")
+        criterio = {"directa": "Mayor = mejor", "inversa": "Mayor = peor", "neutral": "Cualitativo"}.get(polaridad, "—")
+        unidad = r.get("unidad") or info.get("unidad") or ""
+        score_val = r.get("score")
+        peso_val = r.get("peso")
+        filas.append({
+            "Fecha": r.get("fecha"),
+            "Evento": evento,
+            "Impacto": info.get("impacto", r.get("relevancia") or "—"),
+            "Previsto": r.get("previsto") if r.get("previsto") is not None else "—",
+            "Anterior": r.get("anterior") if r.get("anterior") is not None else "—",
+            "Real": r.get("real") if r.get("real") is not None else "—",
+            "Unidad": unidad or "—",
+            "Criterio aplicado": criterio,
+            "Lectura": r.get("impacto_mercado") or "⚪ Sin datos suficientes",
+            "Puntaje": f"{score_val:+.2f}" if pd.notna(score_val) else "—",
+            "Peso": f"{peso_val:.1f}x" if pd.notna(peso_val) else "—",
+        })
+    return pd.DataFrame(filas)
+
+
 IMPACTO_COLOR = {"Muy Alto": "#f85149", "Alto": "#f0883e", "Medio": "#e3b341", "Bajo": "#8b949e"}
 
 MESES_NOMBRE = {
@@ -2060,10 +2101,6 @@ def _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categor
         else:
             st.info("Todavía no hay al menos dos meses distintos cargados como para graficar la evolución mensual.")
 
-    fig_evol_cat = _chart_evolucion_categorias(base_evolucion)
-    if fig_evol_cat is not None:
-        st.plotly_chart(fig_evol_cat, use_container_width=True, key=f"perfil_chart_evol_cat_{pais}")
-
 
 # ==============================================================
 #  RENDER — TAB PERFIL DE PAÍS (reemplaza al viejo "Comparar" A/B)
@@ -2154,17 +2191,40 @@ def _tab_perfil_pais(supabase):
 
     categorias = sorted(df_pais_puntuable["categoria"].unique().tolist())
     if categorias:
+        st.caption("👇 Desplegá cada categoría para ver qué mide, cómo se calculó su puntaje y qué eventos concretos lo componen.")
         for cat in categorias:
             sub = df_pais_puntuable[df_pais_puntuable["categoria"] == cat]
             prom, n = _promedio_ponderado_score(sub)
             emoji, texto = _asset_verdict(prom)
-            col_cat, col_score, col_txt = st.columns([2, 1.4, 3])
-            with col_cat:
-                st.markdown(f"**{cat}**")
-            with col_score:
-                st.caption(f"{prom:+.2f}  ({n} dato{'s' if n != 1 else ''})" if prom is not None else "Sin datos")
-            with col_txt:
-                st.markdown(f"{emoji} {texto}")
+            resumen = f"{prom:+.2f} sobre {n} dato{'s' if n != 1 else ''}" if prom is not None else "sin datos"
+            with st.expander(f"{cat}  ·  {emoji} {texto}  ({resumen})"):
+                st.markdown(f"**📖 Qué mide esta categoría:** {_explicacion_categoria(cat)}.")
+
+                if prom is not None:
+                    st.markdown(
+                        f"**🧮 Por qué da este puntaje ({prom:+.2f}):** cada uno de los {n} evento(s) "
+                        "cargados en esta categoría aporta un puntaje individual —🟢 +1 si fue un buen "
+                        "dato, 🟡 +0.5 si fue parcialmente bueno, ⚪ 0 si fue neutro, 🟠 −0.5 si fue "
+                        "parcialmente malo, 🔴 −1 si fue un mal dato— según si el resultado (Real) quedó "
+                        "por encima o por debajo de lo previsto y de lo anterior, ya corregido por el "
+                        "criterio de cada indicador puntual (ver columna *Criterio aplicado* en la tabla "
+                        "de abajo: no es lo mismo un dato donde 'más' es mejor —como el PBI o el PMI— que "
+                        "uno donde 'más' es peor —como el desempleo o la inflación—). Esos puntajes "
+                        "individuales se promedian ponderando por el impacto de cada evento (Muy Alto "
+                        "pesa 3 veces más que uno Bajo), así una sorpresa en un dato de alta relevancia "
+                        f"mueve más el resultado final que una en un dato secundario. Resultado: {emoji} "
+                        f"**{texto}**."
+                    )
+                else:
+                    st.markdown(
+                        "Todavía no hay eventos con lectura cuantitativa de bueno/malo cargados en esta "
+                        "categoría para el período seleccionado (puede que solo haya eventos cualitativos, "
+                        "como comparecencias o actas)."
+                    )
+
+                st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+                st.markdown("**📋 Eventos que componen esta categoría** (de más reciente a más antiguo):")
+                st.dataframe(_detalle_eventos_categoria(sub), use_container_width=True, hide_index=True)
 
         # Gráfico de barras del panorama, visible apenas se elige el
         # país — antes este gráfico solo aparecía más abajo, en el
