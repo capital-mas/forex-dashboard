@@ -758,6 +758,72 @@ def _obtener_registros(_supabase, limite=None, fecha_desde=None, fecha_hasta=Non
     return todas
 
 
+def _limpiar_cache_registros():
+    """Limpia TODAS las cachés que dependen de la tabla de registros.
+    Usar esto (y no clear() sobre una sola caché) después de cualquier
+    insert/update/delete, porque Historial lee de _obtener_registros
+    directamente mientras que Perfil de País y País vs País leen de
+    _df_registros_procesado — si solo se limpia una, la otra pantalla
+    sigue mostrando datos viejos hasta que expire el TTL de 2 minutos.
+    Este bug fue el motivo por el que un evento recién editado/corregido
+    podía seguir viéndose con el valor anterior en Historial."""
+    _obtener_registros.clear()
+    _df_registros_procesado.clear()
+
+
+def _recalcular_fila(row):
+    """A partir de una fila ya guardada en Supabase, vuelve a calcular
+    el análisis (vs. previsto/anterior, señales, impacto de mercado) y
+    la interpretación macro (divisas, bonos, acciones, oro, cripto,
+    política monetaria, régimen de mercado, lectura) con la lógica
+    VIGENTE del código. Devuelve (cambio: bool, campos_nuevos: dict) —
+    cambio es True si al menos un campo calculado difiere de lo que
+    hoy está guardado en la base (por ejemplo, porque se corrigió un
+    bug de cálculo después de haber cargado el evento)."""
+    evento = row.get("evento")
+    real, previsto, anterior = row.get("real"), row.get("previsto"), row.get("anterior")
+    polaridad = EVENTOS.get(evento, {}).get("polaridad", "directa")
+
+    analisis = _calcular_analisis(previsto, anterior, real, polaridad)
+    macro = interpretar_macro(evento, real, previsto)
+
+    nuevo = {
+        "vs_previsto": analisis["vs_previsto"], "vs_anterior": analisis["vs_anterior"],
+        "senal_previsto": analisis["senal_previsto"], "senal_anterior": analisis["senal_anterior"],
+        "impacto_mercado": analisis["impacto_mercado"],
+        "divisas": macro["divisas"], "bonos": macro["bonos"], "acciones": macro["acciones"],
+        "oro": macro["oro"], "criptomonedas": macro["crypto"],
+        "politica_monetaria": macro["politica"], "regimen_mercado": macro["riesgo"],
+        "lectura_macro": macro["lectura"],
+    }
+    cambio = any((row.get(k) or "") != (v or "") for k, v in nuevo.items())
+    return cambio, nuevo
+
+
+def _recalcular_todos_los_registros(supabase, progreso_cb=None):
+    """Recorre TODOS los eventos ya guardados, recalcula análisis +
+    interpretación macro con la lógica vigente, y actualiza en Supabase
+    ÚNICAMENTE los que cambiaron respecto a lo guardado — pensado para
+    correr una sola vez después de corregir un bug de cálculo, en lugar
+    de tener que editar evento por evento a mano.
+
+    progreso_cb(hecho, total), si se pasa, se llama después de procesar
+    cada fila para poder mostrar una barra de progreso en la UI.
+
+    Devuelve (total_revisados, total_actualizados)."""
+    filas = _obtener_registros(supabase)
+    total = len(filas)
+    actualizados = 0
+    for i, row in enumerate(filas):
+        cambio, nuevo = _recalcular_fila(row)
+        if cambio:
+            supabase.table(TABLA_REGISTRO).update(nuevo).eq("id", row["id"]).execute()
+            actualizados += 1
+        if progreso_cb:
+            progreso_cb(i + 1, total)
+    return total, actualizados
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def _obtener_noticias(_supabase, limite=100):
     res = (_supabase.table(TABLA_NOTICIAS).select("*")
@@ -877,7 +943,7 @@ def _tab_registrar(supabase, user_id, es_admin):
                              unidad=unidad, notas=notas)
                 try:
                     _guardar_registro(supabase, datos, user_id)
-                    _df_registros_procesado.clear()
+                    _limpiar_cache_registros()
                     st.success("✅ Registro guardado.")
                     st.rerun()
                 except Exception as e:
@@ -1147,7 +1213,7 @@ def _tab_carga_masiva(supabase, user_id, es_admin):
         ):
             try:
                 n = _guardar_registros_masivo(supabase, filas_ok, user_id)
-                _df_registros_procesado.clear()
+                _limpiar_cache_registros()
                 st.success(f"✅ Se importaron {n} evento(s) correctamente.")
                 st.rerun()
             except Exception as e:
@@ -1215,7 +1281,7 @@ def _form_editar_registro(supabase, row):
             )
             try:
                 _actualizar_registro(supabase, registro_id, datos)
-                _df_registros_procesado.clear()
+                _limpiar_cache_registros()
                 st.success("✅ Evento actualizado.")
                 st.session_state.pop(f"cal_hist_editando_{registro_id}", None)
                 st.rerun()
@@ -1238,7 +1304,7 @@ def _confirmar_borrado_registro(supabase, row):
         if st.button("🗑️ Sí, eliminar", type="primary", use_container_width=True, key=f"cal_del_{registro_id}_confirmar"):
             try:
                 _borrar_registro(supabase, registro_id)
-                _df_registros_procesado.clear()
+                _limpiar_cache_registros()
                 st.success("✅ Evento eliminado.")
                 st.session_state.pop(f"cal_hist_borrando_{registro_id}", None)
                 st.rerun()
@@ -1256,8 +1322,43 @@ def _tab_historial(supabase, es_admin=False):
         st.caption("Todos los eventos económicos cargados" + (" (el admin puede editar o eliminar cada evento)" if es_admin else " (solo lectura)"))
     with top2:
         if st.button("↺ Actualizar", use_container_width=True, key="cal_hist_refresh"):
-            _df_registros_procesado.clear()
+            _limpiar_cache_registros()
             st.rerun()
+
+    if es_admin:
+        with st.expander("🔄 Recalcular todos los eventos (mantenimiento)"):
+            st.caption(
+                "Vuelve a calcular el análisis (vs. previsto/anterior, señales, impacto de mercado) "
+                "y la interpretación macro (divisas, bonos, acciones, oro, cripto, política monetaria, "
+                "régimen de mercado) de **todos** los eventos ya cargados, con la lógica que está hoy "
+                "en el código. Útil después de corregir un bug de cálculo (como el de 'Real = Previsto' "
+                "que se arregló hace poco), para no tener que entrar evento por evento a Editar → "
+                "Guardar. Solo se actualiza en la base lo que realmente cambió; los eventos ya "
+                "correctos quedan intactos y esto no borra ni modifica Fecha, País, Evento, Previsto, "
+                "Anterior, Real ni Notas."
+            )
+            if st.button("🔄 Recalcular todos los eventos ahora", key="cal_hist_btn_recalcular_todo"):
+                barra = st.progress(0.0, text="Recalculando eventos...")
+
+                def _cb(hecho, total):
+                    frac = hecho / total if total else 1.0
+                    barra.progress(frac, text=f"Recalculando eventos... {hecho}/{total}")
+
+                try:
+                    total, actualizados = _recalcular_todos_los_registros(supabase, progreso_cb=_cb)
+                    barra.empty()
+                    _limpiar_cache_registros()
+                    if actualizados:
+                        st.success(
+                            f"✅ Listo: se revisaron {total} evento(s) y se corrigieron **{actualizados}**, "
+                            "que tenían una lectura distinta a la que da la lógica actual."
+                        )
+                    else:
+                        st.info(f"✅ Se revisaron {total} evento(s) y ya estaban todos al día — no hizo falta corregir ninguno.")
+                    st.rerun()
+                except Exception as e:
+                    barra.empty()
+                    st.error(f"❌ Error al recalcular: {e}")
 
     # El filtro de fecha se resuelve ANTES de pedir los datos, así el
     # rango se manda directo a la query de Supabase (más rápido cuando
