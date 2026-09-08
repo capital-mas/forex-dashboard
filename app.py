@@ -5460,7 +5460,7 @@ PARES_SECTORES = {
         # ============================================================
     #  GRUPOS NUEVOS — índices
     # ============================================================
-    "Índices": {
+    "indices": {
         "benchmark": "SPY",
         "empresas": ["QQQ", "DIA", "IWM", "MDY", "VTI", "EFA", "EEM", "ACWI", "VEA", "VWO"],
         "tickers": {
