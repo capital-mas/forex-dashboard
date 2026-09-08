@@ -523,7 +523,7 @@ def _formato_mes(m):
 #  LÓGICA (portada 1:1 de interpretarMacro / guardarRegistro de GAS)
 # ==============================================================
 
-def interpretar_macro(evento, real, previsto):
+def interpretar_macro(evento, real, previsto, anterior=None):
     info = INTERPRETACION_MACRO.get(evento)
     if not info:
         categoria = EVENTOS.get(evento, {}).get("categoria") if evento else None
@@ -533,24 +533,42 @@ def interpretar_macro(evento, real, previsto):
              "acciones": "⚪ Sin interpretación", "oro": "⚪ Sin interpretación",
              "crypto": "⚪ Sin interpretación", "politica": "⚪ Sin interpretación",
              "riesgo": "⚪ Sin interpretación", "lectura": "No existe interpretación cargada para este evento."}
-    if not info or real is None or previsto is None:
+    if not info or real is None:
         return vacio
 
-    # BUGFIX: antes, "resultado = 'mayor' if real > previsto else 'menor'"
-    # mandaba el caso Real == Previsto directo a la rama "menor" (como si
-    # el dato hubiera salido POR DEBAJO de lo esperado), generando una
-    # lectura macro que contradecía al resto de la pantalla (que sí
-    # marca correctamente "➖ En línea con el previsto" / "⚖️ NEUTRO").
-    # Ahora, cuando no hay sorpresa vs. lo previsto, se devuelve una
-    # interpretación neutra explícita en lugar de inventar una dirección.
-    if real == previsto:
-        en_linea = {campo: "⚪ Sin sorpresa vs. lo previsto" for campo in
+    # Si no hay sorpresa contra el previsto (o directamente no hay previsto
+    # cargado), en vez de devolver "sin sorpresa" para todos los activos,
+    # usamos la comparación contra el dato ANTERIOR como base de la
+    # interpretación macro — así el dato dice algo útil siempre que haya
+    # algo con qué compararlo, y solo queda mudo cuando de verdad no hay
+    # ninguna referencia (ni previsto ni anterior).
+    sin_sorpresa_previsto = previsto is None or real == previsto
+
+    if sin_sorpresa_previsto:
+        if anterior is not None and real != anterior:
+            resultado = "mayor" if real > anterior else "menor"
+            base = info.get(resultado, vacio)
+            ajustado = dict(base)
+            aviso = (
+                "El dato salió en línea con lo previsto" if previsto is not None
+                else "No hay dato de 'previsto' cargado para este evento"
+            )
+            ajustado["lectura"] = (
+                f"{aviso}, sin sorpresa respecto al consenso, pero muestra una variación frente al "
+                f"dato anterior. {base.get('lectura', '')} Nota: como no hubo sorpresa contra lo "
+                "previsto, esta lectura macro se basa en la comparación contra el dato anterior "
+                "(tendencia), no contra el consenso del mercado, y suele tener un impacto más "
+                "moderado que una sorpresa real contra el previsto."
+            )
+            return ajustado
+
+        # Ni previsto (con sorpresa) ni anterior (con variación) dan una
+        # dirección: ahí sí no hay nada de qué agarrarse.
+        en_linea = {campo: "⚪ Sin sorpresa vs. lo previsto ni variación vs. lo anterior" for campo in
                     ("divisas", "bonos", "acciones", "oro", "crypto", "politica", "riesgo")}
         en_linea["lectura"] = (
-            "El dato salió exactamente en línea con lo previsto: no hubo sorpresa respecto al "
-            "consenso, así que por sí solo no aporta una dirección clara para el mercado. El resto "
-            "de la lectura (bueno/malo) que ves arriba depende de la comparación contra el dato "
-            "anterior, no de este valor esperado."
+            "El dato no muestra sorpresa respecto a lo previsto ni variación respecto al dato "
+            "anterior, así que por sí solo no aporta una dirección clara para el mercado."
         )
         return en_linea
 
