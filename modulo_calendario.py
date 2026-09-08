@@ -601,13 +601,16 @@ def _calcular_analisis(previsto, anterior, real, polaridad="directa"):
     mej_a = hay_real and hay_ant and (real - anterior) * signo > 0
     peor_p = hay_real and hay_prev and (real - previsto) * signo < 0
     peor_a = hay_real and hay_ant and (real - anterior) * signo < 0
+    empate_p = hay_real and hay_prev and real == previsto
 
     if hay_prev or hay_ant:
-        if mej_p and mej_a:       impacto_mercado = "🟢 BUEN DATO PARA EL MERCADO"
-        elif peor_p and peor_a:   impacto_mercado = "🔴 MAL DATO PARA EL MERCADO"
-        elif mej_p or mej_a:      impacto_mercado = "🟡 BUEN DATO PARCIAL"
-        elif peor_p or peor_a:    impacto_mercado = "🟠 MAL DATO PARCIAL"
-        else:                     impacto_mercado = "⚪ NEUTRO PARA EL MERCADO"
+        if empate_p:
+            impacto_mercado = "⚪ NEUTRO PARA EL MERCADO (sin sorpresa vs. lo previsto)"
+        elif mej_p and mej_a:       impacto_mercado = "🟢 BUEN DATO PARA EL MERCADO"
+        elif peor_p and peor_a:     impacto_mercado = "🔴 MAL DATO PARA EL MERCADO"
+        elif mej_p or mej_a:        impacto_mercado = "🟡 BUEN DATO PARCIAL"
+        elif peor_p or peor_a:      impacto_mercado = "🟠 MAL DATO PARCIAL"
+        else:                       impacto_mercado = "⚪ NEUTRO PARA EL MERCADO"
 
     return dict(vs_previsto=vs_previsto, vs_anterior=vs_anterior,
                 senal_previsto=senal_prev, senal_anterior=senal_ant,
