@@ -6663,8 +6663,9 @@ with st.container(key='nav_pills_wrap'):
         ('🧮 Optimizar cartera' if TIENE_ACCESO_PRO else '🔒 Optimizar cartera (Pro)'):
                                  ('optimizador', 'optimizador'),
         '📐 Promediador + Stop Loss': ('promediador', 'promediador'),
+        '📊 F-Score (Piotroski)': ('fscore', 'fscore'),
     }
-    _herr_horizontes = {'comparador', 'optimizador', 'promediador'}
+    _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore'}
     _herr_activo = HORIZONTE in _herr_horizontes
     _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
     _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
@@ -6853,7 +6854,7 @@ with st.container(key='nav_mobile_wrap'):
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
         '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares', '🎲 Opciones': 'opciones',
-        '📐 Promediador': 'promediador', '🎯 Señales': 'senales',
+        '📐 Promediador': 'promediador', '🎯 Señales': 'senales', '📊 F-Score': 'fscore',
         '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
     }
     if ES_ADMIN:
@@ -6984,6 +6985,7 @@ titulos = {
     'senales': ('Señales de Trading', '🎯', 'Publicación de señales y simulador de capital'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
     'promediador': ('Promediador + Stop Loss', '📐', 'Precio promedio, tendencia y gestión de riesgo con apalancamiento'),
+    'fscore': ('F-Score (Piotroski)', '🧮', 'Calidad financiera 0-9 por sector — Piotroski Score'),
     'calendario': ('Calendario Económico', '📆', 'Eventos económicos relevantes y su impacto en mercados'),
     'noticias': ('Noticias', '📰', 'Noticias y análisis de mercado'),
     'admin_pagos': ('Panel de Aprobación de Pagos', '🛠️', 'Revisión y aprobación de solicitudes de pago manual'),
@@ -7004,6 +7006,7 @@ badge_map = {
     'senales': ('#ff6ec7', 'rgba(255,110,199,0.12)', 'SEÑALES'),
     'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
     'promediador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'PROMEDIADOR'),
+    'fscore': ('#3fb950', 'rgba(63,185,80,0.12)', 'F-SCORE'),
     'calendario': ('#79c0ff', 'rgba(121,192,255,0.12)', 'CALENDARIO'),
     'noticias': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'NOTICIAS'),
     'admin_pagos': ('#f0883e', 'rgba(240,136,62,0.12)', 'ADMIN'),
@@ -7105,7 +7108,10 @@ elif MODULO == 'promediador':                 # ← agregar
         scores_corto=scores_corto,
         señal_accion_corto=señal_accion_corto,
     )
-    
+
+elif MODULO == 'fscore':
+    modulo_fscore()
+
 elif MODULO == 'admin_pagos':
     if ES_ADMIN:
         panel_admin_pagos(supabase, USER_ID)
