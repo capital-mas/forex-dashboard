@@ -8,30 +8,43 @@
 #  coincidir EXACTAMENTE con el de esas políticas.
 #
 #  CAMBIOS DE ESTA VERSIÓN:
+#   - NUEVO: Múltiples entradas por señal (para promediar precio, ej.
+#     compraste en 2 o 3 tandas a distinto precio). Al publicar, se
+#     puede agregar tantas entradas como se quiera (sin límite fijo),
+#     cada una con su precio y un "peso relativo" opcional (por
+#     defecto 1 = todas pesan igual).
+#       · En "Señales y Resultados" siempre se muestra y se usa el
+#         PROMEDIO SIMPLE de las entradas (todas pesan igual).
+#       · En el "Simulador de Capital" se usa el PROMEDIO PONDERADO
+#         por el peso relativo de cada entrada, para que se pueda
+#         probar también ese escenario.
+#     REQUIERE migrar la tabla en Supabase:
+#       ALTER TABLE senales_trading
+#       ADD COLUMN IF NOT EXISTS entradas jsonb DEFAULT '[]'::jsonb;
+#     Las señales viejas (sin esta columna o con lista vacía) siguen
+#     funcionando igual que antes, usando su único precio_entrada.
 #   - Se eliminó la pestaña independiente "Gestor de Riesgo". Su
 #     cálculo (tamaño de posición a partir de un % de capital en
 #     riesgo y la distancia al Stop Loss) ahora vive DENTRO del
 #     Simulador de Capital, como el modo "🎯 % de riesgo por
 #     operación (según Stop Loss)".
-#   - Nuevo: Perfiles de riesgo (🟢 Conservador / 🟡 Moderado /
-#     🔴 Agresivo). El admin define, al publicar cada señal, qué %
-#     de capital arriesgaría cada perfil si el precio llega al
-#     Stop Loss. REQUIERE migrar la tabla en Supabase:
+#   - Perfiles de riesgo (🟢 Conservador / 🟡 Moderado / 🔴 Agresivo).
+#     El admin define, al publicar cada señal, qué % de capital
+#     arriesgaría cada perfil si el precio llega al Stop Loss.
+#     REQUIERE migrar la tabla en Supabase:
 #       ALTER TABLE senales_trading
 #       ADD COLUMN IF NOT EXISTS riesgo_conservador float DEFAULT 1.0,
 #       ADD COLUMN IF NOT EXISTS riesgo_moderado    float DEFAULT 2.0,
 #       ADD COLUMN IF NOT EXISTS riesgo_agresivo    float DEFAULT 3.0;
-#     (además de la columna "categoria" agregada en la versión anterior)
-#   - En "Señales y Resultados", cada señal ahora tiene un selector
-#     de perfil de riesgo: el usuario elige con qué perfil quiere
-#     tomar esa señal y la app calcula solo el tamaño de posición
-#     sugerido, el capital que usaría de margen y el riesgo/premio
-#     en dólares.
+#     (además de la columna "categoria" agregada en versiones previas)
+#   - En "Señales y Resultados", cada señal tiene un selector de
+#     perfil de riesgo: el usuario elige con qué perfil quiere tomar
+#     esa señal y la app calcula solo el tamaño de posición sugerido,
+#     el capital que usaría de margen y el riesgo/premio en dólares.
 #   - En el Simulador de Capital se agregó el modo "🎭 Comparar los
 #     3 perfiles de riesgo": corre la simulación completa una vez
 #     por perfil (usando el % que definió el admin en cada señal) y
-#     muestra los resultados uno al lado del otro, con una
-#     explicación de qué implica cada perfil.
+#     muestra los resultados uno al lado del otro.
 # ==============================================================
 
 import streamlit as st
@@ -113,6 +126,142 @@ def _es_admin(user_email):
 
 
 # ==============================================================
+#  ENTRADAS MÚLTIPLES — helpers de promediado
+#  Cada señal puede tener 1 o más "entradas" (precio + peso
+#  relativo). Se guardan en la columna jsonb "entradas". El campo
+#  "precio_entrada" de siempre se sigue guardando también, como el
+#  PROMEDIO SIMPLE, para que todo el resto del código (SL/TP,
+#  Señales y Resultados, evaluación automática) siga funcionando
+#  igual sin tener que tocarlo. El Simulador es el único lugar que
+#  pisa ese valor por el promedio PONDERADO antes de calcular.
+# ==============================================================
+
+def _entradas_de_senal(senal):
+    """Devuelve la lista de entradas normalizada: [{'precio':.., 'peso':..}, ...].
+    Si la señal es vieja (sin campo 'entradas' o vacío), arma una lista
+    de 1 sola entrada a partir de precio_entrada, para que el resto del
+    código funcione igual sin importar cuántas entradas tenga la señal."""
+    entradas = senal.get("entradas")
+    if entradas and isinstance(entradas, list):
+        limpio = []
+        for e in entradas:
+            try:
+                p = float(e.get("precio"))
+                w = float(e.get("peso", 1.0)) or 1.0
+                if p > 0:
+                    limpio.append({"precio": p, "peso": w})
+            except (TypeError, ValueError, AttributeError):
+                continue
+        if limpio:
+            return limpio
+    precio_unico = float(senal.get("precio_entrada") or 0)
+    return [{"precio": precio_unico, "peso": 1.0}] if precio_unico > 0 else []
+
+
+def _precio_promedio_simple(senal):
+    entradas = _entradas_de_senal(senal)
+    if not entradas:
+        return float(senal.get("precio_entrada") or 0)
+    precios = [e["precio"] for e in entradas]
+    return sum(precios) / len(precios)
+
+
+def _precio_promedio_ponderado(senal):
+    entradas = _entradas_de_senal(senal)
+    if not entradas:
+        return float(senal.get("precio_entrada") or 0)
+    suma_peso = sum(e["peso"] for e in entradas)
+    if suma_peso <= 0:
+        return _precio_promedio_simple(senal)
+    return sum(e["precio"] * e["peso"] for e in entradas) / suma_peso
+
+
+def _senal_con_precio_entrada(senal, precio_entrada):
+    """Copia la señal pisando precio_entrada por el valor dado — para
+    reusar _calcular_retorno / _calcular_pnl_lotes /
+    _tamano_posicion_por_riesgo con el promedio que corresponda según
+    el contexto (simple en 'Señales y Resultados', ponderado en el
+    Simulador)."""
+    s2 = dict(senal)
+    s2["precio_entrada"] = precio_entrada
+    return s2
+
+
+# ----------------------------------------------------------------
+#  Formulario dinámico de entradas (usado solo al publicar)
+# ----------------------------------------------------------------
+
+def _init_entradas_state():
+    if "sen_entradas" not in st.session_state:
+        st.session_state["sen_entradas"] = [{"id": 0, "precio": 0.0, "peso": 1.0}]
+        st.session_state["sen_entrada_next_id"] = 1
+
+
+def _reset_entradas_state():
+    for e in st.session_state.get("sen_entradas", []):
+        st.session_state.pop(f"sen_entrada_precio_{e['id']}", None)
+        st.session_state.pop(f"sen_entrada_peso_{e['id']}", None)
+    st.session_state["sen_entradas"] = [{"id": 0, "precio": 0.0, "peso": 1.0}]
+    st.session_state["sen_entrada_next_id"] = 1
+
+
+def _render_entradas_form():
+    """Renderiza el formulario dinámico de entradas (1 o más, sin
+    límite) y devuelve la lista de entradas cargadas en session_state."""
+    _init_entradas_state()
+    entradas = st.session_state["sen_entradas"]
+
+    st.markdown("#### 🎯💰 Entradas")
+    st.caption(
+        "Cargá una entrada por cada compra/venta si vas a promediar precio (ej: entraste en 2 "
+        "o 3 tandas a distinto precio). El **Peso relativo** solo se usa para el promedio "
+        "ponderado del Simulador de Capital (ej: si la 2ª entrada fue el doble de tamaño que la "
+        "1ª, poné peso 2 en la 2ª). En **Señales y Resultados** siempre se muestra y se usa el "
+        "promedio **simple** (todas las entradas pesan igual)."
+    )
+
+    a_borrar = None
+    for i, ent in enumerate(entradas):
+        ce1, ce2, ce3 = st.columns([2, 1, 0.6])
+        with ce1:
+            ent["precio"] = st.number_input(
+                f"Precio — Entrada {i + 1}", min_value=0.0, format="%.5f",
+                value=float(ent.get("precio", 0.0)), key=f"sen_entrada_precio_{ent['id']}")
+        with ce2:
+            ent["peso"] = st.number_input(
+                f"Peso relativo {i + 1}", min_value=0.01, format="%.2f",
+                value=float(ent.get("peso", 1.0)), key=f"sen_entrada_peso_{ent['id']}",
+                help="Solo se usa para el promedio ponderado que corre el Simulador de Capital.")
+        with ce3:
+            st.write("")
+            st.write("")
+            if len(entradas) > 1 and st.button("🗑️", key=f"sen_entrada_del_{ent['id']}",
+                                                help="Quitar esta entrada"):
+                a_borrar = i
+
+    if a_borrar is not None:
+        eliminado = entradas.pop(a_borrar)
+        st.session_state.pop(f"sen_entrada_precio_{eliminado['id']}", None)
+        st.session_state.pop(f"sen_entrada_peso_{eliminado['id']}", None)
+        st.rerun()
+
+    if st.button("➕ Agregar otra entrada", key="sen_entrada_add"):
+        nuevo_id = st.session_state["sen_entrada_next_id"]
+        entradas.append({"id": nuevo_id, "precio": 0.0, "peso": 1.0})
+        st.session_state["sen_entrada_next_id"] += 1
+        st.rerun()
+
+    precios_validos = [e["precio"] for e in entradas if e["precio"] > 0]
+    if precios_validos:
+        promedio_simple = sum(precios_validos) / len(precios_validos)
+        extra = f" ({len(precios_validos)} entradas)" if len(precios_validos) > 1 else ""
+        st.info(f"📐 Precio promedio simple con las entradas cargadas: "
+                f"**{fmt_precio_local(promedio_simple)}**{extra}")
+
+    return entradas
+
+
+# ==============================================================
 #  ACCESO A SUPABASE
 # ==============================================================
 
@@ -124,6 +273,7 @@ def _guardar_senal(supabase, datos, user_id, user_email):
         "tipo": datos["tipo"],
         "fecha": str(datos["fecha"]), "hora": str(datos["hora"]),
         "precio_entrada": datos["precio_entrada"],
+        "entradas": datos.get("entradas", []),
         "stop_loss": datos["stop_loss"], "take_profit": datos["take_profit"],
         "apalancamiento": datos["apalancamiento"],
         "riesgo_conservador": datos.get("riesgo_conservador", PERFILES_RIESGO["conservador"]["default_pct"]),
@@ -196,7 +346,7 @@ def _evaluar_senal(senal):
 
     ticker = senal["ticker"]
     tipo = senal["tipo"]
-    entrada = float(senal["precio_entrada"])
+    entrada = _precio_promedio_simple(senal)
     sl = float(senal["stop_loss"])
     tp = float(senal["take_profit"])
 
@@ -245,6 +395,12 @@ def _sincronizar_estados(supabase, senales):
 
 # ==============================================================
 #  CÁLCULO DE RETORNO / P&L
+#  Estas funciones siguen leyendo senal["precio_entrada"] como
+#  siempre. Ese campo se guarda como el PROMEDIO SIMPLE de las
+#  entradas, así que "Señales y Resultados" queda correcto sin
+#  tocar nada más. El Simulador es el único que arma una copia de
+#  la señal con precio_entrada = promedio PONDERADO antes de pasarla
+#  por acá (ver _senal_con_precio_entrada / _precio_promedio_ponderado).
 # ==============================================================
 
 def _calcular_retorno(senal, precio_salida):
@@ -340,9 +496,14 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
     with f2:
         hora = st.time_input("🕐 Hora", value=datetime.now().time().replace(microsecond=0), key="sen_hora")
 
-    p1, p2, p3 = st.columns(3)
-    with p1:
-        precio_entrada = st.number_input("Precio de entrada", min_value=0.0, format="%.5f", key="sen_entrada")
+    st.divider()
+    entradas_form = _render_entradas_form()
+    precios_validos = [e["precio"] for e in entradas_form if e["precio"] > 0]
+    pesos_validos = [e["peso"] for e in entradas_form if e["precio"] > 0]
+    precio_entrada_simple = (sum(precios_validos) / len(precios_validos)) if precios_validos else 0.0
+
+    st.divider()
+    p2, p3 = st.columns(2)
     with p2:
         stop_loss = st.number_input("🛑 Stop Loss", min_value=0.0, format="%.5f", key="sen_sl")
     with p3:
@@ -351,13 +512,14 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
     notas = st.text_area("💬 Notas / justificación", key="sen_notas", height=80,
                           placeholder="Motivo de la señal, contexto técnico o fundamental...")
 
-    # Validación visual rápida antes de guardar
-    if precio_entrada > 0 and stop_loss > 0 and take_profit > 0:
+    # Validación visual rápida antes de guardar (contra el promedio simple)
+    if precio_entrada_simple > 0 and stop_loss > 0 and take_profit > 0:
         es_largo_preview = "LARGO" in tipo.upper()
-        ok_niveles = (stop_loss < precio_entrada < take_profit) if es_largo_preview \
-            else (take_profit < precio_entrada < stop_loss)
+        ok_niveles = (stop_loss < precio_entrada_simple < take_profit) if es_largo_preview \
+            else (take_profit < precio_entrada_simple < stop_loss)
         if not ok_niveles:
-            st.warning("⚠️ Revisá los niveles: para LARGO, SL < Entrada < TP. Para CORTO, TP < Entrada < SL.")
+            st.warning("⚠️ Revisá los niveles: para LARGO, SL < Entrada < TP. Para CORTO, TP < Entrada < SL. "
+                       "(Se valida contra el precio promedio simple de las entradas.)")
 
     st.divider()
     st.markdown("#### 🎭 Perfiles de riesgo para esta señal")
@@ -384,20 +546,23 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
         st.warning("⚠️ Lo lógico es que Conservador ≤ Moderado ≤ Agresivo en % de riesgo.")
 
     if st.button("📢 Publicar señal", type="primary", key="sen_btn_publicar"):
-        if not ticker or precio_entrada <= 0 or stop_loss <= 0 or take_profit <= 0:
-            st.warning("⚠️ Completá ticker, precio de entrada, stop loss y take profit.")
+        if not ticker or not precios_validos or stop_loss <= 0 or take_profit <= 0:
+            st.warning("⚠️ Completá ticker, al menos una entrada con precio válido, stop loss y take profit.")
         else:
+            entradas_guardar = [{"precio": p, "peso": w} for p, w in zip(precios_validos, pesos_validos)]
             datos = dict(ticker=ticker, categoria=categoria, tipo=tipo, fecha=fecha, hora=hora,
-                         precio_entrada=precio_entrada, stop_loss=stop_loss,
-                         take_profit=take_profit, apalancamiento=apalancamiento, notas=notas,
+                         precio_entrada=precio_entrada_simple, entradas=entradas_guardar,
+                         stop_loss=stop_loss, take_profit=take_profit,
+                         apalancamiento=apalancamiento, notas=notas,
                          riesgo_conservador=riesgo_conservador, riesgo_moderado=riesgo_moderado,
                          riesgo_agresivo=riesgo_agresivo)
             try:
                 _guardar_senal(supabase, datos, user_id, user_email)
                 _obtener_senales.clear()
                 st.success("✅ Señal publicada.")
-                for k in ["sen_ticker", "sen_entrada", "sen_sl", "sen_tp", "sen_notas"]:
+                for k in ["sen_ticker", "sen_notas"]:
                     st.session_state.pop(k, None)
+                _reset_entradas_state()
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error al publicar: {e}")
@@ -445,11 +610,22 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
         titulo = (f"{row.get('fecha','')} {row.get('hora','')} · {row.get('ticker','')} · "
                   f"{categoria_row} · {row.get('tipo','')} · {estado_row}")
         with st.expander(f"{emoji} {titulo}"):
+            entradas_lista = _entradas_de_senal(row.to_dict())
             v1, v2, v3, v4 = st.columns(4)
-            v1.metric("Entrada", fmt_precio_local(row.get("precio_entrada")))
+            v1.metric("Entrada (prom. simple)" if len(entradas_lista) > 1 else "Entrada",
+                      fmt_precio_local(row.get("precio_entrada")))
             v2.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
             v3.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
             v4.metric("Apalancamiento", f"{row.get('apalancamiento', 1):.0f}x")
+
+            if len(entradas_lista) > 1:
+                detalle = " · ".join(
+                    f"Entrada {i+1}: {fmt_precio_local(e['precio'])}"
+                    + (f" (peso {e['peso']:.2f})" if abs(e['peso'] - 1.0) > 1e-9 else "")
+                    for i, e in enumerate(entradas_lista)
+                )
+                st.caption(f"🧩 {len(entradas_lista)} entradas → {detalle}")
+
             st.caption(
                 f"Perfiles de riesgo → 🟢 {row.get('riesgo_conservador', PERFILES_RIESGO['conservador']['default_pct']):.1f}% · "
                 f"🟡 {row.get('riesgo_moderado', PERFILES_RIESGO['moderado']['default_pct']):.1f}% · "
@@ -473,8 +649,9 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
 # ==============================================================
 #  RENDER — TAB SEÑALES Y RESULTADOS (todos ven)
 #  Ya NO tiene botón de eliminar — eso vive en "Publicar Señal".
-#  Ahora cada señal tiene un selector de perfil de riesgo que
-#  calcula el tamaño de posición sugerido.
+#  Cada señal tiene un selector de perfil de riesgo que calcula el
+#  tamaño de posición sugerido. Si hay varias entradas, se muestran
+#  todas y el precio promedio SIMPLE usado en los cálculos.
 # ==============================================================
 
 def _tab_senales(supabase, es_admin):
@@ -568,11 +745,24 @@ def _tab_senales(supabase, es_admin):
                 f'<div style="font-size:14px;font-weight:800;color:{col}">{estado}</div></div>',
                 unsafe_allow_html=True,
             )
+
+            entradas_lista = _entradas_de_senal(row.to_dict())
             v1, v2, v3, v4 = st.columns(4)
-            v1.metric("Entrada", fmt_precio_local(row.get("precio_entrada")))
+            v1.metric("Entrada (prom. simple)" if len(entradas_lista) > 1 else "Entrada",
+                      fmt_precio_local(row.get("precio_entrada")))
             v2.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
             v3.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
             v4.metric("Apalancamiento", f"{row.get('apalancamiento', 1):.0f}x")
+
+            if len(entradas_lista) > 1:
+                detalle = " · ".join(
+                    f"Entrada {i+1}: {fmt_precio_local(e['precio'])}"
+                    + (f" (peso {e['peso']:.2f})" if abs(e['peso'] - 1.0) > 1e-9 else "")
+                    for i, e in enumerate(entradas_lista)
+                )
+                st.caption(f"🧩 {len(entradas_lista)} entradas cargadas → {detalle}")
+                st.caption("El promedio de arriba es **simple**. El Simulador de Capital usa el "
+                           "promedio **ponderado** por el peso relativo de cada entrada.")
 
             v5, v6 = st.columns(2)
             v5.metric("Precio actual / cierre", fmt_precio_local(precio_ref))
@@ -636,7 +826,9 @@ def _calcular_fila_simulacion(s, precio_ref, capital_total, modo_calculo,
                                monto_por_senal=None, pct_por_senal=None, riesgo_pct=None,
                                unidades_por_lote=None, cantidad_lotes=None):
     """Arma la fila de la tabla del simulador para una señal, según el
-    modo de cálculo elegido. Devuelve None si faltan datos para calcular."""
+    modo de cálculo elegido. Devuelve None si faltan datos para calcular.
+    IMPORTANTE: 's' ya debe venir con precio_entrada = promedio PONDERADO
+    (ver _senal_con_precio_entrada), que es el que usa el Simulador."""
     estado = s.get("estado", "ABIERTA")
     cat = s.get("categoria") or "🔹 Otro"
     ret_precio, ret_apalancado_signal = _calcular_retorno(s, precio_ref)
@@ -679,6 +871,7 @@ def _calcular_fila_simulacion(s, precio_ref, capital_total, modo_calculo,
 
     fila = {
         "Fecha": s.get("fecha"), "Ticker": s.get("ticker"), "Categoría": cat, "Tipo": s.get("tipo"),
+        "Entrada usada (ponderada)": fmt_precio_local(s.get("precio_entrada")),
         "Estado": "💀 LIQUIDADA" if liquidada else estado,
         "Apalanc.": f"{s.get('apalancamiento',1):.0f}x",
     }
@@ -777,6 +970,9 @@ def _mostrar_mejor_peor(df_sim):
 #  RENDER — TAB SIMULADOR (todos)
 #  Incluye el cálculo que antes vivía en "Gestor de Riesgo" (modo
 #  "% de riesgo por operación") y la comparación de los 3 perfiles.
+#  Cuando una señal tiene varias entradas, acá se usa el promedio
+#  PONDERADO por peso relativo (a diferencia de "Señales y
+#  Resultados", que siempre usa el promedio simple).
 # ==============================================================
 
 MODOS_SIM = [
@@ -791,6 +987,11 @@ MODOS_SIM = [
 def _tab_simulador(supabase):
     st.caption("Simulá cuánto hubieras ganado o perdido replicando las señales publicadas, "
                "con tu propio capital.")
+    st.caption(
+        "🧩 Para señales con varias entradas, acá se usa el precio promedio **ponderado** por el "
+        "peso relativo de cada entrada (a diferencia de 'Señales y Resultados', que usa el "
+        "promedio simple)."
+    )
 
     senales = _obtener_senales(supabase, 200)
     if not senales:
@@ -911,6 +1112,7 @@ def _tab_simulador(supabase):
                 filas = []
                 for _, row in df_base.iterrows():
                     s = row.to_dict()
+                    s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
                     precio_ref = s.get("precio_cierre")
                     if precio_ref is None:
                         ev = _evaluar_senal(s)
@@ -953,6 +1155,7 @@ def _tab_simulador(supabase):
     filas_sim = []
     for _, row in df_base.iterrows():
         s = row.to_dict()
+        s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
         estado = s.get("estado", "ABIERTA")
         precio_ref = s.get("precio_cierre")
         if precio_ref is None:
@@ -1021,7 +1224,8 @@ def render_senales_trading(supabase, user_id, user_email):
         ADD COLUMN IF NOT EXISTS categoria text DEFAULT '🔹 Otro',
         ADD COLUMN IF NOT EXISTS riesgo_conservador float DEFAULT 1.0,
         ADD COLUMN IF NOT EXISTS riesgo_moderado    float DEFAULT 2.0,
-        ADD COLUMN IF NOT EXISTS riesgo_agresivo    float DEFAULT 3.0;
+        ADD COLUMN IF NOT EXISTS riesgo_agresivo    float DEFAULT 3.0,
+        ADD COLUMN IF NOT EXISTS entradas jsonb DEFAULT '[]'::jsonb;
     """
     es_admin = _es_admin(user_email)
 
@@ -1033,10 +1237,10 @@ def render_senales_trading(supabase, user_id, user_email):
         🎯 Señales de Trading
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
-        Señales publicadas con fecha, hora, stop loss, take profit, categoría, apalancamiento y
-        perfiles de riesgo (🟢 Conservador / 🟡 Moderado / 🔴 Agresivo) — evaluación automática de
-        aciertos/desaciertos y simulador de capital (por monto, %, riesgo, lotes o comparando
-        los 3 perfiles) para cualquier usuario.
+        Señales publicadas con fecha, hora, una o varias entradas (promediables), stop loss,
+        take profit, categoría, apalancamiento y perfiles de riesgo (🟢 Conservador / 🟡
+        Moderado / 🔴 Agresivo) — evaluación automática de aciertos/desaciertos y simulador de
+        capital (por monto, %, riesgo, lotes o comparando los 3 perfiles) para cualquier usuario.
       </div>
     </div>
     """, unsafe_allow_html=True)
