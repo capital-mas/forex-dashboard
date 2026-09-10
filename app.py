@@ -8035,12 +8035,11 @@ if HORIZONTE == 'largo' and MODULO == 'tff':
 # ==============================================================
 
 
-st.markdown('<div style="height:24px"></div>', unsafe_allow_html=True)
 st.markdown(f"""
-<div style='text-align:center;color:#3a4a5a;font-size:10px;padding:14px;
-     border-top:1px solid #21262d;margin-top:12px'>
-  📡 Analizador Cuantitativo Unificado &nbsp;·&nbsp; Datos: Yahoo Finance &nbsp;·&nbsp;
-  Caché: 30 min &nbsp;·&nbsp; {ahora_ar().strftime('%d/%m/%Y')} &nbsp;·&nbsp;
-  <b>Solo informativo. No constituye asesoramiento financiero.</b>
+<div style='text-align:center;color:#3a4a5a;font-size:10px;padding:14px;     
+    border-top:1px solid #21262d;margin-top:12px;display:flex;flex-direction:column;align-items:center;gap:6px'>  
+    <img src="data:image/png;base64,{LOGO_TOPBAR_B64}" style="height:22px;width:auto;opacity:0.55"> 
+    <div>Datos: Yahoo Finance &nbsp;-&nbsp; Cache: 30 min &nbsp;-&nbsp; {ahora_ar().strftime('%d/%m/%Y')} &nbsp;-&nbsp;  
+    <b>Solo informativo. No constituye asesoramiento financiero.</b></div>
 </div>
 """, unsafe_allow_html=True)
