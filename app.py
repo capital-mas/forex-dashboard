@@ -6524,22 +6524,19 @@ MODULO    = st.session_state['nav_modulo']
 
 
 st.markdown(f"""
-<div class="topbar-wrap">
-  <div class="topbar-inner">
-    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-      <span style="width:7px;height:7px;border-radius:50%;background:{_h_color.get(HORIZONTE,'#3a7bd5')};display:inline-block"></span>
-      <span style="font-size:11px;font-weight:600;color:{_h_color.get(HORIZONTE,'#3a7bd5')}">{_h_label.get(HORIZONTE,'')}</span>
-    </div>
-    <div class="topbar-brand-center">
-      <div class="topbar-brand-icon">📡</div>
-      <div>
-        <div class="topbar-brand-name">Capital<span>+</span></div>
-        <div class="topbar-brand-sub">Actualización cada 30min</div>
-      </div>
-    </div>
-    <div style="flex:1"></div>
-    <div class="topbar-time">🕐 {_now_str}</div>
-  </div>
+<div class="topbar-wrap">  
+  <div class="topbar-inner">    
+    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">      
+      <span style="width:7px;height:7px;border-radius:50%;background:{_h_color.get(HORIZONTE,'#3a7bd5')};display:inline-block"></span>      
+      <span style="font-size:11px;font-weight:600;color:{_h_color.get(HORIZONTE,'#3a7bd5')}">{_h_label.get(HORIZONTE,'')}</span>    
+      </div>    
+      <div class="topbar-brand-center">      
+        <img src="data:image/png;base64,{LOGO_TOPBAR_B64}" style="height:34px;width:auto;object-fit:contain;display:block">      
+        <div class="topbar-brand-sub" style="margin-left:4px">Actualizacion cada 30min</div>    
+        </div>    
+        <div style="flex:1"></div>    
+        <div class="topbar-time">🕐 {_now_str}</div>  
+   </div>
 </div>
 """, unsafe_allow_html=True)
 
