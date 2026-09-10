@@ -3354,6 +3354,300 @@ def _texto_racha(racha, direccion, pais):
                "del último mes." if racha >= 2 else
                "todavía es un movimiento reciente y conviene confirmarlo con el próximo dato."))
 
+# ==============================================================
+#  FASE DEL CICLO ECONÓMICO
+#  Ubica a cada país en el clásico "reloj del ciclo económico"
+#  (Recuperación / Expansión / Sobrecalentamiento / Desaceleración-
+#  Contracción) cruzando el nivel y el momentum del crecimiento con
+#  el comportamiento de la inflación — versión simplificada del
+#  Investment Clock, calculada 100% con los datos ya cargados.
+# ==============================================================
+
+_CATS_CRECIMIENTO_CICLO = ["Crecimiento", "Actividad Económica", "Empleo", "Consumo", "Industria", "Sentimiento Empresarial"]
+_CAT_INFLACION_CICLO = "Inflación"
+
+_UMBRAL_FUERTE_CICLO = 0.15
+_UMBRAL_MOMENTUM_CICLO = 0.10
+
+
+def _score_compuesto_crecimiento(df_puntuable):
+    """Promedio ponderado del crecimiento, pooleando todos los eventos
+    de las categorías de crecimiento juntas (no promedio de promedios),
+    para que una categoría con más datos pese más que una con uno solo
+    — mismo criterio que _promedio_ponderado_score."""
+    if df_puntuable.empty:
+        return None, 0
+    sub = df_puntuable[df_puntuable["categoria"].isin(_CATS_CRECIMIENTO_CICLO)]
+    return _promedio_ponderado_score(sub)
+
+
+def _score_inflacion_ciclo(df_puntuable):
+    if df_puntuable.empty:
+        return None, 0
+    sub = df_puntuable[df_puntuable["categoria"] == _CAT_INFLACION_CICLO]
+    return _promedio_ponderado_score(sub)
+
+
+def _momentum_crecimiento(df_puntuable):
+    """Compara el puntaje de crecimiento del último mes contra el
+    anterior (mismo criterio que _comparar_ultimos_meses, pero
+    pooleando directamente las categorías de crecimiento)."""
+    if df_puntuable.empty:
+        return None
+    sub = df_puntuable[df_puntuable["categoria"].isin(_CATS_CRECIMIENTO_CICLO)]
+    serie = _serie_mensual(sub)
+    comp = _comparar_ultimos_meses(serie)
+    if comp is None:
+        return None
+    return comp["diff"]
+
+
+_FASES_CICLO = {
+    "recuperacion": {
+        "nombre": "🌱 Recuperación",
+        "color": "#2ea043",
+        "resumen": "el crecimiento viene débil pero mejorando, con la inflación todavía controlada",
+        "detalle": (
+            "Es la fase típica de salida de un piso económico: la actividad todavía no muestra "
+            "fortaleza plena, pero la tendencia reciente es de mejora y la inflación no genera "
+            "una restricción adicional. Suele ser la etapa donde el banco central tiene más margen "
+            "para sostener una política monetaria laxa, y donde los activos de riesgo locales "
+            "empiezan a anticipar la mejora antes de que se confirme en los datos duros."
+        ),
+    },
+    "expansion": {
+        "nombre": "🚀 Expansión",
+        "color": "#3a7bd5",
+        "resumen": "el crecimiento se muestra fuerte y sostenido, con la inflación todavía razonable",
+        "detalle": (
+            "Es el tramo más benigno del ciclo ('goldilocks'): actividad firme sin que la inflación "
+            "se dispare. El banco central suele tener margen para mantener una postura neutral, y "
+            "es la fase históricamente más favorable para activos de riesgo (acciones, moneda local) "
+            "por sobre los refugios."
+        ),
+    },
+    "sobrecalentamiento": {
+        "nombre": "🔥 Sobrecalentamiento",
+        "color": "#e3b341",
+        "resumen": "el crecimiento sigue firme, pero la inflación viene acelerando",
+        "detalle": (
+            "Es la etapa tardía del ciclo expansivo: la economía sigue mostrando fortaleza, pero "
+            "empieza a convivir con presión de precios al alza. Es el escenario que típicamente "
+            "obliga al banco central a endurecer la política monetaria, lo que eleva el riesgo de "
+            "que la propia suba de tasas termine frenando la actividad más adelante."
+        ),
+    },
+    "desaceleracion": {
+        "nombre": "🥶 Desaceleración / Contracción",
+        "color": "#f85149",
+        "resumen": "el crecimiento viene débil y sigue perdiendo impulso",
+        "detalle": (
+            "Es la fase más adversa del ciclo: la actividad se debilita y la tendencia reciente "
+            "confirma el deterioro, en lugar de mostrar señales de piso. Si además la inflación "
+            "sigue alta, es la combinación más difícil de manejar para la política económica "
+            "(estanflación); si la inflación cede, el banco central gana margen para bajar tasas "
+            "y empezar a estimular la economía."
+        ),
+    },
+}
+
+
+def _fase_ciclo_economico(pais, df_puntuable_completo):
+    """Devuelve un dict con la fase del ciclo estimada para el país, o
+    None si no hay datos de crecimiento suficientes como para opinar."""
+    growth_score, n_growth = _score_compuesto_crecimiento(df_puntuable_completo)
+    if growth_score is None:
+        return None
+
+    inflacion_score, n_inflacion = _score_inflacion_ciclo(df_puntuable_completo)
+    momentum = _momentum_crecimiento(df_puntuable_completo)
+
+    crecimiento_fuerte = growth_score >= _UMBRAL_FUERTE_CICLO
+    crecimiento_debil = growth_score <= -_UMBRAL_FUERTE_CICLO
+    inflacion_acelerando = (inflacion_score is not None) and (inflacion_score <= -_UMBRAL_FUERTE_CICLO)
+    inflacion_controlada = (inflacion_score is None) or (inflacion_score > -_UMBRAL_FUERTE_CICLO)
+    momentum_positivo = (momentum is not None) and (momentum >= _UMBRAL_MOMENTUM_CICLO)
+    momentum_negativo = (momentum is not None) and (momentum <= -_UMBRAL_MOMENTUM_CICLO)
+
+    if crecimiento_fuerte and inflacion_acelerando:
+        clave = "sobrecalentamiento"
+    elif crecimiento_fuerte:
+        clave = "expansion"
+    elif crecimiento_debil and momentum_negativo:
+        clave = "desaceleracion"
+    elif crecimiento_debil and momentum_positivo:
+        clave = "recuperacion"
+    elif crecimiento_debil:
+        clave = "desaceleracion"
+    else:
+        if momentum_positivo:
+            clave = "recuperacion"
+        elif momentum_negativo:
+            clave = "sobrecalentamiento" if inflacion_acelerando else "desaceleracion"
+        else:
+            clave = "expansion" if inflacion_controlada else "sobrecalentamiento"
+
+    fase = dict(_FASES_CICLO[clave])
+    fase["clave"] = clave
+    fase["growth_score"] = growth_score
+    fase["n_growth"] = n_growth
+    fase["inflacion_score"] = inflacion_score
+    fase["n_inflacion"] = n_inflacion
+    fase["momentum"] = momentum
+    return fase
+
+
+def _texto_fase_ciclo(pais, fase):
+    if fase is None:
+        return (f"Todavía no hay suficientes eventos de crecimiento, empleo, actividad o consumo "
+                f"cargados para {pais} como para ubicarlo en el ciclo económico.")
+
+    momentum_txt = "sin datos suficientes de tendencia reciente"
+    if fase["momentum"] is not None:
+        if fase["momentum"] >= _UMBRAL_MOMENTUM_CICLO:
+            momentum_txt = f"mejorando en el margen ({fase['momentum']:+.2f} vs. el mes anterior)"
+        elif fase["momentum"] <= -_UMBRAL_MOMENTUM_CICLO:
+            momentum_txt = f"perdiendo impulso en el margen ({fase['momentum']:+.2f} vs. el mes anterior)"
+        else:
+            momentum_txt = f"prácticamente estable en el margen ({fase['momentum']:+.2f} vs. el mes anterior)"
+
+    inflacion_txt = "sin datos de inflación suficientes"
+    if fase["inflacion_score"] is not None:
+        if fase["inflacion_score"] >= _UMBRAL_FUERTE_CICLO:
+            inflacion_txt = f"cediendo ({fase['inflacion_score']:+.2f})"
+        elif fase["inflacion_score"] <= -_UMBRAL_FUERTE_CICLO:
+            inflacion_txt = f"acelerando ({fase['inflacion_score']:+.2f})"
+        else:
+            inflacion_txt = f"relativamente estable ({fase['inflacion_score']:+.2f})"
+
+    return (
+        f"Con un puntaje de crecimiento agregado de {fase['growth_score']:+.2f} "
+        f"(sobre {fase['n_growth']} dato(s) de empleo, actividad, consumo, industria y crecimiento), "
+        f"{momentum_txt}, y una inflación {inflacion_txt}, {pais} se ubica en la fase de "
+        f"**{fase['nombre']}** dentro del ciclo económico: {fase['resumen']}. {fase['detalle']}"
+    )
+
+
+def _chart_reloj_ciclo(paises_fases):
+    """Grafica a uno o más países en el plano Crecimiento (eje X) x
+    Inflación (eje Y) para ubicarlos visualmente en el reloj del ciclo.
+    paises_fases: lista de tuplas (nombre_pais, fase_dict, color)."""
+    fig = go.Figure()
+
+    fig.add_shape(type="rect", x0=0, x1=1.3, y0=0, y1=1.3, fillcolor="#3a7bd511", line=dict(width=0))
+    fig.add_shape(type="rect", x0=0, x1=1.3, y0=-1.3, y1=0, fillcolor="#e3b34111", line=dict(width=0))
+    fig.add_shape(type="rect", x0=-1.3, x1=0, y0=0, y1=1.3, fillcolor="#2ea04311", line=dict(width=0))
+    fig.add_shape(type="rect", x0=-1.3, x1=0, y0=-1.3, y1=0, fillcolor="#f8514911", line=dict(width=0))
+
+    anotaciones = [
+        ("Expansión", 0.65, 0.65, "#3a7bd5"),
+        ("Sobrecalentamiento", 0.65, -0.65, "#e3b341"),
+        ("Recuperación", -0.65, 0.65, "#2ea043"),
+        ("Desaceleración / Contracción", -0.65, -0.65, "#f85149"),
+    ]
+    for texto, x, y, color in anotaciones:
+        fig.add_annotation(x=x, y=y, text=texto, showarrow=False,
+                            font=dict(size=11, color=color), opacity=0.85)
+
+    for nombre, fase, color in paises_fases:
+        if fase is None:
+            continue
+        x = fase["growth_score"]
+        y = fase["inflacion_score"] if fase["inflacion_score"] is not None else 0.0
+        fig.add_trace(go.Scatter(
+            x=[x], y=[y], mode="markers+text", name=nombre,
+            text=[nombre], textposition="top center",
+            marker=dict(size=18, color=color, line=dict(width=2, color="#0d1117")),
+        ))
+
+    fig.add_hline(y=0, line_dash="dot", line_color="#3a3a3a")
+    fig.add_vline(x=0, line_dash="dot", line_color="#3a3a3a")
+    fig.update_layout(
+        title="Ubicación en el reloj del ciclo económico",
+        xaxis=dict(title="◀ Crecimiento débil   |   Crecimiento fuerte ▶", range=[-1.3, 1.3], zerolinecolor="#3a3a3a", color="#e6edf3"),
+        yaxis=dict(title="◀ Inflación acelerando   |   Inflación controlada ▶", range=[-1.3, 1.3], zerolinecolor="#3a3a3a", color="#e6edf3"),
+        height=440,
+        margin=dict(l=10, r=10, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6edf3"),
+        showlegend=False,
+    )
+    return fig
+
+
+def _render_fase_ciclo_pais(pais, df_puntuable_completo):
+    st.markdown(f"#### 🔄 Fase del ciclo económico — {pais}")
+    fase = _fase_ciclo_economico(pais, df_puntuable_completo)
+
+    if fase is None:
+        st.info(_texto_fase_ciclo(pais, fase))
+        return
+
+    st.markdown(
+        f'<div style="border-radius:10px;padding:14px 16px;margin-bottom:10px;'
+        f'background:#0d1117;border:1px solid #21262d;border-left:4px solid {fase["color"]}">'
+        f'<div style="font-size:11px;color:#6b7d9a;text-transform:uppercase;letter-spacing:.5px">Fase estimada</div>'
+        f'<div style="font-size:18px;font-weight:800;color:#e6edf3">{fase["nombre"]}</div>'
+        f'<div style="font-size:12px;color:#8b949e;margin-top:4px">{fase["resumen"].capitalize()}</div></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(_texto_fase_ciclo(pais, fase))
+
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    st.plotly_chart(
+        _chart_reloj_ciclo([(pais, fase, fase["color"])]),
+        use_container_width=True, key=f"ciclo_chart_{pais}",
+    )
+    st.caption(
+        "La ubicación es una estimación basada en el puntaje agregado de crecimiento (empleo, "
+        "actividad económica, consumo, industria, sentimiento empresarial y PBI) y de inflación, "
+        "más el momentum del crecimiento contra el mes anterior — no reemplaza el juicio de un "
+        "analista sobre el ciclo completo del país."
+    )
+
+
+def _render_fase_ciclo_comparada(pais_a, pais_b, df_full_a, df_full_b):
+    st.markdown(f"#### 🔄 Fase del ciclo económico — {pais_a} vs {pais_b}")
+    fase_a = _fase_ciclo_economico(pais_a, df_full_a)
+    fase_b = _fase_ciclo_economico(pais_b, df_full_b)
+
+    c1, c2 = st.columns(2)
+    for col, pais_x, fase_x in [(c1, pais_a, fase_a), (c2, pais_b, fase_b)]:
+        with col:
+            if fase_x is None:
+                st.info(_texto_fase_ciclo(pais_x, fase_x))
+            else:
+                st.markdown(
+                    f'<div style="border-radius:10px;padding:14px 16px;margin-bottom:10px;'
+                    f'background:#0d1117;border:1px solid #21262d;border-left:4px solid {fase_x["color"]}">'
+                    f'<div style="font-size:11px;color:#6b7d9a;text-transform:uppercase;letter-spacing:.5px">{pais_x}</div>'
+                    f'<div style="font-size:17px;font-weight:800;color:#e6edf3">{fase_x["nombre"]}</div>'
+                    f'<div style="font-size:12px;color:#8b949e;margin-top:4px">{fase_x["resumen"].capitalize()}</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+    if fase_a is not None or fase_b is not None:
+        st.plotly_chart(
+            _chart_reloj_ciclo([(pais_a, fase_a, "#3a7bd5"), (pais_b, fase_b, "#f0883e")]),
+            use_container_width=True, key=f"ciclo_chart_cmp_{pais_a}_{pais_b}",
+        )
+
+    if fase_a is not None and fase_b is not None and fase_a["clave"] != fase_b["clave"]:
+        st.info(
+            f"📌 {pais_a} y {pais_b} están en **fases distintas** del ciclo económico "
+            f"({fase_a['nombre']} vs. {fase_b['nombre']}), lo que suele traducirse en necesidades "
+            "de política monetaria distintas entre ambos bancos centrales."
+        )
+    elif fase_a is not None and fase_b is not None:
+        st.info(
+            f"📌 {pais_a} y {pais_b} se ubican en la **misma fase** del ciclo económico "
+            f"({fase_a['nombre']})."
+        )
+
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+    for pais_x, fase_x in [(pais_a, fase_a), (pais_b, fase_b)]:
+        with st.expander(f"Ver detalle — {pais_x}"):
+            st.markdown(_texto_fase_ciclo(pais_x, fase_x))
 
 def _chart_evolucion_mensual(serie_mensual, nombre_serie, color, titulo=None):
     """Línea de tiempo con el puntaje ponderado mes a mes."""
