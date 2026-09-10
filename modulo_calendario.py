@@ -4086,6 +4086,9 @@ def _tab_perfil_pais(supabase):
         st.plotly_chart(fig_evol_cat_pais, use_container_width=True, key=f"panorama_evol_cat_{pais}")
 
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    _render_fase_ciclo_pais(pais, df_pais_puntuable_completo)
+
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     _render_informe_analista_pais(pais, df_pais_todo, df_pais_puntuable, categorias, activos,
                                    df_puntuable_completo=df_pais_puntuable_completo)
 
