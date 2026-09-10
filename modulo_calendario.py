@@ -2034,6 +2034,46 @@ def _recalcular_todos_los_registros(supabase, progreso_cb=None):
             progreso_cb(i + 1, total)
     return total, actualizados
 
+def _encontrar_duplicados(supabase):
+    """Agrupa todos los registros por (fecha, pais, evento) y devuelve
+    los ids a borrar cuando hay más de un registro para la misma
+    combinación — se conserva el más reciente (por created_at) y se
+    marcan los demás para eliminar. Devuelve (ids_a_borrar, detalle)."""
+    filas = _obtener_registros(supabase)
+    grupos = {}
+    for row in filas:
+        clave = (row.get("fecha"), row.get("pais"), row.get("evento"))
+        grupos.setdefault(clave, []).append(row)
+
+    ids_a_borrar = []
+    detalle = []
+    for (fecha, pais, evento), filas_grupo in grupos.items():
+        if len(filas_grupo) > 1:
+            filas_ordenadas = sorted(
+                filas_grupo, key=lambda r: r.get("created_at") or "", reverse=True
+            )
+            conservar = filas_ordenadas[0]
+            borrar = filas_ordenadas[1:]
+            ids_a_borrar.extend([r["id"] for r in borrar])
+            detalle.append({
+                "Fecha": fecha, "País": pais, "Evento": evento,
+                "Copias encontradas": len(filas_grupo),
+                "Se eliminan": len(borrar),
+                "Se conserva (más reciente)": conservar.get("created_at", "—"),
+            })
+    detalle.sort(key=lambda d: (d["Fecha"] or "", d["País"] or ""), reverse=True)
+    return ids_a_borrar, detalle
+
+
+def _borrar_duplicados(supabase, ids_a_borrar):
+    """Borra en Supabase la lista de ids pasada, en lotes."""
+    LOTE = 200
+    total = 0
+    for i in range(0, len(ids_a_borrar), LOTE):
+        lote = ids_a_borrar[i:i + LOTE]
+        supabase.table(TABLA_REGISTRO).delete().in_("id", lote).execute()
+        total += len(lote)
+    return total
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _obtener_noticias(_supabase, limite=100):
@@ -2159,6 +2199,92 @@ def _tab_registrar(supabase, user_id, es_admin):
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error al guardar: {e}")
+
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown("### 🛠️ Mantenimiento")
+
+    # ── Recalcular todos los eventos ──
+    with st.expander("🔄 Recalcular todos los eventos"):
+        st.caption(
+            "Vuelve a calcular el análisis (vs. previsto/anterior, señales, impacto de mercado) "
+            "y la interpretación macro (divisas, bonos, acciones, oro, cripto, política monetaria, "
+            "régimen de mercado) de **todos** los eventos ya cargados, con la lógica que está hoy "
+            "en el código. Útil después de corregir un bug de cálculo, para no tener que entrar "
+            "evento por evento a Editar → Guardar. Solo se actualiza en la base lo que realmente "
+            "cambió; los eventos ya correctos quedan intactos y esto no borra ni modifica Fecha, "
+            "País, Evento, Previsto, Anterior, Real ni Notas."
+        )
+        if st.button("🔄 Recalcular todos los eventos ahora", key="cal_reg_btn_recalcular_todo"):
+            barra = st.progress(0.0, text="Recalculando eventos...")
+
+            def _cb(hecho, total):
+                frac = hecho / total if total else 1.0
+                barra.progress(frac, text=f"Recalculando eventos... {hecho}/{total}")
+
+            try:
+                total, actualizados = _recalcular_todos_los_registros(supabase, progreso_cb=_cb)
+                barra.empty()
+                _limpiar_cache_registros()
+                if actualizados:
+                    st.success(
+                        f"✅ Listo: se revisaron {total} evento(s) y se corrigieron **{actualizados}**, "
+                        "que tenían una lectura distinta a la que da la lógica actual."
+                    )
+                else:
+                    st.info(f"✅ Se revisaron {total} evento(s) y ya estaban todos al día.")
+                st.rerun()
+            except Exception as e:
+                barra.empty()
+                st.error(f"❌ Error al recalcular: {e}")
+
+    # ── Borrar duplicados ──
+    with st.expander("🧹 Borrar eventos duplicados"):
+        st.caption(
+            "Busca registros que compartan la misma **Fecha + País + Evento** y, cuando encuentra "
+            "más de uno, muestra una vista previa antes de borrar nada. Al confirmar, conserva el "
+            "registro más reciente de cada grupo (el de carga más nueva) y elimina el resto."
+        )
+        if st.button("🔍 Buscar duplicados", key="cal_reg_btn_buscar_dup"):
+            with st.spinner("Buscando duplicados..."):
+                ids_a_borrar, detalle = _encontrar_duplicados(supabase)
+            st.session_state["cal_reg_dup_ids"] = ids_a_borrar
+            st.session_state["cal_reg_dup_detalle"] = detalle
+
+        ids_a_borrar = st.session_state.get("cal_reg_dup_ids")
+        detalle = st.session_state.get("cal_reg_dup_detalle")
+
+        if ids_a_borrar is not None:
+            if not ids_a_borrar:
+                st.success("✅ No se encontraron eventos duplicados.")
+            else:
+                st.warning(
+                    f"⚠️ Se encontraron **{len(detalle)}** grupo(s) con duplicados, "
+                    f"totalizando **{len(ids_a_borrar)}** registro(s) a eliminar:"
+                )
+                st.dataframe(pd.DataFrame(detalle), use_container_width=True, hide_index=True)
+
+                bd1, bd2 = st.columns(2)
+                with bd1:
+                    if st.button(
+                        f"🗑️ Confirmar y eliminar {len(ids_a_borrar)} duplicado(s)",
+                        type="primary", use_container_width=True, key="cal_reg_btn_confirmar_dup",
+                    ):
+                        try:
+                            n = _borrar_duplicados(supabase, ids_a_borrar)
+                            _limpiar_cache_registros()
+                            st.session_state.pop("cal_reg_dup_ids", None)
+                            st.session_state.pop("cal_reg_dup_detalle", None)
+                            st.success(f"✅ Se eliminaron {n} registro(s) duplicado(s).")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error al eliminar duplicados: {e}")
+                with bd2:
+                    if st.button("✖️ Cancelar", use_container_width=True, key="cal_reg_btn_cancelar_dup"):
+                        st.session_state.pop("cal_reg_dup_ids", None)
+                        st.session_state.pop("cal_reg_dup_detalle", None)
+                        st.rerun()
 
 
 # ==============================================================
