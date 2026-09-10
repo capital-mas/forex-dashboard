@@ -4603,6 +4603,9 @@ def _tab_comparar_paises(supabase):
     df_full_a = df_puntuable_completo_global[df_puntuable_completo_global["pais"] == pais_a]
     df_full_b = df_puntuable_completo_global[df_puntuable_completo_global["pais"] == pais_b]
 
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    _render_fase_ciclo_comparada(pais_a, pais_b, df_full_a, df_full_b)
+
     # ── Evolución mensual comparada, categoría por categoría ──
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     st.markdown(f"#### 📈 Evolución mensual por categoría — {pais_a} vs {pais_b}")
