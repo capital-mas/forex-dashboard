@@ -745,11 +745,12 @@ def pantalla_landing():
         with st.expander("¿Esto es asesoramiento financiero?"):
             st.write("No. Capital+ es una herramienta de análisis cuantitativo con fines informativos, no constituye recomendación de inversión.")
 
-    st.markdown("""
-    <div class="landing-footer">
-      📡 Capital+ · Análisis cuantitativo de mercados · Solo informativo, no constituye asesoramiento financiero.
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"""    
+        <div class="landing-footer" style="display:flex;flex-direction:column;align-items:center;gap:8px">      
+          <img src="data:image/png;base64,{LOGO_FULL_B64}" style="height:60px;width:auto;opacity:0.85">      
+          <div>Analisis cuantitativo de mercados - Solo informativo, no constituye asesoramiento financiero.</div>    
+        </div>    
+        """, unsafe_allow_html=True)
 
 
 # ── GATE: si no hay sesión, mostrar login y frenar acá ──
