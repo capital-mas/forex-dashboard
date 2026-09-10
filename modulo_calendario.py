@@ -3580,6 +3580,114 @@ def _chart_reloj_ciclo(paises_fases):
     return fig
 
 
+def _serie_mensual_fase_ciclo(df_puntuable_completo):
+    """Arma la fase del ciclo económico MES A MES (no un promedio de
+    todo el historial), para poder graficar cómo fue cambiando de fase
+    el país con el correr del tiempo."""
+    cols = ["periodo", "clave", "nombre", "color", "growth_score", "inflacion_score", "momentum", "n_growth"]
+    if df_puntuable_completo.empty:
+        return pd.DataFrame(columns=cols)
+
+    df = df_puntuable_completo.copy()
+    df["periodo"] = df["fecha_dt"].dt.to_period("M")
+
+    sub_growth = df[df["categoria"].isin(_CATS_CRECIMIENTO_CICLO)]
+    sub_inflacion = df[df["categoria"] == _CAT_INFLACION_CICLO]
+
+    serie_growth = _serie_mensual(sub_growth).dropna(subset=["score"]).sort_values("periodo").reset_index(drop=True)
+    if serie_growth.empty:
+        return pd.DataFrame(columns=cols)
+
+    serie_inflacion = _serie_mensual(sub_inflacion)
+    inflacion_por_periodo = dict(zip(serie_inflacion["periodo"], serie_inflacion["score"]))
+
+    filas = []
+    for i, row in serie_growth.iterrows():
+        periodo, growth_score, n_growth = row["periodo"], row["score"], row["n"]
+        inflacion_score = inflacion_por_periodo.get(periodo)
+
+        momentum = None
+        if i > 0:
+            prev_score = serie_growth.iloc[i - 1]["score"]
+            if prev_score is not None:
+                momentum = growth_score - prev_score
+
+        clave = _clasificar_fase(growth_score, inflacion_score, momentum)
+        info = _FASES_CICLO[clave]
+        filas.append({
+            "periodo": periodo, "clave": clave, "nombre": info["nombre"], "color": info["color"],
+            "growth_score": growth_score, "inflacion_score": inflacion_score,
+            "momentum": momentum, "n_growth": n_growth,
+        })
+
+    return pd.DataFrame(filas)
+
+
+def _chart_ciclo_timeline(pais, serie_fases):
+    if serie_fases is None or serie_fases.empty:
+        return None
+    x = [_periodo_legible(p) for p in serie_fases["periodo"]]
+    colores = serie_fases["color"].tolist()
+    hovers = []
+    for _, r in serie_fases.iterrows():
+        inf_txt = f"{r['inflacion_score']:+.2f}" if r["inflacion_score"] is not None else "s/d"
+        mom_txt = f"{r['momentum']:+.2f}" if r["momentum"] is not None else "s/d (primer mes)"
+        hovers.append(
+            f"<b>{r['nombre']}</b><br>Crecimiento: {r['growth_score']:+.2f} ({r['n_growth']} dato(s))"
+            f"<br>Inflación: {inf_txt}<br>Momentum vs. mes anterior: {mom_txt}"
+        )
+
+    fig = go.Figure(go.Bar(
+        x=x, y=[1] * len(x), marker=dict(color=colores, line=dict(width=1, color="#0d1117")),
+        text=[n.split(" ")[0] for n in serie_fases["nombre"]], textposition="inside",
+        insidetextfont=dict(size=18), hovertext=hovers, hoverinfo="text",
+    ))
+    fig.update_layout(
+        title=f"Fase del ciclo económico mes a mes — {pais}",
+        yaxis=dict(visible=False, range=[0, 1.1]),
+        xaxis=dict(color="#e6edf3"),
+        height=200,
+        margin=dict(l=10, r=10, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6edf3"),
+        showlegend=False,
+        bargap=0.12,
+    )
+    return fig
+
+
+def _texto_transiciones_ciclo(pais, serie_fases):
+    if serie_fases is None or serie_fases.empty:
+        return None
+    sf = serie_fases.sort_values("periodo").reset_index(drop=True)
+
+    ultima_clave = sf.iloc[-1]["clave"]
+    racha = 1
+    for i in range(len(sf) - 2, -1, -1):
+        if sf.iloc[i]["clave"] == ultima_clave:
+            racha += 1
+        else:
+            break
+
+    texto = (
+        f"{pais} lleva **{racha} mes(es) consecutivo(s)** en fase de **{sf.iloc[-1]['nombre']}** "
+        f"(hasta {_periodo_legible(sf.iloc[-1]['periodo'])})."
+    )
+
+    if len(sf) >= 2:
+        cambios = [
+            (_periodo_legible(sf.iloc[i]["periodo"]), sf.iloc[i - 1]["nombre"], sf.iloc[i]["nombre"])
+            for i in range(1, len(sf)) if sf.iloc[i]["clave"] != sf.iloc[i - 1]["clave"]
+        ]
+        if cambios:
+            periodo_cambio, fase_de, fase_a = cambios[-1]
+            texto += f" El último cambio de fase fue en **{periodo_cambio}**, cuando pasó de {fase_de} a {fase_a}."
+        else:
+            texto += " No hubo cambios de fase en todo el período cargado: se mantuvo estable."
+
+    return texto
+
+
 def _render_fase_ciclo_pais(pais, df_puntuable_completo):
     st.markdown(f"#### 🔄 Fase del ciclo económico — {pais}")
     fase = _fase_ciclo_economico(pais, df_puntuable_completo)
@@ -3603,6 +3711,15 @@ def _render_fase_ciclo_pais(pais, df_puntuable_completo):
         _chart_reloj_ciclo([(pais, fase, fase["color"])]),
         use_container_width=True, key=f"ciclo_chart_{pais}",
     )
+
+    serie_fases = _serie_mensual_fase_ciclo(df_puntuable_completo)
+    fig_timeline = _chart_ciclo_timeline(pais, serie_fases)
+    if fig_timeline is not None:
+        st.plotly_chart(fig_timeline, use_container_width=True, key=f"ciclo_timeline_{pais}")
+        st.markdown(_texto_transiciones_ciclo(pais, serie_fases))
+    else:
+        st.caption("Todavía no hay al menos un mes con datos de crecimiento suficientes para graficar la evolución mes a mes.")
+
     st.caption(
         "La ubicación es una estimación basada en el puntaje agregado de crecimiento (empleo, "
         "actividad económica, consumo, industria, sentimiento empresarial y PBI) y de inflación, "
@@ -3653,6 +3770,14 @@ def _render_fase_ciclo_comparada(pais_a, pais_b, df_full_a, df_full_b):
     for pais_x, fase_x in [(pais_a, fase_a), (pais_b, fase_b)]:
         with st.expander(f"Ver detalle — {pais_x}"):
             st.markdown(_texto_fase_ciclo(pais_x, fase_x))
+
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    for pais_x, df_full_x in [(pais_a, df_full_a), (pais_b, df_full_b)]:
+        serie_fases_x = _serie_mensual_fase_ciclo(df_full_x)
+        fig_timeline_x = _chart_ciclo_timeline(pais_x, serie_fases_x)
+        if fig_timeline_x is not None:
+            st.plotly_chart(fig_timeline_x, use_container_width=True, key=f"ciclo_timeline_cmp_{pais_x}")
+            st.markdown(_texto_transiciones_ciclo(pais_x, serie_fases_x))
 
 def _chart_evolucion_mensual(serie_mensual, nombre_serie, color, titulo=None):
     """Línea de tiempo con el puntaje ponderado mes a mes."""
