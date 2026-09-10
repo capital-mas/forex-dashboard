@@ -2245,7 +2245,45 @@ def _num_o_none(valor):
     except ValueError:
         return "ERROR"
 
+import re
 
+_SUFIJO_MES_RE = re.compile(
+    r"\s*\((ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)\.?\)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _normalizar_evento_masivo(nombre_crudo):
+    """Devuelve el nombre de evento tal como está en EVENTOS, probando:
+    1) el nombre tal cual viene en el archivo
+    2) el nombre sin un sufijo de mes pegado al final, tipo " (Mar)"
+       — típico de calendarios económicos que traen el mes incrustado
+       en el nombre del evento en vez de en una columna aparte.
+    3) si tampoco está en EVENTOS pero SÍ está en INTERPRETACION_MACRO
+       (evento con lectura macro cargada pero nunca dado de alta en
+       EVENTOS con categoría/impacto/polaridad), se acepta igual con
+       una categoría/impacto genéricos de respaldo.
+
+    Devuelve (nombre_final, info_evento) o (None, None) si no matchea
+    de ninguna forma.
+    """
+    nombre = (nombre_crudo or "").strip()
+    if nombre in EVENTOS:
+        return nombre, EVENTOS[nombre]
+
+    sin_mes = _SUFIJO_MES_RE.sub("", nombre).strip()
+    if sin_mes and sin_mes in EVENTOS:
+        return sin_mes, EVENTOS[sin_mes]
+
+    # Existe la lectura macro pero nunca se dio de alta en EVENTOS —
+    # lo aceptamos con valores de respaldo en vez de rechazarlo.
+    for candidato in (nombre, sin_mes):
+        if candidato and candidato in INTERPRETACION_MACRO:
+            info_respaldo = {"categoria": "Otros", "unidad": "", "impacto": "Medio", "polaridad": "directa"}
+            return candidato, info_respaldo
+
+    return None, None
+    
 def _validar_fila_masiva(row):
     """Valida una fila del archivo subido. Devuelve (errores, datos)
     donde datos es el dict listo para _guardar_registro / _guardar_registros_masivo,
@@ -2262,11 +2300,14 @@ def _validar_fila_masiva(row):
     elif pais not in PAISES:
         errores.append(f"País no reconocido: '{pais}'")
 
-    evento = str(row.get("evento") or "").strip()
-    if not evento:
+    evento_crudo = str(row.get("evento") or "").strip()
+    if not evento_crudo:
         errores.append("Evento vacío")
-    elif evento not in EVENTOS:
-        errores.append(f"Evento no reconocido: '{evento}'")
+        evento, info_evento_ok = None, None
+    else:
+        evento, info_evento_ok = _normalizar_evento_masivo(evento_crudo)
+        if evento is None:
+            errores.append(f"Evento no reconocido: '{evento_crudo}'")
 
     previsto = _num_o_none(row.get("previsto"))
     anterior = _num_o_none(row.get("anterior"))
@@ -2285,11 +2326,11 @@ def _validar_fila_masiva(row):
         fecha=fecha,
         pais=pais,
         evento=evento,
-        relevancia=EVENTOS[evento]["impacto"],
+        relevancia=info_evento_ok["impacto"],
         previsto=None if previsto == "ERROR" else previsto,
         anterior=None if anterior == "ERROR" else anterior,
         real=None if real == "ERROR" else real,
-        unidad=unidad or EVENTOS[evento]["unidad"],
+        unidad=unidad or info_evento_ok["unidad"],
         notas=notas,
     )
     return [], datos
