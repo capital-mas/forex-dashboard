@@ -2075,6 +2075,13 @@ def _borrar_duplicados(supabase, ids_a_borrar):
         total += len(lote)
     return total
 
+def _borrar_toda_la_base(supabase):
+    """Elimina TODOS los registros de la tabla de eventos económicos.
+    Operación irreversible — pensada para poder recargar todo de cero."""
+    # Supabase/PostgREST exige un filtro en el delete; con neq a un id
+    # imposible (0) se borran todas las filas sin excepción.
+    supabase.table(TABLA_REGISTRO).delete().neq("id", 0).execute()
+
 @st.cache_data(ttl=120, show_spinner=False)
 def _obtener_noticias(_supabase, limite=100):
     res = (_supabase.table(TABLA_NOTICIAS).select("*")
@@ -2286,6 +2293,36 @@ def _tab_registrar(supabase, user_id, es_admin):
                         st.session_state.pop("cal_reg_dup_detalle", None)
                         st.rerun()
 
+    
+    # ── Borrar TODA la base (reinicio total) ──
+    with st.expander("☠️ Borrar TODA la base de datos"):
+        st.error(
+            "⚠️ Esto elimina **absolutamente todos** los eventos económicos cargados hasta "
+            "ahora, sin posibilidad de deshacerlo. Usalo solo si querés arrancar de cero para "
+            "recargar todo el historial desde archivos nuevos."
+        )
+        cantidad_actual = len(_obtener_registros(supabase))
+        st.caption(f"Actualmente hay **{cantidad_actual}** registro(s) en la base.")
+
+        confirmacion = st.text_input(
+            "Para confirmar, escribí exactamente: BORRAR TODO",
+            key="cal_reg_confirm_borrar_todo",
+            placeholder="BORRAR TODO",
+        )
+
+        if st.button(
+            "☠️ Eliminar toda la base de datos",
+            type="primary", key="cal_reg_btn_borrar_todo",
+            disabled=(confirmacion.strip() != "BORRAR TODO"),
+        ):
+            try:
+                _borrar_toda_la_base(supabase)
+                _limpiar_cache_registros()
+                st.session_state.pop("cal_reg_confirm_borrar_todo", None)
+                st.success("✅ Se eliminó toda la base de eventos. Ya podés recargar todo de nuevo.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error al borrar la base: {e}")
 
 # ==============================================================
 #  CARGA MASIVA
