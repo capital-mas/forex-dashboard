@@ -2703,40 +2703,6 @@ def _tab_historial(supabase, es_admin=False):
             _limpiar_cache_registros()
             st.rerun()
 
-    if es_admin:
-        with st.expander("🔄 Recalcular todos los eventos (mantenimiento)"):
-            st.caption(
-                "Vuelve a calcular el análisis (vs. previsto/anterior, señales, impacto de mercado) "
-                "y la interpretación macro (divisas, bonos, acciones, oro, cripto, política monetaria, "
-                "régimen de mercado) de **todos** los eventos ya cargados, con la lógica que está hoy "
-                "en el código. Útil después de corregir un bug de cálculo (como el de 'Real = Previsto' "
-                "que se arregló hace poco), para no tener que entrar evento por evento a Editar → "
-                "Guardar. Solo se actualiza en la base lo que realmente cambió; los eventos ya "
-                "correctos quedan intactos y esto no borra ni modifica Fecha, País, Evento, Previsto, "
-                "Anterior, Real ni Notas."
-            )
-            if st.button("🔄 Recalcular todos los eventos ahora", key="cal_hist_btn_recalcular_todo"):
-                barra = st.progress(0.0, text="Recalculando eventos...")
-
-                def _cb(hecho, total):
-                    frac = hecho / total if total else 1.0
-                    barra.progress(frac, text=f"Recalculando eventos... {hecho}/{total}")
-
-                try:
-                    total, actualizados = _recalcular_todos_los_registros(supabase, progreso_cb=_cb)
-                    barra.empty()
-                    _limpiar_cache_registros()
-                    if actualizados:
-                        st.success(
-                            f"✅ Listo: se revisaron {total} evento(s) y se corrigieron **{actualizados}**, "
-                            "que tenían una lectura distinta a la que da la lógica actual."
-                        )
-                    else:
-                        st.info(f"✅ Se revisaron {total} evento(s) y ya estaban todos al día — no hizo falta corregir ninguno.")
-                    st.rerun()
-                except Exception as e:
-                    barra.empty()
-                    st.error(f"❌ Error al recalcular: {e}")
 
     # El filtro de fecha se resuelve ANTES de pedir los datos, así el
     # rango se manda directo a la query de Supabase (más rápido cuando
