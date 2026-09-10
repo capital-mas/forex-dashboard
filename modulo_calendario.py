@@ -3452,6 +3452,35 @@ _FASES_CICLO = {
 }
 
 
+def _clasificar_fase(growth_score, inflacion_score, momentum):
+    """Clasifica una combinación puntual de (crecimiento, inflación,
+    momentum) en una de las 4 fases del ciclo — reutilizable tanto para
+    el puntaje agregado de todo el historial como para el de un mes
+    puntual."""
+    crecimiento_fuerte = growth_score >= _UMBRAL_FUERTE_CICLO
+    crecimiento_debil = growth_score <= -_UMBRAL_FUERTE_CICLO
+    inflacion_acelerando = (inflacion_score is not None) and (inflacion_score <= -_UMBRAL_FUERTE_CICLO)
+    inflacion_controlada = (inflacion_score is None) or (inflacion_score > -_UMBRAL_FUERTE_CICLO)
+    momentum_positivo = (momentum is not None) and (momentum >= _UMBRAL_MOMENTUM_CICLO)
+    momentum_negativo = (momentum is not None) and (momentum <= -_UMBRAL_MOMENTUM_CICLO)
+
+    if crecimiento_fuerte and inflacion_acelerando:
+        return "sobrecalentamiento"
+    if crecimiento_fuerte:
+        return "expansion"
+    if crecimiento_debil and momentum_negativo:
+        return "desaceleracion"
+    if crecimiento_debil and momentum_positivo:
+        return "recuperacion"
+    if crecimiento_debil:
+        return "desaceleracion"
+    if momentum_positivo:
+        return "recuperacion"
+    if momentum_negativo:
+        return "sobrecalentamiento" if inflacion_acelerando else "desaceleracion"
+    return "expansion" if inflacion_controlada else "sobrecalentamiento"
+
+
 def _fase_ciclo_economico(pais, df_puntuable_completo):
     """Devuelve un dict con la fase del ciclo estimada para el país, o
     None si no hay datos de crecimiento suficientes como para opinar."""
@@ -3462,31 +3491,7 @@ def _fase_ciclo_economico(pais, df_puntuable_completo):
     inflacion_score, n_inflacion = _score_inflacion_ciclo(df_puntuable_completo)
     momentum = _momentum_crecimiento(df_puntuable_completo)
 
-    crecimiento_fuerte = growth_score >= _UMBRAL_FUERTE_CICLO
-    crecimiento_debil = growth_score <= -_UMBRAL_FUERTE_CICLO
-    inflacion_acelerando = (inflacion_score is not None) and (inflacion_score <= -_UMBRAL_FUERTE_CICLO)
-    inflacion_controlada = (inflacion_score is None) or (inflacion_score > -_UMBRAL_FUERTE_CICLO)
-    momentum_positivo = (momentum is not None) and (momentum >= _UMBRAL_MOMENTUM_CICLO)
-    momentum_negativo = (momentum is not None) and (momentum <= -_UMBRAL_MOMENTUM_CICLO)
-
-    if crecimiento_fuerte and inflacion_acelerando:
-        clave = "sobrecalentamiento"
-    elif crecimiento_fuerte:
-        clave = "expansion"
-    elif crecimiento_debil and momentum_negativo:
-        clave = "desaceleracion"
-    elif crecimiento_debil and momentum_positivo:
-        clave = "recuperacion"
-    elif crecimiento_debil:
-        clave = "desaceleracion"
-    else:
-        if momentum_positivo:
-            clave = "recuperacion"
-        elif momentum_negativo:
-            clave = "sobrecalentamiento" if inflacion_acelerando else "desaceleracion"
-        else:
-            clave = "expansion" if inflacion_controlada else "sobrecalentamiento"
-
+    clave = _clasificar_fase(growth_score, inflacion_score, momentum)
     fase = dict(_FASES_CICLO[clave])
     fase["clave"] = clave
     fase["growth_score"] = growth_score
