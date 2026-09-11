@@ -5295,6 +5295,112 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         ]))
     st.dataframe(styled_desglose, use_container_width=True, height=min(350, len(df_desglose)*38+45))
 
+    # ── Desglose del impacto por ACTIVO INDIVIDUAL ──────────────────────
+    st.markdown('---')
+    st.markdown('#### 🔬 Desglose del impacto por activo individual')
+    st.caption('Beta e impacto de cada factor calculados directamente sobre cada activo (no sobre una cartera '
+               'combinada). Es el mismo dato sin importar qué cartera mires — lo que cambia entre carteras es '
+               'solo el peso que le dan a cada activo.')
+
+    filas_activo = []
+    desglose_activo = {}
+    for tk in tickers_opt:
+        if tk not in retornos_opt.columns:
+            continue
+        betas_tk, alpha_tk, r2_tk = _opt_regresion_factores(retornos_opt[tk], ret_factores)
+        if betas_tk is None:
+            continue
+        impacto_tk = _opt_impacto_escenario(betas_tk, shocks)
+        desglose_activo[tk] = {f: betas_tk.get(f, 0.0) * shocks.get(f, 0.0) * 100 for f in shocks}
+        filas_activo.append({
+            'Ticker': tk,
+            'Impacto Estimado %': impacto_tk * 100,
+            'Beta S&P 500': betas_tk.get('S&P 500', 0),
+            'Beta Petróleo': betas_tk.get('Petróleo (WTI)', 0),
+            'Beta Dólar': betas_tk.get('Dólar (DXY vía UUP)', 0),
+            'Beta Tasas': betas_tk.get('Tasas (10Y UST, Δ p.p.)', 0),
+            'Beta VIX': betas_tk.get('Volatilidad (VIX)', 0),
+            'R²': r2_tk,
+        })
+
+    if not filas_activo:
+        st.info('No se pudo estimar el modelo de factores por activo (historial insuficiente).')
+    else:
+        df_activo_stress = pd.DataFrame(filas_activo).sort_values('Impacto Estimado %')
+
+        _map_act = 'map' if hasattr(df_activo_stress.style, 'map') else 'applymap'
+        styled_activo = (df_activo_stress.style
+            .pipe(lambda s: getattr(s, _map_act)(_color_impacto, subset=['Impacto Estimado %']))
+            .format({
+                'Impacto Estimado %': '{:+.2f}%',
+                'Beta S&P 500': '{:.2f}', 'Beta Petróleo': '{:.2f}', 'Beta Dólar': '{:.2f}',
+                'Beta Tasas': '{:.2f}', 'Beta VIX': '{:.2f}', 'R²': '{:.2f}',
+            })
+            .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
+            .set_table_styles([
+                {'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),
+                    ('font-weight','700'),('text-align','center'),
+                    ('border-bottom','2px solid #f85149'),('font-size','11px')]},
+                {'selector':'td','props':[('text-align','center'),('font-size','11px')]},
+            ]))
+        st.dataframe(styled_activo, use_container_width=True, hide_index=True,
+                     height=min(450, len(df_activo_stress)*38+45))
+
+        # Gráfico apilado por factor, un ticker por barra
+        nombres_act = df_activo_stress['Ticker'].tolist()
+        fig_desglose_act = go.Figure()
+        for factor in factores_nombres:
+            vals = [desglose_activo[tk].get(factor, 0.0) for tk in nombres_act]
+            fig_desglose_act.add_trace(go.Bar(
+                x=nombres_act, y=vals, name=factor.split(' (')[0],
+                marker_color=colores_factor.get(factor, C_MUTED),
+            ))
+        fig_desglose_act.add_trace(go.Scatter(
+            x=nombres_act,
+            y=[sum(desglose_activo[tk].values()) for tk in nombres_act],
+            mode='markers', marker=dict(size=10, color=C_TEXT, symbol='diamond-open', line=dict(width=2)),
+            name='Total', showlegend=True,
+        ))
+        fig_desglose_act.update_layout(
+            **PLOTLY_LAYOUT_BASE, barmode='relative',
+            title=dict(text='Contribución de cada factor al impacto de cada activo', font=dict(color=C_TEXT, size=13)),
+            xaxis=dict(gridcolor=C_GRID, tickangle=-30),
+            yaxis=dict(gridcolor=C_GRID, title='Contribución al impacto %'),
+            height=440, legend=dict(orientation='h', y=1.15), margin=dict(l=10, r=10, t=45, b=80),
+        )
+        st.plotly_chart(fig_desglose_act, use_container_width=True, config=PLOTLY_CONFIG, key='desglose_impacto_activo_fig')
+
+        # ── Contribución ponderada al impacto de UNA cartera elegida ────
+        st.markdown('##### 🎯 Cuánto aporta cada activo al impacto total de una cartera')
+        cartera_pesos_sel = st.selectbox(
+            'Ver pesos de', list(carteras_candidatas.keys()), key='desglose_activo_cartera_sel'
+        )
+        pesos_tk = carteras_candidatas[cartera_pesos_sel][tickers_opt].to_dict()
+        impacto_por_tk = {tk: sum(desglose_activo[tk].values()) / 100 for tk in nombres_act}
+        filas_contrib = []
+        for tk in nombres_act:
+            peso = pesos_tk.get(tk, 0.0)
+            contrib = peso * impacto_por_tk[tk] * 100
+            filas_contrib.append({
+                'Ticker': tk,
+                'Peso en cartera %': peso * 100,
+                'Impacto individual %': impacto_por_tk[tk] * 100,
+                'Contribución al impacto total %': contrib,
+            })
+        df_contrib = pd.DataFrame(filas_contrib).sort_values(
+            'Contribución al impacto total %', key=lambda s: s.abs(), ascending=False
+        )
+        st.dataframe(
+            df_contrib.style.format({
+                'Peso en cartera %': '{:.2f}%', 'Impacto individual %': '{:+.2f}%',
+                'Contribución al impacto total %': '{:+.2f}%',
+            }).pipe(lambda s: getattr(s, _map_act)(_color_impacto, subset=['Contribución al impacto total %']))
+              .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'}),
+            use_container_width=True, hide_index=True, height=min(400, len(df_contrib)*36+45),
+        )
+        st.caption(f"La suma de 'Contribución al impacto total %' reconstruye el impacto de {cartera_pesos_sel} "
+                   f"({sum(f['Contribución al impacto total %'] for f in filas_contrib):+.2f}%).")
+
     st.markdown(f"""
     <div class="interp-card">
       <div class="interp-header">🚨 Lectura del escenario</div>
