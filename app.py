@@ -5169,12 +5169,14 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
     </div>
     """, unsafe_allow_html=True)
 
+    desglose_impacto = {}
     filas_stress = []
     for nombre, ret_s in carteras_riesgo.items():
         betas, alpha, r2 = _opt_regresion_factores(ret_s, ret_factores)
         if betas is None:
             continue
         impacto = _opt_impacto_escenario(betas, shocks)
+        desglose_impacto[nombre] = {f: betas.get(f, 0.0) * shocks.get(f, 0.0) * 100 for f in shocks}
         filas_stress.append({
             'Cartera': nombre,
             'Impacto Estimado %': impacto * 100,
