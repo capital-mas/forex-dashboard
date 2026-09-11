@@ -4753,7 +4753,7 @@ def _opt_interpretar_var(df_var, capital_opt, horiz_var):
 def _opt_interpretar_stress(df_stress, capital_opt):
     peor = df_stress.iloc[0]
     mejor = df_stress.iloc[-1]
-    factor_cols = ['Beta S&P 500', 'Beta Petróleo', 'Beta Dólar', 'Beta Tasas (TLT)']
+    factor_cols = ['Beta S&P 500', 'Beta Petróleo', 'Beta Dólar', 'Beta Tasas', 'Beta VIX']
     dominantes = []
     for _, fila in df_stress.iterrows():
         betas_abs = {c: abs(fila[c]) for c in factor_cols}
@@ -5055,53 +5055,91 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
             height=380, margin=dict(l=10,r=10,t=45,b=80))
         st.plotly_chart(fig_mvar, use_container_width=True, config=PLOTLY_CONFIG, key='mvar_fig')
 
-    # ── Stress Testing / Escenarios extremos ─────────────────────────
+    # ── SIMULADOR DE CRISIS ───────────────────────────────────────────
     st.markdown('---')
-    st.markdown('### 🧨 Stress Testing — Escenarios Extremos')
-    st.caption('Se estima la sensibilidad histórica (beta) de cada cartera a 4 factores de riesgo '
-               '(S&P 500, Petróleo, Dólar y Tasas vía TLT) por regresión, y se aplica el shock elegido.')
+    st.markdown('### 🚨 Simulador de Crisis')
+    st.caption('Se estima la sensibilidad histórica (beta) de cada cartera a 5 factores de riesgo '
+               '(S&P 500, Petróleo, Dólar, Tasas y Volatilidad/VIX) por regresión, y se aplica el shock elegido.')
 
-    with st.spinner('Descargando factores de riesgo (SPY, petróleo, dólar, TLT)...'):
+    with st.spinner('Descargando factores de riesgo (SPY, petróleo, dólar, TLT, VIX)...'):
         precios_factores = _opt_descargar_factores_stress(retornos_opt.index[0].strftime('%Y-%m-%d'))
 
     if precios_factores is None or precios_factores.empty:
-        st.warning('No se pudieron descargar los factores de riesgo para el stress test.')
+        st.warning('No se pudieron descargar los factores de riesgo para el simulador de crisis.')
         return
 
     ret_factores = precios_factores.pct_change().dropna()
     simbolo_a_nombre = {v: k for k, v in FACTORES_STRESS.items()}
     ret_factores = ret_factores.rename(columns=simbolo_a_nombre)
 
-    modo_escenario = st.radio('Escenario', ['🎯 Preset (crisis combinada)', '🎛️ Personalizado'],
-                               horizontal=True, key='stress_modo')
-
-    if modo_escenario.startswith('🎯'):
-        shocks = {
-            'S&P 500': -0.10,
-            'Petróleo (WTI)': -0.10,
-            'Dólar (DXY vía UUP)': 0.08,
-            'Tasas (proxy TLT, relación inversa)': -0.05,
-        }
+    # ── Tasa de referencia, ajustable en pasos de 0.25 ──────────────────
+    tc1, tc2 = st.columns([1, 3])
+    with tc1:
+        tasa_base = st.number_input(
+            'Tasa de referencia actual (%)', min_value=0.0, max_value=20.0,
+            value=st.session_state.get('tasa_base_simulador', 3.75), step=0.25, format='%.2f',
+            key='tasa_base_simulador',
+        )
+    with tc2:
         st.markdown(
-            '<div style="font-size:11px;color:#6b7d9a">Preset: S&P 500 -10% · Petróleo -10% · '
-            'Dólar +8% · Tasas al alza (TLT -5% como proxy de suba de tasas)</div>',
+            '<div style="font-size:11px;color:#6b7d9a;padding-top:28px">'
+            'Punto de partida para mostrar la tasa resultante en cada escenario. Los shocks de tasas se '
+            f'traducen a variación de precio de bonos largos (TLT) usando una duración aproximada de '
+            f'{DURATION_TLT_PROXY:.0f} años — estimación ilustrativa, no exacta.</div>',
             unsafe_allow_html=True,
         )
-        if st.checkbox('Variante: Petróleo +10% (shock de oferta) en vez de -10%', key='stress_oil_up'):
-            shocks['Petróleo (WTI)'] = 0.10
+
+    modo_escenario = st.radio(
+        'Tipo de escenario',
+        ['🚨 Evento macro', '📜 Escenario histórico', '🎛️ Personalizado'],
+        horizontal=True, key='crisis_modo',
+    )
+
+    preset = None
+    nota_historica = None
+
+    if modo_escenario.startswith('🚨'):
+        evento_sel = st.selectbox('Elegí el evento', list(EVENTOS_PRESET.keys()), key='crisis_evento_sel')
+        preset = EVENTOS_PRESET[evento_sel]
+
+    elif modo_escenario.startswith('📜'):
+        hist_sel = st.selectbox('Elegí el escenario histórico', list(ESCENARIOS_HISTORICOS.keys()), key='crisis_hist_sel')
+        preset = ESCENARIOS_HISTORICOS[hist_sel]
+        nota_historica = preset.get('nota')
+
     else:
-        sc1, sc2 = st.columns(2)
-        with sc1:
-            sp_shock = st.slider('S&P 500 %', -40, 40, -10, 1, key='stress_sp') / 100
-            oil_shock = st.slider('Petróleo (WTI) %', -50, 50, -10, 1, key='stress_oil') / 100
-        with sc2:
-            usd_shock = st.slider('Dólar (DXY) %', -20, 20, 8, 1, key='stress_usd') / 100
-            rates_shock_tlt = st.slider('Proxy Tasas — TLT %  (negativo = suba de tasas)', -30, 30, -5, 1, key='stress_rates') / 100
-        shocks = {
-            'S&P 500': sp_shock, 'Petróleo (WTI)': oil_shock,
-            'Dólar (DXY vía UUP)': usd_shock,
-            'Tasas (proxy TLT, relación inversa)': rates_shock_tlt,
-        }
+        cp1, cp2, cp3 = st.columns(3)
+        with cp1:
+            sp_lbl = st.selectbox('📉 Mercado accionario (S&P 500)', list(OPCIONES_SP500.keys()), key='crisis_sp')
+            oil_lbl = st.selectbox('🛢️ Petróleo (WTI)', list(OPCIONES_PETROLEO.keys()), key='crisis_oil')
+        with cp2:
+            usd_lbl = st.selectbox('💵 Dólar (DXY)', list(OPCIONES_DOLAR.keys()), key='crisis_usd')
+            tasas_lbl = st.selectbox('🏦 Tasas', list(OPCIONES_TASAS.keys()), key='crisis_tasas')
+        with cp3:
+            vix_lbl = st.selectbox('📊 Volatilidad (VIX)', list(OPCIONES_VIX.keys()), key='crisis_vix')
+        preset = dict(
+            sp500=OPCIONES_SP500[sp_lbl], oil=OPCIONES_PETROLEO[oil_lbl],
+            usd=OPCIONES_DOLAR[usd_lbl], tasas_bp=OPCIONES_TASAS[tasas_lbl],
+            vix=OPCIONES_VIX[vix_lbl],
+        )
+
+    shocks = _opt_shocks_desde_preset(preset)
+    tasa_resultante = tasa_base + preset['tasas_bp'] / 100
+
+    if nota_historica:
+        st.markdown(f'<div class="info-banner">📜 {nota_historica}</div>', unsafe_allow_html=True)
+
+    # ── Resumen visual del escenario aplicado ────────────────────────────
+    st.markdown(f"""
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0 16px 0">
+      <div class="kpi-card"><div class="kpi-label">S&P 500</div><div class="kpi-value" style="font-size:16px">{preset['sp500']:+.0f}%</div></div>
+      <div class="kpi-card"><div class="kpi-label">Petróleo</div><div class="kpi-value" style="font-size:16px">{preset['oil']:+.0f}%</div></div>
+      <div class="kpi-card"><div class="kpi-label">Dólar (DXY)</div><div class="kpi-value" style="font-size:16px">{preset['usd']:+.0f}%</div></div>
+      <div class="kpi-card"><div class="kpi-label">Tasas</div><div class="kpi-value" style="font-size:16px">{preset['tasas_bp']:+.0f} pb</div>
+        <div class="kpi-sub">{tasa_base:.2f}% → {tasa_resultante:.2f}%</div></div>
+      <div class="kpi-card"><div class="kpi-label">VIX</div><div class="kpi-value" style="font-size:16px">{preset['vix']:+.0f}%</div></div>
+    </div>
+    """, unsafe_allow_html=True)
 
     filas_stress = []
     for nombre, ret_s in carteras_riesgo.items():
@@ -5116,7 +5154,8 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
             'Beta S&P 500': betas.get('S&P 500', 0),
             'Beta Petróleo': betas.get('Petróleo (WTI)', 0),
             'Beta Dólar': betas.get('Dólar (DXY vía UUP)', 0),
-            'Beta Tasas (TLT)': betas.get('Tasas (proxy TLT, relación inversa)', 0),
+            'Beta Tasas': betas.get('Tasas (proxy TLT)', 0),
+            'Beta VIX': betas.get('Volatilidad (VIX)', 0),
             'R²': r2,
         })
 
@@ -5138,8 +5177,8 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         .pipe(lambda s: getattr(s, _map_st)(_color_impacto, subset=['Impacto Estimado %']))
         .format({
             'Impacto Estimado %': '{:+.2f}%', 'Impacto Estimado USD': '{:+,.0f}',
-            'Beta S&P 500': '{:.2f}', 'Beta Petróleo': '{:.2f}',
-            'Beta Dólar': '{:.2f}', 'Beta Tasas (TLT)': '{:.2f}', 'R²': '{:.2f}',
+            'Beta S&P 500': '{:.2f}', 'Beta Petróleo': '{:.2f}', 'Beta Dólar': '{:.2f}',
+            'Beta Tasas': '{:.2f}', 'Beta VIX': '{:.2f}', 'R²': '{:.2f}',
         })
         .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
         .set_table_styles([
@@ -5163,10 +5202,9 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         height=400, margin=dict(l=10,r=10,t=45,b=80))
     st.plotly_chart(fig_stress, use_container_width=True, config=PLOTLY_CONFIG, key='stress_fig')
 
-    peor = df_stress.iloc[0]
     st.markdown(f"""
     <div class="interp-card">
-      <div class="interp-header">🧨 Lectura del escenario</div>
+      <div class="interp-header">🚨 Lectura del escenario</div>
       {_opt_interpretar_stress(df_stress, capital_opt)}
     </div>
     """, unsafe_allow_html=True)
