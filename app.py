@@ -5154,6 +5154,8 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         vix=preset_base['vix'] + OPCIONES_VIX[vix_extra],
     )
 
+    tasa_resultante = tasa_base + preset['tasas_bp'] / 100        
+    shocks = _opt_shocks_desde_preset(preset)                     
 
     st.markdown('#### 3️⃣ Escenario combinado aplicado')
     st.markdown(f"""
