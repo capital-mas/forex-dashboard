@@ -5080,9 +5080,32 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
             xaxis=dict(gridcolor=C_GRID, tickangle=-45), yaxis=dict(gridcolor=C_GRID, title='Component VaR diario %'),
             height=380, margin=dict(l=10,r=10,t=45,b=80))
         st.plotly_chart(fig_mvar, use_container_width=True, config=PLOTLY_CONFIG, key='mvar_fig')
+ 
+def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, benchmark_opt,
+                                  carteras_candidatas, series_ret, capital_opt):
+    st.markdown("""
+    <div class="info-banner">
+      Simulá el impacto de un evento macro o escenario histórico sobre las 5 carteras candidatas,
+      el benchmark y tu <b>Cartera Actual</b> (si cargaste montos en "Mi Cartera Actual — Comparar y Rebalancear").
+    </div>
+    """, unsafe_allow_html=True)
 
-    # ── SIMULADOR DE CRISIS ───────────────────────────────────────────
-    st.markdown('---')
+    # ── Universo de carteras a analizar (mismo criterio que Riesgo Avanzado) ──
+    carteras_riesgo = dict(series_ret)
+
+    pesos_actual_dict = None
+    df_montos = st.session_state.get('reb_montos')
+    if df_montos is not None:
+        total_actual = float(df_montos['Monto actual (USD)'].sum())
+        if total_actual > 0:
+            pesos_actual_dict = {
+                fila['Ticker']: float(fila['Monto actual (USD)']) / total_actual
+                for _, fila in df_montos.iterrows()
+            }
+            pesos_arr_act = np.array([pesos_actual_dict.get(tk, 0.0) for tk in tickers_opt])
+            if pesos_arr_act.sum() > 0:
+                carteras_riesgo['Mi Cartera Actual'] = retornos_opt[tickers_opt] @ pesos_arr_act
+
     st.markdown('### 🚨 Simulador de Crisis')
     st.caption('Sensibilidad histórica (beta) de cada cartera a 5 factores de riesgo — S&P 500, Petróleo, '
                'Dólar, Tasas (10Y) y Volatilidad/VIX — estimada por regresión. Podés partir de un evento o '
@@ -5154,8 +5177,8 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         vix=preset_base['vix'] + OPCIONES_VIX[vix_extra],
     )
 
-    tasa_resultante = tasa_base + preset['tasas_bp'] / 100        
-    shocks = _opt_shocks_desde_preset(preset)                     
+    tasa_resultante = tasa_base + preset['tasas_bp'] / 100
+    shocks = _opt_shocks_desde_preset(preset)
 
     st.markdown('#### 3️⃣ Escenario combinado aplicado')
     st.markdown(f"""
@@ -5237,7 +5260,7 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
     st.caption('Cuánto aporta cada factor (beta × shock) al impacto total de cada cartera. '
                'La suma de las barras apiladas de cada cartera reconstruye el "Impacto Estimado %" de la tabla de arriba.')
 
-    nombres_orden = df_stress['Cartera'].tolist()  # mismo orden que el gráfico de arriba
+    nombres_orden = df_stress['Cartera'].tolist()
     factores_nombres = list(shocks.keys())
     colores_factor = {
         'S&P 500': C_RED,
@@ -5269,7 +5292,6 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
     )
     st.plotly_chart(fig_desglose, use_container_width=True, config=PLOTLY_CONFIG, key='desglose_impacto_fig')
 
-    # Tabla del mismo desglose, para ver los números exactos
     df_desglose = pd.DataFrame(desglose_impacto).T[factores_nombres]
     df_desglose.columns = [f.split(' (')[0] for f in factores_nombres]
     df_desglose = df_desglose.loc[nombres_orden]
@@ -5346,7 +5368,6 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         st.dataframe(styled_activo, use_container_width=True, hide_index=True,
                      height=min(450, len(df_activo_stress)*38+45))
 
-        # Gráfico apilado por factor, un ticker por barra
         nombres_act = df_activo_stress['Ticker'].tolist()
         fig_desglose_act = go.Figure()
         for factor in factores_nombres:
@@ -5370,7 +5391,6 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         )
         st.plotly_chart(fig_desglose_act, use_container_width=True, config=PLOTLY_CONFIG, key='desglose_impacto_activo_fig')
 
-        # ── Contribución ponderada al impacto de UNA cartera elegida ────
         st.markdown('##### 🎯 Cuánto aporta cada activo al impacto total de una cartera')
         cartera_pesos_sel = st.selectbox(
             'Ver pesos de', list(carteras_candidatas.keys()), key='desglose_activo_cartera_sel'
@@ -5406,7 +5426,7 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
       <div class="interp-header">🚨 Lectura del escenario</div>
       {_opt_interpretar_stress(df_stress, capital_opt)}
     </div>
-    """, unsafe_allow_html=True) 
+    """, unsafe_allow_html=True)
 
 def modulo_optimizador():
     st.markdown("""
