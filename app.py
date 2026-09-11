@@ -4415,6 +4415,131 @@ def _opt_metricas_completas(ret, ret_bench=None, rf=TASA_LIBRE_RIESGO_OPT):
         'Equity': equity, 'Drawdown': dd,
     }
 
+# ==============================================================
+#  RIESGO AVANZADO — VaR/CVaR histórico y paramétrico,
+#  Marginal VaR, Component VaR y Stress Testing (Optimizador)
+# ==============================================================
+
+try:
+    from scipy.stats import norm as _norm_dist
+    SCIPY_OK = True
+except ImportError:
+    SCIPY_OK = False
+
+
+def _z_score(confianza):
+    """Z-score de la normal estándar. Usa scipy si está disponible; si no, cae a tabla fija."""
+    if SCIPY_OK:
+        return float(_norm_dist.ppf(confianza))
+    tabla = {0.90: 1.2816, 0.95: 1.6449, 0.975: 1.9600, 0.99: 2.3263, 0.995: 2.5758}
+    return tabla.get(round(confianza, 3), 1.6449)
+
+
+def _norm_pdf_z(z):
+    if SCIPY_OK:
+        return float(_norm_dist.pdf(z))
+    return float(np.exp(-z**2 / 2) / np.sqrt(2 * np.pi))
+
+
+HORIZONTES_VAR = {'1 día': 1, '1 semana (5d)': 5, '1 mes (21d)': 21}
+
+FACTORES_STRESS = {
+    'S&P 500':                             'SPY',
+    'Petróleo (WTI)':                      'CL=F',
+    'Dólar (DXY vía UUP)':                 'UUP',
+    'Tasas (proxy TLT, relación inversa)': 'TLT',
+}
+
+
+def _opt_var_cvar_historico(ret, confianza=0.95, horizonte_dias=1):
+    """VaR y CVaR históricos (percentil empírico), escalados a un horizonte por raíz del tiempo."""
+    ret = ret.dropna()
+    if len(ret) < 30:
+        return None
+    var_diario = -np.percentile(ret, (1 - confianza) * 100)
+    cola = ret[ret <= -var_diario]
+    cvar_diario = -cola.mean() if len(cola) > 0 else var_diario
+    escala = np.sqrt(horizonte_dias)
+    return {'VaR': var_diario * escala, 'CVaR': cvar_diario * escala}
+
+
+def _opt_var_cvar_parametrico(ret, confianza=0.95, horizonte_dias=1):
+    """VaR y CVaR paramétricos (Normal / Varianza-Covarianza), escalados por raíz del tiempo."""
+    ret = ret.dropna()
+    if len(ret) < 30:
+        return None
+    mu, sigma = float(ret.mean()), float(ret.std())
+    z = _z_score(confianza)
+    var_diario = sigma * z - mu
+    cvar_diario = sigma * (_norm_pdf_z(z) / (1 - confianza)) - mu
+    escala = np.sqrt(horizonte_dias)
+    return {'VaR': var_diario * escala, 'CVaR': cvar_diario * escala}
+
+
+def _opt_marginal_component_var(pesos, retornos_activos, confianza=0.95):
+    """Marginal VaR y Component VaR (paramétrico, Gaussiano) por activo.
+    La suma de los Component VaR reconstruye el VaR total (paramétrico) de la cartera."""
+    z = _z_score(confianza)
+    cov = retornos_activos.cov().values
+    w = np.array(pesos, dtype=float)
+    var_p = float(w @ cov @ w)
+    sigma_p = np.sqrt(var_p) if var_p > 0 else 0.0
+    if sigma_p == 0:
+        return None, 0.0
+    cov_w = cov @ w
+    marginal = z * cov_w / sigma_p
+    component = w * marginal
+    var_total = z * sigma_p
+    df = pd.DataFrame({
+        'Ticker': retornos_activos.columns,
+        'Peso %': w * 100,
+        'Vol. Individual Anual %': retornos_activos.std().values * np.sqrt(252) * 100,
+        'Marginal VaR diario %': marginal * 100,
+        'Component VaR diario %': component * 100,
+        '% del VaR Total': np.where(var_total != 0, component / var_total * 100, 0),
+    }).sort_values('Component VaR diario %', ascending=False).reset_index(drop=True)
+    return df, var_total
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _opt_descargar_factores_stress(fecha_inicio):
+    try:
+        import yfinance as yf
+        symbols = list(FACTORES_STRESS.values())
+        data = yf.download(symbols, start=fecha_inicio, auto_adjust=True, progress=False)
+        if data is None or data.empty:
+            return None
+        precios = data['Close'] if isinstance(data.columns, pd.MultiIndex) else data
+        if len(symbols) == 1 and 'Close' in precios.columns:
+            precios = precios[['Close']].rename(columns={'Close': symbols[0]})
+        return precios.dropna()
+    except Exception:
+        return None
+
+
+def _opt_regresion_factores(ret_cartera, ret_factores):
+    """Regresión lineal múltiple de los retornos de la cartera contra los factores de riesgo.
+    Devuelve (betas por factor, alpha, R²)."""
+    fechas_comunes = ret_cartera.index.intersection(ret_factores.index)
+    if len(fechas_comunes) < 60:
+        return None, None, None
+    y = ret_cartera.loc[fechas_comunes].values
+    X = ret_factores.loc[fechas_comunes].values
+    X_ = np.column_stack([np.ones(len(X)), X])
+    coef, *_ = np.linalg.lstsq(X_, y, rcond=None)
+    alpha, betas = coef[0], coef[1:]
+    y_pred = X_ @ coef
+    ss_res = float(np.sum((y - y_pred) ** 2))
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1 - ss_res / ss_tot if ss_tot != 0 else 0.0
+    return dict(zip(ret_factores.columns, betas)), float(alpha), r2
+
+
+def _opt_impacto_escenario(betas, shocks):
+    """shocks: dict {nombre_factor: shock decimal (ej. -0.10 = -10%)}."""
+    if betas is None:
+        return None
+    return float(sum(betas.get(f, 0.0) * s for f, s in shocks.items()))
 
 def _opt_pct(x):
     return f'{x*100:.2f}%' if x is not None and not pd.isna(x) else '-'
@@ -4568,6 +4693,236 @@ def _opt_fig_frontera(df_sim, carteras_candidatas, vol_bench, cagr_bench, benchm
     )
     return fig
 
+def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchmark_opt,
+                                 carteras_candidatas, series_ret, capital_opt):
+    st.markdown("""
+    <div class="info-banner">
+      Métricas de riesgo avanzadas para las 5 carteras candidatas, el benchmark y tu <b>Cartera Actual</b>
+      (si cargaste montos en la sección "Mi Cartera Actual — Comparar y Rebalancear" más arriba).
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Universo de carteras a analizar ──────────────────────────────
+    carteras_riesgo = dict(series_ret)  # ya incluye las 5 candidatas + benchmark
+
+    pesos_actual_dict = None
+    df_montos = st.session_state.get('reb_montos')
+    if df_montos is not None:
+        total_actual = float(df_montos['Monto actual (USD)'].sum())
+        if total_actual > 0:
+            pesos_actual_dict = {
+                fila['Ticker']: float(fila['Monto actual (USD)']) / total_actual
+                for _, fila in df_montos.iterrows()
+            }
+            pesos_arr_act = np.array([pesos_actual_dict.get(tk, 0.0) for tk in tickers_opt])
+            if pesos_arr_act.sum() > 0:
+                carteras_riesgo['Mi Cartera Actual'] = retornos_opt[tickers_opt] @ pesos_arr_act
+
+    # ── VaR / CVaR histórico y paramétrico (95% y 99%) ───────────────
+    st.markdown('### 📉 VaR y CVaR — Histórico vs. Paramétrico')
+    ch1, ch2 = st.columns(2)
+    with ch1:
+        horiz_var = st.selectbox('Horizonte', list(HORIZONTES_VAR.keys()), index=0, key='var_horizonte')
+    with ch2:
+        st.caption('Paramétrico asume retornos normales; histórico usa la distribución empírica real (mejor con colas gordas).')
+
+    dias_h = HORIZONTES_VAR[horiz_var]
+    filas_var = []
+    for nombre, ret_s in carteras_riesgo.items():
+        for c in (0.95, 0.99):
+            h = _opt_var_cvar_historico(ret_s, c, dias_h)
+            p = _opt_var_cvar_parametrico(ret_s, c, dias_h)
+            if h is None or p is None:
+                continue
+            filas_var.append({
+                'Cartera': nombre, 'Confianza': f'{int(c*100)}%',
+                'VaR Histórico %': h['VaR']*100, 'CVaR Histórico %': h['CVaR']*100,
+                'VaR Paramétrico %': p['VaR']*100, 'CVaR Paramétrico %': p['CVaR']*100,
+                'VaR Hist. USD': h['VaR']*capital_opt, 'CVaR Hist. USD': h['CVaR']*capital_opt,
+            })
+    if not filas_var:
+        st.warning('No hay suficiente historial para calcular VaR/CVaR.')
+        return
+
+    df_var = pd.DataFrame(filas_var)
+    df_var_fmt = df_var.copy()
+    for c in ['VaR Histórico %','CVaR Histórico %','VaR Paramétrico %','CVaR Paramétrico %']:
+        df_var_fmt[c] = df_var_fmt[c].apply(lambda v: f'{v:.2f}%')
+    for c in ['VaR Hist. USD','CVaR Hist. USD']:
+        df_var_fmt[c] = df_var_fmt[c].apply(lambda v: f'USD {v:,.0f}')
+
+    st.dataframe(df_var_fmt, use_container_width=True, hide_index=True,
+                 height=min(500, len(df_var_fmt)*36+45))
+    st.caption(f'Horizonte: {horiz_var} · Capital de referencia: USD {capital_opt:,.0f} · '
+               'VaR/CVaR expresan la pérdida esperada, no un retorno negativo.')
+
+    df_95 = df_var[df_var['Confianza']=='95%']
+    fig_var = go.Figure()
+    fig_var.add_trace(go.Bar(x=df_95['Cartera'], y=df_95['VaR Histórico %'], name='VaR Histórico 95%', marker_color=C_ACENT))
+    fig_var.add_trace(go.Bar(x=df_95['Cartera'], y=df_95['VaR Paramétrico %'], name='VaR Paramétrico 95%', marker_color=C_MONSTER, opacity=0.7))
+    fig_var.update_layout(**PLOTLY_LAYOUT_BASE, barmode='group',
+        title=dict(text=f'VaR 95% comparado — {horiz_var}', font=dict(color=C_TEXT, size=13)),
+        xaxis=dict(gridcolor=C_GRID, tickangle=-30), yaxis=dict(gridcolor=C_GRID, title='% del capital'),
+        height=380, legend=dict(orientation='h', y=1.1), margin=dict(l=10,r=10,t=45,b=80))
+    st.plotly_chart(fig_var, use_container_width=True, config=PLOTLY_CONFIG, key='var_comparado_fig')
+
+    # ── Marginal VaR y Component VaR ─────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🧩 Marginal VaR y Component VaR por activo')
+    st.caption('Descomponen el riesgo total de UNA cartera en la contribución de cada activo. '
+               'La suma de los Component VaR reconstruye el VaR total (paramétrico) de esa cartera.')
+
+    nombres_multi = [n for n in carteras_riesgo if n != benchmark_opt]
+    cart_mvar_sel = st.selectbox('Cartera a descomponer', nombres_multi, key='mvar_cartera_sel')
+    conf_mvar = st.select_slider('Nivel de confianza', options=[0.90, 0.95, 0.99], value=0.95,
+                                  format_func=lambda x: f'{int(x*100)}%', key='mvar_conf')
+
+    if cart_mvar_sel == 'Mi Cartera Actual':
+        pesos_sel = [pesos_actual_dict.get(tk, 0.0) for tk in tickers_opt]
+    else:
+        pesos_sel = carteras_candidatas[cart_mvar_sel][tickers_opt].values.astype(float)
+
+    df_mvar, var_total_mvar = _opt_marginal_component_var(pesos_sel, retornos_opt[tickers_opt], conf_mvar)
+    if df_mvar is None:
+        st.info('No se pudo calcular (pesos todos en cero).')
+    else:
+        df_mvar_f = df_mvar.copy()
+        for c in ['Peso %','Vol. Individual Anual %','Marginal VaR diario %','Component VaR diario %','% del VaR Total']:
+            df_mvar_f[c] = df_mvar_f[c].apply(lambda v: f'{v:.2f}%')
+        st.dataframe(df_mvar_f, use_container_width=True, hide_index=True,
+                     height=min(450, len(df_mvar)*36+45))
+        st.caption(f'VaR total paramétrico de la cartera ({int(conf_mvar*100)}%, diario): {var_total_mvar*100:.2f}%')
+
+        fig_mvar = go.Figure()
+        fig_mvar.add_trace(go.Bar(
+            x=df_mvar['Ticker'], y=df_mvar['Component VaR diario %'],
+            marker_color=[C_RED if v>0 else C_GREEN for v in df_mvar['Component VaR diario %']],
+        ))
+        fig_mvar.update_layout(**PLOTLY_LAYOUT_BASE,
+            title=dict(text=f'Component VaR por activo — {cart_mvar_sel}', font=dict(color=C_TEXT, size=13)),
+            xaxis=dict(gridcolor=C_GRID, tickangle=-45), yaxis=dict(gridcolor=C_GRID, title='Component VaR diario %'),
+            height=380, margin=dict(l=10,r=10,t=45,b=80))
+        st.plotly_chart(fig_mvar, use_container_width=True, config=PLOTLY_CONFIG, key='mvar_fig')
+
+    # ── Stress Testing / Escenarios extremos ─────────────────────────
+    st.markdown('---')
+    st.markdown('### 🧨 Stress Testing — Escenarios Extremos')
+    st.caption('Se estima la sensibilidad histórica (beta) de cada cartera a 4 factores de riesgo '
+               '(S&P 500, Petróleo, Dólar y Tasas vía TLT) por regresión, y se aplica el shock elegido.')
+
+    with st.spinner('Descargando factores de riesgo (SPY, petróleo, dólar, TLT)...'):
+        precios_factores = _opt_descargar_factores_stress(retornos_opt.index[0].strftime('%Y-%m-%d'))
+
+    if precios_factores is None or precios_factores.empty:
+        st.warning('No se pudieron descargar los factores de riesgo para el stress test.')
+        return
+
+    ret_factores = precios_factores.pct_change().dropna()
+    simbolo_a_nombre = {v: k for k, v in FACTORES_STRESS.items()}
+    ret_factores = ret_factores.rename(columns=simbolo_a_nombre)
+
+    modo_escenario = st.radio('Escenario', ['🎯 Preset (crisis combinada)', '🎛️ Personalizado'],
+                               horizontal=True, key='stress_modo')
+
+    if modo_escenario.startswith('🎯'):
+        shocks = {
+            'S&P 500': -0.10,
+            'Petróleo (WTI)': -0.10,
+            'Dólar (DXY vía UUP)': 0.08,
+            'Tasas (proxy TLT, relación inversa)': -0.05,
+        }
+        st.markdown(
+            '<div style="font-size:11px;color:#6b7d9a">Preset: S&P 500 -10% · Petróleo -10% · '
+            'Dólar +8% · Tasas al alza (TLT -5% como proxy de suba de tasas)</div>',
+            unsafe_allow_html=True,
+        )
+        if st.checkbox('Variante: Petróleo +10% (shock de oferta) en vez de -10%', key='stress_oil_up'):
+            shocks['Petróleo (WTI)'] = 0.10
+    else:
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            sp_shock = st.slider('S&P 500 %', -40, 40, -10, 1, key='stress_sp') / 100
+            oil_shock = st.slider('Petróleo (WTI) %', -50, 50, -10, 1, key='stress_oil') / 100
+        with sc2:
+            usd_shock = st.slider('Dólar (DXY) %', -20, 20, 8, 1, key='stress_usd') / 100
+            rates_shock_tlt = st.slider('Proxy Tasas — TLT %  (negativo = suba de tasas)', -30, 30, -5, 1, key='stress_rates') / 100
+        shocks = {
+            'S&P 500': sp_shock, 'Petróleo (WTI)': oil_shock,
+            'Dólar (DXY vía UUP)': usd_shock,
+            'Tasas (proxy TLT, relación inversa)': rates_shock_tlt,
+        }
+
+    filas_stress = []
+    for nombre, ret_s in carteras_riesgo.items():
+        betas, alpha, r2 = _opt_regresion_factores(ret_s, ret_factores)
+        if betas is None:
+            continue
+        impacto = _opt_impacto_escenario(betas, shocks)
+        filas_stress.append({
+            'Cartera': nombre,
+            'Impacto Estimado %': impacto * 100,
+            'Impacto Estimado USD': impacto * capital_opt,
+            'Beta S&P 500': betas.get('S&P 500', 0),
+            'Beta Petróleo': betas.get('Petróleo (WTI)', 0),
+            'Beta Dólar': betas.get('Dólar (DXY vía UUP)', 0),
+            'Beta Tasas (TLT)': betas.get('Tasas (proxy TLT, relación inversa)', 0),
+            'R²': r2,
+        })
+
+    if not filas_stress:
+        st.warning('No se pudo estimar el modelo de factores (historial insuficiente).')
+        return
+
+    df_stress = pd.DataFrame(filas_stress).sort_values('Impacto Estimado %')
+
+    def _color_impacto(val):
+        try:
+            v = float(val)
+            return f'color:{"#f85149" if v<0 else "#3fb950"};font-weight:700'
+        except Exception:
+            return ''
+
+    _map_st = 'map' if hasattr(df_stress.style, 'map') else 'applymap'
+    styled_stress = (df_stress.style
+        .pipe(lambda s: getattr(s, _map_st)(_color_impacto, subset=['Impacto Estimado %']))
+        .format({
+            'Impacto Estimado %': '{:+.2f}%', 'Impacto Estimado USD': '{:+,.0f}',
+            'Beta S&P 500': '{:.2f}', 'Beta Petróleo': '{:.2f}',
+            'Beta Dólar': '{:.2f}', 'Beta Tasas (TLT)': '{:.2f}', 'R²': '{:.2f}',
+        })
+        .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
+        .set_table_styles([
+            {'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),
+                ('font-weight','700'),('text-align','center'),
+                ('border-bottom','2px solid #f85149'),('font-size','11px')]},
+            {'selector':'td','props':[('text-align','center'),('font-size','11px')]},
+        ]))
+    st.dataframe(styled_stress, use_container_width=True, hide_index=True,
+                 height=min(450, len(df_stress)*38+45))
+
+    fig_stress = go.Figure()
+    fig_stress.add_trace(go.Bar(
+        x=df_stress['Cartera'], y=df_stress['Impacto Estimado %'],
+        marker_color=[C_RED if v<0 else C_GREEN for v in df_stress['Impacto Estimado %']],
+        text=[f'{v:+.1f}%' for v in df_stress['Impacto Estimado %']], textposition='outside',
+    ))
+    fig_stress.update_layout(**PLOTLY_LAYOUT_BASE,
+        title=dict(text='Impacto estimado del escenario por cartera', font=dict(color=C_TEXT, size=13)),
+        xaxis=dict(gridcolor=C_GRID, tickangle=-30), yaxis=dict(gridcolor=C_GRID, title='Impacto %'),
+        height=400, margin=dict(l=10,r=10,t=45,b=80))
+    st.plotly_chart(fig_stress, use_container_width=True, config=PLOTLY_CONFIG, key='stress_fig')
+
+    peor = df_stress.iloc[0]
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">🧨 Lectura del escenario</div>
+      La cartera más golpeada en este escenario sería <b>{peor['Cartera']}</b>, con un impacto estimado de
+      <b style="color:#f85149">{peor['Impacto Estimado %']:+.2f}%</b> (≈ USD {peor['Impacto Estimado USD']:+,.0f}
+      sobre un capital de USD {capital_opt:,.0f}).<br>
+      <span style="color:#6b7d9a;font-size:11px">Estimación basada en sensibilidad histórica (regresión lineal) a 4 factores —
+      no captura efectos no lineales ni cambios de correlación en crisis. No es asesoramiento financiero.</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 def modulo_optimizador():
     st.markdown("""
@@ -4929,7 +5284,9 @@ def modulo_optimizador():
     st.dataframe(df_cap, use_container_width=True, hide_index=True)
 
     st.markdown('---')
-    tabg1, tabg2, tabg3, tabg4 = st.tabs(['📈 Evolución capital', '📉 Drawdown', '🔥 Correlación', '🗺️ Frontera eficiente'])
+    tabg1, tabg2, tabg3, tabg4, tabg5 = st.tabs([
+        '📈 Evolución capital', '📉 Drawdown', '🔥 Correlación', '🗺️ Frontera eficiente', '🧨 Riesgo Avanzado',
+    ])
     with tabg1:
         eq_dict = {n: metricas_cart[n]['Equity'] for n in nombres_col}
         st.plotly_chart(_opt_fig_equity(eq_dict, capital_opt, benchmark_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_equity_fig')
@@ -4943,6 +5300,11 @@ def modulo_optimizador():
         vol_b = ret_bench_opt.std() * np.sqrt(252)
         cagr_b = _opt_cagr_serie(ret_bench_opt)
         st.plotly_chart(_opt_fig_frontera(df_sim, carteras_candidatas, vol_b, cagr_b, benchmark_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_frontera_fig')
+    with tabg5:
+        _opt_render_riesgo_avanzado(
+            tickers_opt, retornos_opt, ret_bench_opt, benchmark_opt,
+            carteras_candidatas, series_ret, capital_opt,
+        )    
 
     st.markdown('---')
     mejor_nombre_opt = max((n for n in nombres_col if n != benchmark_opt), key=lambda n: metricas_cart[n]['Sharpe'])
