@@ -5058,21 +5058,19 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
     # ── SIMULADOR DE CRISIS ───────────────────────────────────────────
     st.markdown('---')
     st.markdown('### 🚨 Simulador de Crisis')
-    st.caption('Se estima la sensibilidad histórica (beta) de cada cartera a 5 factores de riesgo '
-               '(S&P 500, Petróleo, Dólar, Tasas y Volatilidad/VIX) por regresión, y se aplica el shock elegido.')
+    st.caption('Sensibilidad histórica (beta) de cada cartera a 5 factores de riesgo — S&P 500, Petróleo, '
+               'Dólar, Tasas (10Y) y Volatilidad/VIX — estimada por regresión. Podés partir de un evento o '
+               'escenario histórico y sumarle ajustes manuales encima.')
 
-    with st.spinner('Descargando factores de riesgo (SPY, petróleo, dólar, TLT, VIX)...'):
+    with st.spinner('Descargando factores de riesgo (SPY, petróleo, dólar, tasas 10Y, VIX)...'):
         precios_factores = _opt_descargar_factores_stress(retornos_opt.index[0].strftime('%Y-%m-%d'))
 
     if precios_factores is None or precios_factores.empty:
         st.warning('No se pudieron descargar los factores de riesgo para el simulador de crisis.')
         return
 
-    ret_factores = precios_factores.pct_change().dropna()
-    simbolo_a_nombre = {v: k for k, v in FACTORES_STRESS.items()}
-    ret_factores = ret_factores.rename(columns=simbolo_a_nombre)
+    ret_factores = _opt_construir_retornos_factores(precios_factores)
 
-    # ── Tasa de referencia, ajustable en pasos de 0.25 ──────────────────
     tc1, tc2 = st.columns([1, 3])
     with tc1:
         tasa_base = st.number_input(
@@ -5083,53 +5081,57 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
     with tc2:
         st.markdown(
             '<div style="font-size:11px;color:#6b7d9a;padding-top:28px">'
-            'Punto de partida para mostrar la tasa resultante en cada escenario. Los shocks de tasas se '
-            f'traducen a variación de precio de bonos largos (TLT) usando una duración aproximada de '
-            f'{DURATION_TLT_PROXY:.0f} años — estimación ilustrativa, no exacta.</div>',
+            'Los shocks de tasas se aplican directamente como variación en puntos porcentuales del '
+            'rendimiento del bono a 10 años (no dependen de estimar la duración de ningún bono).</div>',
             unsafe_allow_html=True,
         )
 
+    st.markdown('#### 1️⃣ Escenario base')
     modo_escenario = st.radio(
-        'Tipo de escenario',
-        ['🚨 Evento macro', '📜 Escenario histórico', '🎛️ Personalizado'],
+        'Elegí un punto de partida',
+        ['⚪ Ninguno (solo ajustes manuales)', '🚨 Evento macro', '📜 Escenario histórico'],
         horizontal=True, key='crisis_modo',
     )
 
-    preset = None
+    preset_base = dict(sp500=0, oil=0, usd=0, tasas_bp=0, vix=0)
     nota_historica = None
 
     if modo_escenario.startswith('🚨'):
         evento_sel = st.selectbox('Elegí el evento', list(EVENTOS_PRESET.keys()), key='crisis_evento_sel')
-        preset = EVENTOS_PRESET[evento_sel]
-
+        preset_base = EVENTOS_PRESET[evento_sel]
     elif modo_escenario.startswith('📜'):
         hist_sel = st.selectbox('Elegí el escenario histórico', list(ESCENARIOS_HISTORICOS.keys()), key='crisis_hist_sel')
-        preset = ESCENARIOS_HISTORICOS[hist_sel]
-        nota_historica = preset.get('nota')
-
-    else:
-        cp1, cp2, cp3 = st.columns(3)
-        with cp1:
-            sp_lbl = st.selectbox('📉 Mercado accionario (S&P 500)', list(OPCIONES_SP500.keys()), key='crisis_sp')
-            oil_lbl = st.selectbox('🛢️ Petróleo (WTI)', list(OPCIONES_PETROLEO.keys()), key='crisis_oil')
-        with cp2:
-            usd_lbl = st.selectbox('💵 Dólar (DXY)', list(OPCIONES_DOLAR.keys()), key='crisis_usd')
-            tasas_lbl = st.selectbox('🏦 Tasas', list(OPCIONES_TASAS.keys()), key='crisis_tasas')
-        with cp3:
-            vix_lbl = st.selectbox('📊 Volatilidad (VIX)', list(OPCIONES_VIX.keys()), key='crisis_vix')
-        preset = dict(
-            sp500=OPCIONES_SP500[sp_lbl], oil=OPCIONES_PETROLEO[oil_lbl],
-            usd=OPCIONES_DOLAR[usd_lbl], tasas_bp=OPCIONES_TASAS[tasas_lbl],
-            vix=OPCIONES_VIX[vix_lbl],
-        )
-
-    shocks = _opt_shocks_desde_preset(preset)
-    tasa_resultante = tasa_base + preset['tasas_bp'] / 100
+        preset_base = ESCENARIOS_HISTORICOS[hist_sel]
+        nota_historica = preset_base.get('nota')
 
     if nota_historica:
         st.markdown(f'<div class="info-banner">📜 {nota_historica}</div>', unsafe_allow_html=True)
 
-    # ── Resumen visual del escenario aplicado ────────────────────────────
+    st.markdown('#### 2️⃣ Ajustes manuales adicionales (se suman al escenario base)')
+    with st.expander('➕ Agregar o ajustar shocks encima del escenario base',
+                      expanded=modo_escenario.startswith('⚪')):
+        ca1, ca2, ca3 = st.columns(3)
+        with ca1:
+            sp_extra = st.selectbox('📉 S&P 500 — extra', list(OPCIONES_SP500.keys()), key='crisis_sp_extra')
+            oil_extra = st.selectbox('🛢️ Petróleo — extra', list(OPCIONES_PETROLEO.keys()), key='crisis_oil_extra')
+        with ca2:
+            usd_extra = st.selectbox('💵 Dólar — extra', list(OPCIONES_DOLAR.keys()), key='crisis_usd_extra')
+            tasas_extra = st.selectbox('🏦 Tasas — extra', list(OPCIONES_TASAS.keys()), key='crisis_tasas_extra')
+        with ca3:
+            vix_extra = st.selectbox('📊 VIX — extra', list(OPCIONES_VIX.keys()), key='crisis_vix_extra')
+
+    preset = dict(
+        sp500=preset_base['sp500'] + OPCIONES_SP500[sp_extra],
+        oil=preset_base['oil'] + OPCIONES_PETROLEO[oil_extra],
+        usd=preset_base['usd'] + OPCIONES_DOLAR[usd_extra],
+        tasas_bp=preset_base['tasas_bp'] + OPCIONES_TASAS[tasas_extra],
+        vix=preset_base['vix'] + OPCIONES_VIX[vix_extra],
+    )
+
+    shocks = _opt_shocks_desde_preset(preset)
+    tasa_resultante = tasa_base + preset['tasas_bp'] / 100
+
+    st.markdown('#### 3️⃣ Escenario combinado aplicado')
     st.markdown(f"""
     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0 16px 0">
       <div class="kpi-card"><div class="kpi-label">S&P 500</div><div class="kpi-value" style="font-size:16px">{preset['sp500']:+.0f}%</div></div>
@@ -5154,7 +5156,7 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
             'Beta S&P 500': betas.get('S&P 500', 0),
             'Beta Petróleo': betas.get('Petróleo (WTI)', 0),
             'Beta Dólar': betas.get('Dólar (DXY vía UUP)', 0),
-            'Beta Tasas': betas.get('Tasas (proxy TLT)', 0),
+            'Beta Tasas': betas.get('Tasas (10Y UST, Δ p.p.)', 0),
             'Beta VIX': betas.get('Volatilidad (VIX)', 0),
             'R²': r2,
         })
@@ -5207,7 +5209,7 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
       <div class="interp-header">🚨 Lectura del escenario</div>
       {_opt_interpretar_stress(df_stress, capital_opt)}
     </div>
-    """, unsafe_allow_html=True)
+    """, unsafe_allow_html=True) 
 
 def modulo_optimizador():
     st.markdown("""
