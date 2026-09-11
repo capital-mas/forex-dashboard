@@ -4588,6 +4588,17 @@ def _opt_impacto_escenario(betas, shocks):
         return None
     return float(sum(betas.get(f, 0.0) * s for f, s in shocks.items()))
 
+def _opt_shocks_desde_preset(preset):
+    """Convierte un preset (S&P%, Petróleo%, Dólar%, Tasas en pb, VIX%) al diccionario de shocks
+    que espera la regresión."""
+    return {
+        'S&P 500':                 preset['sp500'] / 100,
+        'Petróleo (WTI)':          preset['oil'] / 100,
+        'Dólar (DXY vía UUP)':     preset['usd'] / 100,
+        'Tasas (10Y UST, Δ p.p.)': preset['tasas_bp'] / 100,
+        'Volatilidad (VIX)':       preset['vix'] / 100,
+    }
+
 def _opt_interpretar_comparativa(metricas_cart, nombres_col, benchmark_opt):
     candidatas = [n for n in nombres_col if n != benchmark_opt]
     m_bench = metricas_cart[benchmark_opt]
@@ -5143,17 +5154,6 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         vix=preset_base['vix'] + OPCIONES_VIX[vix_extra],
     )
 
-def _opt_shocks_desde_preset(preset):
-    """Convierte un preset (S&P%, Petróleo%, Dólar%, Tasas en pb, VIX%) al diccionario de shocks
-    que espera la regresión. Las tasas se aplican directamente en puntos porcentuales, ya que el
-    factor de regresión es el rendimiento a 10 años en sí (no un proxy de precio de bono)."""
-    return {
-        'S&P 500':                 preset['sp500'] / 100,
-        'Petróleo (WTI)':          preset['oil'] / 100,
-        'Dólar (DXY vía UUP)':     preset['usd'] / 100,
-        'Tasas (10Y UST, Δ p.p.)': preset['tasas_bp'] / 100,   # ej. 100 pb -> 1.00 p.p.
-        'Volatilidad (VIX)':       preset['vix'] / 100,
-    }
 
     st.markdown('#### 3️⃣ Escenario combinado aplicado')
     st.markdown(f"""
