@@ -4937,6 +4937,21 @@ def _opt_fig_frontera(df_sim, carteras_candidatas, vol_bench, cagr_bench, benchm
     )
     return fig
 
+def _opt_construir_retornos_factores(precios_factores):
+    """Arma el DataFrame de factores para la regresión: retorno % diario para los activos de precio
+    (SPY, petróleo, dólar, VIX), y variación diaria en puntos porcentuales para las tasas
+    (el ^TNX de Yahoo cotiza el rendimiento x10, por eso se divide por 10 antes de tomar la diferencia)."""
+    ret = pd.DataFrame(index=precios_factores.index)
+    for nombre_col, simbolo in FACTORES_STRESS.items():
+        if simbolo not in precios_factores.columns:
+            continue
+        serie = precios_factores[simbolo]
+        if simbolo == FACTOR_TASAS_SYMBOL:
+            ret[nombre_col] = (serie / 10).diff()
+        else:
+            ret[nombre_col] = serie.pct_change()
+    return ret.dropna()
+    
 def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchmark_opt,
                                  carteras_candidatas, series_ret, capital_opt):
     st.markdown("""
@@ -5128,8 +5143,17 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         vix=preset_base['vix'] + OPCIONES_VIX[vix_extra],
     )
 
-    shocks = _opt_shocks_desde_preset(preset)
-    tasa_resultante = tasa_base + preset['tasas_bp'] / 100
+def _opt_shocks_desde_preset(preset):
+    """Convierte un preset (S&P%, Petróleo%, Dólar%, Tasas en pb, VIX%) al diccionario de shocks
+    que espera la regresión. Las tasas se aplican directamente en puntos porcentuales, ya que el
+    factor de regresión es el rendimiento a 10 años en sí (no un proxy de precio de bono)."""
+    return {
+        'S&P 500':                 preset['sp500'] / 100,
+        'Petróleo (WTI)':          preset['oil'] / 100,
+        'Dólar (DXY vía UUP)':     preset['usd'] / 100,
+        'Tasas (10Y UST, Δ p.p.)': preset['tasas_bp'] / 100,   # ej. 100 pb -> 1.00 p.p.
+        'Volatilidad (VIX)':       preset['vix'] / 100,
+    }
 
     st.markdown('#### 3️⃣ Escenario combinado aplicado')
     st.markdown(f"""
