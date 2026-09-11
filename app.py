@@ -4963,6 +4963,13 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         height=380, legend=dict(orientation='h', y=1.1), margin=dict(l=10,r=10,t=45,b=80))
     st.plotly_chart(fig_var, use_container_width=True, config=PLOTLY_CONFIG, key='var_comparado_fig')
 
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">📉 Lectura de VaR/CVaR</div>
+      {_opt_interpretar_var(df_var, capital_opt, horiz_var)}
+    </div>
+    """, unsafe_allow_html=True)
+
     # ── Marginal VaR y Component VaR ─────────────────────────────────
     st.markdown('---')
     st.markdown('### 🧩 Marginal VaR y Component VaR por activo')
@@ -5113,11 +5120,7 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
     st.markdown(f"""
     <div class="interp-card">
       <div class="interp-header">🧨 Lectura del escenario</div>
-      La cartera más golpeada en este escenario sería <b>{peor['Cartera']}</b>, con un impacto estimado de
-      <b style="color:#f85149">{peor['Impacto Estimado %']:+.2f}%</b> (≈ USD {peor['Impacto Estimado USD']:+,.0f}
-      sobre un capital de USD {capital_opt:,.0f}).<br>
-      <span style="color:#6b7d9a;font-size:11px">Estimación basada en sensibilidad histórica (regresión lineal) a 4 factores —
-      no captura efectos no lineales ni cambios de correlación en crisis. No es asesoramiento financiero.</span>
+      {_opt_interpretar_stress(df_stress, capital_opt)}
     </div>
     """, unsafe_allow_html=True)
 
@@ -5500,10 +5503,22 @@ def modulo_optimizador():
     with tabg3:
         corr_opt = retornos_opt[tickers_opt].corr()
         st.plotly_chart(_opt_fig_corr(corr_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_corr_fig')
+        st.markdown(f"""
+        <div class="interp-card">
+          <div class="interp-header">🔥 Lectura de correlaciones</div>
+          {_opt_interpretar_correlacion(corr_opt)}
+        </div>
+        """, unsafe_allow_html=True)
     with tabg4:
         vol_b = ret_bench_opt.std() * np.sqrt(252)
         cagr_b = _opt_cagr_serie(ret_bench_opt)
         st.plotly_chart(_opt_fig_frontera(df_sim, carteras_candidatas, vol_b, cagr_b, benchmark_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_frontera_fig')
+        st.markdown(f"""
+        <div class="interp-card">
+          <div class="interp-header">🗺️ Lectura de la frontera eficiente</div>
+          {_opt_interpretar_frontera(df_sim, carteras_candidatas, vol_b, cagr_b, benchmark_opt)}
+        </div>
+        """, unsafe_allow_html=True)
     with tabg5:
         _opt_render_riesgo_avanzado(
             tickers_opt, retornos_opt, ret_bench_opt, benchmark_opt,
