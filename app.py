@@ -5230,6 +5230,69 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
         height=400, margin=dict(l=10,r=10,t=45,b=80))
     st.plotly_chart(fig_stress, use_container_width=True, config=PLOTLY_CONFIG, key='stress_fig')
 
+    # ── Desglose del impacto por factor ─────────────────────────────────
+    st.markdown('#### 🧬 Desglose del impacto por factor')
+    st.caption('Cuánto aporta cada factor (beta × shock) al impacto total de cada cartera. '
+               'La suma de las barras apiladas de cada cartera reconstruye el "Impacto Estimado %" de la tabla de arriba.')
+
+    nombres_orden = df_stress['Cartera'].tolist()  # mismo orden que el gráfico de arriba
+    factores_nombres = list(shocks.keys())
+    colores_factor = {
+        'S&P 500': C_RED,
+        'Petróleo (WTI)': C_YELL,
+        'Dólar (DXY vía UUP)': C_ACENT,
+        'Tasas (10Y UST, Δ p.p.)': '#bc8cff',
+        'Volatilidad (VIX)': C_MONSTER,
+    }
+
+    fig_desglose = go.Figure()
+    for factor in factores_nombres:
+        vals = [desglose_impacto[n].get(factor, 0.0) for n in nombres_orden]
+        fig_desglose.add_trace(go.Bar(
+            x=nombres_orden, y=vals, name=factor.split(' (')[0],
+            marker_color=colores_factor.get(factor, C_MUTED),
+        ))
+    fig_desglose.add_trace(go.Scatter(
+        x=nombres_orden,
+        y=[sum(desglose_impacto[n].values()) for n in nombres_orden],
+        mode='markers', marker=dict(size=11, color=C_TEXT, symbol='diamond-open', line=dict(width=2)),
+        name='Total', showlegend=True,
+    ))
+    fig_desglose.update_layout(
+        **PLOTLY_LAYOUT_BASE, barmode='relative',
+        title=dict(text='Contribución de cada factor al impacto total', font=dict(color=C_TEXT, size=13)),
+        xaxis=dict(gridcolor=C_GRID, tickangle=-30),
+        yaxis=dict(gridcolor=C_GRID, title='Contribución al impacto %'),
+        height=420, legend=dict(orientation='h', y=1.15), margin=dict(l=10, r=10, t=45, b=80),
+    )
+    st.plotly_chart(fig_desglose, use_container_width=True, config=PLOTLY_CONFIG, key='desglose_impacto_fig')
+
+    # Tabla del mismo desglose, para ver los números exactos
+    df_desglose = pd.DataFrame(desglose_impacto).T[factores_nombres]
+    df_desglose.columns = [f.split(' (')[0] for f in factores_nombres]
+    df_desglose = df_desglose.loc[nombres_orden]
+    df_desglose['Total'] = df_desglose.sum(axis=1)
+
+    def _color_contrib(val):
+        try:
+            v = float(val)
+            return f'color:{"#f85149" if v<0 else "#3fb950"};font-weight:600'
+        except Exception:
+            return ''
+
+    _map_ds = 'map' if hasattr(df_desglose.style, 'map') else 'applymap'
+    styled_desglose = (df_desglose.style
+        .pipe(lambda s: getattr(s, _map_ds)(_color_contrib))
+        .format('{:+.2f}%')
+        .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
+        .set_table_styles([
+            {'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),
+                ('font-weight','700'),('text-align','center'),
+                ('border-bottom','2px solid #bc8cff'),('font-size','11px')]},
+            {'selector':'td','props':[('text-align','center'),('font-size','11px')]},
+        ]))
+    st.dataframe(styled_desglose, use_container_width=True, height=min(350, len(df_desglose)*38+45))
+
     st.markdown(f"""
     <div class="interp-card">
       <div class="interp-header">🚨 Lectura del escenario</div>
