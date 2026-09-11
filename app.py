@@ -4443,11 +4443,58 @@ def _norm_pdf_z(z):
 
 HORIZONTES_VAR = {'1 día': 1, '1 semana (5d)': 5, '1 mes (21d)': 21}
 
+FACTOR_TASAS_SYMBOL = '^TNX'  # CBOE 10Y Treasury Note Yield Index (Yahoo lo cotiza x10, ej. 42.5 = 4.25%)
+
 FACTORES_STRESS = {
-    'S&P 500':                             'SPY',
-    'Petróleo (WTI)':                      'CL=F',
-    'Dólar (DXY vía UUP)':                 'UUP',
-    'Tasas (proxy TLT, relación inversa)': 'TLT',
+    'S&P 500':                 'SPY',
+    'Petróleo (WTI)':          'CL=F',
+    'Dólar (DXY vía UUP)':     'UUP',
+    'Tasas (10Y UST, Δ p.p.)': FACTOR_TASAS_SYMBOL,
+    'Volatilidad (VIX)':       '^VIX',
+}
+
+OPCIONES_TASAS    = {'Sin cambio': 0, '+50 pb': 50, '+100 pb': 100, '+200 pb': 200, '+300 pb': 300}
+OPCIONES_DOLAR    = {'Sin cambio': 0, '+5%': 5, '+10%': 10, '+20%': 20, '+30%': 30}
+OPCIONES_PETROLEO = {'Sin cambio': 0, '-10%': -10, '-20%': -20, '-30%': -30, '+20%': 20, '+40%': 40}
+OPCIONES_SP500    = {'Sin cambio': 0, '-10%': -10, '-20%': -20, '-30%': -30, '-40%': -40}
+OPCIONES_VIX      = {'Sin cambio': 0, '+20%': 20, '+50%': 50, '+100%': 100}
+
+EVENTOS_PRESET = {
+    'Recesión':          dict(sp500=-25, oil=-25, usd=+5,  tasas_bp=-100, vix=+60),
+    'Crisis bancaria':   dict(sp500=-20, oil=-15, usd=+3,  tasas_bp=-50,  vix=+80),
+    'Guerra':            dict(sp500=-15, oil=+30, usd=+5,  tasas_bp=0,    vix=+50),
+    'Crisis energética': dict(sp500=-12, oil=+50, usd=+3,  tasas_bp=+50,  vix=+40),
+    'Crisis de deuda':   dict(sp500=-18, oil=-10, usd=-5,  tasas_bp=+150, vix=+70),
+    'Inflación elevada': dict(sp500=-10, oil=+20, usd=+2,  tasas_bp=+200, vix=+30),
+    'Shock de tasas':    dict(sp500=-15, oil=-5,  usd=+5,  tasas_bp=+300, vix=+50),
+    'Crisis cambiaria':  dict(sp500=-10, oil=+5,  usd=+20, tasas_bp=+100, vix=+40),
+    'Pandemia':          dict(sp500=-30, oil=-60, usd=+3,  tasas_bp=-150, vix=+150),
+    'Crash bursátil':    dict(sp500=-25, oil=-15, usd=+5,  tasas_bp=-25,  vix=+120),
+}
+
+ESCENARIOS_HISTORICOS = {
+    'Crisis 2008 (Lehman)': dict(
+        sp500=-45, oil=-70, usd=+20, tasas_bp=-400, vix=+250,
+        nota='Colapso de Lehman Brothers y crisis financiera global (Sep 2008 - Mar 2009). '
+             'La Fed recortó tasas a casi 0%, el petróleo se desplomó junto a la demanda global, '
+             'y el dólar se fortaleció como refugio.',
+    ),
+    'COVID-19 (Feb-Mar 2020)': dict(
+        sp500=-34, oil=-60, usd=+3, tasas_bp=-150, vix=+400,
+        nota='Caída más rápida de la historia del S&P 500 (~34% en 5 semanas). La Fed llevó las '
+             'tasas a 0-0.25%, el petróleo colapsó por la parálisis de demanda, y el VIX tocó '
+             'máximos históricos (~82 puntos).',
+    ),
+    'Shock de tasas 2022': dict(
+        sp500=-25, oil=+5, usd=+15, tasas_bp=+425, vix=+30,
+        nota='La Fed subió tasas de 0.25% a 4.5% en el ciclo de suba más agresivo desde los años 80. '
+             'Acciones y bonos cayeron juntos, y el dólar se fortaleció con fuerza (DXY +15%).',
+    ),
+    'Crisis energética 2021-22': dict(
+        sp500=-10, oil=+60, usd=+10, tasas_bp=+100, vix=+40,
+        nota='Escalada de precios de energía en Europa tras la invasión a Ucrania, con petróleo y '
+             'gas natural disparados y presión inflacionaria que aceleró la suba de tasas.',
+    ),
 }
 
 
