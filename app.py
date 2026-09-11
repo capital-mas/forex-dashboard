@@ -4541,6 +4541,203 @@ def _opt_impacto_escenario(betas, shocks):
         return None
     return float(sum(betas.get(f, 0.0) * s for f, s in shocks.items()))
 
+def _opt_interpretar_comparativa(metricas_cart, nombres_col, benchmark_opt):
+    candidatas = [n for n in nombres_col if n != benchmark_opt]
+    m_bench = metricas_cart[benchmark_opt]
+    mejor_cagr = max(candidatas, key=lambda n: metricas_cart[n]['CAGR'])
+    mejor_sharpe = max(candidatas, key=lambda n: metricas_cart[n]['Sharpe'])
+    peor_dd = min(candidatas, key=lambda n: metricas_cart[n]['Max Drawdown'])
+    n_supera_cagr = sum(1 for n in candidatas if metricas_cart[n]['CAGR'] > m_bench['CAGR'])
+    n_supera_sharpe = sum(1 for n in candidatas if metricas_cart[n]['Sharpe'] > m_bench['Sharpe'])
+
+    lineas = []
+    lineas.append(
+        f"De las {len(candidatas)} carteras candidatas, <b>{n_supera_cagr}</b> superaron el CAGR de {benchmark_opt} "
+        f"({_opt_pct(m_bench['CAGR'])}) y <b>{n_supera_sharpe}</b> superaron su Sharpe ({m_bench['Sharpe']:.2f})."
+    )
+
+    m_mejor_c = metricas_cart[mejor_cagr]
+    lineas.append(
+        f"<b>{mejor_cagr}</b> fue la de mayor retorno ({_opt_pct(m_mejor_c['CAGR'])} CAGR), con Beta "
+        f"{m_mejor_c['Beta']:.2f} respecto a {benchmark_opt} "
+        f"({'más sensible' if m_mejor_c['Beta']>1 else 'menos sensible'} al mercado) y Alpha "
+        f"{_opt_pct(m_mejor_c['Alpha'])} "
+        f"({'genera retorno propio más allá del mercado' if m_mejor_c['Alpha']>0 else 'no compensa el riesgo de mercado asumido'})."
+    )
+
+    if mejor_sharpe != mejor_cagr:
+        m_mejor_s = metricas_cart[mejor_sharpe]
+        lineas.append(
+            f"<b>{mejor_sharpe}</b> tuvo el mejor Sharpe ({m_mejor_s['Sharpe']:.2f}) — mejor relación retorno/riesgo, "
+            f"aunque no sea la de mayor retorno absoluto."
+        )
+
+    m_peor_dd = metricas_cart[peor_dd]
+    lineas.append(
+        f"La caída más profunda fue la de <b>{peor_dd}</b> ({_opt_pct(m_peor_dd['Max Drawdown'])}), "
+        f"{'peor que' if m_peor_dd['Max Drawdown'] < m_bench['Max Drawdown'] else 'mejor que'} "
+        f"el drawdown de {benchmark_opt} ({_opt_pct(m_bench['Max Drawdown'])})."
+    )
+
+    ir_vals = [(n, metricas_cart[n]['Information Ratio']) for n in candidatas
+               if metricas_cart[n]['Information Ratio'] is not None and not pd.isna(metricas_cart[n]['Information Ratio'])]
+    if ir_vals:
+        mejor_ir = max(ir_vals, key=lambda x: x[1])
+        lineas.append(
+            f"El Information Ratio mide si el retorno extra sobre el benchmark compensa el riesgo activo tomado "
+            f"(Tracking Error); <b>{mejor_ir[0]}</b> lo hizo de forma más eficiente ({mejor_ir[1]:.2f})."
+        )
+
+    return " ".join(lineas)
+
+
+def _opt_interpretar_correlacion(corr):
+    tickers = list(corr.columns)
+    pares = []
+    for i in range(len(tickers)):
+        for j in range(i + 1, len(tickers)):
+            pares.append((tickers[i], tickers[j], float(corr.iloc[i, j])))
+    if not pares:
+        return "No hay suficientes activos para calcular correlaciones cruzadas."
+
+    pares_ord = sorted(pares, key=lambda x: x[2], reverse=True)
+    mas_corr, menos_corr = pares_ord[0], pares_ord[-1]
+    promedio = float(np.mean([p[2] for p in pares]))
+    altos = [p for p in pares if p[2] >= 0.6]
+    negativos = [p for p in pares if p[2] < 0]
+
+    lineas = []
+    if promedio < 0.35:
+        lectura_prom = "Es un valor bajo — buena señal de diversificación, los activos no se mueven muy juntos."
+    elif promedio < 0.6:
+        lectura_prom = "Es un valor moderado — hay cierta diversificación, pero también movimiento conjunto relevante."
+    else:
+        lectura_prom = "Es un valor alto — los activos tienden a moverse juntos, lo que reduce el beneficio real de combinarlos."
+    lineas.append(f"Correlación promedio entre los {len(tickers)} activos: <b>{promedio:.2f}</b>. {lectura_prom}")
+
+    lineas.append(
+        f"El par más correlacionado es <b>{mas_corr[0]}–{mas_corr[1]}</b> ({mas_corr[2]:.2f}) — "
+        f"suelen moverse juntos, así que combinarlos aporta poca diversificación entre ellos."
+    )
+    lineas.append(
+        f"El par más independiente es <b>{menos_corr[0]}–{menos_corr[1]}</b> ({menos_corr[2]:.2f}) — "
+        f"esta combinación es la que más ayuda a bajar la volatilidad total de la cartera."
+    )
+    if altos:
+        nombres_altos = ', '.join(f'{a}-{b}' for a, b, _ in altos[:4])
+        extra = f' y {len(altos)-4} más' if len(altos) > 4 else ''
+        lineas.append(f"Pares con correlación alta (≥0.6) a vigilar: {nombres_altos}{extra}.")
+    if negativos:
+        lineas.append(
+            f"Hay {len(negativos)} par(es) con correlación negativa — estos activos tienden a compensarse entre sí, "
+            f"lo cual es especialmente valioso para reducir el riesgo conjunto."
+        )
+    else:
+        lineas.append("No hay pares con correlación negativa en este grupo — ningún activo actúa como cobertura directa de otro.")
+    return " ".join(lineas)
+
+
+def _opt_interpretar_frontera(df_sim, carteras_candidatas, vol_bench, cagr_bench, benchmark_opt):
+    sharpe_max = float(df_sim['Sharpe'].max())
+    sharpe_mediana = float(df_sim['Sharpe'].median())
+
+    domina = []
+    for nombre, cart in carteras_candidatas.items():
+        if (cart['CAGR'] > cagr_bench and cart['Volatilidad'] <= vol_bench) or \
+           (cart['CAGR'] >= cagr_bench and cart['Volatilidad'] < vol_bench):
+            domina.append(nombre)
+
+    lineas = []
+    lineas.append(
+        f"Se simularon {len(df_sim):,} combinaciones de pesos aleatorios. El mejor Sharpe encontrado en la nube fue "
+        f"{sharpe_max:.2f}, frente a una mediana de {sharpe_mediana:.2f} — la dispersión muestra cuánto importa la "
+        f"elección de pesos dentro del mismo universo de activos."
+    )
+    if domina:
+        lineas.append(
+            f"<b>{', '.join(domina)}</b> domina(n) a {benchmark_opt}: logra(n) igual o mayor retorno con igual o "
+            f"menor volatilidad — en el gráfico eso se ve como estar arriba y/o a la izquierda del punto rojo."
+        )
+    else:
+        lineas.append(
+            f"Ninguna candidata domina estrictamente a {benchmark_opt} en ambos ejes a la vez — la que logra más "
+            f"retorno lo hace asumiendo más volatilidad que el benchmark, así que la elección depende de cuánto "
+            f"riesgo estés dispuesto a tomar por ese retorno extra."
+        )
+    lineas.append(
+        "El color de cada punto de la nube representa su Sharpe individual (más claro = mejor relación "
+        "retorno-riesgo); los símbolos grandes marcan las 5 carteras candidatas y el círculo rojo el benchmark."
+    )
+    return " ".join(lineas)
+
+
+def _opt_interpretar_var(df_var, capital_opt, horiz_var):
+    df_95 = df_var[df_var['Confianza'] == '95%'].copy()
+    df_95['Gap %'] = df_95['VaR Histórico %'] - df_95['VaR Paramétrico %']
+    peor = df_95.loc[df_95['VaR Histórico %'].idxmax()]
+    mejor = df_95.loc[df_95['VaR Histórico %'].idxmin()]
+    mayor_gap = df_95.loc[df_95['Gap %'].idxmax()]
+
+    lineas = []
+    lineas.append(
+        f"Con 95% de confianza, en un {horiz_var.lower()} normal, la cartera con mayor riesgo de cola es "
+        f"<b>{peor['Cartera']}</b> (VaR histórico {peor['VaR Histórico %']:.2f}%, ≈ USD {peor['VaR Hist. USD']:,.0f} "
+        f"sobre USD {capital_opt:,.0f}), y la más conservadora es <b>{mejor['Cartera']}</b> "
+        f"({mejor['VaR Histórico %']:.2f}%)."
+    )
+    if mayor_gap['Gap %'] > 0.5:
+        lineas.append(
+            f"<b>{mayor_gap['Cartera']}</b> muestra la mayor diferencia entre el VaR histórico y el paramétrico "
+            f"({mayor_gap['Gap %']:.2f} puntos) — señal de colas más gordas de lo que asume un modelo normal: el "
+            f"riesgo real de pérdidas extremas es mayor al que sugiere el modelo Gaussiano."
+        )
+    else:
+        lineas.append(
+            "Las diferencias entre VaR histórico y paramétrico son moderadas en general — el supuesto de "
+            "normalidad no distorsiona demasiado la estimación de riesgo para este grupo de carteras."
+        )
+    lineas.append(
+        "El CVaR (Expected Shortfall) es más informativo que el VaR solo, porque te dice cuánto perdés en promedio "
+        "cuando ocurre ese peor 5% (o 1%) de los casos — no solo el umbral de pérdida."
+    )
+    return " ".join(lineas)
+
+
+def _opt_interpretar_stress(df_stress, capital_opt):
+    peor = df_stress.iloc[0]
+    mejor = df_stress.iloc[-1]
+    factor_cols = ['Beta S&P 500', 'Beta Petróleo', 'Beta Dólar', 'Beta Tasas (TLT)']
+    dominantes = []
+    for _, fila in df_stress.iterrows():
+        betas_abs = {c: abs(fila[c]) for c in factor_cols}
+        f_dom = max(betas_abs, key=betas_abs.get)
+        dominantes.append((fila['Cartera'], f_dom.replace('Beta ', ''), fila[f_dom]))
+
+    lineas = []
+    lineas.append(
+        f"En este escenario, <b>{peor['Cartera']}</b> sería la más golpeada "
+        f"({peor['Impacto Estimado %']:+.2f}%, ≈ USD {peor['Impacto Estimado USD']:+,.0f}) y "
+        f"<b>{mejor['Cartera']}</b> la que mejor resistiría ({mejor['Impacto Estimado %']:+.2f}%)."
+    )
+    dominante_str = ' · '.join(f"{n}: {f} (β={b:.2f})" for n, f, b in dominantes)
+    lineas.append(f"Factor de riesgo dominante por cartera — {dominante_str}.")
+
+    r2_bajo = df_stress[df_stress['R²'] < 0.4]
+    if len(r2_bajo) > 0:
+        nombres_bajo = ', '.join(r2_bajo['Cartera'].tolist())
+        lineas.append(
+            f"⚠️ El modelo de 4 factores explica poco del comportamiento de {nombres_bajo} (R² &lt; 0.40) — "
+            f"probablemente tienen exposición relevante a riesgos no capturados acá (riesgo país, volatilidad "
+            f"idiosincrática de un sector, apalancamiento). El impacto estimado para esas carteras es menos confiable."
+        )
+    else:
+        lineas.append("El modelo de 4 factores explica razonablemente bien el comportamiento de todas las carteras (R² ≥ 0.40).")
+    lineas.append(
+        '<span style="color:#6b7d9a;font-size:11px">Estimación basada en sensibilidad histórica (regresión lineal) — '
+        'no captura efectos no lineales ni cambios de correlación en crisis. No es asesoramiento financiero.</span>'
+    )
+    return " ".join(lineas)
+    
 def _opt_pct(x):
     return f'{x*100:.2f}%' if x is not None and not pd.isna(x) else '-'
 
@@ -5271,6 +5468,13 @@ def modulo_optimizador():
         tabla_cmp[nombre] = col_vals
     df_cmp_opt = pd.DataFrame(tabla_cmp, index=filas_m)
     st.dataframe(df_cmp_opt, use_container_width=True, height=min(700, len(filas_m)*35+45))
+
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">📊 Lectura de la comparativa</div>
+      {_opt_interpretar_comparativa(metricas_cart, nombres_col, benchmark_opt)}
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown('### 📅 Rentabilidad por año')
     rent_anual = pd.DataFrame({n: s.resample('YE').apply(lambda x: (1+x).prod()-1) for n, s in series_ret.items()})
