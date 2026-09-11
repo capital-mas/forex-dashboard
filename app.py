@@ -5795,8 +5795,9 @@ def modulo_optimizador():
     st.dataframe(df_cap, use_container_width=True, hide_index=True)
 
     st.markdown('---')
-    tabg1, tabg2, tabg3, tabg4, tabg5 = st.tabs([
-        '📈 Evolución capital', '📉 Drawdown', '🔥 Correlación', '🗺️ Frontera eficiente', '🧨 Riesgo Avanzado',
+    tabg1, tabg2, tabg3, tabg4, tabg5, tabg6 = st.tabs([
+        '📈 Evolución capital', '📉 Drawdown', '🔥 Correlación', '🗺️ Frontera eficiente',
+        '🧨 Riesgo Avanzado', '☠️ Simulador de Crisis',
     ])
     with tabg1:
         eq_dict = {n: metricas_cart[n]['Equity'] for n in nombres_col}
@@ -5826,8 +5827,12 @@ def modulo_optimizador():
     with tabg5:
         _opt_render_riesgo_avanzado(
             tickers_opt, retornos_opt, ret_bench_opt, benchmark_opt,
+            carteras_candidatas, series_ret, capital_opt,)
+    with tabg6:
+        _opt_render_simulador_crisis(
+            tickers_opt, retornos_opt, ret_bench_opt, benchmark_opt,
             carteras_candidatas, series_ret, capital_opt,
-        )    
+        )
 
     st.markdown('---')
     mejor_nombre_opt = max((n for n in nombres_col if n != benchmark_opt), key=lambda n: metricas_cart[n]['Sharpe'])
