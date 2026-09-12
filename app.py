@@ -27,7 +27,6 @@ from modulo_opciones import modulo_opciones
 from modulo_estados_financieros import render_analisis_profundo, render_comparativo_estados
 from modulo_calendario import render_calendario_economico, render_noticias
 from modulo_noticias_mercado import render_noticias_mercado
-render_noticias_mercado(supabase, USER_ID, st.session_state['usuario'].email)
 from modulo_senales_trading import render_senales_trading
 from modulo_fscore import modulo_fscore
 from finanzas_ui import render_finanzas_personales
@@ -8228,7 +8227,7 @@ elif MODULO == 'calendario':
        render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
 
 elif MODULO == 'noticias':
-       render_noticias(supabase, USER_ID, st.session_state["usuario"].email)
+    render_noticias_mercado(supabase, USER_ID, st.session_state["usuario"].email)
 
 elif MODULO == 'finanzas':
     render_finanzas_personales(supabase, USER_ID)
