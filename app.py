@@ -4678,6 +4678,20 @@ def _opt_marginal_component_var(pesos, retornos_activos, confianza=0.95):
     }).sort_values('Component VaR diario %', ascending=False).reset_index(drop=True)
     return df, var_total
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _opt_descargar_factores_stress(fecha_inicio):
+    try:
+        import yfinance as yf
+        symbols = list(FACTORES_STRESS.values())
+        data = yf.download(symbols, start=fecha_inicio, auto_adjust=True, progress=False)
+        if data is None or data.empty:
+            return None
+        precios = data['Close'] if isinstance(data.columns, pd.MultiIndex) else data
+        if len(symbols) == 1 and 'Close' in precios.columns:
+            precios = precios[['Close']].rename(columns={'Close': symbols[0]})
+        return precios.dropna()
+    except Exception:
+        return None
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _opt_descargar_factores_pais(tickers_items, fecha_inicio):
