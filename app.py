@@ -4453,6 +4453,28 @@ FACTORES_STRESS = {
     'Volatilidad (VIX)':       '^VIX',
 }
 
+# ── Países disponibles como factor de riesgo (reutiliza tickers de ETFS) ──
+PAISES_FACTOR_TICKERS = {nombre: tk for nombre, (tk, _cat, _c) in ETFS.items()}
+
+# ── Catálogo de efectos genérico, aplicable a CUALQUIER país ──
+EFECTOS_PAIS_GENERICOS = {
+    'Sin cambio': 0,
+    'Recuperación fuerte': +20,
+    'Expansión / boom': +12,
+    'Desaceleración leve': -8,
+    'Desaceleración fuerte': -15,
+    'Recesión': -25,
+    'Recesión severa': -40,
+    'Suba fuerte del riesgo país': -20,
+    'Crisis cambiaria / devaluación': -30,
+    'Default soberano': -45,
+    'Crisis bancaria local': -25,
+    'Inestabilidad política': -15,
+    'Boom de commodities (exportador)': +15,
+    'Caída de términos de intercambio': -12,
+    'Sanciones internacionales': -20,
+}
+
 OPCIONES_TASAS    = {'Sin cambio': 0, '+50 pb': 50, '+100 pb': 100, '+200 pb': 200, '+300 pb': 300}
 OPCIONES_DOLAR    = {'Sin cambio': 0, '+5%': 5, '+10%': 10, '+20%': 20, '+30%': 30}
 OPCIONES_PETROLEO = {'Sin cambio': 0, '-10%': -10, '-20%': -20, '-30%': -30, '+20%': 20, '+40%': 40}
@@ -4460,40 +4482,149 @@ OPCIONES_SP500    = {'Sin cambio': 0, '-10%': -10, '-20%': -20, '-30%': -30, '-4
 OPCIONES_VIX      = {'Sin cambio': 0, '+20%': 20, '+50%': 50, '+100%': 100}
 
 EVENTOS_PRESET = {
-    'Recesión':          dict(sp500=-25, oil=-25, usd=+5,  tasas_bp=-100, vix=+60),
-    'Crisis bancaria':   dict(sp500=-20, oil=-15, usd=+3,  tasas_bp=-50,  vix=+80),
-    'Guerra':            dict(sp500=-15, oil=+30, usd=+5,  tasas_bp=0,    vix=+50),
-    'Crisis energética': dict(sp500=-12, oil=+50, usd=+3,  tasas_bp=+50,  vix=+40),
-    'Crisis de deuda':   dict(sp500=-18, oil=-10, usd=-5,  tasas_bp=+150, vix=+70),
-    'Inflación elevada': dict(sp500=-10, oil=+20, usd=+2,  tasas_bp=+200, vix=+30),
-    'Shock de tasas':    dict(sp500=-15, oil=-5,  usd=+5,  tasas_bp=+300, vix=+50),
-    'Crisis cambiaria':  dict(sp500=-10, oil=+5,  usd=+20, tasas_bp=+100, vix=+40),
-    'Pandemia':          dict(sp500=-30, oil=-60, usd=+3,  tasas_bp=-150, vix=+150),
-    'Crash bursátil':    dict(sp500=-25, oil=-15, usd=+5,  tasas_bp=-25,  vix=+120),
+    # ── 📈 Crecimiento ──
+    '📈 Expansión':                    dict(sp500=+15, oil=+10, usd=-2,  tasas_bp=+50,  vix=-15),
+    '📈 Desaceleración':               dict(sp500=-8,  oil=-10, usd=+2,  tasas_bp=-25,  vix=+15),
+    '📈 Soft landing':                 dict(sp500=+5,  oil=-3,  usd=0,   tasas_bp=-25,  vix=-5),
+    '📈 Hard landing':                 dict(sp500=-20, oil=-25, usd=+3,  tasas_bp=-100, vix=+50),
+    '📈 Recesión':                     dict(sp500=-25, oil=-25, usd=+5,  tasas_bp=-100, vix=+60),
+    '📈 Recesión severa':              dict(sp500=-35, oil=-35, usd=+8,  tasas_bp=-150, vix=+90),
+    '📈 Depresión':                    dict(sp500=-50, oil=-45, usd=+10, tasas_bp=-300, vix=+150),
+    '📈 Estanflación':                 dict(sp500=-15, oil=+25, usd=+3,  tasas_bp=+100, vix=+35),
+    '📈 Deflación':                    dict(sp500=-15, oil=-20, usd=+8,  tasas_bp=-150, vix=+30),
+    '📈 Reflación':                    dict(sp500=+10, oil=+15, usd=-5,  tasas_bp=+75,  vix=-10),
+
+    # ── 🔥 Inflación ──
+    '🔥 Inflación moderada':           dict(sp500=-3,  oil=+10, usd=0,   tasas_bp=+50,  vix=+5),
+    '🔥 Inflación elevada':            dict(sp500=-10, oil=+20, usd=+2,  tasas_bp=+150, vix=+20),
+    '🔥 Inflación persistente':        dict(sp500=-15, oil=+15, usd=+3,  tasas_bp=+200, vix=+25),
+    '🔥 Inflación extrema':            dict(sp500=-25, oil=+40, usd=-5,  tasas_bp=+350, vix=+50),
+    '🔥 Shock inflacionario':          dict(sp500=-18, oil=+35, usd=0,   tasas_bp=+250, vix=+40),
+    '🔥 Desinflación rápida':          dict(sp500=+8,  oil=-15, usd=-2,  tasas_bp=-100, vix=-10),
+
+    # ── 🏦 Tasas ──
+    '🏦 Shock de tasas alcista':       dict(sp500=-15, oil=-5,  usd=+5,  tasas_bp=+300, vix=+50),
+    '🏦 Shock de tasas bajista':       dict(sp500=+12, oil=+8,  usd=-5,  tasas_bp=-200, vix=-20),
+    '🏦 Suba agresiva de tasas':       dict(sp500=-20, oil=-10, usd=+8,  tasas_bp=+400, vix=+45),
+    '🏦 Recorte agresivo':             dict(sp500=+10, oil=+5,  usd=-6,  tasas_bp=-250, vix=-15),
+    '🏦 Curva invertida':              dict(sp500=-10, oil=-5,  usd=+3,  tasas_bp=-50,  vix=+25),
+    '🏦 Steepening':                   dict(sp500=+5,  oil=+5,  usd=-2,  tasas_bp=+75,  vix=-5),
+    '🏦 Flattening':                   dict(sp500=-5,  oil=0,   usd=+2,  tasas_bp=-50,  vix=+10),
+    '🏦 Bear steepening':              dict(sp500=-8,  oil=-3,  usd=+3,  tasas_bp=+120, vix=+20),
+    '🏦 Bull steepening':              dict(sp500=+6,  oil=+3,  usd=-3,  tasas_bp=-40,  vix=-10),
+
+    # ── 🔴 Financieros ──
+    '🔴 Crash bursátil':               dict(sp500=-25, oil=-15, usd=+5,  tasas_bp=-25,  vix=+120),
+    '🔴 Bear market':                  dict(sp500=-22, oil=-12, usd=+3,  tasas_bp=-50,  vix=+40),
+    '🔴 Crisis bancaria':              dict(sp500=-20, oil=-15, usd=+3,  tasas_bp=-50,  vix=+80),
+    '🔴 Crisis de liquidez':           dict(sp500=-18, oil=-10, usd=+8,  tasas_bp=-40,  vix=+70),
+    '🔴 Credit crunch':                dict(sp500=-20, oil=-15, usd=+5,  tasas_bp=-60,  vix=+65),
+    '🔴 Crisis de deuda':              dict(sp500=-18, oil=-10, usd=-5,  tasas_bp=+150, vix=+70),
+    '🔴 Default soberano':             dict(sp500=-15, oil=-8,  usd=+2,  tasas_bp=+100, vix=+55),
+    '🔴 Default corporativo':          dict(sp500=-12, oil=-5,  usd=+2,  tasas_bp=-30,  vix=+50),
+    '🔴 Crisis inmobiliaria':          dict(sp500=-20, oil=-15, usd=+2,  tasas_bp=-80,  vix=+55),
+    '🔴 Crisis de crédito':            dict(sp500=-22, oil=-15, usd=+4,  tasas_bp=-70,  vix=+65),
+    '🔴 Contagio financiero':          dict(sp500=-20, oil=-15, usd=+6,  tasas_bp=-50,  vix=+75),
+    '🔴 Flight to quality':            dict(sp500=-12, oil=-10, usd=+8,  tasas_bp=-80,  vix=+40),
+    '🔴 Flight from USD':              dict(sp500=+5,  oil=+15, usd=-15, tasas_bp=+50,  vix=+20),
+    '🔴 Dollar squeeze':               dict(sp500=-10, oil=-15, usd=+18, tasas_bp=+50,  vix=+35),
+    '🔴 Liquidity shock':              dict(sp500=-18, oil=-12, usd=+6,  tasas_bp=-40,  vix=+80),
+    '🔴 Volatility shock':             dict(sp500=-15, oil=-8,  usd=+3,  tasas_bp=-20,  vix=+100),
+
+    # ── 🌎 Geopolíticos ──
+    '🌎 Guerra':                       dict(sp500=-15, oil=+30, usd=+5,  tasas_bp=0,    vix=+50),
+    '🌎 Guerra regional':              dict(sp500=-8,  oil=+20, usd=+2,  tasas_bp=0,    vix=+30),
+    '🌎 Guerra global':                dict(sp500=-35, oil=+60, usd=+8,  tasas_bp=-50,  vix=+100),
+    '🌎 Escalada militar':             dict(sp500=-6,  oil=+15, usd=+2,  tasas_bp=0,    vix=+25),
+    '🌎 Guerra comercial':             dict(sp500=-10, oil=-5,  usd=+3,  tasas_bp=-25,  vix=+30),
+    '🌎 Sanciones':                    dict(sp500=-5,  oil=+10, usd=+2,  tasas_bp=0,    vix=+20),
+    '🌎 Bloqueo comercial':            dict(sp500=-8,  oil=+20, usd=+2,  tasas_bp=0,    vix=+30),
+    '🌎 Interrupción rutas marítimas': dict(sp500=-6,  oil=+25, usd=+1,  tasas_bp=0,    vix=+25),
+    '🌎 Crisis energética':            dict(sp500=-12, oil=+50, usd=+3,  tasas_bp=+50,  vix=+40),
+    '🌎 Crisis alimentaria':           dict(sp500=-8,  oil=+15, usd=+2,  tasas_bp=+30,  vix=+25),
+    '🌎 Crisis de commodities':        dict(sp500=-10, oil=+30, usd=0,   tasas_bp=+40,  vix=+30),
+    '🌎 Ruptura cadenas de suministro':dict(sp500=-10, oil=+15, usd=+2,  tasas_bp=+50,  vix=+30),
+
+    # ── 💵 Cambiarios ──
+    '💵 Devaluación':                  dict(sp500=-5,  oil=+5,  usd=+15, tasas_bp=+100, vix=+25),
+    '💵 Apreciación del USD':          dict(sp500=-3,  oil=-10, usd=+10, tasas_bp=+25,  vix=+10),
+    '💵 Depreciación del USD':         dict(sp500=+5,  oil=+10, usd=-10, tasas_bp=+25,  vix=+5),
+    '💵 Crisis cambiaria':             dict(sp500=-10, oil=+5,  usd=+20, tasas_bp=+100, vix=+40),
+    '💵 Currency peg failure':         dict(sp500=-8,  oil=+5,  usd=+15, tasas_bp=+150, vix=+35),
+    '💵 Fuga de capitales':            dict(sp500=-12, oil=-10, usd=+10, tasas_bp=+80,  vix=+35),
+    '💵 Sudden stop':                  dict(sp500=-15, oil=-15, usd=+12, tasas_bp=+120, vix=+45),
+    '💵 Crisis de reservas':           dict(sp500=-10, oil=0,   usd=+15, tasas_bp=+100, vix=+30),
+    '💵 Controles cambiarios':         dict(sp500=-6,  oil=0,   usd=+8,  tasas_bp=+50,  vix=+20),
 }
 
 ESCENARIOS_HISTORICOS = {
+    'Great Depression (1929)': dict(
+        sp500=-60, oil=-30, usd=+10, tasas_bp=-200, vix=+150,
+        nota='Crash bursátil, deflación, crisis bancaria en cadena y desempleo masivo. El evento deflacionario/'
+             'depresivo más severo de la historia moderna.',
+    ),
+    'Black Monday (1987)': dict(
+        sp500=-22, oil=-5, usd=+2, tasas_bp=-30, vix=+200,
+        nota='Caída del 22% del Dow en un solo día por fallas de trading programado — volatilidad extrema sin '
+             'una causa macro clara detrás.',
+    ),
+    'Crisis Asiática (1997)': dict(
+        sp500=-12, oil=-20, usd=+8, tasas_bp=-50, vix=+45,
+        nota='Colapso de divisas y crédito en el sudeste asiático, contagio a emergentes en general.',
+    ),
+    'Default Ruso / LTCM (1998)': dict(
+        sp500=-19, oil=-25, usd=+5, tasas_bp=-75, vix=+60,
+        nota='Default de Rusia y quiebra de LTCM — crisis de crédito y liquidez con fuerte contagio global.',
+    ),
+    'Dot-com (2000-2002)': dict(
+        sp500=-45, oil=-15, usd=+5, tasas_bp=-250, vix=+55,
+        nota='Colapso de las valuaciones tecnológicas (Nasdaq cayó ~78%), arrastre prolongado en growth.',
+    ),
     'Crisis 2008 (Lehman)': dict(
         sp500=-45, oil=-70, usd=+20, tasas_bp=-400, vix=+250,
-        nota='Colapso de Lehman Brothers y crisis financiera global (Sep 2008 - Mar 2009). '
-             'La Fed recortó tasas a casi 0%, el petróleo se desplomó junto a la demanda global, '
-             'y el dólar se fortaleció como refugio.',
+        nota='Colapso de Lehman Brothers y crisis financiera global (Sep 2008 - Mar 2009). La Fed recortó tasas '
+             'a casi 0%, el petróleo se desplomó junto a la demanda global, y el dólar se fortaleció como refugio.',
+    ),
+    'Flash Crash (2010)': dict(
+        sp500=-9, oil=-5, usd=+3, tasas_bp=-10, vix=+70,
+        nota='Caída relámpago intradía por problemas de liquidez algorítmica, recuperada casi por completo el '
+             'mismo día — shock puntual de volatilidad.',
+    ),
+    'Crisis de Deuda Europea (2010-2012)': dict(
+        sp500=-15, oil=-10, usd=+8, tasas_bp=-50, vix=+40,
+        nota='Grecia, Italia y España al borde del default; estrés fuerte en bancos europeos y en el euro.',
+    ),
+    'China / Commodities (2015-2016)': dict(
+        sp500=-13, oil=-30, usd=+5, tasas_bp=-25, vix=+50,
+        nota='Devaluación del yuan y desaceleración china golpean commodities y emergentes.',
+    ),
+    'Guerra Comercial (2018)': dict(
+        sp500=-17, oil=-15, usd=+4, tasas_bp=-50, vix=+35,
+        nota='Escalada de aranceles EE.UU.-China, presión sobre acciones cíclicas y commodities.',
     ),
     'COVID-19 (Feb-Mar 2020)': dict(
         sp500=-34, oil=-60, usd=+3, tasas_bp=-150, vix=+400,
-        nota='Caída más rápida de la historia del S&P 500 (~34% en 5 semanas). La Fed llevó las '
-             'tasas a 0-0.25%, el petróleo colapsó por la parálisis de demanda, y el VIX tocó '
-             'máximos históricos (~82 puntos).',
+        nota='Caída más rápida de la historia del S&P 500 (~34% en 5 semanas). La Fed llevó las tasas a 0-0.25%, '
+             'el petróleo colapsó por la parálisis de demanda, y el VIX tocó máximos históricos (~82 puntos).',
+    ),
+    'Crisis energética (2021-22)': dict(
+        sp500=-10, oil=+60, usd=+10, tasas_bp=+100, vix=+40,
+        nota='Escalada de precios de energía en Europa tras la invasión a Ucrania, con petróleo y gas natural '
+             'disparados y presión inflacionaria que aceleró la suba de tasas.',
+    ),
+    'Rusia-Ucrania (2022)': dict(
+        sp500=-8, oil=+40, usd=+5, tasas_bp=+30, vix=+35,
+        nota='Invasión rusa a Ucrania: shock de energía y alimentos, sanciones, inflación en Europa.',
     ),
     'Shock de tasas 2022': dict(
         sp500=-25, oil=+5, usd=+15, tasas_bp=+425, vix=+30,
-        nota='La Fed subió tasas de 0.25% a 4.5% en el ciclo de suba más agresivo desde los años 80. '
-             'Acciones y bonos cayeron juntos, y el dólar se fortaleció con fuerza (DXY +15%).',
+        nota='La Fed subió tasas de 0.25% a 4.5% en el ciclo de suba más agresivo desde los años 80. Acciones y '
+             'bonos cayeron juntos, y el dólar se fortaleció con fuerza (DXY +15%).',
     ),
-    'Crisis energética 2021-22': dict(
-        sp500=-10, oil=+60, usd=+10, tasas_bp=+100, vix=+40,
-        nota='Escalada de precios de energía en Europa tras la invasión a Ucrania, con petróleo y '
-             'gas natural disparados y presión inflacionaria que aceleró la suba de tasas.',
+    'Estrés Bancario (2023)': dict(
+        sp500=-8, oil=-8, usd=-2, tasas_bp=-50, vix=+35,
+        nota='Colapso de Silicon Valley Bank y Credit Suisse — foco en bancos regionales y riesgo de liquidez, '
+             'contenido por intervención rápida de reguladores.',
     ),
 }
 
