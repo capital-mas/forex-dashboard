@@ -4454,25 +4454,62 @@ FACTORES_STRESS = {
 }
 
 # ── Países disponibles como factor de riesgo (reutiliza tickers de ETFS) ──
-PAISES_FACTOR_TICKERS = {nombre: tk for nombre, (tk, _cat, _c) in ETFS.items()}
+_PAISES_EXCLUIR = {'EE.UU. S&P500', 'EE.UU. NASDAQ', 'EE.UU. DOW', 'EE.UU. Russell'}
+PAISES_FACTOR_TICKERS = {nombre: tk for nombre, (tk, _cat, _c) in ETFS.items() if nombre not in _PAISES_EXCLUIR}
 
 # ── Catálogo de efectos genérico, aplicable a CUALQUIER país ──
 EFECTOS_PAIS_GENERICOS = {
     'Sin cambio': 0,
-    'Recuperación fuerte': +20,
-    'Expansión / boom': +12,
-    'Desaceleración leve': -8,
-    'Desaceleración fuerte': -15,
-    'Recesión': -25,
-    'Recesión severa': -40,
-    'Suba fuerte del riesgo país': -20,
-    'Crisis cambiaria / devaluación': -30,
-    'Default soberano': -45,
-    'Crisis bancaria local': -25,
-    'Inestabilidad política': -15,
-    'Boom de commodities (exportador)': +15,
-    'Caída de términos de intercambio': -12,
-    'Sanciones internacionales': -20,
+
+    # ── 📈 Crecimiento ──
+    '📈 Recuperación fuerte': +20,
+    '📈 Expansión / boom': +12,
+    '📈 Soft landing': +5,
+    '📈 Desaceleración leve': -8,
+    '📈 Desaceleración fuerte': -15,
+    '📈 Hard landing': -22,
+    '📈 Recesión': -25,
+    '📈 Recesión severa': -40,
+    '📈 Depresión': -55,
+    '📈 Estanflación': -18,
+
+    # ── 🔥 Inflación ──
+    '🔥 Inflación moderada': -3,
+    '🔥 Inflación elevada': -10,
+    '🔥 Inflación persistente': -15,
+    '🔥 Inflación extrema / hiperinflación': -35,
+    '🔥 Desinflación rápida': +6,
+
+    # ── 🔴 Financiero / Riesgo país ──
+    '🔴 Suba fuerte del riesgo país': -20,
+    '🔴 Crisis bancaria local': -25,
+    '🔴 Crisis de liquidez': -18,
+    '🔴 Crisis de deuda': -22,
+    '🔴 Default soberano': -45,
+    '🔴 Default corporativo (contagio local)': -15,
+    '🔴 Contagio financiero regional': -15,
+    '🔴 Flight to quality (salida de capitales)': -18,
+
+    # ── 🌎 Geopolítico ──
+    '🌎 Guerra / conflicto armado': -20,
+    '🌎 Escalada militar / tensión regional': -10,
+    '🌎 Sanciones internacionales': -20,
+    '🌎 Bloqueo comercial': -15,
+    '🌎 Inestabilidad política': -15,
+    '🌎 Crisis energética (importador)': -12,
+    '🌎 Crisis alimentaria': -10,
+    '🌎 Boom de commodities (exportador)': +15,
+    '🌎 Caída de términos de intercambio': -12,
+
+    # ── 💵 Cambiario ──
+    '💵 Devaluación': -20,
+    '💵 Crisis cambiaria': -30,
+    '💵 Currency peg failure': -35,
+    '💵 Fuga de capitales': -22,
+    '💵 Sudden stop': -28,
+    '💵 Crisis de reservas': -18,
+    '💵 Controles cambiarios': -10,
+    '💵 Apreciación de la moneda local': +8,
 }
 
 OPCIONES_TASAS    = {'Sin cambio': 0, '+50 pb': 50, '+100 pb': 100, '+200 pb': 200, '+300 pb': 300}
