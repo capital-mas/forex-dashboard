@@ -4680,19 +4680,31 @@ def _opt_marginal_component_var(pesos, retornos_activos, confianza=0.95):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _opt_descargar_factores_stress(fecha_inicio):
+def _opt_descargar_factores_pais(tickers_items, fecha_inicio):
+    """tickers_items: tupla ordenada de (nombre_pais, ticker) — clave de caché estable."""
     try:
         import yfinance as yf
-        symbols = list(FACTORES_STRESS.values())
+        tickers_dict = dict(tickers_items)
+        symbols = sorted(set(tickers_dict.values()))
+        if not symbols:
+            return None
         data = yf.download(symbols, start=fecha_inicio, auto_adjust=True, progress=False)
         if data is None or data.empty:
             return None
         precios = data['Close'] if isinstance(data.columns, pd.MultiIndex) else data
         if len(symbols) == 1 and 'Close' in precios.columns:
             precios = precios[['Close']].rename(columns={'Close': symbols[0]})
-        return precios.dropna()
+        out = pd.DataFrame(index=precios.index)
+        for nombre, tk in tickers_dict.items():
+            if tk in precios.columns:
+                out[f'País: {nombre}'] = precios[tk]
+        return out.dropna(how='all')
     except Exception:
         return None
+
+
+def _opt_construir_retornos_pais(precios_pais):
+    return precios_pais.pct_change().dropna()
 
 
 def _opt_regresion_factores(ret_cartera, ret_factores):
