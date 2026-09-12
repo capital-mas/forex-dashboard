@@ -4907,7 +4907,7 @@ def _opt_interpretar_var(df_var, capital_opt, horiz_var):
 def _opt_interpretar_stress(df_stress, capital_opt):
     peor = df_stress.iloc[0]
     mejor = df_stress.iloc[-1]
-    factor_cols = ['Beta S&P 500', 'Beta Petróleo', 'Beta Dólar', 'Beta Tasas', 'Beta VIX']
+    factor_cols = [c for c in df_stress.columns if c.startswith('Beta ')]
     dominantes = []
     for _, fila in df_stress.iterrows():
         betas_abs = {c: abs(fila[c]) for c in factor_cols}
@@ -5228,12 +5228,12 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
                                   carteras_candidatas, series_ret, capital_opt):
     st.markdown("""
     <div class="info-banner">
-      Simulá el impacto de un evento macro o escenario histórico sobre las 5 carteras candidatas,
-      el benchmark y tu <b>Cartera Actual</b> (si cargaste montos en "Mi Cartera Actual — Comparar y Rebalancear").
+      Simulá el impacto de un evento macro, un escenario histórico y/o shocks por país — combinables entre sí —
+      sobre las 5 carteras candidatas, el benchmark y tu <b>Cartera Actual</b> (si cargaste montos en
+      "Mi Cartera Actual — Comparar y Rebalancear").
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Universo de carteras a analizar (mismo criterio que Riesgo Avanzado) ──
     carteras_riesgo = dict(series_ret)
 
     pesos_actual_dict = None
@@ -5249,12 +5249,12 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
             if pesos_arr_act.sum() > 0:
                 carteras_riesgo['Mi Cartera Actual'] = retornos_opt[tickers_opt] @ pesos_arr_act
 
-    st.markdown('### 🚨 Simulador de Crisis')
-    st.caption('Sensibilidad histórica (beta) de cada cartera a 5 factores de riesgo — S&P 500, Petróleo, '
-               'Dólar, Tasas (10Y) y Volatilidad/VIX — estimada por regresión. Podés partir de un evento o '
-               'escenario histórico y sumarle ajustes manuales encima.')
+    st.markdown('### ☠️ Simulador de Crisis')
+    st.caption('Sensibilidad histórica (beta) de cada cartera/activo a factores de riesgo globales y por país — '
+               'estimada por regresión. Combiná un evento macro, un escenario histórico y shocks por país; '
+               'todos se suman en el mismo escenario.')
 
-    with st.spinner('Descargando factores de riesgo (SPY, petróleo, dólar, tasas 10Y, VIX)...'):
+    with st.spinner('Descargando factores de riesgo globales (SPY, petróleo, dólar, tasas 10Y, VIX)...'):
         precios_factores = _opt_descargar_factores_stress(retornos_opt.index[0].strftime('%Y-%m-%d'))
 
     if precios_factores is None or precios_factores.empty:
@@ -5278,7 +5278,7 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
             unsafe_allow_html=True,
         )
 
-    st.markdown('#### 1️⃣ Escenario base')
+    st.markdown('#### 1️⃣ Escenario macro base')
     modo_escenario = st.radio(
         'Elegí un punto de partida',
         ['⚪ Ninguno (solo ajustes manuales)', '🚨 Evento macro', '📜 Escenario histórico'],
@@ -5300,7 +5300,7 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
         st.markdown(f'<div class="info-banner">📜 {nota_historica}</div>', unsafe_allow_html=True)
 
     st.markdown('#### 2️⃣ Ajustes manuales adicionales (se suman al escenario base)')
-    with st.expander('➕ Agregar o ajustar shocks encima del escenario base',
+    with st.expander('➕ Agregar o ajustar shocks macro encima del escenario base',
                       expanded=modo_escenario.startswith('⚪')):
         ca1, ca2, ca3 = st.columns(3)
         with ca1:
@@ -5319,41 +5319,104 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
         tasas_bp=preset_base['tasas_bp'] + OPCIONES_TASAS[tasas_extra],
         vix=preset_base['vix'] + OPCIONES_VIX[vix_extra],
     )
-
     tasa_resultante = tasa_base + preset['tasas_bp'] / 100
-    shocks = _opt_shocks_desde_preset(preset)
+    shocks_macro = _opt_shocks_desde_preset(preset)
 
-    st.markdown('#### 3️⃣ Escenario combinado aplicado')
-    st.markdown(f"""
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0 16px 0">
-      <div class="kpi-card"><div class="kpi-label">S&P 500</div><div class="kpi-value" style="font-size:16px">{preset['sp500']:+.0f}%</div></div>
-      <div class="kpi-card"><div class="kpi-label">Petróleo</div><div class="kpi-value" style="font-size:16px">{preset['oil']:+.0f}%</div></div>
-      <div class="kpi-card"><div class="kpi-label">Dólar (DXY)</div><div class="kpi-value" style="font-size:16px">{preset['usd']:+.0f}%</div></div>
-      <div class="kpi-card"><div class="kpi-label">Tasas</div><div class="kpi-value" style="font-size:16px">{preset['tasas_bp']:+.0f} pb</div>
-        <div class="kpi-sub">{tasa_base:.2f}% → {tasa_resultante:.2f}%</div></div>
-      <div class="kpi-card"><div class="kpi-label">VIX</div><div class="kpi-value" style="font-size:16px">{preset['vix']:+.0f}%</div></div>
-    </div>
-    """, unsafe_allow_html=True)
+    # ── 3️⃣ Shocks por país (combinables, cualquier cantidad) ──────────
+    st.markdown('#### 3️⃣ Shocks por país (opcional, combinable)')
+    st.caption('Sumá uno o más países con su propio efecto. Se combinan entre sí y con el escenario macro de '
+               'arriba. El impacto se estima con la beta histórica de cada activo/cartera al índice de ese país.')
 
+    paises_disp = list(PAISES_FACTOR_TICKERS.keys())
+    paises_sel = st.multiselect('Países a incluir', paises_disp, key='crisis_paises_sel')
+
+    shocks_pais = {}
+    if paises_sel:
+        n_cols_p = min(3, len(paises_sel))
+        cols_pais = st.columns(n_cols_p)
+        for i, pais in enumerate(paises_sel):
+            with cols_pais[i % n_cols_p]:
+                efecto_sel = st.selectbox(
+                    pais, list(EFECTOS_PAIS_GENERICOS.keys()), key=f'crisis_pais_efecto_{pais}',
+                )
+                pct = EFECTOS_PAIS_GENERICOS[efecto_sel]
+                if pct != 0:
+                    shocks_pais[f'País: {pais}'] = pct / 100
+
+    ret_factores_total = ret_factores
+    if paises_sel:
+        tickers_pais_sel = tuple(sorted((p, PAISES_FACTOR_TICKERS[p]) for p in paises_sel))
+        with st.spinner('Descargando índices de los países seleccionados...'):
+            precios_pais = _opt_descargar_factores_pais(tickers_pais_sel, retornos_opt.index[0].strftime('%Y-%m-%d'))
+        if precios_pais is not None and not precios_pais.empty:
+            ret_pais = _opt_construir_retornos_pais(precios_pais)
+            fechas_comunes_p = ret_factores_total.index.intersection(ret_pais.index)
+            ret_factores_total = pd.concat(
+                [ret_factores_total.loc[fechas_comunes_p], ret_pais.loc[fechas_comunes_p]], axis=1
+            )
+        else:
+            st.warning('No se pudieron descargar los índices de los países seleccionados; se ignoran esos shocks.')
+            shocks_pais = {}
+
+    shocks = {**shocks_macro, **shocks_pais}
+    factores_nombres = list(shocks.keys())
+
+    # Paleta: 5 colores fijos para los factores macro + paleta cíclica para países
+    colores_factor = {
+        'S&P 500': C_RED,
+        'Petróleo (WTI)': C_YELL,
+        'Dólar (DXY vía UUP)': C_ACENT,
+        'Tasas (10Y UST, Δ p.p.)': '#bc8cff',
+        'Volatilidad (VIX)': C_MONSTER,
+    }
+    paleta_pais = ['#ffa657', '#7ee787', '#79c0ff', '#f0883e', '#d2a8ff', '#3fb950', '#e3b341', '#f85149']
+    for i, f in enumerate(factores_nombres):
+        if f not in colores_factor:
+            colores_factor[f] = paleta_pais[i % len(paleta_pais)]
+
+    # ── 4️⃣ Escenario combinado aplicado ────────────────────────────────
+    st.markdown('#### 4️⃣ Escenario combinado aplicado')
+    kpis_escenario = [
+        ('S&P 500', f"{preset['sp500']:+.0f}%", ''),
+        ('Petróleo', f"{preset['oil']:+.0f}%", ''),
+        ('Dólar (DXY)', f"{preset['usd']:+.0f}%", ''),
+        ('Tasas', f"{preset['tasas_bp']:+.0f} pb", f"{tasa_base:.2f}% → {tasa_resultante:.2f}%"),
+        ('VIX', f"{preset['vix']:+.0f}%", ''),
+    ]
+    for pais, tk_pais in [(p, PAISES_FACTOR_TICKERS[p]) for p in paises_sel]:
+        pct_p = shocks_pais.get(f'País: {pais}', 0.0) * 100
+        if pct_p != 0:
+            kpis_escenario.append((pais, f'{pct_p:+.0f}%', tk_pais))
+
+    n_kpi_cols = min(5, len(kpis_escenario)) or 1
+    filas_kpi = [kpis_escenario[i:i+n_kpi_cols] for i in range(0, len(kpis_escenario), n_kpi_cols)]
+    for fila_kpi in filas_kpi:
+        html_kpi = '<div style="display:grid;grid-template-columns:repeat({},1fr);gap:8px;margin:6px 0">'.format(len(fila_kpi))
+        for label_kpi, val_kpi, sub_kpi in fila_kpi:
+            html_kpi += (f'<div class="kpi-card"><div class="kpi-label">{label_kpi}</div>'
+                         f'<div class="kpi-value" style="font-size:16px">{val_kpi}</div>'
+                         + (f'<div class="kpi-sub">{sub_kpi}</div>' if sub_kpi else '') + '</div>')
+        html_kpi += '</div>'
+        st.markdown(html_kpi, unsafe_allow_html=True)
+
+    if not factores_nombres:
+        st.info('No hay ningún shock activo — ajustá el escenario macro o agregá un país para ver resultados.')
+        return
+
+    # ── Impacto por cartera ──────────────────────────────────────────────
     desglose_impacto = {}
     filas_stress = []
     for nombre, ret_s in carteras_riesgo.items():
-        betas, alpha, r2 = _opt_regresion_factores(ret_s, ret_factores)
+        betas, alpha, r2 = _opt_regresion_factores(ret_s, ret_factores_total)
         if betas is None:
             continue
         impacto = _opt_impacto_escenario(betas, shocks)
-        desglose_impacto[nombre] = {f: betas.get(f, 0.0) * shocks.get(f, 0.0) * 100 for f in shocks}
-        filas_stress.append({
-            'Cartera': nombre,
-            'Impacto Estimado %': impacto * 100,
-            'Impacto Estimado USD': impacto * capital_opt,
-            'Beta S&P 500': betas.get('S&P 500', 0),
-            'Beta Petróleo': betas.get('Petróleo (WTI)', 0),
-            'Beta Dólar': betas.get('Dólar (DXY vía UUP)', 0),
-            'Beta Tasas': betas.get('Tasas (10Y UST, Δ p.p.)', 0),
-            'Beta VIX': betas.get('Volatilidad (VIX)', 0),
-            'R²': r2,
-        })
+        desglose_impacto[nombre] = {f: betas.get(f, 0.0) * shocks.get(f, 0.0) * 100 for f in factores_nombres}
+        fila = {'Cartera': nombre, 'Impacto Estimado %': impacto * 100, 'Impacto Estimado USD': impacto * capital_opt}
+        for f in factores_nombres:
+            fila[f'Beta {f}'] = betas.get(f, 0.0)
+        fila['R²'] = r2
+        filas_stress.append(fila)
 
     if not filas_stress:
         st.warning('No se pudo estimar el modelo de factores (historial insuficiente).')
@@ -5368,14 +5431,14 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
         except Exception:
             return ''
 
+    cols_beta = [f'Beta {f}' for f in factores_nombres]
+    fmt_stress = {'Impacto Estimado %': '{:+.2f}%', 'Impacto Estimado USD': '{:+,.0f}', 'R²': '{:.2f}'}
+    fmt_stress.update({c: '{:.2f}' for c in cols_beta})
+
     _map_st = 'map' if hasattr(df_stress.style, 'map') else 'applymap'
     styled_stress = (df_stress.style
         .pipe(lambda s: getattr(s, _map_st)(_color_impacto, subset=['Impacto Estimado %']))
-        .format({
-            'Impacto Estimado %': '{:+.2f}%', 'Impacto Estimado USD': '{:+,.0f}',
-            'Beta S&P 500': '{:.2f}', 'Beta Petróleo': '{:.2f}', 'Beta Dólar': '{:.2f}',
-            'Beta Tasas': '{:.2f}', 'Beta VIX': '{:.2f}', 'R²': '{:.2f}',
-        })
+        .format(fmt_stress)
         .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
         .set_table_styles([
             {'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),
@@ -5383,6 +5446,7 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
                 ('border-bottom','2px solid #f85149'),('font-size','11px')]},
             {'selector':'td','props':[('text-align','center'),('font-size','11px')]},
         ]))
+    st.caption('↔️ Desliza horizontalmente para ver todas las columnas de beta (varían según los países elegidos).')
     st.dataframe(styled_stress, use_container_width=True, hide_index=True,
                  height=min(450, len(df_stress)*38+45))
 
@@ -5398,21 +5462,12 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
         height=400, margin=dict(l=10,r=10,t=45,b=80))
     st.plotly_chart(fig_stress, use_container_width=True, config=PLOTLY_CONFIG, key='stress_fig')
 
-    # ── Desglose del impacto por factor ─────────────────────────────────
+    # ── Desglose por factor (cartera) ────────────────────────────────────
     st.markdown('#### 🧬 Desglose del impacto por factor')
     st.caption('Cuánto aporta cada factor (beta × shock) al impacto total de cada cartera. '
-               'La suma de las barras apiladas de cada cartera reconstruye el "Impacto Estimado %" de la tabla de arriba.')
+               'La suma de las barras apiladas reconstruye el "Impacto Estimado %" de la tabla de arriba.')
 
     nombres_orden = df_stress['Cartera'].tolist()
-    factores_nombres = list(shocks.keys())
-    colores_factor = {
-        'S&P 500': C_RED,
-        'Petróleo (WTI)': C_YELL,
-        'Dólar (DXY vía UUP)': C_ACENT,
-        'Tasas (10Y UST, Δ p.p.)': '#bc8cff',
-        'Volatilidad (VIX)': C_MONSTER,
-    }
-
     fig_desglose = go.Figure()
     for factor in factores_nombres:
         vals = [desglose_impacto[n].get(factor, 0.0) for n in nombres_orden]
@@ -5460,7 +5515,7 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
         ]))
     st.dataframe(styled_desglose, use_container_width=True, height=min(350, len(df_desglose)*38+45))
 
-    # ── Desglose del impacto por ACTIVO INDIVIDUAL ──────────────────────
+    # ── Desglose por ACTIVO INDIVIDUAL ──────────────────────────────────
     st.markdown('---')
     st.markdown('#### 🔬 Desglose del impacto por activo individual')
     st.caption('Beta e impacto de cada factor calculados directamente sobre cada activo (no sobre una cartera '
@@ -5472,35 +5527,28 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
     for tk in tickers_opt:
         if tk not in retornos_opt.columns:
             continue
-        betas_tk, alpha_tk, r2_tk = _opt_regresion_factores(retornos_opt[tk], ret_factores)
+        betas_tk, alpha_tk, r2_tk = _opt_regresion_factores(retornos_opt[tk], ret_factores_total)
         if betas_tk is None:
             continue
         impacto_tk = _opt_impacto_escenario(betas_tk, shocks)
-        desglose_activo[tk] = {f: betas_tk.get(f, 0.0) * shocks.get(f, 0.0) * 100 for f in shocks}
-        filas_activo.append({
-            'Ticker': tk,
-            'Impacto Estimado %': impacto_tk * 100,
-            'Beta S&P 500': betas_tk.get('S&P 500', 0),
-            'Beta Petróleo': betas_tk.get('Petróleo (WTI)', 0),
-            'Beta Dólar': betas_tk.get('Dólar (DXY vía UUP)', 0),
-            'Beta Tasas': betas_tk.get('Tasas (10Y UST, Δ p.p.)', 0),
-            'Beta VIX': betas_tk.get('Volatilidad (VIX)', 0),
-            'R²': r2_tk,
-        })
+        desglose_activo[tk] = {f: betas_tk.get(f, 0.0) * shocks.get(f, 0.0) * 100 for f in factores_nombres}
+        fila_a = {'Ticker': tk, 'Impacto Estimado %': impacto_tk * 100}
+        for f in factores_nombres:
+            fila_a[f'Beta {f}'] = betas_tk.get(f, 0.0)
+        fila_a['R²'] = r2_tk
+        filas_activo.append(fila_a)
 
     if not filas_activo:
         st.info('No se pudo estimar el modelo de factores por activo (historial insuficiente).')
     else:
         df_activo_stress = pd.DataFrame(filas_activo).sort_values('Impacto Estimado %')
+        fmt_activo = {'Impacto Estimado %': '{:+.2f}%', 'R²': '{:.2f}'}
+        fmt_activo.update({c: '{:.2f}' for c in cols_beta})
 
         _map_act = 'map' if hasattr(df_activo_stress.style, 'map') else 'applymap'
         styled_activo = (df_activo_stress.style
             .pipe(lambda s: getattr(s, _map_act)(_color_impacto, subset=['Impacto Estimado %']))
-            .format({
-                'Impacto Estimado %': '{:+.2f}%',
-                'Beta S&P 500': '{:.2f}', 'Beta Petróleo': '{:.2f}', 'Beta Dólar': '{:.2f}',
-                'Beta Tasas': '{:.2f}', 'Beta VIX': '{:.2f}', 'R²': '{:.2f}',
-            })
+            .format(fmt_activo)
             .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
             .set_table_styles([
                 {'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),
@@ -5566,7 +5614,7 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
 
     st.markdown(f"""
     <div class="interp-card">
-      <div class="interp-header">🚨 Lectura del escenario</div>
+      <div class="interp-header">☠️ Lectura del escenario</div>
       {_opt_interpretar_stress(df_stress, capital_opt)}
     </div>
     """, unsafe_allow_html=True)
