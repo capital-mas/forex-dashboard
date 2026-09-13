@@ -430,8 +430,8 @@ def _guardar_evento(supabase, datos, user_id, user_email):
         "pais": (datos.get("pais") or "").strip(),
         "sector": (datos.get("sector") or "").strip(),
         "activos_afectados": datos.get("activos_afectados") or ", ".join(info.get("activos", [])),
-        "monto": datos.get("monto"),
-        "moneda_monto": (datos.get("moneda_monto") or "").strip(),
+        "monto": None,
+        "moneda_monto": "",
         "fuente_url": (datos.get("fuente_url") or "").strip(),
         "reaccion_pct": datos.get("reaccion_pct"),
         "reaccion_activo": (datos.get("reaccion_activo") or "").strip(),
@@ -533,46 +533,76 @@ def _tab_registrar(supabase, user_id, user_email):
     tipo_evento = st.selectbox("🏷️ Tipo de evento", TIPOS_EVENTO_ORDENADOS, key="me_tipo")
     info = TIPOS_EVENTO.get(tipo_evento, {})
 
+    # Cuando cambia el tipo de evento, forzamos el impacto y los activos
+    # afectados a los valores de la taxonomía ANTES de instanciar los
+    # widgets de abajo. Si no se hace así, Streamlit conserva el último
+    # valor tipeado/seleccionado en esos widgets (porque tienen "key")
+    # y el autocompletado no se nota al cambiar de tipo de evento.
+    if st.session_state.get("me_tipo_anterior") != tipo_evento:
+        st.session_state["me_impacto"] = info.get("impacto", "Depende del caso")
+        st.session_state["me_tipo_anterior"] = tipo_evento
+
     st.markdown(_badges_evento(info), unsafe_allow_html=True)
-    st.caption(f"**Factor:** {info.get('factor','')}  ·  **Activos típicos:** {', '.join(info.get('activos', []))}")
+    st.caption(f"**Factor:** {info.get('factor','')}")
 
     impactos = list(IMPACTO_META.keys())
-    idx_impacto = impactos.index(info.get("impacto", "Depende del caso")) if info.get("impacto") in impactos else 0
     impacto_override = st.selectbox(
-        "⚡ Impacto para este caso puntual", impactos, index=idx_impacto, key="me_impacto",
+        "⚡ Impacto para este caso puntual", impactos, key="me_impacto",
         help="Precargado según el tipo de evento; ajustalo si este caso concreto es distinto al típico.",
     )
 
     st.markdown("##### 🎯 Contexto del evento")
-    e1, e2, e3 = st.columns(3)
+    e1, e2 = st.columns([1, 2])
     with e1:
-        empresa = st.text_input("Empresa (si aplica)", key="me_empresa")
+        tipo_entidad = st.radio(
+            "¿A qué afecta principalmente?", ["Empresa", "País / países", "No aplica"],
+            key="me_tipo_entidad", horizontal=True,
+        )
     with e2:
-        ticker = st.text_input("Ticker / activo principal", key="me_ticker", placeholder="Ej: AAPL")
+        if tipo_entidad == "Empresa":
+            empresa = st.text_input(
+                "Empresa(s) / ticker(s)", key="me_empresa",
+                placeholder="Ej: Apple (AAPL) — separá con comas si son varias",
+            )
+        elif tipo_entidad == "País / países":
+            empresa = st.text_input(
+                "País(es)", key="me_empresa",
+                placeholder="Ej: Argentina, Brasil — separá con comas si son varios",
+            )
+        else:
+            empresa = ""
+
+    e3, e4 = st.columns(2)
     with e3:
-        pais = st.selectbox("País", [""] + [
+        ticker = st.text_input(
+            "Ticker principal (opcional)", key="me_ticker", placeholder="Ej: AAPL",
+            disabled=(tipo_entidad != "Empresa"),
+        )
+    with e4:
+        sector = st.text_input("Sector", key="me_sector", placeholder="Ej: Tecnología, Energía, Bancos...")
+
+    # El país sigue existiendo como campo propio (se usa para cruzar
+    # con la reacción histórica y con el Calendario Económico), pero
+    # solo se pide cuando el evento afecta a un país/países.
+    if tipo_entidad == "País / países":
+        pais = st.selectbox("País principal (para el cruce con el histórico)", [""] + [
             "Alemania", "Arabia Saudita", "Argentina", "Australia", "Brasil", "Canadá", "Chile",
             "China", "Colombia", "Corea del Sur", "España", "Estados Unidos", "Europa", "Francia",
             "India", "Indonesia", "Italia", "Japón", "México", "Perú", "Reino Unido", "Rusia",
             "Sudáfrica", "Turquía", "Otro",
         ], key="me_pais")
+    else:
+        pais = ""
 
-    e4, e5 = st.columns(2)
-    with e4:
-        sector = st.text_input("Sector", key="me_sector", placeholder="Ej: Tecnología, Energía, Bancos...")
-    with e5:
-        activos_afectados = st.text_input(
-            "Activos afectados (editable)", key="me_activos",
-            value=", ".join(info.get("activos", [])),
-        )
+    # Los activos afectados vienen SOLOS de la taxonomía, según el tipo
+    # de evento elegido. No es un campo que carga el analista.
+    st.markdown(
+        f"**Activos afectados (automático según el tipo de evento):** "
+        f"{', '.join(info.get('activos', [])) or '—'}"
+    )
+    activos_afectados = ", ".join(info.get("activos", []))
 
-    e6, e7, e8 = st.columns(3)
-    with e6:
-        monto = st.number_input("Monto (opcional)", value=None, format="%.2f", key="me_monto")
-    with e7:
-        moneda_monto = st.text_input("Moneda del monto", key="me_moneda", placeholder="USD")
-    with e8:
-        fuente_url = st.text_input("Fuente (URL)", key="me_fuente")
+    fuente_url = st.text_input("Fuente (URL)", key="me_fuente")
 
     contenido = st.text_area("Contenido / detalle de la noticia", key="me_contenido", height=110)
     notas = st.text_input("Notas del analista (opcional)", key="me_notas")
@@ -613,7 +643,7 @@ def _tab_registrar(supabase, user_id, user_email):
                     fecha_evento=fecha_evento, titulo=titulo, contenido=contenido,
                     tipo_evento=tipo_evento, impacto_override=impacto_override,
                     empresa=empresa, ticker=ticker, pais=pais, sector=sector,
-                    activos_afectados=activos_afectados, monto=monto, moneda_monto=moneda_monto,
+                    activos_afectados=activos_afectados,
                     fuente_url=fuente_url, reaccion_pct=reaccion_pct,
                     reaccion_activo=reaccion_activo, reaccion_plazo=reaccion_plazo, notas=notas,
                 )
