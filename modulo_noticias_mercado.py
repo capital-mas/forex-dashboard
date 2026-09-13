@@ -334,6 +334,84 @@ def _obtener_eventos(_supabase, limite=500):
 
 def _limpiar_cache_eventos():
     _obtener_eventos.clear()
+    _obtener_eventos_calendario.clear()
+
+
+# ==============================================================
+#  PUENTE CON EL CALENDARIO ECONÓMICO
+#  El Calendario Económico (modulo_calendario.py) ya tiene su propia
+#  carga de datos macro (IPC, tasas, PBI, PMI...) con previsto/real e
+#  interpretación calculada. En vez de volver a cargar esos mismos
+#  eventos acá, los leemos directo de su tabla (calendario_registro)
+#  y los mostramos como eventos de solo lectura dentro de este feed,
+#  clasificados automáticamente en un grupo de Noticias + Eventos de
+#  Mercado. Así el admin carga el dato UNA sola vez, en el Calendario.
+# ==============================================================
+
+TABLA_CALENDARIO = "calendario_registro"
+
+# Categoría del Calendario Económico -> Grupo de este módulo.
+CATEGORIA_CALENDARIO_A_GRUPO = {
+    "Inflación": "Macro", "Empleo": "Macro", "Actividad Económica": "Macro",
+    "Consumo": "Macro", "Crecimiento": "Macro", "Industria": "Macro",
+    "Vivienda": "Macro", "Comercio Exterior": "Macro", "Sentimiento Empresarial": "Macro",
+    "Agricultura": "Commodities", "Energía": "Commodities",
+    "Política Monetaria": "Bancos Centrales", "Crédito": "Bancos Centrales",
+    "Deuda Pública": "Bancos Centrales",
+    "Política Fiscal": "Gobiernos",
+    "Posicionamiento Especulativo": "Mercados",
+    "Comentarios de Funcionarios": "Bancos Centrales",
+    "Comentarios Políticos": "Geopolítica",
+    "Evento Especial": "Bancos Centrales",
+}
+
+
+def _impacto_desde_impacto_mercado(impacto_mercado):
+    """Traduce el texto de impacto_mercado del Calendario (ej. '🟢 BUEN DATO
+    PARA EL MERCADO') al vocabulario de impacto de este módulo."""
+    txt = (impacto_mercado or "").upper()
+    if "BUEN DATO" in txt:
+        return "Positivo"
+    if "MAL DATO" in txt:
+        return "Negativo"
+    if "NEUTRO" in txt or "CUALITATIVO" in txt:
+        return "Depende del caso"
+    return "Depende del caso"
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _obtener_eventos_calendario(_supabase, limite=200):
+    """Trae los últimos eventos ya cargados en el Calendario Económico y
+    los adapta al formato de este feed — solo lectura, no se guarda nada
+    nuevo en la base."""
+    try:
+        res = (_supabase.table(TABLA_CALENDARIO).select("*")
+               .order("fecha", desc=True).order("created_at", desc=True)
+               .limit(limite).execute())
+    except Exception:
+        return []
+
+    filas = []
+    for row in (res.data or []):
+        categoria = ""  # el registro del calendario no guarda la categoría directamente
+        evento_nombre = row.get("evento") or ""
+        filas.append({
+            "id": f"cal_{row.get('id')}",
+            "es_calendario": True,
+            "fecha_evento": row.get("fecha"),
+            "titulo": f"{evento_nombre} — {row.get('pais','')}",
+            "contenido": row.get("lectura_macro") or row.get("notas") or "",
+            "tipo_evento": evento_nombre,
+            "grupo": "Macro",  # se podría refinar cruzando con EVENTOS de modulo_calendario si se importa
+            "factor": "Dato económico programado (Calendario Económico)",
+            "impacto": _impacto_desde_impacto_mercado(row.get("impacto_mercado")),
+            "empresa": "", "ticker": "", "pais": row.get("pais") or "",
+            "sector": "", "activos_afectados": row.get("divisas") or "",
+            "monto": None, "moneda_monto": "", "fuente_url": "",
+            "reaccion_pct": None, "reaccion_activo": "", "reaccion_plazo": "",
+            "notas": row.get("notas") or "",
+        })
+    return filas
 
 
 def _guardar_evento(supabase, datos, user_id, user_email):
@@ -578,20 +656,33 @@ def _form_reaccion(supabase, row):
 
 
 def _tab_feed(supabase, es_admin):
-    top1, top2 = st.columns([3, 1])
+    top1, top2, top3 = st.columns([2.4, 1, 1])
     with top1:
         st.caption("Feed de noticias y eventos de mercado, ya clasificados")
     with top2:
+        incluir_calendario = st.toggle(
+            "📅 Incluir Calendario", value=True, key="me_feed_incluir_calendario",
+            help="Suma automáticamente los eventos macro (IPC, tasas, PBI, PMI...) ya cargados "
+                 "en el Calendario Económico — no hace falta volver a cargarlos acá.",
+        )
+    with top3:
         if st.button("↺ Actualizar", use_container_width=True, key="me_feed_refresh"):
             _limpiar_cache_eventos()
             st.rerun()
 
-    filas = _obtener_eventos(supabase)
+    filas = list(_obtener_eventos(supabase))
+    filas_calendario = _obtener_eventos_calendario(supabase) if incluir_calendario else []
+    if incluir_calendario:
+        filas = filas + filas_calendario
+
     if not filas:
         st.info("Todavía no hay eventos cargados.")
         return
 
     df = pd.DataFrame(filas)
+    if "es_calendario" not in df.columns:
+        df["es_calendario"] = False
+    df["es_calendario"] = df["es_calendario"].fillna(False)
 
     grupo_sel = st.radio("Filtrar por grupo", GRUPOS, horizontal=True, key="me_feed_grupo")
 
@@ -640,11 +731,15 @@ def _tab_feed(supabase, es_admin):
             contexto.append(f"🏭 {row['sector']}")
         contexto_txt = "  ·  ".join(contexto)
 
-        titulo_exp = f"{row.get('fecha_evento','')} · {row.get('titulo','')}"
+        origen_calendario = bool(row.get("es_calendario"))
+        icono_origen = "📅 " if origen_calendario else ""
+        titulo_exp = f"{icono_origen}{row.get('fecha_evento','')} · {row.get('titulo','')}"
         with st.expander(titulo_exp):
             badges_html = _badge(f'{gm["emoji"]} {row.get("grupo","")}', gm["color"])
             badges_html += _badge(f'{im["emoji"]} {row.get("impacto","")}', im["color"])
             badges_html += _badge(f'🏷️ {row.get("tipo_evento","")}', "#3a7bd5")
+            if origen_calendario:
+                badges_html += _badge("📅 Calendario Económico", "#e3b341")
             st.markdown(badges_html, unsafe_allow_html=True)
 
             if contexto_txt:
@@ -670,24 +765,30 @@ def _tab_feed(supabase, es_admin):
                     f"({row.get('reaccion_plazo') or 'plazo no especificado'})"
                 )
 
-            st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
-            st.markdown("###### 📊 Eventos históricos similares")
-            _render_similares(
-                df, row.get("tipo_evento"), ticker=row.get("ticker") or None,
-                pais=row.get("pais") or None, excluir_id=row.get("id"),
-            )
-
-            if es_admin:
+            if origen_calendario:
+                st.caption(
+                    "📅 Este evento viene del Calendario Económico — para editarlo, cargar la "
+                    "reacción de mercado o borrarlo, hacelo desde esa sección (Historial)."
+                )
+            else:
                 st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
-                _form_reaccion(supabase, row)
-                if st.button("🗑️ Eliminar evento", key=f"me_del_{row['id']}"):
-                    try:
-                        _borrar_evento(supabase, row["id"])
-                        _limpiar_cache_eventos()
-                        st.success("✅ Eliminado.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ {e}")
+                st.markdown("###### 📊 Eventos históricos similares")
+                _render_similares(
+                    df[~df["es_calendario"]], row.get("tipo_evento"), ticker=row.get("ticker") or None,
+                    pais=row.get("pais") or None, excluir_id=row.get("id"),
+                )
+
+                if es_admin:
+                    st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
+                    _form_reaccion(supabase, row)
+                    if st.button("🗑️ Eliminar evento", key=f"me_del_{row['id']}"):
+                        try:
+                            _borrar_evento(supabase, row["id"])
+                            _limpiar_cache_eventos()
+                            st.success("✅ Eliminado.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ {e}")
 
 
 # ==============================================================
@@ -700,6 +801,15 @@ def render_noticias_mercado(supabase, user_id, user_email):
         render_noticias_mercado(supabase, USER_ID, st.session_state['usuario'].email)
 
     Requiere la tabla mercado_eventos (ver mercado_eventos_schema.sql).
+
+    Puente con el Calendario Económico: el feed lee también, de forma
+    automática y de solo lectura, la tabla calendario_registro (la que ya
+    llena modulo_calendario.py). Así los datos macro programados (IPC,
+    tasas, PBI, PMI...) se cargan UNA sola vez desde el Calendario y
+    aparecen acá solos, sin volver a tipearlos. El botón "📅 Incluir
+    Calendario" del feed prende/apaga esa mezcla. Lo que sí se carga
+    manualmente en este módulo es lo que el Calendario no cubre: eventos
+    puntuales de empresas, gobiernos, geopolítica y commodities.
     """
     es_admin = _es_admin(user_email)
 
