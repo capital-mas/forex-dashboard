@@ -710,9 +710,26 @@ def _tab_feed(supabase, es_admin):
         return
 
     df = pd.DataFrame(filas)
-    if "es_calendario" not in df.columns:
-        df["es_calendario"] = False
-    df["es_calendario"] = df["es_calendario"].fillna(False)
+
+    # Nos aseguramos de que TODAS las columnas que se usan más abajo
+    # existan siempre, sin importar si vienen de un evento manual, de
+    # un evento del Calendario, o de una fila vieja con algún campo
+    # sin cargar. Esto evita KeyError si en algún momento falta una
+    # columna (por ejemplo "es_calendario", que no es una columna real
+    # de la tabla — solo la agregan los eventos del Calendario).
+    columnas_por_defecto = {
+        "es_calendario": False, "id": None, "fecha_evento": "", "titulo": "",
+        "contenido": "", "tipo_evento": "", "grupo": "", "factor": "",
+        "impacto": "", "empresa": "", "ticker": "", "pais": "", "sector": "",
+        "activos_afectados": "", "monto": None, "moneda_monto": "", "fuente_url": "",
+        "reaccion_pct": None, "reaccion_activo": "", "reaccion_plazo": "", "notas": "",
+    }
+    for columna, valor_por_defecto in columnas_por_defecto.items():
+        if columna not in df.columns:
+            df[columna] = valor_por_defecto
+        else:
+            df[columna] = df[columna].where(df[columna].notna(), valor_por_defecto)
+    df["es_calendario"] = df["es_calendario"].astype(bool)
 
     grupo_sel = st.radio("Filtrar por grupo", GRUPOS, horizontal=True, key="me_feed_grupo")
 
@@ -765,60 +782,63 @@ def _tab_feed(supabase, es_admin):
         icono_origen = "📅 " if origen_calendario else ""
         titulo_exp = f"{icono_origen}{row.get('fecha_evento','')} · {row.get('titulo','')}"
         with st.expander(titulo_exp):
-            badges_html = _badge(f'{gm["emoji"]} {row.get("grupo","")}', gm["color"])
-            badges_html += _badge(f'{im["emoji"]} {row.get("impacto","")}', im["color"])
-            badges_html += _badge(f'🏷️ {row.get("tipo_evento","")}', "#3a7bd5")
-            if origen_calendario:
-                badges_html += _badge("📅 Calendario Económico", "#e3b341")
-            st.markdown(badges_html, unsafe_allow_html=True)
+            try:
+                badges_html = _badge(f'{gm["emoji"]} {row.get("grupo","")}', gm["color"])
+                badges_html += _badge(f'{im["emoji"]} {row.get("impacto","")}', im["color"])
+                badges_html += _badge(f'🏷️ {row.get("tipo_evento","")}', "#3a7bd5")
+                if origen_calendario:
+                    badges_html += _badge("📅 Calendario Económico", "#e3b341")
+                st.markdown(badges_html, unsafe_allow_html=True)
 
-            if contexto_txt:
-                st.caption(contexto_txt)
+                if contexto_txt:
+                    st.caption(contexto_txt)
 
-            st.markdown(f"**Factor:** {row.get('factor') or '—'}")
-            if row.get("activos_afectados"):
-                st.markdown(f"**Activos afectados:** {row['activos_afectados']}")
-            if row.get("monto"):
-                st.markdown(f"**Monto:** {row['monto']} {row.get('moneda_monto') or ''}")
-            if row.get("contenido"):
-                st.markdown(row["contenido"])
-            if row.get("fuente_url"):
-                st.markdown(f"[🔗 Fuente]({row['fuente_url']})")
-            if row.get("notas"):
-                st.caption(f"📝 {row['notas']}")
+                st.markdown(f"**Factor:** {row.get('factor') or '—'}")
+                if row.get("activos_afectados"):
+                    st.markdown(f"**Activos afectados:** {row['activos_afectados']}")
+                if row.get("monto"):
+                    st.markdown(f"**Monto:** {row['monto']} {row.get('moneda_monto') or ''}")
+                if row.get("contenido"):
+                    st.markdown(row["contenido"])
+                if row.get("fuente_url"):
+                    st.markdown(f"[🔗 Fuente]({row['fuente_url']})")
+                if row.get("notas"):
+                    st.caption(f"📝 {row['notas']}")
 
-            if row.get("reaccion_pct") is not None:
-                emoji_r = "🟢" if row["reaccion_pct"] > 0 else ("🔴" if row["reaccion_pct"] < 0 else "⚪")
-                st.markdown(
-                    f"**Reacción observada:** {emoji_r} {row['reaccion_pct']:+.2f}% "
-                    f"en {row.get('reaccion_activo') or row.get('ticker') or 'el activo principal'} "
-                    f"({row.get('reaccion_plazo') or 'plazo no especificado'})"
-                )
+                if row.get("reaccion_pct") is not None:
+                    emoji_r = "🟢" if row["reaccion_pct"] > 0 else ("🔴" if row["reaccion_pct"] < 0 else "⚪")
+                    st.markdown(
+                        f"**Reacción observada:** {emoji_r} {row['reaccion_pct']:+.2f}% "
+                        f"en {row.get('reaccion_activo') or row.get('ticker') or 'el activo principal'} "
+                        f"({row.get('reaccion_plazo') or 'plazo no especificado'})"
+                    )
 
-            if origen_calendario:
-                st.caption(
-                    "📅 Este evento viene del Calendario Económico — para editarlo, cargar la "
-                    "reacción de mercado o borrarlo, hacelo desde esa sección (Historial)."
-                )
-            else:
-                st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
-                st.markdown("###### 📊 Eventos históricos similares")
-                _render_similares(
-                    df[~df["es_calendario"]], row.get("tipo_evento"), ticker=row.get("ticker") or None,
-                    pais=row.get("pais") or None, excluir_id=row.get("id"),
-                )
-
-                if es_admin:
+                if origen_calendario:
+                    st.caption(
+                        "📅 Este evento viene del Calendario Económico — para editarlo, cargar la "
+                        "reacción de mercado o borrarlo, hacelo desde esa sección (Historial)."
+                    )
+                else:
                     st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
-                    _form_reaccion(supabase, row)
-                    if st.button("🗑️ Eliminar evento", key=f"me_del_{row['id']}"):
-                        try:
-                            _borrar_evento(supabase, row["id"])
-                            _limpiar_cache_eventos()
-                            st.success("✅ Eliminado.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ {e}")
+                    st.markdown("###### 📊 Eventos históricos similares")
+                    _render_similares(
+                        df[~df["es_calendario"]], row.get("tipo_evento"), ticker=row.get("ticker") or None,
+                        pais=row.get("pais") or None, excluir_id=row.get("id"),
+                    )
+
+                    if es_admin:
+                        st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
+                        _form_reaccion(supabase, row)
+                        if st.button("🗑️ Eliminar evento", key=f"me_del_{row['id']}"):
+                            try:
+                                _borrar_evento(supabase, row["id"])
+                                _limpiar_cache_eventos()
+                                st.success("✅ Eliminado.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ {e}")
+            except Exception as e:
+                st.error(f"⚠️ No se pudo mostrar este evento completo ({e}).")
 
 
 # ==============================================================
