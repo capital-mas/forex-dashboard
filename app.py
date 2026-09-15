@@ -6625,16 +6625,16 @@ PARES_SECTORES = {
             # América
             "^GSPC", "^IXIC", "^DJI", "^RUT", "^BVSP", "^MERV",
             # Asia-Pacífico
-            "^N225", "000001.SS", "^KS11", "^NSEI",
+            "^N225", "^HSI", "^KS11", "^NSEI",
             # Europa
-            "^GDAXI", "^STOXX", "^STOXX50E", "^FTSE", "^FCHI",
+            "^GDAXI", "^STOXX50E", "^FTSE", "^FCHI",
     ],
         "tickers": {
             "ACWI": "ACWI",
             "^GSPC": "^GSPC", "^IXIC": "^IXIC", "^DJI": "^DJI", "^RUT": "^RUT",
             "^BVSP": "^BVSP", "^MERV": "^MERV",
-            "^N225": "^N225", "000001.SS": "000001.SS", "^KS11": "^KS11", "^NSEI": "^NSEI",
-            "^GDAXI": "^GDAXI", "^STOXX": "^STOXX", "^STOXX50E": "^STOXX50E",
+            "^N225": "^N225", "^HSI": "^HSI", "^KS11": "^KS11", "^NSEI": "^NSEI",
+            "^GDAXI": "^GDAXI", "^STOXX50E": "^STOXX50E",
             "^FTSE": "^FTSE", "^FCHI": "^FCHI",
     },
 },
