@@ -782,7 +782,22 @@ from streamlit_autorefresh import st_autorefresh
 # sin que el usuario tenga que tocar "↺ Actualizar". Como Streamlit conserva
 # el session_state entre reruns, no se pierden filtros, navegación ni lo que
 # el usuario esté escribiendo en un campo.
-st_autorefresh(interval=5 * 60 * 1000, key="autorefresh_precios")
+#
+# Se activa solo en las pantallas donde tiene sentido (viven de cotizaciones
+# que cambian todo el tiempo); en el resto (Buscador, Comparador, Optimizador,
+# Fundamental, etc.) NO se dispara, para no interrumpir al usuario mientras
+# escribe, filtra o revisa un análisis puntual.
+_nav_h_actual = st.session_state.get('nav_horizonte', 'inicio')
+_nav_m_actual = st.session_state.get('nav_modulo', 'inicio')
+
+_autorefresh_activo = (
+    _nav_m_actual == 'inicio'
+    or _nav_h_actual == 'corto'
+    or (_nav_h_actual == 'largo' and _nav_m_actual in ('tdc', 'reversion'))
+)
+
+if _autorefresh_activo:
+    st_autorefresh(interval=5 * 60 * 1000, key="autorefresh_precios")
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _contar_alertas_finanzas(_client, user_id):
