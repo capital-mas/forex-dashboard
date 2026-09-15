@@ -6413,6 +6413,7 @@ def modulo_optimizador():
         _opt_render_simulador_crisis(
             tickers_opt, retornos_opt, ret_bench_opt, benchmark_opt,
             carteras_candidatas, series_ret, capital_opt,
+        )
     with tabg7:
         _opt_render_ajuste_inflacion(
             tickers_opt, retornos_opt, benchmark_opt,
