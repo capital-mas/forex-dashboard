@@ -5840,40 +5840,48 @@ def _opt_fig_nominal_vs_real(equity_nominal, equity_real, capital_inicial, nombr
     )
     return fig
 
-
 def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
                                   carteras_candidatas, series_ret, metricas_cart, capital_opt):
     st.markdown("""
     <div class="info-banner">
-      Cargá vos la inflación anual de cada país que te interese, y asigná qué país le corresponde a
-      cada activo de la cartera. El sistema calcula, para cada cartera candidata, una <b>inflación
-      combinada</b> (ponderada por el peso de cada activo) y recalcula el retorno real.
+      Cargá la inflación anual de cada país, <b>año por año</b> (podés poner una tasa distinta para
+      cada año del período analizado), y asigná qué país le corresponde a cada activo. El sistema calcula,
+      para cada cartera, una inflación combinada año a año (ponderada por el peso de cada activo) y
+      recalcula el retorno real.
     </div>
     """, unsafe_allow_html=True)
 
-    # ── 1) Tabla de países ──────────────────────────────────────────────
-    st.markdown('#### 1️⃣ Inflación anual por país')
-    if 'infl_tabla_paises' not in st.session_state:
-        st.session_state['infl_tabla_paises'] = _opt_paises_default()
+    anios_disponibles = sorted(set(retornos_opt.index.year))
+
+    st.markdown('#### 1️⃣ Inflación anual por país y por año')
+    firma_anios = tuple(anios_disponibles)
+    if ('infl_tabla_paises' not in st.session_state
+            or st.session_state.get('infl_tabla_paises_firma') != firma_anios):
+        st.session_state['infl_tabla_paises'] = _opt_paises_default_por_anio(anios_disponibles)
+        st.session_state['infl_tabla_paises_firma'] = firma_anios
+
+    col_config_paises = {'País': st.column_config.TextColumn(required=True)}
+    for a in anios_disponibles:
+        col_config_paises[str(a)] = st.column_config.NumberColumn(
+            f'Infl. {a} %', min_value=-20.0, step=0.5, format='%.1f'
+        )
 
     df_paises_edit = st.data_editor(
         st.session_state['infl_tabla_paises'],
         key='infl_paises_editor', use_container_width=True, num_rows='dynamic', hide_index=True,
-        column_config={
-            'País': st.column_config.TextColumn(required=True),
-            'Inflación anual %': st.column_config.NumberColumn(min_value=0.0, step=0.5, format='%.1f'),
-        },
+        column_config=col_config_paises,
     )
     st.session_state['infl_tabla_paises'] = df_paises_edit
     df_paises_validos = df_paises_edit.dropna(subset=['País']).drop_duplicates(subset='País')
-    tasas_pais = {
-        row['País']: row['Inflación anual %'] / 100
-        for _, row in df_paises_validos.iterrows()
-        if pd.notna(row['Inflación anual %'])
-    }
-    paises_disponibles = list(tasas_pais.keys()) or ['Estados Unidos']
 
-    # ── 2) Tabla de activos → país ───────────────────────────────────────
+    tasas_por_anio_pais = {}
+    for _, row in df_paises_validos.iterrows():
+        tasas_por_anio_pais[row['País']] = {
+            a: row[str(a)] / 100 for a in anios_disponibles
+            if str(a) in row and pd.notna(row[str(a)])
+        }
+    paises_disponibles = list(tasas_por_anio_pais.keys()) or ['Estados Unidos']
+
     st.markdown('#### 2️⃣ Asignar país a cada activo')
     firma_tk = tuple(sorted(tickers_opt))
     if st.session_state.get('infl_tabla_activos_firma') != firma_tk:
@@ -5895,12 +5903,12 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
     st.session_state['infl_tabla_activos'] = df_activos_edit
     mapa_pais = dict(zip(df_activos_edit['Ticker'], df_activos_edit['País']))
 
-    if not st.button('▶ Calcular retorno real', key='infl_run'):
+    if st.button('▶ Calcular retorno real', key='infl_run'):
+        st.session_state['infl_run_flag'] = True
+    if not st.session_state.get('infl_run_flag'):
         return
 
-    # ── 3) Pesos por cartera (+ Mi Cartera Actual si existe) ─────────────
     carteras_infl = {n: cart[tickers_opt].to_dict() for n, cart in carteras_candidatas.items()}
-    carteras_infl[benchmark_opt] = {tk: 0.0 for tk in tickers_opt}  # benchmark se trata aparte abajo
 
     df_montos = st.session_state.get('reb_montos')
     pesos_actual = None
@@ -5913,25 +5921,26 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
             }
             carteras_infl['Mi Cartera Actual'] = pesos_actual
 
-    # ── 4) Tasa combinada + métricas reales por cartera ──────────────────
+    tasa_default_bench = tasas_por_anio_pais.get('Estados Unidos', {})
+
     filas_infl, equities_reales = [], {}
     for nombre, ret_s in series_ret.items():
         if nombre == benchmark_opt:
-            # Benchmark: usa el país predominante elegido para EE.UU. si existe, si no el primero de la tabla
-            tasa_bench = tasas_pais.get('Estados Unidos', list(tasas_pail := tasas_pais.values())[0] if tasas_pais else 0.0)
+            blend_anio = tasa_default_bench
         else:
             pesos_c = carteras_infl.get(nombre, {})
-            tasa_bench = _opt_tasa_blend(pesos_c, mapa_pais, tasas_pais)
+            blend_anio = _opt_tasa_blend_por_anio(pesos_c, mapa_pais, tasas_por_anio_pais, anios_disponibles)
 
         equity_nom = (1 + ret_s.dropna()).cumprod()
-        serie_infl = _opt_serie_inflacion_manual(equity_nom.index, tasa_bench)
+        serie_infl = _opt_serie_inflacion_por_anio(equity_nom.index, blend_anio)
         m_real = _opt_metricas_reales(equity_nom, serie_infl)
         equities_reales[nombre] = dict(nominal=equity_nom, real=m_real['equity_real'])
 
+        tasa_prom_periodo = _opt_cagr_desde_serie_nivel(serie_infl)
         cagr_nom = metricas_cart[nombre]['CAGR']
         filas_infl.append({
             'Cartera': nombre,
-            'Inflación Combinada %': tasa_bench * 100,
+            'Inflación Combinada %': tasa_prom_periodo * 100 if not pd.isna(tasa_prom_periodo) else np.nan,
             'CAGR Nominal': cagr_nom,
             'CAGR Real': m_real['cagr_real'],
             'Pérdida por Inflación (p.p.)': (cagr_nom - m_real['cagr_real']) * 100 if not pd.isna(m_real['cagr_real']) else np.nan,
@@ -5939,20 +5948,20 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
             'Sharpe Real': m_real['sharpe_real'],
         })
 
-    # Cartera Actual, si existe
     if pesos_actual:
         pesos_arr_act = np.array([pesos_actual.get(tk, 0.0) for tk in tickers_opt])
         if pesos_arr_act.sum() > 0:
             ret_actual = retornos_opt[tickers_opt] @ pesos_arr_act
             equity_nom_act = (1 + ret_actual.dropna()).cumprod()
-            tasa_act = _opt_tasa_blend(pesos_actual, mapa_pais, tasas_pais)
-            serie_infl_act = _opt_serie_inflacion_manual(equity_nom_act.index, tasa_act)
+            blend_act = _opt_tasa_blend_por_anio(pesos_actual, mapa_pais, tasas_por_anio_pais, anios_disponibles)
+            serie_infl_act = _opt_serie_inflacion_por_anio(equity_nom_act.index, blend_act)
             m_real_act = _opt_metricas_reales(equity_nom_act, serie_infl_act)
             equities_reales['Mi Cartera Actual'] = dict(nominal=equity_nom_act, real=m_real_act['equity_real'])
             cagr_nom_act = _opt_cagr_serie(ret_actual)
+            tasa_prom_act = _opt_cagr_desde_serie_nivel(serie_infl_act)
             filas_infl.append({
                 'Cartera': 'Mi Cartera Actual',
-                'Inflación Combinada %': tasa_act * 100,
+                'Inflación Combinada %': tasa_prom_act * 100 if not pd.isna(tasa_prom_act) else np.nan,
                 'CAGR Nominal': cagr_nom_act,
                 'CAGR Real': m_real_act['cagr_real'],
                 'Pérdida por Inflación (p.p.)': (cagr_nom_act - m_real_act['cagr_real']) * 100 if not pd.isna(m_real_act['cagr_real']) else np.nan,
@@ -5965,12 +5974,13 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
     kpi_cards_4([
         ('Mejor CAGR Real', df_infl.iloc[0]['Cartera'], _opt_pct(df_infl.iloc[0]['CAGR Real']), C_MONSTER),
         ('Peor CAGR Real', df_infl.iloc[-1]['Cartera'], _opt_pct(df_infl.iloc[-1]['CAGR Real']), C_RED),
-        ('Inflación combinada — mejor', f"{df_infl.iloc[0]['Inflación Combinada %']:.1f}%", df_infl.iloc[0]['Cartera'], C_YELL),
         ('Carteras con CAGR real < 0', str(int((df_infl['CAGR Real'] < 0).sum())), f'de {len(df_infl)}', C_RED),
+        ('Años cargados', f'{anios_disponibles[0]}–{anios_disponibles[-1]}', f'{len(anios_disponibles)} años', C_YELL),
     ])
 
     df_infl_fmt = df_infl.copy()
-    df_infl_fmt['Inflación Combinada %'] = df_infl_fmt['Inflación Combinada %'].apply(lambda v: f'{v:.1f}%')
+    df_infl_fmt['Inflación Combinada %'] = df_infl_fmt['Inflación Combinada %'].apply(
+        lambda v: f'{v:.1f}%' if not pd.isna(v) else '-')
     for c in ['CAGR Nominal', 'CAGR Real', 'Vol. Real']:
         df_infl_fmt[c] = df_infl_fmt[c].apply(_opt_pct)
     df_infl_fmt['Sharpe Real'] = df_infl_fmt['Sharpe Real'].apply(lambda v: f'{v:.2f}' if not pd.isna(v) else '-')
@@ -6007,6 +6017,7 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
     st.markdown('#### 📈 Capital nominal vs. real — por cartera')
     cartera_ver = st.selectbox('Ver evolución de', list(equities_reales.keys()), key='infl_cartera_ver')
     eq_sel = equities_reales[cartera_ver]
+
     st.plotly_chart(
         _opt_fig_nominal_vs_real(eq_sel['nominal'], eq_sel['real'], capital_opt, cartera_ver),
         use_container_width=True, config=PLOTLY_CONFIG, key='infl_fig_nom_real',
@@ -6016,6 +6027,29 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
         f"USD {capital_opt * eq_sel['nominal'].iloc[-1]:,.0f} nominales, que en poder de compra equivalen a "
         f"USD {capital_opt * eq_sel['real'].iloc[-1]:,.0f} de cuando empezaste."
     )
+
+    st.markdown('#### 💵 Capital simulado año por año — Nominal vs. Real')
+    cap_nom_anual = (capital_opt * eq_sel['nominal']).resample('YE').last()
+    cap_real_anual = (capital_opt * eq_sel['real']).resample('YE').last()
+    df_cap_infl = pd.DataFrame({'Nominal': cap_nom_anual, 'Real (ajustado)': cap_real_anual})
+    df_cap_infl.index = df_cap_infl.index.year
+
+    anio_inicio = int(eq_sel['nominal'].index[0].year) - 1
+    fila_inicio = pd.DataFrame({'Nominal': capital_opt, 'Real (ajustado)': capital_opt}, index=[anio_inicio])
+    df_cap_infl = pd.concat([fila_inicio, df_cap_infl]).sort_index()
+    df_cap_infl.index.name = 'Año'
+    df_cap_infl['Brecha (Nominal - Real)'] = df_cap_infl['Nominal'] - df_cap_infl['Real (ajustado)']
+
+    styled_cap_infl = (df_cap_infl.style
+        .format('USD {:,.0f}')
+        .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+        .set_table_styles([
+            {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                ('font-weight', '700'), ('text-align', 'center'),
+                ('border-bottom', '2px solid #e3b341'), ('font-size', '11px')]},
+            {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+        ]))
+    st.dataframe(styled_cap_infl, use_container_width=True, height=min(500, len(df_cap_infl) * 36 + 45))
 
 def modulo_optimizador():
     st.markdown("""
