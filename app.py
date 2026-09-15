@@ -775,6 +775,15 @@ tiene_acceso = pantalla_suscripcion(supabase, USER_ID, st.session_state["usuario
 if not tiene_acceso:
     st.stop()
 
+from streamlit_autorefresh import st_autorefresh
+
+# Auto-actualización: relanza el script cada 5 minutos para que los cachés
+# (que ya vencen solos por TTL: 5/30/60 min según el módulo) se refresquen
+# sin que el usuario tenga que tocar "↺ Actualizar". Como Streamlit conserva
+# el session_state entre reruns, no se pierden filtros, navegación ni lo que
+# el usuario esté escribiendo en un campo.
+st_autorefresh(interval=5 * 60 * 1000, key="autorefresh_precios")
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _contar_alertas_finanzas(_client, user_id):
     """Cuenta las alertas de Finanzas Personales. Cacheado 5 min para no
