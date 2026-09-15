@@ -205,6 +205,65 @@ INDICES_CONSTITUYENTES = {
               'VBBR3.SA', 'VIVA3.SA', 'VIVT3.SA', 'WEGE3.SA', 'YDUQ3.SA'
             ],
    },
+   # 1. HSI — Hang Seng Index (Hong Kong)
+   # Los tickers llevan el sufijo .HK (4 dígitos con ceros a la izquierda)
+      'Hang Seng Index (82)': {
+         'ticker_indice': '^HSI',
+         'constituyentes': [
+              '0001.HK', '0002.HK', '0003.HK', '0005.HK', '0006.HK', '0011.HK', '0012.HK', '0016.HK', '0017.HK', '0027.HK',
+              '0066.HK', '0101.HK', '0175.HK', '0241.HK', '0267.HK', '0288.HK', '0291.HK', '0316.HK', '0322.HK', '0386.HK',
+              '0388.HK', '0669.HK', '0700.HK', '0762.HK', '0823.HK', '0836.HK', '0857.HK', '0868.HK', '0883.HK', '0939.HK',
+              '0941.HK', '0960.HK', '0968.HK', '0981.HK', '0992.HK', '1038.HK', '1044.HK', '1088.HK', '1093.HK', '1109.HK',
+              '1113.HK', '1177.HK', '1209.HK', '1211.HK', '1299.HK', '1378.HK', '1398.HK', '1810.HK', '1928.HK', '1929.HK',
+              '1997.HK', '2015.HK', '2020.HK', '2269.HK', '2313.HK', '2318.HK', '2319.HK', '2331.HK', '2382.HK', '2388.HK',
+              '2688.HK', '3690.HK', '3692.HK', '3968.HK', '3988.HK', '6618.HK', '6690.HK', '9618.HK', '9633.HK', '9866.HK',
+              '9888.HK', '9961.HK', '9988.HK', '9999.HK'
+          ],
+},
+
+# 2. GDAXI — DAX 40 (Alemania)
+# Los tickers de la bolsa XETRA llevan el sufijo .DE
+      'DAX 40 (40)': {
+          'ticker_indice': '^GDAXI',
+          'constituyentes': [
+              'ADS.DE', 'AIR.DE', 'ALV.DE', 'BAS.DE', 'BAYN.DE', 'BEI.DE', 'BMW.DE', 'BNR.DE', 'CBK.DE', 'CON.DE',
+              '1337.DE', 'DTG.DE', 'DB1.DE', 'DBK.DE', 'SY1.DE', 'DPW.DE', 'DTE.DE', 'EOAN.DE', 'FRE.DE', 'HEI.DE',
+              'HEN3.DE', 'HLAG.DE', 'IFX.DE', 'MBG.DE', 'MRK.DE', 'MTX.DE', 'MUV2.DE', 'P911.DE', 'PAH3.DE', 'QIAGEN.DE',
+              'RHM.DE', 'RWE.DE', 'SAP.DE', 'SRT3.DE', 'SIE.DE', 'ENR.DE', 'SHL.DE', 'SY1.DE', 'VOW3.DE', 'VNA.DE'
+          ],
+},
+
+# 3. NSEI — NIFTY 50 (India)
+# Los tickers de la National Stock Exchange llevan el sufijo .NS
+      'NIFTY 50 (50)': {
+          'ticker_indice': '^NSEI',
+          'constituyentes': [
+              'ADANIENT.NS', 'ADANIPORTS.NS', 'APOLLOHOSP.NS', 'ASIANPAINT.NS', 'AXISBANK.NS', 'BAJAJ-AUTO.NS',
+              'BAJFINANCE.NS', 'BAJAJFINSV.NS', 'BEL.NS', 'BPCL.NS', 'BHARTIARTL.NS', 'BRITANNIA.NS', 'CIPLA.NS',
+              'COALINDIA.NS', 'DIVISLAB.NS', 'DRREDDY.NS', 'EICHERMOT.NS', 'GRASIM.NS', 'HCLTECH.NS', 'HDFCBANK.NS',
+              'HDFCLIFE.NS', 'HEROMOTOCO.NS', 'HINDALCO.NS', 'HINDUNILVR.NS', 'ICICIBANK.NS', 'ITC.NS', 'INDUSINDBK.NS',
+              'INFY.NS', 'JSWSTEEL.NS', 'KOTAKBANK.NS', 'LT.NS', 'LTIM.NS', 'M&M.NS', 'MARUTI.NS', 'NTPC.NS',
+              'NESTLEIND.NS', 'ONGC.NS', 'POWERGRID.NS', 'RELIANCE.NS', 'SBILIFE.NS', 'SHRIRAMFIN.NS', 'SBIN.NS',
+              'SUNPHARMA.NS', 'TCS.NS', 'TATACONSUM.NS', 'TATAMOTORS.NS', 'TATASTEEL.NS', 'TECHM.NS', 'TITAN.NS',
+              'ULTRATECH.NS', 'WIPRO.NS'
+          ],
+},
+
+# 4. KS11 — KOSPI (Corea del Sur - Muestra de los ~100 activos principales)
+# El KOSPI total tiene más de 900 empresas. En Yahoo Finance se usan los códigos de 6 dígitos + .KS
+      'KOSPI (Top 100)': {
+          'ticker_indice': '^KS11',
+          'constituyentes': [
+              '005930.KS', '000660.KS', '373220.KS', '207940.KS', '005380.KS', '005935.KS', '000270.KS', '068270.KS',
+              '035420.KS', '051910.KS', '006400.KS', '035720.KS', '012330.KS', '105560.KS', '055550.KS', '028260.KS',
+              '015760.KS', '032830.KS', '003550.KS', '033780.KS', '086790.KS', '010130.KS', '009150.KS', '011200.KS',
+              '018260.KS', '010140.KS', '034730.KS', '000810.KS', '003670.KS', '030200.KS', '010950.KS', '251270.KS',
+              '000150.KS', '036570.KS', '009540.KS', '034020.KS', '090430.KS', '011070.KS', '271560.KS', '004020.KS',
+              '024110.KS', '000720.KS', '005490.KS', '011170.KS', '020150.KS', '001040.KS', '000100.KS', '006800.KS',
+              '032640.KS', '004990.KS', '000210.KS', '000670.KS', '011780.KS', '005830.KS', '002790.KS', '010620.KS',
+              '000880.KS', '001450.KS', '000080.KS', '004800.KS', '001740.KS', '000240.KS', '003230.KS', '005300.KS'
+          ],
+},
     # 👉 Acá se suman más índices con la lista real de constituyentes,
     #    por ejemplo 'S&P 500 (500)', 'Nasdaq 100 (100)', 'Merval (Argentina)', etc.
 }
