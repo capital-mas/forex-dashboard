@@ -6069,6 +6069,40 @@ def modulo_optimizador():
     with tabg1:
         eq_dict = {n: metricas_cart[n]['Equity'] for n in nombres_col}
         st.plotly_chart(_opt_fig_equity(eq_dict, capital_opt, benchmark_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_equity_fig')
+
+        st.markdown('#### 💵 Capital simulado año por año')
+        st.caption(f'Cómo hubiera evolucionado un capital inicial de USD {capital_opt:,.0f} en cada cartera, '
+                    'tomando el valor al cierre de cada año calendario (mismos datos que el gráfico de arriba).')
+
+        cap_anual = {}
+        for n, eq in eq_dict.items():
+            serie_valor = capital_opt * eq
+            cap_anual[n] = serie_valor.resample('YE').last()
+        df_cap_anual = pd.DataFrame(cap_anual)
+        df_cap_anual.index = df_cap_anual.index.year
+
+        # Fila de partida (capital inicial), con el año anterior al primer dato del histórico
+        anio_inicio = int(retornos_opt.index[0].year) - 1
+        fila_inicio = pd.DataFrame({n: capital_opt for n in df_cap_anual.columns}, index=[anio_inicio])
+        df_cap_anual = pd.concat([fila_inicio, df_cap_anual]).sort_index()
+        df_cap_anual.index.name = 'Año'
+
+        def _color_cap_var(col):
+            var = col.pct_change()
+            return ['' if pd.isna(v) else ('color:#3fb950' if v >= 0 else 'color:#f85149') for v in var]
+
+        styled_cap_anual = (df_cap_anual.style
+            .apply(_color_cap_var, axis=0)
+            .format('USD {:,.0f}')
+            .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+            .set_table_styles([
+                {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                    ('font-weight', '700'), ('text-align', 'center'),
+                    ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+            ]))
+        st.dataframe(styled_cap_anual, use_container_width=True,
+                     height=min(500, len(df_cap_anual) * 36 + 45))
     with tabg2:
         dd_dict = {n: metricas_cart[n]['Drawdown'] for n in nombres_col}
         st.plotly_chart(_opt_fig_drawdown(dd_dict, benchmark_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_dd_fig')
