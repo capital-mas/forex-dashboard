@@ -6619,7 +6619,7 @@ PARES_SECTORES = {
     #  GRUPO NUEVO — Índices/mercados por país (ETFs, todo en USD)
     #  Benchmark: ACWI (mercado mundial completo)
     # ============================================================
-    "Índices Mundiales": {
+    "indices Mundiales": {
         "benchmark": "ACWI",
         "empresas": [
             # América
