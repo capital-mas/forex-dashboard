@@ -84,6 +84,21 @@ INDICES_CONSTITUYENTES = {
             'GS', 'HD', 'HON', 'IBM', 'JNJ', 'JPM', 'MCD', 'MRK', 'MSFT', 'NKE',
             'NVDA', 'PG', 'CRM', 'SHW', 'TRV', 'UNH', 'V', 'WMT', 'DIS', 'GOOGL',
         ],
+   },
+       'Nasdaq 100 (100)': {
+          'ticker_indice': '^NDX',
+          'constituyentes': [
+              'AAPL', 'ABNB', 'ADBE', 'ADI', 'ADP', 'ADSK', 'AEP', 'AMAT', 'AMD', 'AMGN',
+              'AMZN', 'ANSS', 'APP', 'ARM', 'ASML', 'AVGO', 'AZN', 'BKR', 'BIIB', 'BKNG',
+              'CDNS', 'CDW', 'CEG', 'CHTR', 'CMCSA', 'COST', 'CPRT', 'CRWD', 'CSGP', 'CSX',
+              'CTAS', 'CTSH', 'DASH', 'DDOG', 'DLTR', 'DXCM', 'EA', 'EXC', 'FANG', 'FAST',
+              'FTNT', 'GEHC', 'GFCI', 'GILD', 'GOOG', 'GOOGL', 'HON', 'IDXX', 'ILMN', 'INTC',
+              'INTU', 'ISRG', 'KDP', 'KHC', 'KLAC', 'LRCX', 'LULU', 'MAR', 'MCHP', 'MDLZ',
+              'MELI', 'META', 'MNST', 'MRVL', 'MSFT', 'MU', 'NFLX', 'NRA', 'NVDA', 'NXPI',
+              'ODFL', 'ON', 'ORLY', 'PANW', 'PAYX', 'PCAR', 'PDD', 'PEP', 'PYPL', 'QCOM',
+              'REGN', 'ROP', 'ROST', 'SBUX', 'SNPS', 'TEAM', 'TMUS', 'TSLA', 'TTD', 'TTWO',
+              'TXN', 'VRSK', 'VRTX', 'WBD', 'WDAY', 'XEL', 'ZS'
+          ],
     },
     # 👉 Acá se suman más índices con la lista real de constituyentes,
     #    por ejemplo 'S&P 500 (500)', 'Nasdaq 100 (100)', 'Merval (Argentina)', etc.
