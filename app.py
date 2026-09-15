@@ -5706,6 +5706,48 @@ def _opt_paises_default():
         'Inflación anual %': [3.0, 120.0, 4.5, 2.5],
     })
 
+def _opt_paises_default_por_anio(anios):
+    paises_base = ['Estados Unidos', 'Argentina', 'Brasil', 'Europa (Zona Euro)']
+    tasas_base  = {'Estados Unidos': 3.0, 'Argentina': 120.0, 'Brasil': 4.5, 'Europa (Zona Euro)': 2.5}
+    data = {'País': paises_base}
+    for a in anios:
+        data[str(a)] = [tasas_base[p] for p in paises_base]
+    return pd.DataFrame(data)
+
+
+def _opt_serie_inflacion_por_anio(indice_fechas, tasas_por_anio, tasa_default=0.0):
+    niveles, nivel = [], 1.0
+    anio_actual, tasa_diaria = None, None
+    for fecha in indice_fechas:
+        if fecha.year != anio_actual:
+            anio_actual = fecha.year
+            tasa_anual = tasas_por_anio.get(anio_actual, tasa_default)
+            tasa_diaria = (1 + tasa_anual) ** (1 / 252) - 1
+        niveles.append(nivel)
+        nivel *= (1 + tasa_diaria)
+    return pd.Series(niveles, index=indice_fechas)
+
+
+def _opt_tasa_blend_por_anio(pesos_dict, mapa_pais, tasas_por_anio_pais, anios, tasa_default=0.0):
+    blend = {}
+    for anio in anios:
+        total_peso, acumulado = 0.0, 0.0
+        for tk, peso in pesos_dict.items():
+            if peso <= 0:
+                continue
+            pais = mapa_pais.get(tk, 'Estados Unidos')
+            tasa = tasas_por_anio_pais.get(pais, {}).get(anio, tasa_default)
+            acumulado += peso * tasa
+            total_peso += peso
+        blend[anio] = acumulado / total_peso if total_peso > 0 else tasa_default
+    return blend
+
+
+def _opt_cagr_desde_serie_nivel(serie):
+    anios = len(serie) / 252
+    if anios <= 0 or serie.iloc[-1] <= 0:
+        return np.nan
+    return serie.iloc[-1] ** (1 / anios) - 1
 
 def _opt_pais_sugerido(ticker):
     """Sugerencia inicial de país según la industria del ticker (editable por el usuario)."""
