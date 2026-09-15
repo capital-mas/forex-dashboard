@@ -6623,26 +6623,21 @@ PARES_SECTORES = {
         "benchmark": "ACWI",
         "empresas": [
             # América
-            "SPY", "EWC", "ARGT", "EWZ", "EWW", "ECH", "EPU",
-            # Europa
-            "EWU", "EWG", "EWQ", "EWI", "EWP", "EWN", "EWL", "EWD",
+            "^GSPC", "^IXIC", "^DJI", "^RUT", "^BVSP", "^MERV",
             # Asia-Pacífico
-            "EWJ", "EWY", "MCHI", "INDA", "EWT", "EWH", "EWS", "EWA",
-            # Otros emergentes
-            "EZA", "TUR", "EPOL", "EIDO", "THD", "EPHE", "VNM", "KSA", "EIS",
-        ],
+            "^N225", "000001.SS", "^KS11", "^NSEI",
+            # Europa
+            "^GDAXI", "^STOXX", "^STOXX50E", "^FTSE", "^FCHI",
+    ],
         "tickers": {
             "ACWI": "ACWI",
-            "SPY": "SPY", "EWC": "EWC", "ARGT": "ARGT", "EWZ": "EWZ",
-            "EWW": "EWW", "ECH": "ECH", "EPU": "EPU",
-            "EWU": "EWU", "EWG": "EWG", "EWQ": "EWQ", "EWI": "EWI",
-            "EWP": "EWP", "EWN": "EWN", "EWL": "EWL", "EWD": "EWD",
-            "EWJ": "EWJ", "EWY": "EWY", "MCHI": "MCHI", "INDA": "INDA",
-            "EWT": "EWT", "EWH": "EWH", "EWS": "EWS", "EWA": "EWA",
-            "EZA": "EZA", "TUR": "TUR", "EPOL": "EPOL", "EIDO": "EIDO",
-            "THD": "THD", "EPHE": "EPHE", "VNM": "VNM", "KSA": "KSA", "EIS": "EIS",
-        },
+            "^GSPC": "^GSPC", "^IXIC": "^IXIC", "^DJI": "^DJI", "^RUT": "^RUT",
+            "^BVSP": "^BVSP", "^MERV": "^MERV",
+            "^N225": "^N225", "000001.SS": "000001.SS", "^KS11": "^KS11", "^NSEI": "^NSEI",
+            "^GDAXI": "^GDAXI", "^STOXX": "^STOXX", "^STOXX50E": "^STOXX50E",
+            "^FTSE": "^FTSE", "^FCHI": "^FCHI",
     },
+},
 
     # ============================================================
     #  GRUPOS NUEVOS — commodities
