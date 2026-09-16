@@ -2102,15 +2102,14 @@ def cargar_resultados_largo(industrias_sel):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def cargar_precios_inicio_base():
-    """Descarga precios del día (period=5d) para índices, sectores, mercados y forex en bulk.
-    TTL corto (5 min) para que la página de inicio se sienta viva."""
     try:
         import yfinance as yf
         tks_paises   = [tk for tk, _ in PAISES.values()]
+        tks_etfs     = [tk for tk, _cat, _c in ETFS.values()]   # ← AGREGAR ESTA LÍNEA
         tks_sectores = [tk for tk, _ in SECTORES.values()]
         tks_mercados = [tk for tk, _, _ in MERCADOS_REALES.values()]
         tks_forex    = [tk for tk, _ in FOREX.values()]
-        todos = sorted(set(tks_paises + tks_sectores + tks_mercados + tks_forex))
+        todos = sorted(set(tks_paises + tks_etfs + tks_sectores + tks_mercados + tks_forex))  # ← agregar tks_etfs acá también
         df = yf.download(todos, period='5d', interval='1d',
                          auto_adjust=True, progress=False, group_by='ticker')
         if df is None or df.empty:
