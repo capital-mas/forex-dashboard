@@ -8129,8 +8129,8 @@ for key, default in [
 
 
 _now_str = ahora_ar().strftime('%H:%M')
-_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'senales': '#ff6ec7', 'finanzas': '#6CC24A'}
-_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'senales': 'Señales', 'finanzas': 'Finanzas'}
+_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'renta_fija_macro': '#00838f', 'senales': '#ff6ec7', 'finanzas': '#6CC24A'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'renta_fija_macro': 'Renta Fija', 'senales': 'Señales', 'finanzas': 'Finanzas'}
 
 HORIZONTE = st.session_state['nav_horizonte']
 MODULO    = st.session_state['nav_modulo']
@@ -8287,8 +8287,9 @@ with st.container(key='nav_pills_wrap'):
         '📐 Promediador + Stop Loss': ('promediador', 'promediador'),
         '📊 F-Score (Piotroski)': ('fscore', 'fscore'),
         '📡 Salud del Mercado': ('breadth', 'breadth'),
+        '📉 Renta Fija y Macro': ('renta_fija_macro', 'renta_fija_macro'),   # ← NUEVO
     }
-    _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth'}
+    _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth', 'renta_fija_macro'}  # ← agregar acá también
     _herr_activo = HORIZONTE in _herr_horizontes
     _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
     _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
@@ -8477,7 +8478,8 @@ with st.container(key='nav_mobile_wrap'):
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
         '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares', '🎲 Opciones': 'opciones',
-        '📐 Promediador': 'promediador', '🎯 Señales': 'senales', '📊 F-Score': 'fscore','📡 Salud Mercado': 'breadth',
+        '📐 Promediador': 'promediador', '🎯 Señales': 'senales', '📊 F-Score': 'fscore', '📡 Salud Mercado': 'breadth',
+        '📉 Renta Fija/Macro': 'renta_fija_macro',   # ← NUEVO
         '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
     }
     if ES_ADMIN:
@@ -8605,6 +8607,8 @@ titulos = {
     'cot': ('Análisis COT — Commitment of Traders', '📑', 'Posicionamiento de Managed Money — 100% datos manuales, sin precio'),
     'tff': ('Análisis TFF — Traders in Financial Futures', '📑', 'Posicionamiento Asset Manager vs. Leveraged Funds — índices, forex y cripto'),
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
+    'renta_fija_macro': ('Renta Fija, Salud del Mercado y Macro', '📉',
+                          'Bonos, tasas del Tesoro, crédito corporativo y 12 ratios macro estratégicos'),
     'senales': ('Señales de Trading', '🎯', 'Publicación de señales y simulador de capital'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
     'promediador': ('Promediador + Stop Loss', '📐', 'Precio promedio, tendencia y gestión de riesgo con apalancamiento'),
@@ -8632,6 +8636,7 @@ badge_map = {
     'promediador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'PROMEDIADOR'),
     'fscore': ('#3fb950', 'rgba(63,185,80,0.12)', 'F-SCORE'),
     'breadth': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BREADTH'),
+    'renta_fija_macro': ('#00838f', 'rgba(0,131,143,0.12)', 'RENTA FIJA')
     'calendario': ('#79c0ff', 'rgba(121,192,255,0.12)', 'CALENDARIO'),
     'noticias': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'NOTICIAS'),
     'admin_pagos': ('#f0883e', 'rgba(240,136,62,0.12)', 'ADMIN'),
