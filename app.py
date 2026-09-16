@@ -8635,7 +8635,7 @@ badge_map = {
     'promediador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'PROMEDIADOR'),
     'fscore': ('#3fb950', 'rgba(63,185,80,0.12)', 'F-SCORE'),
     'breadth': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BREADTH'),
-    'renta_fija_macro': ('#00838f', 'rgba(0,131,143,0.12)', 'RENTA FIJA')
+    'renta_fija_macro': ('#00838f', 'rgba(0,131,143,0.12)', 'RENTA FIJA'),   # ← coma agregada acá
     'calendario': ('#79c0ff', 'rgba(121,192,255,0.12)', 'CALENDARIO'),
     'noticias': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'NOTICIAS'),
     'admin_pagos': ('#f0883e', 'rgba(240,136,62,0.12)', 'ADMIN'),
