@@ -2790,6 +2790,8 @@ def _tab_historial(supabase, es_admin=False):
     if f_cat != "Todas":
         df_f = df_f[df_f["categoria"] == f_cat]
 
+    df_f = df_f.sort_values("fecha_dt", ascending=False, kind="stable")
+
     st.caption(
         f"{len(df_f)} registros mostrados de {len(df)} totales"
         + (" en el período seleccionado" if fecha_desde else "")
