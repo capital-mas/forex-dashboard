@@ -1343,47 +1343,55 @@ PAISES = {
     
 # --- ETFs (Índices + Sectores, todo junto) ---
 ETFS = {
-    # Índices (ETF que los replica)
-    'EE.UU. S&P500':    ('SPY',  'Índices', '#3a7bd5'),
-    'EE.UU. NASDAQ':    ('QQQ',  'Índices', '#79c0ff'),
-    'EE.UU. DOW':       ('DIA',  'Índices', '#8b949e'),
-    'EE.UU. Russell':   ('IWM',  'Índices', '#bc8cff'),
-    'Argentina':        ('ARGT', 'Índices', '#6cb6ff'),
-    'Brasil':           ('EWZ',  'Índices', '#3fb950'),
-    'Japón':            ('EWJ',  'Índices', '#f0883e'),
-    'China':            ('FXI',  'Índices', '#f85149'),
-    'Corea del Sur':    ('EWY',  'Índices', '#e3b341'),
-    'India':            ('INDA', 'Índices', '#ffa657'),
-    'Alemania':         ('EWG',  'Índices', '#d2a8ff'),
-    'Europa general':   ('VGK',  'Índices', '#3a7bd5'),
-    'Mercados Emerg.':  ('EEM',  'Índices', '#8b949e'),
-    'Mid Caps (S&P 400)':  ('IJH',  'Índices EE.UU.', '#9c27b0'),
-    'Crecimiento (Growth)':('IWF',  'Factores', '#00e676'),
-    'Valor (Value)':       ('IWD',  'Factores', '#ff9100'),
-    'Alta Dividendos':     ('VYM',  'Factores', '#ffd700'),
-    'Baja Volatilidad':    ('USMV', 'Factores', '#607d8b'),
-    'Mercados Globales':   ('VT',   'Global', '#00bcd4'),
-    'Latinoamérica':       ('ILF',  'Global', '#4caf50'),
-    'Tasa Tesoro 3 Meses':       ('^IRX',  'Tasas Tesoro', '#00e5ff'),
-    'Tasa Tesoro 5 Años':        ('^FVX',  'Tasas Tesoro', '#00b0ff'),
-    'Tasa Tesoro 10 Años (Bench)':('^TNX',  'Tasas Tesoro', '#2979ff'),
-    'Tasa Tesoro 30 Años':       ('^TYX',  'Tasas Tesoro', '#3d5aff'),
-    'Bonos Tesoro Corto (1-3y)': ('SHY', 'Bonos', '#80deea'),
-    'Bonos Tesoro Medio (7-10y)':('IEF', 'Bonos', '#26c6da'),
-    'Bonos Tesoro Largo (20y+)': ('TLT', 'Bonos', '#00838f'),
-    'Bonos Corporativos IG':    ('LQD', 'Bonos', '#7e57c2'),
-    'Bonos Alto Rendimiento(Junk)': ('HYG', 'Bonos', '#ff7043'),
-    'Bonos Inflación (TIPS)':    ('TIP', 'Bonos', '#ab47bc'),
-    'Bonos Corp. Corto Plazo IG':     ('VCSH', 'Crédito Corporativo', '#b388ff'),
-    'Bonos Corporativos IG':           ('LQD',  'Crédito Corporativo', '#7e57c2'),
-    'Bonos Alto Rendimiento (Junk)':   ('HYG',  'Crédito Corporativo', '#ff7043'),
-    'Bonos Junk SPDR':                 ('JNK',  'Crédito Corporativo', '#f4511e'),
-    'Deuda Emergente USD (iShares)':   ('EMB',  'Renta Fija Global',   '#ff9800'),
-    'Deuda Emergente USD (Vanguard)':  ('VWOB', 'Renta Fija Global',   '#fb8c00'),
-    'Deuda Emergente Moneda Local':    ('EMLC', 'Renta Fija Global',   '#e65100'),
-    'Corporativos Emergentes USD':     ('CEMB', 'Renta Fija Global',   '#d81b60'),
-    'Deuda Desarrollada ex-US':        ('BNDX', 'Renta Fija Global',   '#03a9f4'),
-    'Soberanos Desarrollados ex-US':   ('IGOV', 'Renta Fija Global',   '#0288d1'),
+    # --- Índices & Factores ---
+    'EE.UU. S&P500':                ('SPY',   'Índices', '#3a7bd5'),
+    'EE.UU. NASDAQ':                ('QQQ',   'Índices', '#79c0ff'),
+    'EE.UU. DOW':                   ('DIA',   'Índices', '#8b949e'),
+    'EE.UU. Russell':               ('IWM',   'Índices', '#bc8cff'),
+    'Mid Caps (S&P 400)':           ('IJH',   'Índices', '#9c27b0'),
+    'Crecimiento (Growth)':         ('IWF',   'Factores', '#00e676'),
+    'Valor (Value)':                ('IWD',   'Factores', '#ff9100'),
+    'Alta Dividendos':              ('VYM',   'Factores', '#ffd700'),
+    'Baja Volatilidad':             ('USMV',  'Factores', '#607d8b'),
+
+    # --- Geografías / Global ---
+    'Mercados Globales':            ('VT',    'Global', '#00bcd4'),
+    'Latinoamérica':                ('ILF',   'Global', '#4caf50'),
+    'Mercados Emerg.':              ('EEM',   'Global', '#8b949e'),
+    'Europa general':               ('VGK',   'Global', '#3a7bd5'),
+    'Alemania':                     ('EWG',   'Global', '#d2a8ff'),
+    'Argentina':                    ('ARGT',  'Global', '#6cb6ff'),
+    'Brasil':                       ('EWZ',   'Global', '#3fb950'),
+    'Japón':                        ('EWJ',   'Global', '#f0883e'),
+    'China':                        ('FXI',   'Global', '#f85149'),
+    'Corea del Sur':                ('EWY',   'Global', '#e3b341'),
+    'India':                        ('INDA',  'Global', '#ffa657'),
+
+    # --- Tasas del Tesoro (Yields) ---
+    'Tasa Tesoro 3 Meses':          ('^IRX',  'Tasas Tesoro', '#00e5ff'),
+    'Tasa Tesoro 5 Años':           ('^FVX',  'Tasas Tesoro', '#00b0ff'),
+    'Tasa Tesoro 10 Años (Bench)':  ('^TNX',  'Tasas Tesoro', '#2979ff'),
+    'Tasa Tesoro 30 Años':          ('^TYX',  'Tasas Tesoro', '#3d5aff'),
+
+    # --- Bonos Soberanos EE.UU. ---
+    'Bonos Tesoro Corto (1-3y)':    ('SHY',   'Bonos EE.UU.', '#80deea'),
+    'Bonos Tesoro Medio (7-10y)':   ('IEF',   'Bonos EE.UU.', '#26c6da'),
+    'Bonos Tesoro Largo (20y+)':    ('TLT',   'Bonos EE.UU.', '#00838f'),
+    'Bonos Inflación (TIPS)':       ('TIP',   'Bonos EE.UU.', '#ab47bc'),
+
+    # --- Crédito Corporativo EE.UU. ---
+    'Bonos Corp. Corto Plazo IG':  ('VCSH',  'Crédito Corporativo', '#b388ff'),
+    'Bonos Corporativos IG':        ('LQD',   'Crédito Corporativo', '#7e57c2'),
+    'Bonos Alto Rendimiento (Junk)':('HYG',   'Crédito Corporativo', '#ff7043'),
+    'Bonos Junk SPDR':              ('JNK',   'Crédito Corporativo', '#f4511e'),
+
+    # --- Renta Fija Global y Emergentes ---
+    'Deuda Emergente USD (iShares)':('EMB',   'Renta Fija Global', '#ff9800'),
+    'Deuda Emergente USD (Vanguard)':('VWOB', 'Renta Fija Global', '#fb8c00'),
+    'Deuda Emergente Moneda Local': ('EMLC',  'Renta Fija Global', '#e65100'),
+    'Corporativos Emergentes USD':  ('CEMB',  'Renta Fija Global', '#d81b60'),
+    'Deuda Desarrollada ex-US':     ('BNDX',  'Renta Fija Global', '#03a9f4'),
+    'Soberanos Desarrollados ex-US':('IGOV',  'Renta Fija Global', '#0288d1'),
 }
 
 SECTORES_TOTAL = {
