@@ -7555,7 +7555,7 @@ def modulo_inicio():
     """, unsafe_allow_html=True)
 
     # ── Tabs principales ─────────────────────────────────────────────────
-    tab_indices, tab_sectores, tab_mercados, tab_forex, tab_acciones = st.tabs([
+    tab_indices, tab_etfs, tab_sectores, tab_mercados, tab_forex, tab_acciones = st.tabs([
         '🌍 Índices', '📦 ETFs', '📊 Sectores', '🛢️ Mercados', '💱 Forex', '📈 Acciones',
     ])
 
@@ -7564,11 +7564,13 @@ def modulo_inicio():
 
     # ── Subconjuntos de datos_base por sección (para los KPI por tab) ─────
     tks_paises_all   = [tk for tk, _ in PAISES.values()]
+    tks_etfs_all = [tk for tk, _cat, _c in ETFS.values()]
     tks_sectores_all = [tk for tk, _ in SECTORES.values()]
     tks_mercados_all = [tk for tk, _, _ in MERCADOS_REALES.values()]
     tks_forex_all    = [tk for tk, _ in FOREX.values()]
 
     datos_indices_kpi  = {tk: d for tk, d in datos_base.items() if tk in tks_paises_all}
+    datos_etfs_kpi = {tk: d for tk, d in datos_base.items() if tk in tks_etfs_all}
     datos_sectores_kpi = {tk: d for tk, d in datos_base.items() if tk in tks_sectores_all}
     datos_mercados_kpi = {tk: d for tk, d in datos_base.items() if tk in tks_mercados_all}
     datos_forex_kpi    = {tk: d for tk, d in datos_base.items() if tk in tks_forex_all}
@@ -7594,13 +7596,15 @@ def modulo_inicio():
 # ── TAB: ETFs ───────────────────────────────────────────────────────────────
     with tab_etfs:
         _kpi_resumen_seccion(datos_etfs_kpi, 'ETFs')
-
+    
         categorias = {}
-        for nombre, (tk, categoria) in ETFS_DICT.items():
+        colores_etf_cat = {}
+        for nombre, (tk, categoria, color) in ETFS.items():
             categorias.setdefault(categoria, []).append((nombre, tk))
+            colores_etf_cat.setdefault(categoria, color)
     
         for categoria, items in categorias.items():
-            color_c = COLORES_ETFS.get(categoria, C_MONSTER)
+            color_c = colores_etf_cat.get(categoria, C_MONSTER)
             st.markdown(
                 f'<div style="font-size:11px;font-weight:700;color:{color_c};'
                 f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
