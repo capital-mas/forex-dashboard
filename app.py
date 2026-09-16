@@ -1340,39 +1340,6 @@ PAISES = {
     'Gran Bretaña':   ('^FTSE',  'Europa'),
     'Francia':   ('^FCHI',  'Europa'),
 }
-
-# --- Índices Principales EE.UU. ---
-ETFS = {
-    'S&P 500':             ('SPY',  'Índices EE.UU.', '#00d2ff'),
-    'Nasdaq 100':          ('QQQ',  'Índices EE.UU.', '#0082c8'),
-    'Dow Jones':           ('DIA',  'Índices EE.UU.', '#4a90e2'),
-    'Small Caps (Russell)':('IWM',  'Índices EE.UU.', '#e91e63'),
-    'Mid Caps (S&P 400)':  ('IJH',  'Índices EE.UU.', '#9c27b0'),
-
-    # --- Estilos y Factores de Inversión ---
-    'Crecimiento (Growth)':('IWF',  'Factores', '#00e676'),
-    'Valor (Value)':       ('IWD',  'Factores', '#ff9100'),
-    'Alta Dividendos':     ('VYM',  'Factores', '#ffd700'),
-    'Baja Volatilidad':    ('USMV', 'Factores', '#607d8b'),
-
-    # --- Regiones y Mercados Globales ---
-    'Mercados Globales':   ('VT',   'Global', '#00bcd4'),
-    'Desarrollados ex-US': ('EFA',  'Global', '#03a9f4'),
-    'Mercados Emergentes': ('EEM',  'Global', '#ff5722'),
-    'China':               ('FXI',  'Global', '#de2910'),
-    'Europa':              ('EZU',  'Global', '#3f51b5'),
-    'Japón':               ('EWJ',  'Global', '#e91e63'),
-    'Latinoamérica':       ('ILF',  'Global', '#4caf50'),
-    'Brasil':              ('EWZ',  'Global', '#009688'),
-
-    # --- Renta Fija y Tasas de Interés (Bond Market) ---
-    'Bonos Tesoro Corto (1-3y)': ('SHY', 'Bonos', '#80deea'),
-    'Bonos Tesoro Medio (7-10y)':('IEF', 'Bonos', '#26c6da'),
-    'Bonos Tesoro Largo (20y+)': ('TLT', 'Bonos', '#00838f'),
-    'Bonos Corporativos IG':    ('LQD', 'Bonos', '#7e57c2'),
-    'Bonos Alto Rendimiento(Junk)': ('HYG', 'Bonos', '#ff7043'),
-    'Bonos Inflación (TIPS)':    ('TIP', 'Bonos', '#ab47bc'),
-}
     
 # --- ETFs (Índices + Sectores, todo junto) ---
 ETFS = {
@@ -1390,6 +1357,19 @@ ETFS = {
     'Alemania':         ('EWG',  'Índices', '#d2a8ff'),
     'Europa general':   ('VGK',  'Índices', '#3a7bd5'),
     'Mercados Emerg.':  ('EEM',  'Índices', '#8b949e'),
+    'Mid Caps (S&P 400)':  ('IJH',  'Índices EE.UU.', '#9c27b0'),
+    'Crecimiento (Growth)':('IWF',  'Factores', '#00e676'),
+    'Valor (Value)':       ('IWD',  'Factores', '#ff9100'),
+    'Alta Dividendos':     ('VYM',  'Factores', '#ffd700'),
+    'Baja Volatilidad':    ('USMV', 'Factores', '#607d8b'),
+    'Mercados Globales':   ('VT',   'Global', '#00bcd4'),
+    'Latinoamérica':       ('ILF',  'Global', '#4caf50'),
+    'Bonos Tesoro Corto (1-3y)': ('SHY', 'Bonos', '#80deea'),
+    'Bonos Tesoro Medio (7-10y)':('IEF', 'Bonos', '#26c6da'),
+    'Bonos Tesoro Largo (20y+)': ('TLT', 'Bonos', '#00838f'),
+    'Bonos Corporativos IG':    ('LQD', 'Bonos', '#7e57c2'),
+    'Bonos Alto Rendimiento(Junk)': ('HYG', 'Bonos', '#ff7043'),
+    'Bonos Inflación (TIPS)':    ('TIP', 'Bonos', '#ab47bc'),
 }
 
 SECTORES_TOTAL = {
