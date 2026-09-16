@@ -2769,20 +2769,26 @@ def _tab_historial(supabase, es_admin=False):
 
     df = pd.DataFrame(filas)
     df["fecha_dt"] = pd.to_datetime(df["fecha"], errors="coerce").dt.date
+    df["categoria"] = df["evento"].map(lambda e: EVENTOS.get(e, {}).get("categoria", "Otros"))
 
-    fc1, fc2 = st.columns(2)
+    fc1, fc2, fc3 = st.columns(3)
     with fc1:
         paises_u = ["Todos"] + sorted(df["pais"].dropna().unique().tolist())
         f_pais = st.selectbox("Filtrar país", paises_u, key="cal_hist_f_pais")
     with fc2:
         impactos_u = ["Todos"] + sorted(df["impacto_mercado"].dropna().unique().tolist()) if "impacto_mercado" in df.columns else ["Todos"]
         f_imp = st.selectbox("Filtrar impacto", impactos_u, key="cal_hist_f_imp")
+    with fc3:
+        categorias_u = ["Todas"] + sorted(df["categoria"].dropna().unique().tolist())
+        f_cat = st.selectbox("Filtrar categoría", categorias_u, key="cal_hist_f_cat")
 
     df_f = df.copy()
     if f_pais != "Todos":
         df_f = df_f[df_f["pais"] == f_pais]
     if f_imp != "Todos":
         df_f = df_f[df_f["impacto_mercado"] == f_imp]
+    if f_cat != "Todas":
+        df_f = df_f[df_f["categoria"] == f_cat]
 
     st.caption(
         f"{len(df_f)} registros mostrados de {len(df)} totales"
