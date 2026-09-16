@@ -5258,9 +5258,12 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
     fig_var.add_trace(go.Bar(x=df_95['Cartera'], y=df_95['VaR Histórico %'], name='VaR Histórico 95%', marker_color=C_ACENT))
     fig_var.add_trace(go.Bar(x=df_95['Cartera'], y=df_95['VaR Paramétrico %'], name='VaR Paramétrico 95%', marker_color=C_MONSTER, opacity=0.7))
     fig_var.update_layout(**PLOTLY_LAYOUT_BASE, barmode='group',
-        title=dict(text=f'VaR 95% comparado — {horiz_var}', font=dict(color=C_TEXT, size=13)),
+        title=dict(text=f'VaR 95% comparado — {horiz_var}', font=dict(color=C_TEXT, size=13),
+                   y=0.97, yanchor='top', x=0.01, xanchor='left'),
         xaxis=dict(gridcolor=C_GRID, tickangle=-30), yaxis=dict(gridcolor=C_GRID, title='% del capital'),
-        height=380, legend=dict(orientation='h', y=1.1), margin=dict(l=10,r=10,t=45,b=80))
+        height=410,
+        legend=dict(orientation='h', yanchor='bottom', y=1.14, xanchor='left', x=0, font=dict(size=10)),
+        margin=dict(l=10,r=10,t=90,b=80))
     st.plotly_chart(fig_var, use_container_width=True, config=PLOTLY_CONFIG, key='var_comparado_fig')
 
     st.markdown(f"""
@@ -5567,10 +5570,13 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
     ))
     fig_desglose.update_layout(
         **PLOTLY_LAYOUT_BASE, barmode='relative',
-        title=dict(text='Contribución de cada factor al impacto total', font=dict(color=C_TEXT, size=13)),
+        title=dict(text='Contribución de cada factor al impacto total', font=dict(color=C_TEXT, size=13),
+                   y=0.97, yanchor='top', x=0.01, xanchor='left'),
         xaxis=dict(gridcolor=C_GRID, tickangle=-30),
         yaxis=dict(gridcolor=C_GRID, title='Contribución al impacto %'),
-        height=420, legend=dict(orientation='h', y=1.15), margin=dict(l=10, r=10, t=45, b=80),
+        height=470,
+        legend=dict(orientation='h', yanchor='bottom', y=1.16, xanchor='left', x=0, font=dict(size=9)),
+        margin=dict(l=10, r=10, t=110, b=80),
     )
     st.plotly_chart(fig_desglose, use_container_width=True, config=PLOTLY_CONFIG, key='desglose_impacto_fig')
 
@@ -5840,10 +5846,12 @@ def _opt_fig_nominal_vs_real(equity_nominal, equity_real, capital_inicial, nombr
         name='Real (ajustado)', line=dict(color=C_MONSTER, width=2.2, dash='dash')))
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text=f'{nombre} — Capital nominal vs. real', font=dict(color=C_TEXT, size=13)),
+        title=dict(text=f'{nombre} — Capital nominal vs. real', font=dict(color=C_TEXT, size=13),
+                   y=0.97, yanchor='top', x=0.01, xanchor='left'),
         xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='Valor de la inversión'),
-        height=420, hovermode='x unified', legend=dict(orientation='h', y=1.1),
-        margin=dict(l=10, r=10, t=45, b=10),
+        height=450, hovermode='x unified',
+        legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0, font=dict(size=10)),
+        margin=dict(l=10, r=10, t=90, b=10),
     )
     return fig
 
@@ -6336,9 +6344,12 @@ def modulo_optimizador():
             fig_reb.add_trace(go.Bar(x=df_reb['Ticker'], y=df_reb['Peso Objetivo %'], name=cartera_comparar, marker_color=C_MONSTER))
             fig_reb.update_layout(
                 **PLOTLY_LAYOUT_BASE, barmode='group',
-                title=dict(text='Peso actual vs. objetivo por activo', font=dict(color=C_TEXT, size=13)),
+                title=dict(text='Peso actual vs. objetivo por activo', font=dict(color=C_TEXT, size=13),
+                           y=0.97, yanchor='top', x=0.01, xanchor='left'),
                 xaxis=dict(gridcolor=C_GRID, tickangle=-45), yaxis=dict(gridcolor=C_GRID, title='% de cartera'),
-                height=380, legend=dict(orientation='h', y=1.1), margin=dict(l=10, r=10, t=45, b=80),
+                height=410,
+                legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0, font=dict(size=10)),
+                margin=dict(l=10, r=10, t=90, b=80),
             )
             st.plotly_chart(fig_reb, use_container_width=True, config=PLOTLY_CONFIG, key='reb_fig_pesos')
 
