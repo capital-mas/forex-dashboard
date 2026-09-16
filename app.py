@@ -5098,10 +5098,12 @@ def _opt_fig_equity(series_dict, capital_inicial, benchmark):
             line=dict(color=color, width=2.2, dash=dash)))
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text=f'Evolución de USD {capital_inicial:,.0f}', font=dict(color=C_TEXT, size=14)),
+        title=dict(text=f'Evolución de USD {capital_inicial:,.0f}', font=dict(color=C_TEXT, size=14),
+                   y=0.97, yanchor='top', x=0.01, xanchor='left'),
         xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='Valor de la inversión'),
-        height=460, hovermode='x unified', legend=dict(orientation='h', y=1.1),
-        margin=dict(l=10, r=10, t=50, b=10),
+        height=490, hovermode='x unified',
+        legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0, font=dict(size=10)),
+        margin=dict(l=10, r=10, t=95, b=10),
     )
     return fig
 
@@ -5115,10 +5117,12 @@ def _opt_fig_drawdown(dd_dict, benchmark):
         fig.add_trace(go.Scatter(x=dd.index, y=dd*100, name=nombre, line=dict(color=color, width=1.6, dash=dash)))
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text='Drawdown histórico comparado', font=dict(color=C_TEXT, size=14)),
+        title=dict(text='Drawdown histórico comparado', font=dict(color=C_TEXT, size=14),
+                   y=0.97, yanchor='top', x=0.01, xanchor='left'),
         xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='Caída desde máximo (%)'),
-        height=380, hovermode='x unified', legend=dict(orientation='h', y=1.1),
-        margin=dict(l=10, r=10, t=50, b=10),
+        height=410, hovermode='x unified',
+        legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='left', x=0, font=dict(size=10)),
+        margin=dict(l=10, r=10, t=95, b=10),
     )
     return fig
 
@@ -5161,10 +5165,13 @@ def _opt_fig_frontera(df_sim, carteras_candidatas, vol_bench, cagr_bench, benchm
     ))
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text='Frontera eficiente simulada', font=dict(color=C_TEXT, size=14)),
+        title=dict(text='Frontera eficiente simulada', font=dict(color=C_TEXT, size=14),
+                   y=0.98, yanchor='top', x=0.01, xanchor='left'),
         xaxis=dict(title='Volatilidad anual', tickformat='.0%', gridcolor=C_GRID),
         yaxis=dict(title='CAGR', tickformat='.0%', gridcolor=C_GRID),
-        height=520, legend=dict(orientation='h', y=1.12), margin=dict(l=10, r=10, t=50, b=10),
+        height=560,
+        legend=dict(orientation='h', yanchor='bottom', y=1.14, xanchor='left', x=0, font=dict(size=10)),
+        margin=dict(l=10, r=10, t=110, b=10),
     )
     return fig
 
