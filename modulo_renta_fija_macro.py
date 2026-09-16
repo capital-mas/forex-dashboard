@@ -314,82 +314,223 @@ def calcular_matriz_ratios_macro(precios):
 
 GLOSARIO_RATIOS = {
     'Apetito Riesgo Crediticio (HYG/IEF)':
-        'Compara bonos "basura" de alto rendimiento (HYG) contra bonos del Tesoro '
-        'de mediano plazo (IEF). Cuando sube, el mercado tiene apetito por el riesgo '
-        '("Risk-On"); cuando cae, los inversores buscan refugio ("Risk-Off").',
+        'Compara bonos "basura" de alto rendimiento (HYG) contra bonos del Tesoro de '
+        'mediano plazo (IEF). Los bonos de alto rendimiento son emitidos por empresas '
+        'con calificación crediticia baja, por lo que su precio cae fuerte cuando el '
+        'mercado teme una recesión o una ola de defaults corporativos, mientras que '
+        'los bonos del Tesoro suben de precio en esos mismos momentos porque actúan '
+        'como refugio. Por eso, cuando el ratio sube de forma sostenida, significa que '
+        'los inversores institucionales están dispuestos a asumir más riesgo de crédito '
+        'a cambio de mayor rendimiento ("Risk-On"); cuando cae, el capital está huyendo '
+        'del crédito corporativo hacia la seguridad de la deuda soberana ("Risk-Off"). '
+        'Se usa mucho como termómetro adelantado, porque el mercado de bonos corporativos '
+        'suele anticipar giros en la bolsa antes de que se reflejen en los índices accionarios.',
+
     'Riesgo de Crédito Puro (HYG/LQD)':
-        'Mide el estrés específico del crédito de menor calidad (HYG) frente a '
-        'empresas sólidas con grado de inversión (LQD). Si cae con fuerza, es señal '
-        'de que el mercado le empieza a temer a un default corporativo.',
+        'Mide el estrés específico del crédito de menor calidad (HYG, bonos de alto '
+        'rendimiento) frente a empresas sólidas con grado de inversión (LQD, "investment '
+        'grade"). A diferencia del ratio HYG/IEF, acá ambos activos son bonos corporativos, '
+        'así que este ratio aísla puramente el riesgo de crédito, sin la variable extra de '
+        'las tasas de interés que meten los bonos del Tesoro. Si el ratio cae con fuerza, '
+        'las empresas de menor calidad están perdiendo valor en relación a las más sólidas '
+        '— señal de que el mercado le empieza a temer específicamente a un default '
+        'corporativo o a un ciclo de "credit crunch" (restricción de crédito), incluso si '
+        'las tasas de interés se mantienen estables.',
+
     'Liquidez Corporativa (VCSH/LQD)':
-        'Compara el costo de financiamiento corporativo a corto plazo (VCSH) contra '
-        'el de largo plazo (LQD). Ayuda a ver si las empresas están teniendo más o '
-        'menos facilidad para financiarse en el corto plazo.',
+        'Compara el costo de financiamiento corporativo a corto plazo (VCSH, bonos '
+        'investment grade de 1 a 5 años) contra el de largo plazo (LQD, duración más '
+        'extensa). En condiciones normales ambos se mueven parecido, pero cuando hay '
+        'estrés de liquidez en el sistema financiero (por ejemplo, bancos que dejan de '
+        'prestar, o empresas con dificultades para refinanciar deuda de corto plazo), el '
+        'tramo corto suele sufrir primero y de forma más brusca. Este ratio ayuda a '
+        'detectar tensiones tempranas en el financiamiento corporativo antes de que se '
+        'conviertan en un problema de crédito más amplio y visible en HYG/IEF.',
+
     'Spread Curva 10Y-3M (TNX-IRX)':
         'La diferencia entre la tasa a 10 años y la tasa a 3 meses del Tesoro de EE.UU. '
-        'Cuando este número se vuelve negativo (la curva se "invierte"), ha sido, '
-        'históricamente, una de las señales de recesión más confiables.',
+        'En una economía sana, los inversores exigen más rendimiento por prestar a más '
+        'largo plazo (curva "normal", con pendiente positiva). Cuando el mercado espera '
+        'que la Reserva Federal vaya a bajar las tasas en el futuro (típicamente porque '
+        'anticipa una desaceleración o recesión), la tasa larga cae por debajo de la '
+        'corta y el spread se vuelve negativo: la curva se "invierte". Este indicador es '
+        'uno de los predictores de recesión más estudiados históricamente en EE.UU., '
+        'aunque el "lag" entre la inversión y la recesión efectiva puede ser de varios '
+        'meses a más de un año, por lo que no debe leerse como una señal de timing exacto.',
+
     'Spread Curva Larga (TYX-TNX)':
-        'La prima extra que exige el mercado por prestar a 30 años en vez de a 10 años. '
-        'Si esta prima se achica o se vuelve negativa, sugiere expectativas de menor '
-        'crecimiento o inflación en el largo plazo.',
+        'La prima extra que exige el mercado por prestarle al Tesoro a 30 años en vez de '
+        'a 10 años. Este tramo de la curva refleja principalmente expectativas de '
+        'crecimiento e inflación de muy largo plazo, más que las expectativas de política '
+        'monetaria de corto plazo que domina el spread 10Y-3M. Si esta prima se achica o '
+        'se vuelve negativa, el mercado está señalando que espera un crecimiento '
+        'económico estructuralmente más débil o una inflación controlada en las próximas '
+        'décadas; si se amplía, suele reflejar mayor preocupación por inflación '
+        'persistente o por el aumento de la emisión de deuda soberana de largo plazo.',
+
     'Sensibilidad a Tasas / Duration (TLT/SHY)':
-        'Compara bonos largos (TLT, muy sensibles a cambios de tasas) contra bonos '
-        'cortos (SHY, casi insensibles). Si sube, el mercado está apostando a que las '
-        'tasas de la Fed van a bajar; si cae, a que van a subir o mantenerse altas.',
+        'Compara bonos del Tesoro largos (TLT, 20+ años, muy sensibles a cambios en las '
+        'tasas de interés por su alta "duration") contra bonos cortos (SHY, 1-3 años, '
+        'casi insensibles a esos cambios). Cuando las tasas bajan, el precio de TLT sube '
+        'mucho más que el de SHY, y viceversa. Por eso este ratio funciona como una '
+        'apuesta implícita del mercado sobre la dirección futura de las tasas: si sube de '
+        'forma sostenida, el mercado está posicionándose para una baja de tasas de la Fed; '
+        'si cae, está anticipando que las tasas se mantendrán altas por más tiempo o que '
+        'incluso podrían subir más.',
+
     'Expectativa Inflacionaria (TIP/IEF)':
-        'TIP son bonos protegidos contra la inflación; IEF son bonos tradicionales. '
-        'Cuando el ratio sube, el mercado empieza a temerle más a la inflación futura.',
+        'TIP son bonos del Tesoro protegidos contra la inflación (su valor nominal se '
+        'ajusta según el IPC), mientras que IEF son bonos tradicionales de tasa fija sin '
+        'ese ajuste. Cuando los inversores esperan mayor inflación futura, prefieren TIP '
+        'por sobre IEF porque su rendimiento real está protegido, y ese mayor apetito '
+        'hace subir el precio relativo de TIP frente a IEF. Por eso, cuando el ratio sube, '
+        'el mercado está empezando a temerle más a la inflación; cuando cae, las '
+        'expectativas inflacionarias se están moderando. Es una forma indirecta de ver el '
+        '"breakeven inflation rate" sin tener que calcular el spread de rendimientos '
+        'directamente.',
+
     'Estrés Monetario Emergente (EMLC/EMB)':
-        'Compara deuda emergente en moneda local (EMLC) contra deuda emergente en '
-        'dólares (EMB). Si cae, sugiere que el mercado teme más una devaluación de '
-        'las monedas emergentes que un default en dólares.',
+        'Compara deuda de mercados emergentes emitida en moneda local (EMLC) contra '
+        'deuda emergente emitida en dólares (EMB). La deuda en moneda local tiene un '
+        'riesgo adicional que la deuda en dólares no tiene: el riesgo cambiario, es decir, '
+        'que la moneda local se devalúe frente al dólar y erosione el retorno del '
+        'inversor extranjero. Cuando el ratio EMLC/EMB cae, sugiere que el mercado está '
+        'más preocupado por una devaluación generalizada de las monedas emergentes '
+        '(riesgo cambiario) que por un default de esos países en su deuda dolarizada '
+        '(riesgo de crédito puro). Es un indicador útil para diferenciar entre estrés '
+        'cambiario y estrés de solvencia en el mundo emergente.',
+
     'Flujo Global (EEM/VT)':
-        'Mide si el dinero global fluye hacia mercados emergentes (EEM) o se queda '
-        'en el promedio del mercado mundial (VT, que incluye desarrollados).',
+        'Mide si el flujo de capital global está privilegiando a los mercados emergentes '
+        '(EEM) o si se está quedando concentrado en el promedio del mercado mundial (VT, '
+        'que incluye tanto desarrollados como emergentes, pero con mucho mayor peso de '
+        'EE.UU. y otros países desarrollados). Cuando el ratio sube, hay un apetito '
+        'especial por el riesgo emergente — típico de fases de "búsqueda de rendimiento" '
+        'con tasas de interés bajas en EE.UU. y dólar débil. Cuando cae, el capital está '
+        'rotando hacia la seguridad relativa de los mercados desarrollados, algo común en '
+        'entornos de dólar fuerte o de aversión al riesgo global.',
+
     'Rotación Crecimiento vs Refugio (SPY/TLT)':
-        'Compara acciones (SPY) contra bonos del Tesoro largo (TLT), el activo '
-        'refugio por excelencia. Si sube, hay apetito por el riesgo; si cae, los '
-        'inversores buscan protección.',
+        'Compara acciones del S&P 500 (SPY) contra bonos del Tesoro largo (TLT), el '
+        'activo refugio por excelencia en momentos de estrés. Cuando el ratio sube, el '
+        'capital está rotando desde la renta fija hacia la renta variable, en busca de '
+        'mayor retorno esperado — típico de fases de expansión económica y confianza del '
+        'mercado. Cuando cae, los inversores están vendiendo acciones y refugiándose en '
+        'bonos largos, algo característico de correcciones bursátiles o de expectativas de '
+        'desaceleración económica. Es uno de los ratios más simples y directos para medir '
+        'el "sentimiento de riesgo" general del mercado en un solo número.',
+
     'Liderazgo Tecnológico (QQQ/SPY)':
-        'Mide si el Nasdaq (dominado por tecnología) le está ganando o perdiendo al '
-        'mercado general. Un ratio en alza indica que las mega-tecnológicas están '
-        'concentrando el liderazgo del rally.',
+        'Mide si el Nasdaq 100 (QQQ, dominado por las grandes tecnológicas) le está '
+        'ganando o perdiendo al S&P 500 en general (SPY, que incluye todos los sectores). '
+        'Un ratio en alza sostenida indica que el rally del mercado está siendo liderado, '
+        'y muchas veces concentrado, en un puñado de mega-tecnológicas — lo cual puede ser '
+        'una señal de fortaleza del sector, pero también de fragilidad si ese liderazgo es '
+        'demasiado estrecho (pocas empresas explicando la mayor parte de la suba). Cuando '
+        'el ratio cae, el mercado se está ampliando hacia otros sectores más tradicionales '
+        '("rotación hacia value" o hacia cíclicas), lo que suele leerse como una señal más '
+        'saludable de participación amplia en la suba.',
+
     'Estilos de Inversión (IWF/IWD)':
-        'Compara acciones de "crecimiento" (Growth, IWF) contra acciones de "valor" '
-        '(Value, IWD). Ayuda a identificar qué estilo está liderando el ciclo actual.',
+        'Compara acciones de "crecimiento" (Growth, IWF — empresas que reinvierten sus '
+        'ganancias para crecer rápido, suelen tener múltiplos de valuación altos, como '
+        'muchas tecnológicas) contra acciones de "valor" (Value, IWD — empresas más '
+        'maduras, con múltiplos más bajos, flujos de caja estables y dividendos, típicas '
+        'de sectores como financieras, energía o industriales). Este ratio ayuda a '
+        'identificar qué estilo está liderando el ciclo de mercado actual: cuando sube, '
+        'el capital favorece el crecimiento y suele coincidir con entornos de tasas bajas; '
+        'cuando cae, el mercado está rotando hacia el valor, algo típico de entornos de '
+        'tasas altas o de mayor aversión al riesgo de valuaciones exigentes.',
+
     'Estrés Volatilidad Táctica (VIX/VIX9D)':
-        'Compara el VIX tradicional (30 días) contra el VIX de 9 días. Cuando el '
-        'ratio cae por debajo de 1, significa que el mercado le está poniendo más '
-        'miedo al muy corto plazo que al mediano plazo — señal de pánico inminente.',
+        'Compara el VIX tradicional, que mide la volatilidad implícita esperada a 30 días '
+        'sobre el S&P 500, contra el VIX9D, que mide esa misma expectativa pero a solo 9 '
+        'días. En condiciones normales el VIX de 30 días suele estar por encima del de 9 '
+        'días (la curva de volatilidad tiene pendiente positiva, llamada "contango"), '
+        'porque hay más incertidumbre acumulada cuanto más lejos se mira en el tiempo. '
+        'Cuando este ratio cae por debajo de 1, significa que el mercado le está poniendo '
+        'más miedo al muy corto plazo que al mediano plazo (la curva se invierte, llamado '
+        '"backwardation") — algo que históricamente ocurre en momentos de pánico agudo o '
+        'de eventos de riesgo inminentes (por ejemplo, antes de una decisión de la Fed muy '
+        'esperada, una elección, o en medio de una caída fuerte del mercado).',
+
     'Miedo Crediticio vs Accionario (HYG_Vol/VIX)':
-        'Compara qué tan nerviosos están los bonos basura (HYG) frente a qué tan '
-        'nervioso está el mercado accionario (VIX). Si la volatilidad de los bonos '
-        'se dispara más rápido que la de las acciones, el crédito puede estar '
-        'anticipando un problema de liquidez que las acciones todavía no reflejan.',
+        'Compara la volatilidad realizada reciente de los bonos de alto rendimiento (HYG) '
+        'frente al nivel del VIX, que mide el miedo del mercado accionario. Normalmente el '
+        'mercado de crédito se mueve con menor volatilidad que el de acciones, porque los '
+        'bonos tienen un piso más claro (el pago de cupón y capital) que las acciones. Si '
+        'la volatilidad de HYG se dispara en relación al VIX, es una señal de alerta '
+        'temprana: significa que el mercado de crédito está reaccionando con más nerviosismo '
+        'que el mercado accionario, lo cual históricamente ha anticipado problemas de '
+        'liquidez o de refinanciamiento que las acciones todavía no habían empezado a '
+        'reflejar en sus precios.',
+
     'Apetito Apalancamiento (SPHB/SPLV)':
-        'Compara acciones de alta volatilidad/beta (SPHB) contra acciones defensivas '
-        'de baja volatilidad (SPLV). Si cae con fuerza, el capital institucional está '
-        'rotando hacia posiciones más defensivas ("Risk-Off").',
+        'Compara acciones de alta volatilidad y beta (SPHB — empresas más sensibles a los '
+        'movimientos del mercado, que suben y bajan con más fuerza que el promedio) contra '
+        'acciones defensivas de baja volatilidad (SPLV — empresas más estables, típicamente '
+        'de sectores como consumo básico o utilities). Este ratio funciona como un '
+        'termómetro del apetito por el riesgo dentro de la propia bolsa: cuando sube, el '
+        'capital institucional está buscando más apalancamiento y retorno, asumiendo más '
+        'riesgo ("Risk-On" agresivo). Cuando cae con fuerza, hay una rotación clara hacia '
+        'posiciones defensivas, típica de fases de incertidumbre o de expectativas de '
+        'corrección en el mercado.',
+
     'Sensibilidad al Consumo (XLY/XLP)':
-        'El "termómetro del consumidor": Consumo Discrecional (autos, viajes, lujo) '
-        'contra Consumo Básico (alimentos, higiene). Si sube, el consumidor gasta con '
-        'confianza; si cae, el dinero busca refugio en lo esencial.',
+        'El "termómetro del consumidor": compara el sector de Consumo Discrecional (XLY — '
+        'autos, viajes, retail de lujo, entretenimiento; gasto que la gente puede posponer '
+        'o recortar) contra el de Consumo Básico (XLP — alimentos, higiene, productos de '
+        'primera necesidad; gasto que la gente mantiene incluso en tiempos difíciles). '
+        'Cuando el ratio sube, el consumidor está gastando con confianza en bienes y '
+        'servicios no esenciales, algo típico de un mercado laboral fuerte y buen clima de '
+        'consumo. Cuando cae, el dinero busca refugio en lo esencial — señal de que los '
+        'consumidores empiezan a recortar gastos discrecionales, algo que suele anticipar '
+        'una desaceleración del consumo privado, motor clave de la economía de EE.UU.',
+
     'Salud Economía Real (XLI/XLU)':
-        'Compara Industriales (fábricas, maquinaria) contra Utilities (servicios '
-        'públicos, muy defensivos). Si sube, la economía real se está expandiendo; '
-        'si cae, el dinero huye hacia lo más seguro.',
+        'Compara el sector Industrial (XLI — fábricas, maquinaria pesada, transporte, '
+        'construcción; actividad directamente ligada a la producción y la inversión) '
+        'contra el sector de Utilities (XLU — servicios públicos regulados como agua, luz '
+        'y gas, con demanda muy estable e independiente del ciclo económico, por lo que se '
+        'consideran uno de los sectores más defensivos de la bolsa). Cuando el ratio sube, '
+        'la economía real se está expandiendo y hay confianza en la actividad productiva. '
+        'Cuando cae, el dinero está rotando hacia la seguridad de Utilities, algo que '
+        'suele ocurrir cuando el mercado anticipa una desaceleración industrial o un ciclo '
+        'económico más débil.',
+
     'Apetito Innovación/Especulación (ARKK/QQQ)':
-        'Compara empresas tecnológicas especulativas y sin ganancias consolidadas '
-        '(ARKK) contra las mega-tecnológicas más sólidas del Nasdaq (QQQ). Si sube, '
-        'hay apetito especulativo real, no solo un rally de las grandes empresas.',
+        'Compara empresas tecnológicas especulativas y de alto crecimiento, muchas veces '
+        'sin ganancias consolidadas todavía (ARKK, el ETF insignia de Cathie Wood, enfocado '
+        'en innovación disruptiva) contra las mega-tecnológicas más sólidas y rentables del '
+        'Nasdaq 100 (QQQ). Este ratio permite diferenciar entre un rally tecnológico '
+        'amplio, impulsado por apetito especulativo genuino en toda la cadena de '
+        'innovación, y un rally concentrado únicamente en las gigantes ya consolidadas '
+        '(las "Mega Caps"). Cuando ARKK/QQQ sube, hay apetito de riesgo real por empresas '
+        'más especulativas; cuando cae con fuerza, el mercado está descartando el riesgo '
+        'de crecimiento no rentable y refugiándose en calidad dentro del propio sector '
+        'tecnológico.',
+
     'Cobre/Oro — Doctor Copper (CPER/GLD)':
-        'El cobre refleja actividad industrial y crecimiento; el oro refleja refugio '
-        'e inflación. Si el ratio sube, anticipa crecimiento económico (y presión '
-        'sobre las tasas); si cae, anticipa desaceleración o mayor aversión al riesgo.',
+        'El cobre es un insumo industrial clave (construcción, electrónica, vehículos '
+        'eléctricos, infraestructura), por lo que su precio refleja de forma directa el '
+        'nivel de actividad industrial y crecimiento económico global — de ahí el apodo '
+        '"Doctor Copper", porque se dice que "tiene un doctorado en economía". El oro, en '
+        'cambio, es el activo refugio por excelencia, y su precio sube con la aversión al '
+        'riesgo, la inflación o la incertidumbre geopolítica. Cuando el ratio Cobre/Oro '
+        'sube, el mercado está anticipando crecimiento económico (lo cual, a su vez, suele '
+        'presionar al alza las tasas de interés); cuando cae, anticipa desaceleración '
+        'económica o un aumento de la aversión al riesgo global.',
+
     'Energía vs Mercado (XLE/SPY)':
-        'Si el sector Energía empieza a subir más que el mercado en general, suele '
-        'anticipar presiones inflacionarias por el lado de los costos de insumos.',
+        'Compara el sector Energía (XLE — petroleras, gasíferas, refinadoras) contra el '
+        'mercado en general (SPY). Los precios de la energía son un componente directo del '
+        'costo de producción y transporte en toda la economía, por lo que cuando el sector '
+        'Energía empieza a subir mucho más que el mercado en general, suele anticipar '
+        'presiones inflacionarias por el lado de los costos de insumos (energía más cara '
+        'se traslada, con rezago, a precios más altos en otros sectores). Este ratio '
+        'también sirve como indicador de rotación sectorial: subidas fuertes de XLE/SPY '
+        'suelen coincidir con entornos de shocks de oferta de petróleo o con ciclos '
+        'inflacionarios más amplios en la economía.',
 }
 
 
@@ -477,12 +618,21 @@ def _fig_serie_simple(nombre, serie, sma_ventana=None, hline_cero=False, formato
         ))
     if hline_cero:
         fig.add_hline(y=0, line_color=C_MUTED, opacity=0.5, line_dash='dot')
+
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text=nombre, font=dict(color=C_TEXT, size=13), x=0.01),
+        title=dict(
+            text=nombre, font=dict(color=C_TEXT, size=13),
+            x=0.01, xanchor='left', y=0.98, yanchor='top',
+        ),
         xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID),
-        height=320, margin=dict(l=10, r=10, t=45, b=10), hovermode='x unified',
-        legend=dict(orientation='h', y=1.15, font=dict(size=9)),
+        height=360,
+        margin=dict(l=10, r=10, t=90, b=10),   # ← más espacio arriba (era 45)
+        hovermode='x unified',
+        legend=dict(
+            orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0,
+            font=dict(size=9),
+        ),
     )
     return fig
 
