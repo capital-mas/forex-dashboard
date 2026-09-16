@@ -30,6 +30,7 @@ from modulo_noticias_mercado import render_noticias_mercado
 from modulo_senales_trading import render_senales_trading
 from modulo_fscore import modulo_fscore
 from modulo_market_breadth import render_market_breadth
+from modulo_renta_fija_macro import modulo_renta_fija_macro
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
 from modulo_pago_manual import (
@@ -8744,7 +8745,10 @@ elif MODULO == 'breadth':
         fmt_precio=fmt_precio,
         chips_navegacion=chips_navegacion,
     )
-    
+
+elif MODULO == 'renta_fija_macro':
+    modulo_renta_fija_macro(PLOTLY_CONFIG=PLOTLY_CONFIG)
+
 elif MODULO == 'admin_pagos':
     if ES_ADMIN:
         panel_admin_pagos(supabase, USER_ID)
