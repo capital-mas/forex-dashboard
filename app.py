@@ -7556,7 +7556,7 @@ def modulo_inicio():
 
     # ── Tabs principales ─────────────────────────────────────────────────
     tab_indices, tab_sectores, tab_mercados, tab_forex, tab_acciones = st.tabs([
-        '🌍 Índices', '📊 Sectores', '🛢️ Mercados', '💱 Forex', '📈 Acciones',
+        '🌍 Índices', '📦 ETFs', '📊 Sectores', '🛢️ Mercados', '💱 Forex', '📈 Acciones',
     ])
 
     with st.spinner('Cargando cotizaciones...'):
@@ -7587,6 +7587,24 @@ def modulo_inicio():
                 f'<div style="font-size:11px;font-weight:700;color:{color_r};'
                 f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
                 f'◆ {region}</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(_cards_html(items, datos_base), unsafe_allow_html=True)
+
+# ── TAB: ETFs ───────────────────────────────────────────────────────────────
+    with tab_etfs:
+        _kpi_resumen_seccion(datos_etfs_kpi, 'ETFs')
+
+        categorias = {}
+        for nombre, (tk, categoria) in ETFS_DICT.items():
+            categorias.setdefault(categoria, []).append((nombre, tk))
+    
+        for categoria, items in categorias.items():
+            color_c = COLORES_ETFS.get(categoria, C_MONSTER)
+            st.markdown(
+                f'<div style="font-size:11px;font-weight:700;color:{color_c};'
+                f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
+                f'◆ {categoria}</div>',
                 unsafe_allow_html=True,
             )
             st.markdown(_cards_html(items, datos_base), unsafe_allow_html=True)
