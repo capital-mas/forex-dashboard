@@ -796,6 +796,7 @@ _autorefresh_activo = (
     _nav_m_actual == 'inicio'
     or _nav_h_actual == 'corto'
     or (_nav_h_actual == 'largo' and _nav_m_actual in ('tdc', 'reversion'))
+    or (_nav_h_actual == 'herramientas' and _nav_m_actual in ('renta fija y macro', 'salud de mercado'))
 )
 
 if _autorefresh_activo:
