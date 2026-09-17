@@ -8436,14 +8436,32 @@ st.markdown("""
     border-color: #f85149 !important;
 }
 
-/* ── Nav alternativo para pantallas chicas (celular) ──
-   En desktop se ve la fila de botones; en mobile esa fila se
-   esconde y aparecen 2 selectbox en su lugar, mucho más usables
-   con el dedo que botones angostos en una fila scrolleable. */
-.st-key-nav_mobile_wrap { display: none; }
+/* ── Mantener la misma nav de pills en mobile, pero scrolleable ── */
+.st-key-nav_mobile_wrap { display: none !important; }
+
 @media (max-width: 768px) {
-  .st-key-nav_pills_wrap { display: none !important; }
-  .st-key-nav_mobile_wrap { display: block !important; }
+  .st-key-nav_pills_wrap { display: block !important; }
+
+  /* Evita que Streamlit apile las columnas: las deja en fila con scroll horizontal */
+  .st-key-nav_pills_wrap div[data-testid="stHorizontalBlock"] {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    gap: 6px !important;
+    padding-bottom: 4px !important;
+  }
+  .st-key-nav_pills_wrap div[data-testid="column"] {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 118px !important;
+  }
+  /* que los botones no corten el texto ni se compriman */
+  .st-key-nav_pills_wrap .stButton > button {
+    white-space: nowrap !important;
+    font-size: 11.5px !important;
+    padding: 8px 12px !important;
+  }
 }
 </style>
 """, unsafe_allow_html=True)
