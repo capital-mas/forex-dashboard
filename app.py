@@ -33,7 +33,7 @@ from modulo_market_breadth import render_market_breadth
 from modulo_renta_fija_macro import modulo_renta_fija_macro
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
-from modulo_ia_asistente import modulo_ia_asistente, responder
+from modulo_ia_asistente import modulo_ia_asistente
 from modulo_pago_manual import (
     pantalla_suscripcion, panel_admin_pagos, panel_gestion_cuentas,
     es_admin_usuario, obtener_plan_actual, mostrar_selector_planes,
