@@ -535,6 +535,116 @@ GLOSARIO_RATIOS = {
 
 
 # ==============================================================
+#  4b. INTERPRETACIÓN DE ESTADO — qué significa "arriba" / "abajo" en cada ratio
+#      modo='sma'    -> compara el último valor contra su media móvil de N ruedas
+#      modo='umbral' -> compara el último valor contra un umbral fijo (ej. 0, 1.0)
+# ==============================================================
+
+ESTADO_INTERPRETACION = {
+    'Apetito Riesgo Crediticio (HYG/IEF)': dict(
+        modo='sma',
+        arriba='Risk-On: el mercado tolera más riesgo de crédito',
+        abajo='Risk-Off: el capital se refugia en bonos del Tesoro',
+    ),
+    'Riesgo de Crédito Puro (HYG/LQD)': dict(
+        modo='sma',
+        arriba='Crédito de baja calidad ganando terreno',
+        abajo='Mercado empieza a temerle a un default corporativo',
+    ),
+    'Liquidez Corporativa (VCSH/LQD)': dict(
+        modo='sma',
+        arriba='Financiamiento corporativo de corto plazo saludable',
+        abajo='Posible estrés de liquidez en el corto plazo',
+    ),
+    'Spread Curva 10Y-3M (TNX-IRX)': dict(
+        modo='umbral', umbral=0.0,
+        arriba='Curva normal: sin señal de recesión por este indicador',
+        abajo='Curva invertida: señal histórica de recesión',
+    ),
+    'Spread Curva Larga (TYX-TNX)': dict(
+        modo='umbral', umbral=0.0,
+        arriba='Prima normal por duración larga',
+        abajo='Prima comprimida: se espera crecimiento/inflación débil a largo plazo',
+    ),
+    'Sensibilidad a Tasas / Duration (TLT/SHY)': dict(
+        modo='sma',
+        arriba='Mercado posicionándose para una baja de tasas de la Fed',
+        abajo='Mercado espera tasas altas por más tiempo',
+    ),
+    'Expectativa Inflacionaria (TIP/IEF)': dict(
+        modo='sma',
+        arriba='Mayor temor a inflación futura',
+        abajo='Las expectativas de inflación se están moderando',
+    ),
+    'Estrés Monetario Emergente (EMLC/EMB)': dict(
+        modo='sma',
+        arriba='Confianza en las monedas emergentes',
+        abajo='Temor a una devaluación generalizada de monedas emergentes',
+    ),
+    'Flujo Global (EEM/VT)': dict(
+        modo='sma',
+        arriba='Apetito especial por riesgo emergente',
+        abajo='Rotación hacia la seguridad de mercados desarrollados',
+    ),
+    'Rotación Crecimiento vs Refugio (SPY/TLT)': dict(
+        modo='sma',
+        arriba='Capital rotando hacia acciones (Risk-On)',
+        abajo='Capital refugiándose en bonos largos (Risk-Off)',
+    ),
+    'Liderazgo Tecnológico (QQQ/SPY)': dict(
+        modo='sma',
+        arriba='Rally liderado (y concentrado) en tecnológicas',
+        abajo='Mercado ampliándose hacia otros sectores (rotación a value)',
+    ),
+    'Estilos de Inversión (IWF/IWD)': dict(
+        modo='sma',
+        arriba='Growth liderando el ciclo de mercado',
+        abajo='Rotación hacia acciones de Value',
+    ),
+    'Estrés Volatilidad Táctica (VIX/VIX9D)': dict(
+        modo='umbral', umbral=1.0,
+        arriba='Curva de volatilidad normal (contango)',
+        abajo='Backwardation: más miedo al muy corto plazo que al mediano',
+    ),
+    'Miedo Crediticio vs Accionario (HYG_Vol/VIX)': dict(
+        modo='sma',
+        arriba='Crédito más nervioso que las acciones (alerta temprana)',
+        abajo='Crédito relativamente calmo frente a las acciones',
+    ),
+    'Apetito Apalancamiento (SPHB/SPLV)': dict(
+        modo='sma',
+        arriba='Apetito agresivo por riesgo dentro de la bolsa',
+        abajo='Rotación defensiva dentro de la bolsa',
+    ),
+    'Sensibilidad al Consumo (XLY/XLP)': dict(
+        modo='sma',
+        arriba='Consumidor gastando con confianza en bienes no esenciales',
+        abajo='Consumidor recortando gasto discrecional',
+    ),
+    'Salud Economía Real (XLI/XLU)': dict(
+        modo='sma',
+        arriba='Economía real expandiéndose, confianza en la producción',
+        abajo='Rotación defensiva hacia utilities',
+    ),
+    'Apetito Innovación/Especulación (ARKK/QQQ)': dict(
+        modo='sma',
+        arriba='Apetito especulativo real por innovación disruptiva',
+        abajo='Refugio en calidad dentro del sector tecnológico',
+    ),
+    'Cobre/Oro — Doctor Copper (CPER/GLD)': dict(
+        modo='sma',
+        arriba='El mercado anticipa crecimiento económico',
+        abajo='El mercado anticipa desaceleración o aversión al riesgo',
+    ),
+    'Energía vs Mercado (XLE/SPY)': dict(
+        modo='sma',
+        arriba='Presión inflacionaria desde el costo de la energía',
+        abajo='La energía no está presionando la inflación general',
+    ),
+}
+
+
+# ==============================================================
 #  5. MOTOR DE REGLAS — ALERTAS AUTOMÁTICAS
 # ==============================================================
 
@@ -605,7 +715,71 @@ def generar_alertas_macro(precios, df_ratios):
 #  6. FUNCIONES DE GRÁFICOS
 # ==============================================================
 
-def _fig_serie_simple(nombre, serie, sma_ventana=None, hline_cero=False, formato_pct=False):
+def _calcular_estado_serie(serie, nombre=None, sma_ventana=20, dias_var=5):
+    """Calcula un resumen de 'situación actual' para una serie de un ratio:
+    posición vs. su media móvil (o vs. un umbral fijo, para spreads), qué
+    significa eso en criollo (según ESTADO_INTERPRETACION), variación reciente
+    y color/flecha asociados.
+    Devuelve un dict {'interpretacion','detalle','color','flecha'} o None si
+    no hay datos suficientes."""
+    s = pd.Series(serie).dropna()
+    if len(s) < 2:
+        return None
+
+    ultimo = float(s.iloc[-1])
+    interp_cfg = ESTADO_INTERPRETACION.get(nombre)
+
+    # Variación de corto plazo (para la flecha y el detalle técnico)
+    var_txt = ''
+    sube = None
+    if len(s) > dias_var:
+        prev = float(s.iloc[-1 - dias_var])
+        if prev:
+            var_pct = (ultimo / prev - 1) * 100
+            sube = var_pct >= 0
+            var_txt = f'{var_pct:+.2f}% ({dias_var}r)'
+
+    # Posición vs. referencia (SMA o umbral fijo), para decidir arriba/abajo
+    arriba = None
+    ref_txt = ''
+    modo = interp_cfg['modo'] if interp_cfg else 'sma'
+
+    if modo == 'umbral' and interp_cfg is not None:
+        umbral = interp_cfg['umbral']
+        arriba = ultimo > umbral
+        ref_txt = f'vs. umbral {umbral:g}'
+    elif len(s) > sma_ventana:
+        sma = s.rolling(sma_ventana).mean().dropna()
+        if len(sma):
+            sma_val = float(sma.iloc[-1])
+            if ultimo != sma_val:
+                arriba = ultimo > sma_val
+            ref_txt = f'SMA{sma_ventana}'
+
+    # Texto de interpretación (qué significa) + color
+    if arriba is not None and interp_cfg is not None:
+        interpretacion = interp_cfg['arriba'] if arriba else interp_cfg['abajo']
+        color = C_GREEN if arriba else C_RED
+    elif arriba is not None:
+        interpretacion = f'Por encima de su {ref_txt}' if arriba else f'Por debajo de su {ref_txt}'
+        color = C_GREEN if arriba else C_RED
+    elif sube is not None:
+        interpretacion = 'En tendencia alcista de corto plazo' if sube else 'En tendencia bajista de corto plazo'
+        color = C_GREEN if sube else C_RED
+    else:
+        interpretacion = 'Datos insuficientes'
+        color = C_MUTED
+
+    flecha = '●' if sube is None else ('▲' if sube else '▼')
+
+    detalle_partes = [p for p in [ref_txt, var_txt] if p]
+    detalle = ' · '.join(detalle_partes)
+
+    return dict(interpretacion=interpretacion, detalle=detalle, color=color, flecha=flecha, ultimo=ultimo)
+
+
+def _fig_serie_simple(nombre, serie, sma_ventana=None, hline_cero=False, formato_pct=False,
+                       mostrar_estado=True):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=serie.index, y=serie.values, line=dict(color=C_ACENT, width=2.0), name=nombre,
@@ -619,6 +793,25 @@ def _fig_serie_simple(nombre, serie, sma_ventana=None, hline_cero=False, formato
     if hline_cero:
         fig.add_hline(y=0, line_color=C_MUTED, opacity=0.5, line_dash='dot')
 
+    # ── Indicador de "situación actual" (badge en la esquina sup. derecha) ──
+    # Línea 1 (grande, coloreada): qué significa el estado actual del ratio.
+    # Línea 2 (chica, gris): el dato técnico que lo respalda (SMA/umbral + variación).
+    estado = _calcular_estado_serie(serie, nombre=nombre, sma_ventana=sma_ventana or 20) if mostrar_estado else None
+    annotations = []
+    if estado:
+        linea1 = f"<b>{estado['flecha']} {estado['interpretacion']}</b>"
+        texto_badge = linea1
+        if estado['detalle']:
+            texto_badge += f"<br><span style='color:{C_MUTED};font-size:9px'>{estado['detalle']}</span>"
+        annotations.append(dict(
+            xref='paper', yref='paper', x=0.99, y=0.98, xanchor='right', yanchor='top',
+            showarrow=False, align='right',
+            text=texto_badge,
+            font=dict(color=estado['color'], size=11, family='Inter, sans-serif'),
+            bgcolor='rgba(13,17,23,0.82)', bordercolor=estado['color'], borderwidth=1,
+            borderpad=6,
+        ))
+
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
         title=dict(
@@ -626,13 +819,14 @@ def _fig_serie_simple(nombre, serie, sma_ventana=None, hline_cero=False, formato
             x=0.01, xanchor='left', y=0.98, yanchor='top',
         ),
         xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID),
-        height=360,
-        margin=dict(l=10, r=10, t=90, b=10),   # ← más espacio arriba (era 45)
+        height=370,
+        margin=dict(l=10, r=10, t=104, b=10),   # ← espacio para título + leyenda + badge (2 líneas)
         hovermode='x unified',
         legend=dict(
             orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0,
             font=dict(size=9),
         ),
+        annotations=annotations,
     )
     return fig
 
@@ -640,6 +834,8 @@ def _fig_serie_simple(nombre, serie, sma_ventana=None, hline_cero=False, formato
 def _fig_base100(series_dict, titulo='Comparativa Base 100'):
     fig = go.Figure()
     palette = [C_MONSTER, C_ACENT, C_LRED, '#bc8cff', C_YELL, C_LGRE]
+
+    resumen_series = []  # para el indicador de "situación actual"
     for i, (nombre, serie) in enumerate(series_dict.items()):
         s = serie.dropna()
         if len(s) == 0:
@@ -649,14 +845,42 @@ def _fig_base100(series_dict, titulo='Comparativa Base 100'):
             x=rebased.index, y=rebased.values, name=nombre,
             line=dict(color=palette[i % len(palette)], width=2.0),
         ))
+        var_total = float(rebased.iloc[-1]) - 100.0
+        resumen_series.append((nombre, var_total, palette[i % len(palette)]))
+
     fig.add_hline(y=100, line_dash='dot', line_color=C_MUTED, opacity=0.4)
+
+    # ── Indicador de "situación actual": líder y rezagado del período ──
+    annotations = []
+    if resumen_series:
+        resumen_series.sort(key=lambda t: t[1], reverse=True)
+        lider = resumen_series[0]
+        rezagado = resumen_series[-1]
+        texto_estado = (
+            f"<b>Líder:</b> {lider[0]} ({lider[1]:+.1f}%)  ·  "
+            f"<b>Rezagado:</b> {rezagado[0]} ({rezagado[1]:+.1f}%)"
+        )
+        annotations.append(dict(
+            xref='paper', yref='paper', x=0.99, y=1.16, xanchor='right', yanchor='top',
+            showarrow=False, align='right', text=texto_estado,
+            font=dict(color=C_TEXT, size=11, family='Inter, sans-serif'),
+            bgcolor='rgba(13,17,23,0.75)', bordercolor=C_GRID, borderwidth=1, borderpad=5,
+        ))
+
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text=titulo, font=dict(color=C_TEXT, size=14)),
+        title=dict(
+            text=titulo, font=dict(color=C_TEXT, size=14),
+            x=0.01, xanchor='left', y=0.98, yanchor='top',
+        ),
         xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='Índice (base 100)'),
-        height=440, hovermode='x unified',
-        legend=dict(orientation='h', y=1.1),
-        margin=dict(l=10, r=10, t=50, b=10),
+        height=480, hovermode='x unified',
+        legend=dict(
+            orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0,
+            font=dict(size=10),
+        ),
+        margin=dict(l=10, r=10, t=110, b=10),  # ← más espacio arriba para título + leyenda + badge
+        annotations=annotations,
     )
     return fig
 
