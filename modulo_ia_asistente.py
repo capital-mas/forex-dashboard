@@ -1,13 +1,15 @@
 # modulo_ia_asistente.py
 import re
 import random
+import difflib
 import streamlit as st
 
 # ── Palabras clave por intención (orden de prioridad) ──
 _PATRONES_INTENCION = [
-    ('finanzas',      [r'\bmis?\s+finanzas\b', r'\bmis?\s+gastos?\b', r'\bmi\s+presupuesto\b',
-                        r'\bcu[aá]nto\s+gast', r'\bmis?\s+deudas?\b', r'\bmi\s+ahorro\b',
-                        r'\bmis?\s+ingresos?\b', r'\bmi\s+situaci[oó]n\s+financiera\b']),
+    ('finanzas',      [r'\bmis?\s+finanzas\b', r'\bfinanzas\b', r'\bmis?\s+gastos?\b', r'\bgastos?\b',
+                        r'\bmi\s+presupuesto\b', r'\bpresupuesto\b', r'\bcu[aá]nto\s+gast',
+                        r'\bmis?\s+deudas?\b', r'\bdeudas?\b', r'\bmi\s+ahorro\b', r'\bahorros?\b',
+                        r'\bmis?\s+ingresos?\b', r'\bingresos?\b', r'\bmi\s+situaci[oó]n\s+financiera\b']),
     ('comparar',      [r'\bcompar', r'\bvs\.?\b', r'\bcu[aá]l\s+es\s+mejor\b', r'\bo\s+\w+\?']),
     ('oportunidades', [r'\boportunidad', r'\brecomend', r'\bqu[eé]\s+me\s+recomend', r'\bideas?\s+de\s+inversi[oó]n\b',
                         r'\bd[oó]nde\s+invert', r'\bqu[eé]\s+comprar']),
@@ -25,14 +27,91 @@ def detectar_intencion(texto):
     return 'analizar_ticker'  # default: si no matchea nada, asumimos que pregunta por un activo
 
 
+# ── Palabras comunes del español que coinciden con tickers reales
+#    (ej. "EL" = Estée Lauder, "A" = Agilent, "ON" = ON Semiconductor).
+#    Si no se filtran, frases normales generan falsos positivos. ──
+_STOPWORDS_TICKER = {
+    'EL','LA','LOS','LAS','UN','UNA','UNOS','UNAS','DE','DEL','AL','EN','Y','O','U',
+    'ES','SE','SU','SUS','TU','TUS','MI','MIS','LO','LE','LES','NO','SI','SOY','ERES',
+    'CON','SIN','POR','PARA','QUE','COMO','CUAL','QUIEN','CUANTO','CUANDO','DONDE',
+    'ESTA','ESTE','ESTO','ESA','ESE','ESO','HAY','MAS','MUY','TAN','SOBRE','ENTRE',
+    'HOY','AYER','AHORA','BIEN','MAL','TODO','TODA','TODOS','TODAS','OK','ASI','SOLO',
+    'ME','TE','NOS','OS','YA','VA','VE','DA','DI','EH','AH','OH','IR','VER','SER','A',
+}
+
+# ── Nombres de empresas/activos en lenguaje natural → ticker real.
+#    Cubre además errores de tipeo comunes (ej. "nvdia") vía fuzzy matching. ──
+_ALIAS_ACTIVOS = {
+    'nvidia': 'NVDA', 'nvidea': 'NVDA',
+    'apple': 'AAPL',
+    'tesla': 'TSLA',
+    'google': 'GOOGL', 'alphabet': 'GOOGL',
+    'amazon': 'AMZN',
+    'microsoft': 'MSFT',
+    'facebook': 'META',
+    'netflix': 'NFLX',
+    'bitcoin': 'BTC-USD',
+    'ethereum': 'ETH-USD',
+    'oro': 'GC=F',
+    'plata': 'SI=F',
+    'petroleo': 'CL=F', 'petróleo': 'CL=F',
+    'mercadolibre': 'MELI',
+    'cocacola': 'KO',
+    'galicia': 'GGAL',
+    'ypf': 'YPF',
+}
+
+
+def _detectar_alias(texto):
+    """Detecta nombres de empresas/activos escritos en lenguaje natural (con o sin
+    errores de tipeo) y los traduce al ticker real."""
+    t = texto.lower()
+    encontrados = []
+    for alias, tk in _ALIAS_ACTIVOS.items():
+        if alias in t:
+            encontrados.append(tk)
+    palabras = re.findall(r'\b[a-záéíóúñ]{4,}\b', t)
+    claves = list(_ALIAS_ACTIVOS.keys())
+    for palabra in palabras:
+        match = difflib.get_close_matches(palabra, claves, n=1, cutoff=0.8)
+        if match:
+            encontrados.append(_ALIAS_ACTIVOS[match[0]])
+    return encontrados
+
+
+def _detectar_industria(texto, industrias_validas):
+    """Detecta si el usuario mencionó el nombre de una industria/sector conocido
+    por la app (ej. 'semiconductores', 'bancos', 'energía renovable')."""
+    t = texto.lower()
+    # Ordena por longitud descendente para priorizar coincidencias más específicas
+    # (ej. 'bancos regionales' antes que 'bancos').
+    for ind in sorted(industrias_validas, key=len, reverse=True):
+        if ind.lower() in t:
+            return ind
+    return None
+
+
 def extraer_tickers(texto, universo_valido, ctx_validar):
     """Busca tokens que parezcan tickers y los valida contra el universo conocido de la app
-    (evita falsos positivos con palabras comunes en mayúscula)."""
-    candidatos = re.findall(r'\b[A-Za-z]{1,6}(?:[.\-=\^][A-Za-z0-9]{1,4})?\b', texto)
+    (evita falsos positivos con palabras comunes en mayúscula), y además reconoce nombres
+    de empresas/activos escritos en lenguaje natural (ej. 'nvidia', 'bitcoin')."""
     encontrados = []
+
+    # 1) Nombres de empresas/activos en lenguaje natural (con tolerancia a typos)
+    encontrados.extend(_detectar_alias(texto))
+
+    # 2) Tickers explícitos (formato tipo NVDA, BTC-USD, EURUSD=X, etc.)
+    candidatos = re.findall(r'\b[A-Za-z]{1,6}(?:[.\-=\^][A-Za-z0-9]{1,4})?\b', texto)
     for c in candidatos:
         c_norm = c.upper()
+        if c_norm in _STOPWORDS_TICKER:
+            continue
         if c_norm in universo_valido:
+            # Palabras cortas escritas en minúscula son casi siempre palabras
+            # comunes del idioma, no tickers — solo las aceptamos si el usuario
+            # las escribió en mayúsculas (como se tipea un ticker real).
+            if len(c_norm) <= 3 and not c.isupper():
+                continue
             encontrados.append(c_norm)
             continue
         # Si el usuario lo escribió tal cual en mayúsculas (ej "NVDA"), lo aceptamos
@@ -41,6 +120,7 @@ def extraer_tickers(texto, universo_valido, ctx_validar):
             val = ctx_validar(c)
             if val:
                 encontrados.append(val)
+
     return list(dict.fromkeys(encontrados))  # dedup preservando orden
 
 
@@ -82,13 +162,20 @@ def responder(texto_usuario, ctx):
     intencion = detectar_intencion(texto_usuario)
     tickers = extraer_tickers(texto_usuario, ctx['UNIVERSO_TICKERS_VALIDOS'], ctx['validar_ticker'])
 
-    # Usa el último ticker mencionado si esta pregunta no trae uno nuevo (contexto conversacional simple)
-    if not tickers and st.session_state.get('ia_ultimo_ticker') and intencion in ('analizar_ticker', 'simular'):
+    # Detecta mención de una industria/sector (ej. "semiconductores") — solo si no
+    # hay ya un ticker explícito, para no pisar el análisis de un ticker puntual.
+    industrias_validas = set(ctx.get('TICKER_INDUSTRY', {}).values())
+    industria_detectada = _detectar_industria(texto_usuario, industrias_validas) if not tickers else None
+
+    # Usa el último ticker mencionado si esta pregunta no trae uno nuevo NI una industria
+    # (contexto conversacional simple, ej. seguir preguntando por el mismo activo)
+    if (not tickers and not industria_detectada and st.session_state.get('ia_ultimo_ticker')
+            and intencion in ('analizar_ticker', 'simular')):
         tickers = [st.session_state['ia_ultimo_ticker']]
     if tickers:
         st.session_state['ia_ultimo_ticker'] = tickers[0]
 
-    if intencion == 'ayuda' and not tickers:
+    if intencion == 'ayuda' and not tickers and not industria_detectada:
         return _respuesta_ayuda()
 
     if intencion == 'finanzas':
@@ -101,6 +188,11 @@ def responder(texto_usuario, ctx):
         if len(tickers) < 2:
             return "Decime al menos dos activos para comparar (ej: *'compará NVDA vs AMD'*)."
         return _responder_comparar(tickers, ctx)
+
+    # Si mencionó una industria/sector conocido (y no un ticker puntual), le mostramos
+    # el panorama de ese sector en vez de reutilizar el último ticker analizado.
+    if industria_detectada and not tickers:
+        return _responder_industria(industria_detectada, ctx)
 
     if intencion == 'oportunidades':
         return _responder_oportunidades(texto_usuario, ctx)
@@ -115,7 +207,8 @@ def responder(texto_usuario, ctx):
     # default: analizar_ticker
     if not tickers:
         return ("No detecté ningún ticker en tu mensaje. Probá algo como *'analizame NVDA'*, "
-                "*'compará YPF y GGAL'*, o *'qué significa el Sharpe'*. Escribí *ayuda* para ver todo lo que puedo hacer.")
+                "*'compará YPF y GGAL'*, *'semiconductores'*, o *'qué significa el Sharpe'*. "
+                "Escribí *ayuda* para ver todo lo que puedo hacer.")
     return _responder_analizar(tickers[0], ctx)
 
 
@@ -197,6 +290,28 @@ def _responder_comparar(tickers, ctx):
     ganador = filas[0]
     lineas.append(f"\n🏆 **{ganador[0]}** lidera el grupo por Global Score, pero fijate el drawdown "
                    f"({ganador[1]['max_dd']:.1f}%) antes de sacar conclusiones — más score no siempre es menos riesgo.")
+    return "\n".join(lineas)
+
+
+def _responder_industria(industria_nombre, ctx):
+    """Muestra el top de la industria/sector mencionado (ej. 'Semiconductores'),
+    usando los mismos tickers de esa industria que ya tiene la app."""
+    cargar_acciones = ctx.get('cargar_acciones_corto')
+    if not cargar_acciones:
+        return (f"Detecté que preguntás por **{industria_nombre}**, pero no tengo acceso a esos datos "
+                f"desde acá ahora mismo. Probá con *'analizame <ticker>'* de esa industria puntual.")
+
+    datos_ind = cargar_acciones((industria_nombre,))
+    tickers_data = datos_ind.get(industria_nombre, {})
+    if not tickers_data:
+        return f"No pude obtener datos de corto plazo para la industria **{industria_nombre}** en este momento."
+
+    top = sorted(tickers_data.items(), key=lambda x: x[1]['sa'], reverse=True)[:6]
+    lineas = [f"Esto es lo que muestra **{industria_nombre}** ahora mismo (top por Score de Acumulación):\n"]
+    for tk, d in top:
+        lineas.append(f"- **{tk}**: Acum {d['sa']:.0f}/100, Antic {d['sn']:.0f}/100 → {d.get('accion','')}")
+    lineas.append(f"\n*Hay {len(tickers_data)} activos en total en {industria_nombre} en la app. "
+                   f"Decime 'analizame <ticker>' para ver el detalle completo de alguno de ellos.*")
     return "\n".join(lineas)
 
 
