@@ -8119,6 +8119,7 @@ CTX_IA = dict(
     analizar_fundamental=analizar_fundamental, _es_activo_sin_fundamentals=_es_activo_sin_fundamentals,
     TICKER_INDUSTRY=TICKER_INDUSTRY, GLOSARIO=GLOSARIO,
     cargar_sectores_corto=cargar_sectores_corto, cargar_paises_corto=cargar_paises_corto,
+    cargar_acciones_corto=cargar_acciones_corto,   # ← AGREGAR ESTA LÍNEA
     UNIVERSO_TICKERS_VALIDOS=UNIVERSO_TICKERS_VALIDOS,
     fd=fd, supabase=supabase, user_id=USER_ID,
     tiene_acceso_pro=TIENE_ACCESO_PRO,
