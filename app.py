@@ -8119,7 +8119,12 @@ CTX_IA = dict(
     analizar_fundamental=analizar_fundamental, _es_activo_sin_fundamentals=_es_activo_sin_fundamentals,
     TICKER_INDUSTRY=TICKER_INDUSTRY, GLOSARIO=GLOSARIO,
     cargar_sectores_corto=cargar_sectores_corto, cargar_paises_corto=cargar_paises_corto,
-    cargar_acciones_corto=cargar_acciones_corto,   # ← AGREGAR ESTA LÍNEA
+    cargar_acciones_corto=cargar_acciones_corto,
+    cargar_mercados_corto=cargar_mercados_corto,          # ← nuevo: oportunidades en commodities/cripto
+    _tdc_analizar_ticker=_tdc_analizar_ticker,             # ← nuevo: Top-Down Cuantitativo por chat
+    HORIZONTES_TDC=HORIZONTES_TDC,                         # ← nuevo
+    _tdc_texto_interpretacion=_tdc_texto_interpretacion,   # ← nuevo
+    fmt_precio=fmt_precio,                                 # ← nuevo: por si querés formatear precios en respuestas
     UNIVERSO_TICKERS_VALIDOS=UNIVERSO_TICKERS_VALIDOS,
     fd=fd, supabase=supabase, user_id=USER_ID,
     tiene_acceso_pro=TIENE_ACCESO_PRO,
