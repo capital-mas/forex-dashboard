@@ -190,27 +190,52 @@ def extraer_periodo(texto):
     return '1y'
 
 
-_CATEGORIAS_KEYWORDS = {
-    'Alimentación': [r'comida', r'super(mercado)?', r'almuerzo', r'cena', r'restaur', r'delivery', r'kiosco'],
-    'Transporte':   [r'nafta', r'combustible', r'uber', r'taxi', r'colectivo', r'transporte', r'subte', r'peaje'],
-    'Vivienda':     [r'alquiler', r'expensas', r'hipoteca', r'inmobiliaria'],
-    'Servicios':    [r'luz', r'gas\b', r'internet', r'celular', r'telefono', r'teléfono', r'agua\b', r'streaming', r'netflix', r'spotify'],
-    'Salud':        [r'medico', r'médico', r'farmacia', r'obra\s+social', r'prepaga', r'dentista'],
-    'Entretenimiento': [r'cine', r'salida', r'bar\b', r'boliche', r'juego'],
-    'Educación':    [r'curso', r'colegio', r'universidad', r'facultad', r'libro'],
-    'Ropa':         [r'ropa', r'zapatillas', r'indumentaria'],
-    'Ahorro/Inversión': [r'ahorro', r'invert', r'plazo\s+fijo', r'compr[eé]\s+d[oó]lares'],
-    'Sueldo':       [r'sueldo', r'salario', r'nómina', r'nomina'],
+_CATEGORIAS_GASTO_KEYWORDS = {
+    'Alimentación':     [r'comida', r'super(mercado)?', r'almuerzo', r'cena', r'restaur', r'delivery', r'kiosco', r'verduler', r'carnicer'],
+    'Transporte':       [r'nafta', r'combustible', r'uber', r'taxi', r'colectivo', r'transporte', r'subte', r'peaje', r'sube\b'],
+    'Vivienda':         [r'alquiler', r'expensas', r'hipoteca', r'inmobiliaria', r'mantenimiento\s+casa'],
+    'Servicios':        [r'\bluz\b', r'\bgas\b', r'internet', r'celular', r'telefono', r'teléfono', r'\bagua\b', r'streaming', r'netflix', r'spotify', r'comisi[oó]n\s+banco'],
+    'Salud':            [r'medico', r'médico', r'farmacia', r'obra\s+social', r'prepaga', r'dentista', r'psicolog', r'an[aá]lisis\s+cl[ií]nico'],
+    'Entretenimiento':  [r'cine', r'salida', r'bar\b', r'boliche', r'juego', r'teatro', r'viaje'],
+    'Educación':        [r'curso', r'colegio', r'universidad', r'facultad', r'libro'],
+    'Ropa':             [r'ropa', r'zapatillas', r'calzado', r'indumentaria'],
+    'Tecnología':       [r'celular\s+nuevo', r'computadora', r'notebook', r'software', r'perif[eé]ric'],
+    'Deudas':           [r'cuota\s+pr[eé]stamo', r'tarjeta\s+de\s+cr[eé]dito', r'pagu[eé]\s+la\s+tarjeta'],
+}
+
+_CATEGORIAS_INGRESO_KEYWORDS = {
+    'Salario':      [r'sueldo', r'salario', r'n[oó]mina'],
     'Freelance':    [r'freelance', r'changa', r'laburo\s+extra', r'proyecto'],
+    'Negocio':      [r'negocio', r'\bventas?\b'],
+    'Inversiones':  [r'dividendo', r'inter[eé]s(es)?\s+cobrado'],
+    'Alquiler':     [r'alquiler.*cobr', r'renta\s+de\s+depto'],
+    'Trading':      [r'trading', r'operaci[oó]n\s+cerrada'],
+    'Regalo':       [r'regalo'],
 }
 
 
-def extraer_categoria(texto):
+def extraer_categoria(texto, tipo):
     t = texto.lower()
-    for cat, patrones in _CATEGORIAS_KEYWORDS.items():
+    mapa = _CATEGORIAS_GASTO_KEYWORDS if tipo == 'gasto' else _CATEGORIAS_INGRESO_KEYWORDS
+    for cat, patrones in mapa.items():
         if any(re.search(p, t) for p in patrones):
             return cat
     return 'Otros'
+
+
+def extraer_cuenta(texto, tipo):
+    t = texto.lower()
+    if re.search(r'tarjeta|cr[eé]dito', t):
+        return 'Crédito' if tipo == 'gasto' else 'Banco'
+    if re.search(r'd[eé]bito', t):
+        return 'Débito' if tipo == 'gasto' else 'Banco'
+    if re.search(r'mercado\s*pago|\bmp\b', t):
+        return 'Mercado Pago'
+    if re.search(r'crypto|cripto', t):
+        return 'Crypto' if tipo == 'ingreso' else 'Otro'
+    if re.search(r'transferencia|banco', t):
+        return 'Banco'
+    return 'Efectivo'
 
 
 def detectar_tipo_movimiento(texto):
@@ -239,42 +264,32 @@ def extraer_fecha(texto):
 #  ninguno coincide, decilo y actualizamos esta función una sola vez.
 # ==============================================================
 
-def _registrar_movimiento_fd(ctx, tipo, monto, categoria, descripcion, fecha):
+def _registrar_movimiento_fd(ctx, tipo, monto, categoria, subcategoria, cuenta, descripcion, fecha):
     fd = ctx.get('fd')
     supabase = ctx.get('supabase')
     user_id = ctx.get('user_id')
     if fd is None or supabase is None or user_id is None:
         return False, "No tengo conexión con el módulo de Finanzas Personales desde acá."
 
-    intentos = [
-        ('agregar_movimiento', (supabase, user_id, tipo, monto, categoria, descripcion, fecha)),
-        ('registrar_movimiento', (supabase, user_id, tipo, monto, categoria, descripcion, fecha)),
-        ('agregar_transaccion', (supabase, user_id, tipo, monto, categoria, descripcion, fecha)),
-        ('crear_movimiento', (supabase, user_id, tipo, monto, categoria, descripcion, fecha)),
-        ('insertar_movimiento', (supabase, user_id, tipo, monto, categoria, descripcion, fecha)),
-        ('agregar_movimiento', (supabase, user_id, {
-            'tipo': tipo, 'monto': monto, 'categoria': categoria,
-            'descripcion': descripcion, 'fecha': fecha,
-        })),
-    ]
-    ultimo_error = None
-    for nombre_fn, args in intentos:
-        fn = getattr(fd, nombre_fn, None)
-        if fn is None:
-            continue
-        try:
-            fn(*args)
-            return True, None
-        except Exception as e:
-            ultimo_error = str(e)
-            continue
+    try:
+        if tipo == 'gasto':
+            r = fd.insertar_gasto(supabase, user_id, {
+                "fecha": fecha, "descripcion": descripcion, "categoria": categoria,
+                "subcategoria": subcategoria, "monto": monto, "cuenta": cuenta, "notas": "",
+            })
+        elif tipo == 'ingreso':
+            r = fd.insertar_ingreso(supabase, user_id, {
+                "fecha": fecha, "descripcion": descripcion, "categoria": categoria,
+                "monto": monto, "cuenta": cuenta, "notas": "",
+            })
+        else:
+            return False, "Las deudas necesitan más datos (acreedor, cuotas, vencimiento) — cargala directo en 💰 Finanzas → Deudas."
+    except Exception as e:
+        return False, f"Error inesperado al guardar: {e}"
 
-    return False, (
-        "No encontré una función compatible en finanzas_data.py para guardar el movimiento "
-        f"(probé agregar_movimiento / registrar_movimiento / agregar_transaccion / crear_movimiento / "
-        f"insertar_movimiento). Último error: {ultimo_error or 'ninguna función existe con esos nombres'}. "
-        "Decime el nombre exacto de la función que usa el módulo de Finanzas y lo ajusto."
-    )
+    if r.get("ok"):
+        return True, None
+    return False, r.get("mensaje", "No se pudo guardar por un motivo desconocido.")
 
 
 # ==============================================================
@@ -297,6 +312,7 @@ def responder(texto_usuario, ctx):
         if re.search(r'\b(s[ií]|confirmo|dale|ok|correcto|s[ií]\s+dale)\b', t):
             ok, err = _registrar_movimiento_fd(
                 ctx, pendiente['tipo'], pendiente['monto'], pendiente['categoria'],
+                pendiente.get('subcategoria', ''), pendiente.get('cuenta', 'Efectivo'),
                 pendiente['descripcion'], pendiente['fecha'],
             )
             st.session_state['ia_pendiente_mov'] = None
@@ -431,60 +447,85 @@ def _iniciar_registro_movimiento(texto, ctx):
     if not monto:
         return "¿Cuánto fue el monto? Decime algo como *'anotá que gasté 5000 en comida'*."
     tipo = detectar_tipo_movimiento(texto) or 'gasto'
-    categoria = extraer_categoria(texto)
+
+    if tipo == 'deuda':
+        return ("Las deudas necesitan más datos que no puedo inferir de forma segura desde un mensaje "
+                "(acreedor, cuotas, tasa, fecha de vencimiento) — cargala directo en "
+                "💰 Finanzas Personales → Deudas, tiene un formulario para eso.")
+
+    categoria = extraer_categoria(texto, tipo)
+    cuenta = extraer_cuenta(texto, tipo)
     fecha = extraer_fecha(texto)
 
+    subcategoria = ''
+    if tipo == 'gasto':
+        fd = ctx.get('fd')
+        subs = fd.SUBCATEGORIAS_GASTOS.get(categoria, []) if fd else []
+        subcategoria = 'Otros' if 'Otros' in subs else (subs[0] if subs else '')
+
     st.session_state['ia_pendiente_mov'] = dict(
-        tipo=tipo, monto=monto, categoria=categoria, descripcion=texto, fecha=fecha,
+        tipo=tipo, monto=monto, categoria=categoria, subcategoria=subcategoria,
+        cuenta=cuenta, descripcion=texto, fecha=fecha,
     )
-    signo = {'gasto': '🔴', 'ingreso': '🟢', 'deuda': '🟠'}.get(tipo, '⚪')
-    return (f"{signo} Voy a registrar un **{tipo}** de **${monto:,.2f}** en **{categoria}** "
-            f"({fecha}). ¿Confirmás? (respondé *sí* o *no*)")
+    signo = {'gasto': '🔴', 'ingreso': '🟢'}.get(tipo, '⚪')
+    extra = f" (subcategoría: {subcategoria})" if subcategoria else ""
+    return (f"{signo} Voy a registrar un **{tipo}** de **${monto:,.2f}** en **{categoria}**{extra}, "
+            f"cuenta **{cuenta}** ({fecha}). ¿Confirmás? (respondé *sí* o *no*)")
 
 
-def _obtener_resumen_finanzas_fd(ctx):
-    """Prueba varios nombres/firmas comunes para leer el resumen financiero,
-    igual que el adaptador de escritura. Devuelve (resumen, error)."""
+def _responder_finanzas(ctx):
     fd = ctx.get('fd')
     supabase = ctx.get('supabase')
     user_id = ctx.get('user_id')
     if fd is None or supabase is None or user_id is None:
-        return None, "Falta la conexión con Supabase o el user_id en ctx."
+        return "No tengo conexión con tus datos de Finanzas Personales desde acá."
 
-    intentos = [
-        ('obtener_resumen_completo', (supabase, user_id)),
-        ('obtener_resumen', (supabase, user_id)),
-        ('resumen_completo', (supabase, user_id)),
-        ('obtener_resumen_financiero', (supabase, user_id)),
-        ('get_resumen', (supabase, user_id)),
-    ]
-    ultimo_error = None
-    for nombre_fn, args in intentos:
-        fn = getattr(fd, nombre_fn, None)
-        if fn is None:
-            continue
-        try:
-            return fn(*args), None
-        except Exception as e:
-            ultimo_error = f"{nombre_fn}() -> {e}"
-            continue
-    return None, (
-        "No encontré una función compatible en finanzas_data.py para leer el resumen "
-        f"(probé obtener_resumen_completo / obtener_resumen / resumen_completo / "
-        f"obtener_resumen_financiero / get_resumen). "
-        + (f"Último error: {ultimo_error}. " if ultimo_error else "Ninguna de esas funciones existe. ")
-        + "Decime el nombre exacto de la función que devuelve el resumen y lo ajusto."
-    )
+    hoy = date.today()
+    inicio, fin = fd.rango_mes(hoy.year, hoy.month)
+    try:
+        d = fd.obtener_dashboard_data(supabase, user_id, inicio, fin)
+    except Exception as e:
+        return f"⚠️ No pude leer tus datos de Finanzas Personales: {e}"
 
+    if not d or (d.get('ingresos', 0) == 0 and d.get('gastos', 0) == 0 and d.get('deudas', 0) == 0):
+        return ("Todavía no veo movimientos cargados este mes. Podés decirme algo como "
+                "*'anotá que gasté 5000 en comida'* para empezar, o ir directo a 💰 Finanzas Personales.")
 
-def _responder_finanzas(ctx):
-    resumen, err = _obtener_resumen_finanzas_fd(ctx)
-    if err:
-        return f"⚠️ {err}"
-    if not resumen:
-        return ("Todavía no cargaste datos en Finanzas Personales. Podés decirme algo como "
-                "*'anotá que gasté 5000 en comida'* para empezar, o ir directo a esa sección.")
-    return f"Tu resumen financiero:\n\n{resumen}"
+    partes = [f"**Tu resumen financiero — {MESES_ES[hoy.month-1]} {hoy.year}**\n"]
+    partes.append(f"- 📥 Ingresos: ${d['ingresos']:,.2f}  ·  📤 Gastos: ${d['gastos']:,.2f}")
+    signo_bal = "🟢" if d['balance'] >= 0 else "🔴"
+    partes.append(f"- {signo_bal} Balance: ${d['balance']:,.2f}  ·  Tasa de ahorro: {d['tasa_ahorro']}")
+
+    if d.get('deudas', 0) > 0:
+        partes.append(f"- 💳 Deudas activas: ${d['deudas']:,.2f} ({d.get('deuda_max','')})  ·  "
+                       f"Próx. vencimiento: {d.get('proximo_vencimiento','')}")
+
+    if d.get('inv_corto', 0) or d.get('inv_largo', 0):
+        partes.append(f"- 📈 Inversiones: ${d.get('inv_corto',0)+d.get('inv_largo',0):,.2f} "
+                       f"(ganancia/pérdida: ${d.get('ganancia',0):,.2f}, {d.get('rendimiento','0%')})")
+
+    if d.get('abiertas', 0) or d.get('trading_pnl', 0):
+        partes.append(f"- ⚡ Trading: P&L realizado ${d.get('trading_pnl',0):,.2f}  ·  "
+                       f"Win rate {d.get('win_rate','0%')}  ·  {d.get('abiertas',0)} operación(es) abierta(s)")
+
+    if d.get('obj_activos', 0):
+        partes.append(f"- 🎯 Objetivos activos: {d['obj_activos']}  ·  Ahorrado ${d.get('obj_ahorrado',0):,.2f}  ·  "
+                       f"Falta ${d.get('obj_faltante',0):,.2f}  ·  Más próximo: {d.get('obj_proximo','')}")
+
+    try:
+        alertas = fd.obtener_alertas(supabase, user_id)
+    except Exception:
+        alertas = []
+    if alertas:
+        urgentes = [a for a in alertas if a['nivel'] in ('error', 'warning')][:3]
+        if urgentes:
+            partes.append("\n**⚠️ Alertas:**")
+            for a in urgentes:
+                partes.append(f"- {a['icono']} {a['mensaje']}")
+            if len(alertas) > len(urgentes):
+                partes.append(f"_...y {len(alertas) - len(urgentes)} más en la sección de Finanzas._")
+
+    return "\n".join(partes)
 
 
 # ── Análisis de ticker (corto + largo + fundamental) ─────────────
