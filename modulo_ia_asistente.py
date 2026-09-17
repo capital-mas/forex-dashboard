@@ -54,7 +54,9 @@ _PATRONES_INTENCION = [
     ('optimizador', [r'\boptimiz', r'\bmonte\s+carlo\b', r'\bfrontera\s+eficiente\b', r'\brebalance',
                       r'\bmi\s+cartera\b']),
     ('oportunidades', [r'\boportunidad', r'\brecomend', r'\bqu[eé]\s+me\s+recomend', r'\bideas?\s+de\s+inversi[oó]n\b',
-                        r'\bd[oó]nde\s+invert', r'\bqu[eé]\s+comprar']),
+                        r'\bd[oó]nde\s+invert', r'\bqu[eé]\s+comprar',
+                        r'\bbarat', r'\b(m[aá]s|menos)\s+car[oa]s?\b', r'\bsectores?\s+(est[aá]n|con)\b',
+                        r'\bpa[ií]ses?\s+(est[aá]n|con)\b', r'\bqu[eé]\s+sector', r'\bqu[eé]\s+pa[ií]s']),
     ('simular', [r'\bsi\s+invi[eé]rto\b', r'\bcu[aá]nto\s+tendr[ií]a\b', r'\bhubiera\s+invertido\b',
                  r'\bsimul']),
     ('glosario', [r'\bqu[eé]\s+significa\b', r'\bqu[eé]\s+es\s+(el|la|un|una)\b', r'\bexplic[aá]']),
@@ -63,19 +65,15 @@ _PATRONES_INTENCION = [
     ('ayuda', [r'\bhola\b', r'\bqu[eé]\s+pod[eé]s\s+hacer\b', r'\bayuda\b', r'\bmenu\b', r'^\s*$']),
 ]
 
-# Palabras de consulta que, si aparecen junto a un verbo de gasto/ingreso,
-# indican que el usuario está PREGUNTANDO (no pidiendo registrar algo).
-_PALABRAS_CONSULTA = [r'\bcu[aá]nto\b', r'\bcu[aá]l\b', r'\bc[oó]mo\s+est', r'\bqu[eé]\s+gast']
-
-
 def detectar_intencion(texto):
     t = texto.lower()
-    # 'registrar_movimiento' tiene prioridad, pero si hay palabras de consulta
-    # ("cuánto gasté"), se interpreta como pregunta -> cae a 'finanzas'.
+    # 'registrar_movimiento' solo dispara con verbos de acción explícitos
+    # (anotá/registrá/cargá/agregá/sumá/metelo/ponelo), así que no hace falta
+    # una segunda pasada para distinguirlo de una pregunta: si el usuario
+    # escribió "anotá que gasté...", la palabra "que" no debe confundirse
+    # con una consulta tipo "¿en qué gasté más?".
     for intencion, patrones in _PATRONES_INTENCION:
         if any(re.search(p, t) for p in patrones):
-            if intencion == 'registrar_movimiento' and any(re.search(p, t) for p in _PALABRAS_CONSULTA):
-                return 'finanzas'
             return intencion
     return 'analizar_ticker'
 
@@ -444,11 +442,45 @@ def _iniciar_registro_movimiento(texto, ctx):
             f"({fecha}). ¿Confirmás? (respondé *sí* o *no*)")
 
 
+def _obtener_resumen_finanzas_fd(ctx):
+    """Prueba varios nombres/firmas comunes para leer el resumen financiero,
+    igual que el adaptador de escritura. Devuelve (resumen, error)."""
+    fd = ctx.get('fd')
+    supabase = ctx.get('supabase')
+    user_id = ctx.get('user_id')
+    if fd is None or supabase is None or user_id is None:
+        return None, "Falta la conexión con Supabase o el user_id en ctx."
+
+    intentos = [
+        ('obtener_resumen_completo', (supabase, user_id)),
+        ('obtener_resumen', (supabase, user_id)),
+        ('resumen_completo', (supabase, user_id)),
+        ('obtener_resumen_financiero', (supabase, user_id)),
+        ('get_resumen', (supabase, user_id)),
+    ]
+    ultimo_error = None
+    for nombre_fn, args in intentos:
+        fn = getattr(fd, nombre_fn, None)
+        if fn is None:
+            continue
+        try:
+            return fn(*args), None
+        except Exception as e:
+            ultimo_error = f"{nombre_fn}() -> {e}"
+            continue
+    return None, (
+        "No encontré una función compatible en finanzas_data.py para leer el resumen "
+        f"(probé obtener_resumen_completo / obtener_resumen / resumen_completo / "
+        f"obtener_resumen_financiero / get_resumen). "
+        + (f"Último error: {ultimo_error}. " if ultimo_error else "Ninguna de esas funciones existe. ")
+        + "Decime el nombre exacto de la función que devuelve el resumen y lo ajusto."
+    )
+
+
 def _responder_finanzas(ctx):
-    try:
-        resumen = ctx['fd'].obtener_resumen_completo(ctx['supabase'], ctx['user_id'])
-    except Exception:
-        return "No pude acceder a tus datos de finanzas personales ahora mismo."
+    resumen, err = _obtener_resumen_finanzas_fd(ctx)
+    if err:
+        return f"⚠️ {err}"
     if not resumen:
         return ("Todavía no cargaste datos en Finanzas Personales. Podés decirme algo como "
                 "*'anotá que gasté 5000 en comida'* para empezar, o ir directo a esa sección.")
