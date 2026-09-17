@@ -764,7 +764,8 @@ def modulo_ia_asistente(ctx):
         with st.chat_message(msg['role'], avatar='🤖' if msg['role'] == 'assistant' else None):
             st.markdown(msg['content'])
 
-    prompt = sugerencia_click or st.chat_input("Preguntame algo...")
+    chat_val = st.chat_input("Preguntame algo...")
+    prompt = sugerencia_click or chat_val
     if prompt:
         st.session_state['ia_mensajes'].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
