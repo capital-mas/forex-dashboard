@@ -33,6 +33,7 @@ from modulo_market_breadth import render_market_breadth
 from modulo_renta_fija_macro import modulo_renta_fija_macro
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
+from modulo_ia_asistente import modulo_ia_asistente, responder
 from modulo_pago_manual import (
     pantalla_suscripcion, panel_admin_pagos, panel_gestion_cuentas,
     es_admin_usuario, obtener_plan_actual, mostrar_selector_planes,
@@ -827,7 +828,7 @@ def _plan_cache(_client, user_id):
         return None
 
 PLAN_USUARIO = _plan_cache(supabase, USER_ID)
-MODULOS_SOLO_PRO = {'optimizador', 'senales', 'pares'}
+MODULOS_SOLO_PRO = {'optimizador', 'senales', 'pares', 'ia_asistente'}
 TIENE_ACCESO_PRO = ES_ADMIN or PLAN_USUARIO in ('trial', 'pro')
 
 
@@ -8103,6 +8104,25 @@ def _refrescar_cotizaciones():
             pass
     st.rerun()
 
+UNIVERSO_TICKERS_VALIDOS = (
+    set(ALL_TICKERS)
+    | set(v[0] for v in FOREX.values())
+    | set(v[0] for v in PAISES.values())
+    | set(v[0] for v in SECTORES.values())
+)
+
+CTX_IA = dict(
+    validar_ticker=validar_ticker, descargar_datos=descargar_datos,
+    get_close_series=get_close_series, calcular_atr=calcular_atr,
+    scores_corto=scores_corto, señal_accion_corto=señal_accion_corto,
+    analizar_largo=analizar_largo, interpretar_largo=interpretar_largo,
+    analizar_fundamental=analizar_fundamental, _es_activo_sin_fundamentals=_es_activo_sin_fundamentals,
+    TICKER_INDUSTRY=TICKER_INDUSTRY, GLOSARIO=GLOSARIO,
+    cargar_sectores_corto=cargar_sectores_corto, cargar_paises_corto=cargar_paises_corto,
+    UNIVERSO_TICKERS_VALIDOS=UNIVERSO_TICKERS_VALIDOS,
+    fd=fd, supabase=supabase, user_id=USER_ID,
+    tiene_acceso_pro=TIENE_ACCESO_PRO,
+)
 
 # ==============================================================
 #  ESTADO DE NAVEGACIÓN
@@ -8130,8 +8150,8 @@ for key, default in [
 
 
 _now_str = ahora_ar().strftime('%H:%M')
-_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'renta_fija_macro': '#00838f', 'senales': '#ff6ec7', 'finanzas': '#6CC24A'}
-_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'renta_fija_macro': 'Renta Fija', 'senales': 'Señales', 'finanzas': 'Finanzas'}
+_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'renta_fija_macro': '#00838f', 'ia_asistente': '#bc8cff', 'senales': '#ff6ec7', 'finanzas': '#6CC24A'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'renta_fija_macro': 'Renta Fija', 'ia_asistente': 'Asistente IA', 'senales': 'Señales', 'finanzas': 'Finanzas'}
 
 HORIZONTE = st.session_state['nav_horizonte']
 MODULO    = st.session_state['nav_modulo']
@@ -8288,9 +8308,11 @@ with st.container(key='nav_pills_wrap'):
         '📐 Promediador + Stop Loss': ('promediador', 'promediador'),
         '📊 F-Score (Piotroski)': ('fscore', 'fscore'),
         '📡 Salud del Mercado': ('breadth', 'breadth'),
-        '📉 Renta Fija y Macro': ('renta_fija_macro', 'renta_fija_macro'),   # ← NUEVO
+        '📉 Renta Fija y Macro': ('renta_fija_macro', 'renta_fija_macro'),
+        ('🤖 Asistente IA' if TIENE_ACCESO_PRO else '🔒 Asistente IA (Pro)'):
+                                 ('ia_asistente', 'ia_asistente'),
     }
-    _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth', 'renta_fija_macro'}  # ← agregar acá también
+    _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth', 'renta_fija_macro', 'ia_asistente'}
     _herr_activo = HORIZONTE in _herr_horizontes
     _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
     _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
@@ -8497,8 +8519,9 @@ with st.container(key='nav_mobile_wrap'):
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
         '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares', '🎲 Opciones': 'opciones',
-        '📐 Promediador': 'promediador', '🎯 Señales': 'senales', '📊 F-Score': 'fscore', '📡 Salud Mercado': 'breadth',
-        '📉 Renta Fija/Macro': 'renta_fija_macro',   # ← NUEVO
+        '📐 Promediador': 'promediador', '🎯 Señales': 'senales', '📊 F-Score': 'fscore',
+        '📡 Salud Mercado': 'breadth', '📉 Renta Fija/Macro': 'renta_fija_macro',
+        '🤖 Asistente IA': 'ia_asistente',   # ← nuevo
         '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
     }
     if ES_ADMIN:
@@ -8632,6 +8655,7 @@ titulos = {
     'promediador': ('Promediador + Stop Loss', '📐', 'Precio promedio, tendencia y gestión de riesgo con apalancamiento'),
     'fscore': ('F-Score (Piotroski)', '🧮', 'Calidad financiera 0-9 por sector — Piotroski Score'),
     'breadth': ('Salud del Mercado', '📡', 'Amplitud, avance/declive, máximos/mínimos y concentración'),
+    'ia_asistente': ('Asistente IA', '🤖', 'Preguntá por activos, comparaciones, finanzas personales y más'),
     'calendario': ('Calendario Económico', '📆', 'Eventos económicos relevantes y su impacto en mercados'),
     'noticias': ('Noticias', '📰', 'Noticias y análisis de mercado'),
     'admin_pagos': ('Panel de Aprobación de Pagos', '🛠️', 'Revisión y aprobación de solicitudes de pago manual'),
@@ -8655,6 +8679,7 @@ badge_map = {
     'fscore': ('#3fb950', 'rgba(63,185,80,0.12)', 'F-SCORE'),
     'breadth': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BREADTH'),
     'renta_fija_macro': ('#00838f', 'rgba(0,131,143,0.12)', 'RENTA FIJA'),   # ← coma agregada acá
+    'ia_asistente': ('#bc8cff', 'rgba(188,140,255,0.12)', 'ASISTENTE IA'),
     'calendario': ('#79c0ff', 'rgba(121,192,255,0.12)', 'CALENDARIO'),
     'noticias': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'NOTICIAS'),
     'admin_pagos': ('#f0883e', 'rgba(240,136,62,0.12)', 'ADMIN'),
@@ -8771,6 +8796,12 @@ elif MODULO == 'breadth':
 
 elif MODULO == 'renta_fija_macro':
     modulo_renta_fija_macro(PLOTLY_CONFIG=PLOTLY_CONFIG)
+
+elif MODULO == 'ia_asistente':
+    if TIENE_ACCESO_PRO:
+        modulo_ia_asistente(CTX_IA)
+    else:
+        _mostrar_bloqueo_pro('Asistente IA')
 
 elif MODULO == 'admin_pagos':
     if ES_ADMIN:
