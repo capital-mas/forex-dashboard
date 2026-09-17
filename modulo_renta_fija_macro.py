@@ -779,7 +779,7 @@ def _calcular_estado_serie(serie, nombre=None, sma_ventana=20, dias_var=5):
 
 
 def _fig_serie_simple(nombre, serie, sma_ventana=None, hline_cero=False, formato_pct=False,
-                       mostrar_estado=True):
+                       mostrar_estado=False):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=serie.index, y=serie.values, line=dict(color=C_ACENT, width=2.0), name=nombre,
@@ -794,8 +794,10 @@ def _fig_serie_simple(nombre, serie, sma_ventana=None, hline_cero=False, formato
         fig.add_hline(y=0, line_color=C_MUTED, opacity=0.5, line_dash='dot')
 
     # ── Indicador de "situación actual" (badge en la esquina sup. derecha) ──
-    # Línea 1 (grande, coloreada): qué significa el estado actual del ratio.
-    # Línea 2 (chica, gris): el dato técnico que lo respalda (SMA/umbral + variación).
+    # Desactivado por defecto (mostrar_estado=False): esta lectura ahora se
+    # muestra como columna "Estado" en la tabla de la Matriz de 12 Ratios,
+    # para no tapar la visual del gráfico. Se puede reactivar puntualmente
+    # pasando mostrar_estado=True si en algún lugar se lo prefiere superpuesto.
     estado = _calcular_estado_serie(serie, nombre=nombre, sma_ventana=sma_ventana or 20) if mostrar_estado else None
     annotations = []
     if estado:
@@ -1070,8 +1072,9 @@ def _tab_salud_mercado(precios, df_ratios):
 def _tab_matriz_ratios(df_ratios):
     st.markdown("""
     <div class="rf-info-banner">
-      Los <b>12 ratios estratégicos</b> que arma el módulo, con su último valor y una
-      explicación de qué mide cada uno, en lenguaje simple.
+      Los <b>12 ratios estratégicos</b> que arma el módulo, con su último valor, su
+      variación reciente y el <b>estado actual</b> (qué significa hoy ese ratio), en
+      lenguaje simple.
     </div>
     """, unsafe_allow_html=True)
 
@@ -1085,6 +1088,7 @@ def _tab_matriz_ratios(df_ratios):
     ]
 
     filas = []
+    estado_colors = {}  # nombre del ratio -> color del estado, para pintar la columna
     for nombre in orden_12:
         if nombre not in df_ratios.columns:
             continue
@@ -1096,9 +1100,20 @@ def _tab_matriz_ratios(df_ratios):
         if len(s) > 5:
             prev = float(s.iloc[-6])
             var_5d = (ultimo / prev - 1) * 100 if prev else None
+
+        # ── Estado actual (el mismo cartel que antes iba superpuesto al gráfico) ──
+        estado_info = _calcular_estado_serie(s, nombre=nombre, sma_ventana=20)
+        if estado_info:
+            estado_txt = f"{estado_info['flecha']} {estado_info['interpretacion']}"
+            estado_colors[nombre] = estado_info['color']
+        else:
+            estado_txt = 'S/D'
+            estado_colors[nombre] = C_MUTED
+
         filas.append({
             'Ratio': nombre, 'Último valor': round(ultimo, 4),
             'Var. 5 ruedas %': round(var_5d, 2) if var_5d is not None else None,
+            'Estado': estado_txt,
         })
 
     if filas:
@@ -1111,10 +1126,19 @@ def _tab_matriz_ratios(df_ratios):
             except Exception:
                 return ''
 
+        def _color_estado(row):
+            color = estado_colors.get(row['Ratio'], C_MUTED)
+            return [
+                f'color:{color};font-weight:700' if col == 'Estado' else ''
+                for col in row.index
+            ]
+
         _map = 'map' if hasattr(df_tabla.style, 'map') else 'applymap'
         styled = (df_tabla.style
                   .pipe(lambda s: getattr(s, _map)(_color_var, subset=['Var. 5 ruedas %']))
+                  .apply(_color_estado, axis=1)
                   .set_properties(**{'background-color': C_BG1, 'color': C_TEXT, 'border': f'1px solid {C_GRID}'})
+                  .set_properties(subset=['Estado'], **{'text-align': 'left'})
                   .set_table_styles([
                       {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', C_TEXT),
                           ('font-weight', '700'), ('text-align', 'center'),
