@@ -8126,6 +8126,7 @@ CTX_IA = dict(
     _tdc_texto_interpretacion=_tdc_texto_interpretacion,   # ← nuevo
     fmt_precio=fmt_precio,                                 # ← nuevo: por si querés formatear precios en respuestas
     UNIVERSO_TICKERS_VALIDOS=UNIVERSO_TICKERS_VALIDOS,
+    ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA, 
     fd=fd, supabase=supabase, user_id=USER_ID,
     tiene_acceso_pro=TIENE_ACCESO_PRO,
 )
