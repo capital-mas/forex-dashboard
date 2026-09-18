@@ -763,6 +763,11 @@ _SUGERENCIAS_RAPIDAS = [
     "Anotá que gasté 5000 en comida",
 ]
 
+MESES_ES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+]
+
 
 def modulo_ia_asistente(ctx):
     if not ctx.get('tiene_acceso_pro'):
