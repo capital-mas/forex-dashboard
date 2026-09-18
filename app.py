@@ -8228,8 +8228,8 @@ _OPCIONES_SUB_LARGO = {
     '📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
     '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
     '📐 Top-Down Cuantitativo': 'tdc',
-    '📑 Análisis COT': 'cot',
-    '📑 Análisis TFF': 'tff',
+    ('📑 Análisis COT' if TIENE_ACCESO_PRO else '🔒 Análisis COT (Pro)'): 'cot',
+    ('📑 Análisis TFF' if TIENE_ACCESO_PRO else '🔒 Análisis TFF (Pro)'): 'tff',
 }
 
 with st.container(key='nav_pills_wrap'):
@@ -8312,9 +8312,12 @@ with st.container(key='nav_pills_wrap'):
         ('🧮 Optimizar cartera' if TIENE_ACCESO_PRO else '🔒 Optimizar cartera (Pro)'):
                                  ('optimizador', 'optimizador'),
         '📐 Promediador + Stop Loss': ('promediador', 'promediador'),
-        '📊 F-Score (Piotroski)': ('fscore', 'fscore'),
-        '📡 Salud del Mercado': ('breadth', 'breadth'),
-        '📉 Renta Fija y Macro': ('renta_fija_macro', 'renta_fija_macro'),
+        ('📊 F-Score (Piotroski)' if TIENE_ACCESO_PRO else '🔒 F-Score (Piotroski) (Pro)'):
+                                 ('fscore', 'fscore'),
+        ('📡 Salud del Mercado' if TIENE_ACCESO_PRO else '🔒 Salud del Mercado (Pro)'):
+                                 ('breadth', 'breadth'),
+        ('📉 Renta Fija y Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija y Macro (Pro)'):
+                                 ('renta_fija_macro', 'renta_fija_macro'),
         ('🤖 Asistente IA' if TIENE_ACCESO_PRO else '🔒 Asistente IA (Pro)'):
                                  ('ia_asistente', 'ia_asistente'),
     }
@@ -8524,10 +8527,15 @@ with st.container(key='nav_mobile_wrap'):
     _OPCIONES_HORIZONTE_MOBILE = {
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
-        '🧮 Optimizar': 'optimizador', '🔗 Pares': 'pares', '🎲 Opciones': 'opciones',
-        '📐 Promediador': 'promediador', '🎯 Señales': 'senales', '📊 F-Score': 'fscore',
-        '📡 Salud Mercado': 'breadth', '📉 Renta Fija/Macro': 'renta_fija_macro',
-        '🤖 Asistente IA': 'ia_asistente',   # ← nuevo
+        ('🧮 Optimizar' if TIENE_ACCESO_PRO else '🔒 Optimizar (Pro)'): 'optimizador',
+        ('🔗 Pares' if TIENE_ACCESO_PRO else '🔒 Pares (Pro)'): 'pares',
+        '🎲 Opciones': 'opciones',
+        '📐 Promediador': 'promediador',
+        ('🎯 Señales' if TIENE_ACCESO_PRO else '🔒 Señales (Pro)'): 'senales',
+        ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
+        ('📡 Salud Mercado' if TIENE_ACCESO_PRO else '🔒 Salud Mercado (Pro)'): 'breadth',
+        ('📉 Renta Fija/Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija/Macro (Pro)'): 'renta_fija_macro',
+        ('🤖 Asistente IA' if TIENE_ACCESO_PRO else '🔒 Asistente IA (Pro)'): 'ia_asistente',
         '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
     }
     if ES_ADMIN:
@@ -8538,8 +8546,9 @@ with st.container(key='nav_mobile_wrap'):
                   '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones'},
         'largo': {'📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
                   '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
-                  '📐 Top-Down Cuantitativo': 'tdc', '📑 Análisis COT': 'cot', '📑 Análisis TFF': 'tff'},
-    }    
+                  '📐 Top-Down Cuantitativo': 'tdc',
+                  ('📑 Análisis COT' if TIENE_ACCESO_PRO else '🔒 Análisis COT (Pro)'): 'cot',
+                  ('📑 Análisis TFF' if TIENE_ACCESO_PRO else '🔒 Análisis TFF (Pro)'): 'tff'},
     _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '🏠 Inicio')
     if st.session_state.get('nav_mobile_h') != _label_h_actual:
         st.session_state['nav_mobile_h'] = _label_h_actual
@@ -8789,19 +8798,28 @@ elif MODULO == 'promediador':                 # ← agregar
     )
 
 elif MODULO == 'fscore':
-    modulo_fscore()
+    if TIENE_ACCESO_PRO:
+        modulo_fscore()
+    else:
+        _mostrar_bloqueo_pro('F-Score (Piotroski)')
 
 elif MODULO == 'breadth':
-    render_market_breadth(
-        ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA,
-        PLOTLY_CONFIG=PLOTLY_CONFIG,
-        kpi_cards_4=kpi_cards_4,
-        fmt_precio=fmt_precio,
-        chips_navegacion=chips_navegacion,
-    )
+    if TIENE_ACCESO_PRO:
+        render_market_breadth(
+            ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA,
+            PLOTLY_CONFIG=PLOTLY_CONFIG,
+            kpi_cards_4=kpi_cards_4,
+            fmt_precio=fmt_precio,
+            chips_navegacion=chips_navegacion,
+        )
+    else:
+        _mostrar_bloqueo_pro('Salud del Mercado')
 
 elif MODULO == 'renta_fija_macro':
-    modulo_renta_fija_macro(PLOTLY_CONFIG=PLOTLY_CONFIG)
+    if TIENE_ACCESO_PRO:
+        modulo_renta_fija_macro(PLOTLY_CONFIG=PLOTLY_CONFIG)
+    else:
+        _mostrar_bloqueo_pro('Renta Fija y Macro')
 
 elif MODULO == 'ia_asistente':
     if TIENE_ACCESO_PRO:
