@@ -828,7 +828,7 @@ def _plan_cache(_client, user_id):
         return None
 
 PLAN_USUARIO = _plan_cache(supabase, USER_ID)
-MODULOS_SOLO_PRO = {'optimizador', 'senales', 'pares', 'ia_asistente'}
+MODULOS_SOLO_PRO = {'optimizador', 'senales', 'pares', 'ia_asistente', 'fscore', 'breadth', 'renta_fija_macro', 'cot', 'tff'}
 TIENE_ACCESO_PRO = ES_ADMIN or PLAN_USUARIO in ('trial', 'pro')
 
 
