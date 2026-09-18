@@ -9733,10 +9733,16 @@ if HORIZONTE == 'largo' and MODULO == 'tdc':
     modulo_topdown_cuantitativo()
 
 if HORIZONTE == 'largo' and MODULO == 'cot':
-    modulo_cot(supabase, USER_ID, st.session_state["usuario"].email)
+    if TIENE_ACCESO_PRO:
+        modulo_cot(supabase, USER_ID, st.session_state["usuario"].email)
+    else:
+        _mostrar_bloqueo_pro('Análisis COT')
 
 if HORIZONTE == 'largo' and MODULO == 'tff':
-    modulo_tff(supabase, USER_ID, st.session_state["usuario"].email)    
+    if TIENE_ACCESO_PRO:
+        modulo_tff(supabase, USER_ID, st.session_state["usuario"].email)
+    else:
+        _mostrar_bloqueo_pro('Análisis TFF')  
     
 # ==============================================================
 #  FOOTER
