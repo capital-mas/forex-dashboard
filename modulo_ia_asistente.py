@@ -204,7 +204,7 @@ _CATEGORIAS_GASTO_KEYWORDS = {
 }
 
 _CATEGORIAS_INGRESO_KEYWORDS = {
-    'Salario':      [r'sueldo', r'salario', r'n[oó]mina'],
+    'Salario':      [r'sueldo', r'salario', r'n[oó]mina', r'\btrabajo\b'],
     'Freelance':    [r'freelance', r'changa', r'laburo\s+extra', r'proyecto'],
     'Negocio':      [r'negocio', r'\bventas?\b'],
     'Inversiones':  [r'dividendo', r'inter[eé]s(es)?\s+cobrado'],
@@ -240,11 +240,21 @@ def extraer_cuenta(texto, tipo):
 
 def detectar_tipo_movimiento(texto):
     t = texto.lower()
-    if re.search(r'\bdeuda\b|\bpr[eé]stamo\b|\bdebo\b|\bcuota\b', t):
+    if re.search(r'\bdeudas?\b|\bpr[eé]stamos?\b|\bdebo\b|\bcuotas?\b', t):
         return 'deuda'
-    if re.search(r'\bcobr[eé]\b|\bingres[eé]\b|\bme\s+pagaron\b|\bsueldo\b|\bsalario\b|\bfacturaci[oó]n\b', t):
+    # OJO: acá van tanto formas verbales (cobré, ingresé) como sustantivos
+    # (ingreso, cobro) — el bug original solo cubría el verbo y por eso
+    # "anotá un ingreso de 200000" caía siempre en 'gasto' por default.
+    if re.search(
+        r'\bcobr[eé]\b|\bcobros?\b|\bingres[eé]\b|\bingresos?\b|\bme\s+pagaron\b|'
+        r'\bsueldo\b|\bsalario\b|\bfacturaci[oó]n\b|\brecib[ií]\b|\bgan[eé]\b',
+        t,
+    ):
         return 'ingreso'
-    if re.search(r'\bgast[eé]\b|\bpagu[eé]\b|\bcompr[eé]\b|\bsale?\b', t):
+    if re.search(
+        r'\bgast[eé]\b|\bgastos?\b|\bpagu[eé]\b|\bpagos?\b|\bcompr[eé]\b|\bcompras?\b|\bsale?\b',
+        t,
+    ):
         return 'gasto'
     return None
 
@@ -328,6 +338,25 @@ def responder(texto_usuario, ctx):
         # Si el mensaje no es ni sí ni no, cancelamos el pendiente y seguimos
         # procesando el nuevo mensaje normalmente (para no bloquear la charla).
         st.session_state['ia_pendiente_mov'] = None
+
+    # ── 1.5) ¿Hay una pregunta pendiente de "¿qué tipo de movimiento es?"? ──
+    pendiente_tipo = st.session_state.get('ia_pendiente_tipo')
+    if pendiente_tipo:
+        t = texto_usuario.lower().strip()
+        tipo_resuelto = None
+        if re.search(r'\b(1|ingreso)\b', t):
+            tipo_resuelto = 'ingreso'
+        elif re.search(r'\b(2|gasto)\b', t):
+            tipo_resuelto = 'gasto'
+        elif re.search(r'\b(3|deuda)\b', t):
+            tipo_resuelto = 'deuda'
+
+        st.session_state['ia_pendiente_tipo'] = None
+        if tipo_resuelto:
+            return _armar_pendiente_movimiento(
+                tipo_resuelto, pendiente_tipo['texto'], pendiente_tipo['monto'], ctx,
+            )
+        # Si no contestó con una opción válida, dejamos que siga como mensaje normal.
 
     intencion = detectar_intencion(texto_usuario)
     tickers = extraer_tickers(texto_usuario, ctx['UNIVERSO_TICKERS_VALIDOS'], ctx['validar_ticker'])
@@ -446,8 +475,22 @@ def _iniciar_registro_movimiento(texto, ctx):
     monto = extraer_monto(texto)
     if not monto:
         return "¿Cuánto fue el monto? Decime algo como *'anotá que gasté 5000 en comida'*."
-    tipo = detectar_tipo_movimiento(texto) or 'gasto'
 
+    tipo = detectar_tipo_movimiento(texto)
+
+    # Antes esto caía silenciosamente en 'gasto' cuando no se detectaba nada,
+    # lo cual cargaba ingresos como gastos. Ahora, si es ambiguo, preguntamos
+    # en vez de adivinar mal.
+    if tipo is None:
+        st.session_state['ia_pendiente_tipo'] = dict(texto=texto, monto=monto)
+        return (f"Detecté un monto de **${monto:,.2f}** pero no me quedó claro qué tipo de movimiento es. "
+                f"¿Qué es?\n\n1️⃣ Ingreso\n2️⃣ Gasto\n3️⃣ Deuda\n\n"
+                f"_(las deudas necesitan cargarse en 💰 Finanzas Personales → Deudas, tienen más campos)_")
+
+    return _armar_pendiente_movimiento(tipo, texto, monto, ctx)
+
+
+def _armar_pendiente_movimiento(tipo, texto, monto, ctx):
     if tipo == 'deuda':
         return ("Las deudas necesitan más datos que no puedo inferir de forma segura desde un mensaje "
                 "(acreedor, cuotas, tasa, fecha de vencimiento) — cargala directo en "
@@ -825,4 +868,5 @@ def modulo_ia_asistente(ctx):
     if st.button('🗑️ Limpiar conversación', key='ia_clear'):
         st.session_state['ia_mensajes'] = []
         st.session_state['ia_pendiente_mov'] = None
+        st.session_state['ia_pendiente_tipo'] = None
         st.rerun()
