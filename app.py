@@ -8549,7 +8549,7 @@ with st.container(key='nav_mobile_wrap'):
                   '📐 Top-Down Cuantitativo': 'tdc',
                   ('📑 Análisis COT' if TIENE_ACCESO_PRO else '🔒 Análisis COT (Pro)'): 'cot',
                   ('📑 Análisis TFF' if TIENE_ACCESO_PRO else '🔒 Análisis TFF (Pro)'): 'tff', 
-}
+    }
     _label_h_actual = next((k for k, v in _OPCIONES_HORIZONTE_MOBILE.items() if v == HORIZONTE), '🏠 Inicio')
     if st.session_state.get('nav_mobile_h') != _label_h_actual:
         st.session_state['nav_mobile_h'] = _label_h_actual
