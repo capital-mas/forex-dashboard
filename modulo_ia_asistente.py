@@ -64,7 +64,8 @@ _PATRONES_INTENCION = [
     # Va ANTES de 'optimizador' a propósito: "armame una cartera con X" debe
     # disparar el pipeline completo, no la explicación genérica del módulo.
     ('armar_cartera_ia', [
-        r'\barm[aá](?:me)?\s+(?:una\s+)?cartera\b', r'\barm[aá](?:me)?\s+(?:un\s+)?portafolio\b',
+        r'\barm[ao]?[áa]?r?(?:me)?\s+(?:una\s+)?cartera\b',
+        r'\barm[ao]?[áa]?r?(?:me)?\s+(?:un\s+)?portafolio\b',
         r'\bconstru[iy]\w*\s+(?:una\s+)?cartera\b', r'\bhaceme\s+una\s+cartera\b',
         r'\bmontame\s+una\s+cartera\b', r'\barmame\s+una\s+cartera\s+con\b',
         r'\bpipeline\s+de\s+cartera\b', r'\barma\s+un\s+portafolio\s+con\b',
