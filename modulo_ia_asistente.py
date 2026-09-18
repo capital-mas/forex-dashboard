@@ -300,7 +300,7 @@ def _texto_menu_registro():
     return ("¿Qué querés registrar?\n\n"
             "1️⃣ Ingreso\n2️⃣ Gasto\n3️⃣ Deuda\n4️⃣ Inversión Corto Plazo\n"
             "5️⃣ Inversión Largo Plazo\n6️⃣ Operación de Trading\n7️⃣ Objetivo de Ahorro\n\n"
-            "Respondé con el número o el nombre. Te voy a ir pidiendo los datos uno por uno.")
+            "Tocá un botón de abajo o respondé con el número o el nombre. Te voy a ir pidiendo los datos uno por uno.")
 
 
 def _resolver_tipo_menu(texto):
@@ -430,7 +430,7 @@ def _formatear_pregunta_campo(campo):
     if campo['tipo'] == 'opciones':
         lista = "\n".join(f"{i+1}. {o}" for i, o in enumerate(campo['opciones']))
         extra = f"\n{lista}"
-    marca_opcional = " _(opcional — escribí '-' para dejarlo vacío/por defecto)_" if campo.get('opcional') else ""
+    marca_opcional = " _(opcional — tocá 'Omitir' o escribí '-' para dejarlo vacío/por defecto)_" if campo.get('opcional') else ""
     return f"**{campo['label']}**{marca_opcional}:{extra}"
 
 
@@ -799,7 +799,7 @@ def _respuesta_ayuda():
 - **🔄 Rotación y Pares** — *"scanner de pares"*
 - **🧮 Optimizador de cartera** — *"optimizame una cartera con NVDA, AAPL y KO"*
 - **💰 Tus finanzas** — *"cómo está mi presupuesto"*, *"cuánto debo"*
-- **✍️ Registrar movimientos** — *"anotá que gasté 5000 en comida"*, *"registrá un ingreso de 200000 por sueldo"*, o simplemente escribí *"registrar"* para elegir entre Ingreso, Gasto, Deuda, Inversión Corto/Largo Plazo, Trading u Objetivo y te voy pidiendo los datos uno por uno
+- **✍️ Registrar movimientos** — *"anotá que gasté 5000 en comida"*, *"registrá un ingreso de 200000 por sueldo"*, o simplemente escribí *"registrar"* para elegir entre Ingreso, Gasto, Deuda, Inversión Corto/Largo Plazo, Trading u Objetivo y te voy pidiendo los datos uno por uno (con botones para elegir opciones)
 - **📐 Simulaciones** — *"si invierto 1000 en AAPL en el último año"*
 - **📖 Glosario** — *"qué significa el Sharpe"*
 
@@ -1149,6 +1149,65 @@ def _responder_optimizador(tickers, ctx):
 
 
 # ==============================================================
+#  BOTONES RÁPIDOS — evita tener que escribir cuando el asistente
+#  está esperando una opción de una lista fija (menú de registro,
+#  tipo de movimiento, campos con `tipo='opciones'` del wizard,
+#  confirmaciones sí/no). Devuelve una lista de (etiqueta, valor_a_enviar)
+#  o None si el siguiente paso espera texto libre (monto, fecha, texto).
+# ==============================================================
+
+def _opciones_pendientes_botones(ctx):
+    if st.session_state.get('ia_pendiente_mov'):
+        return [('✅ Sí, confirmar', 'sí'), ('❌ No, cancelar', 'no')]
+
+    if st.session_state.get('ia_pendiente_tipo'):
+        return [('1️⃣ Ingreso', 'Ingreso'), ('2️⃣ Gasto', 'Gasto'), ('3️⃣ Deuda', 'Deuda')]
+
+    if st.session_state.get('ia_pendiente_registro'):
+        return [('✅ Sí, confirmar', 'sí'), ('❌ No, cancelar', 'no')]
+
+    if st.session_state.get('ia_registro_menu_pendiente'):
+        return [
+            ('1️⃣ Ingreso', 'Ingreso'),
+            ('2️⃣ Gasto', 'Gasto'),
+            ('3️⃣ Deuda', 'Deuda'),
+            ('4️⃣ Inversión Corto Plazo', 'Inversión Corto Plazo'),
+            ('5️⃣ Inversión Largo Plazo', 'Inversión Largo Plazo'),
+            ('6️⃣ Trading', 'Trading'),
+            ('7️⃣ Objetivo de Ahorro', 'Objetivo de Ahorro'),
+        ]
+
+    wizard = st.session_state.get('ia_wizard')
+    if wizard:
+        campos = _campos_registro(wizard['tipo'], ctx)
+        if wizard['paso'] < len(campos):
+            campo = campos[wizard['paso']]
+            if campo['tipo'] == 'opciones':
+                pares = [(o, o) for o in campo['opciones']]
+                if campo.get('opcional'):
+                    pares.append(('➖ Omitir / usar por defecto', '-'))
+                return pares
+
+    return None
+
+
+def _render_botones_rapidos(pares, turno):
+    """Dibuja los botones en filas y devuelve el valor del que se haya
+    tocado en esta ejecución (o None). `turno` (largo del historial de
+    mensajes) entra en la key para que cada tanda de botones sea única."""
+    seleccion = None
+    n_cols = 2 if len(pares) <= 2 else 3
+    for i in range(0, len(pares), n_cols):
+        fila = pares[i:i + n_cols]
+        cols = st.columns(len(fila))
+        for j, (label, valor) in enumerate(fila):
+            with cols[j]:
+                if st.button(label, use_container_width=True, key=f'ia_btn_{turno}_{i}_{j}'):
+                    seleccion = valor
+    return seleccion
+
+
+# ==============================================================
 #  UI DE CHAT
 # ==============================================================
 
@@ -1194,19 +1253,33 @@ def modulo_ia_asistente(ctx):
     if 'ia_mensajes' not in st.session_state:
         st.session_state['ia_mensajes'] = []
 
-    cols_sug = st.columns(len(_SUGERENCIAS_RAPIDAS))
+    # Los botones de sugerencia rápida ("Sectores más baratos", etc.) solo
+    # tienen sentido cuando no hay un wizard/confirmación en curso — si no,
+    # se pisan visualmente con los botones de opciones del paso actual.
+    pares_botones = _opciones_pendientes_botones(ctx)
+
     sugerencia_click = None
-    for col, sug in zip(cols_sug, _SUGERENCIAS_RAPIDAS):
-        with col:
-            if st.button(sug, use_container_width=True, key=f'ia_sug_{sug}'):
-                sugerencia_click = sug
+    if not pares_botones:
+        cols_sug = st.columns(len(_SUGERENCIAS_RAPIDAS))
+        for col, sug in zip(cols_sug, _SUGERENCIAS_RAPIDAS):
+            with col:
+                if st.button(sug, use_container_width=True, key=f'ia_sug_{sug}'):
+                    sugerencia_click = sug
 
     for msg in st.session_state['ia_mensajes']:
         with st.chat_message(msg['role'], avatar='🤖' if msg['role'] == 'assistant' else None):
             st.markdown(msg['content'])
 
-    chat_val = st.chat_input("Preguntame algo...")
-    prompt = sugerencia_click or chat_val
+    # Botones de opción rápida para el paso actual del wizard/confirmación,
+    # renderizados justo debajo del último mensaje del asistente.
+    boton_click = None
+    if pares_botones:
+        boton_click = _render_botones_rapidos(pares_botones, len(st.session_state['ia_mensajes']))
+
+    chat_val = st.chat_input(
+        "Preguntame algo..." if not pares_botones else "...o escribí tu respuesta acá"
+    )
+    prompt = sugerencia_click or boton_click or chat_val
     if prompt:
         st.session_state['ia_mensajes'].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -1216,6 +1289,7 @@ def modulo_ia_asistente(ctx):
                 resp = responder(prompt, ctx)
             st.markdown(resp)
         st.session_state['ia_mensajes'].append({"role": "assistant", "content": resp})
+        st.rerun()
 
     if st.button('🗑️ Limpiar conversación', key='ia_clear'):
         st.session_state['ia_mensajes'] = []
