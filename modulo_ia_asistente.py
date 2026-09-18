@@ -268,7 +268,326 @@ def extraer_fecha(texto):
 
 
 # ==============================================================
-#  ADAPTADOR DE ESCRITURA — Finanzas Personales
+#  WIZARD DE REGISTRO — Deudas / Corto Plazo / Largo Plazo /
+#  Trading / Objetivos (además de Ingreso y Gasto que ya tenían
+#  el flujo rápido de una sola frase). Pregunta campo por campo,
+#  como un formulario, y al final pide confirmación antes de
+#  guardar en Supabase vía finanzas_data.py.
+# ==============================================================
+
+_NOMBRE_TIPO_REGISTRO = {
+    'ingreso': 'Ingreso',
+    'gasto': 'Gasto',
+    'deuda': 'Deuda',
+    'inv_corto': 'Inversión Corto Plazo',
+    'inv_largo': 'Inversión Largo Plazo',
+    'trading': 'Operación de Trading',
+    'objetivo': 'Objetivo de Ahorro',
+}
+
+_OPCIONES_MENU_REGISTRO = [
+    ('ingreso', ['1', 'ingreso', 'ingresos']),
+    ('gasto', ['2', 'gasto', 'gastos']),
+    ('deuda', ['3', 'deuda', 'deudas']),
+    ('inv_corto', ['4', 'corto', 'corto plazo', 'inversion corto plazo', 'inversión corto plazo']),
+    ('inv_largo', ['5', 'largo', 'largo plazo', 'inversion largo plazo', 'inversión largo plazo']),
+    ('trading', ['6', 'trading']),
+    ('objetivo', ['7', 'objetivo', 'objetivos', 'ahorro']),
+]
+
+
+def _texto_menu_registro():
+    return ("¿Qué querés registrar?\n\n"
+            "1️⃣ Ingreso\n2️⃣ Gasto\n3️⃣ Deuda\n4️⃣ Inversión Corto Plazo\n"
+            "5️⃣ Inversión Largo Plazo\n6️⃣ Operación de Trading\n7️⃣ Objetivo de Ahorro\n\n"
+            "Respondé con el número o el nombre. Te voy a ir pidiendo los datos uno por uno.")
+
+
+def _resolver_tipo_menu(texto):
+    t = texto.strip().lower()
+    for tipo, alias in _OPCIONES_MENU_REGISTRO:
+        if t in alias:
+            return tipo
+    for tipo, alias in _OPCIONES_MENU_REGISTRO:
+        if any(len(a) > 2 and a in t for a in alias):
+            return tipo
+    return None
+
+
+def _campos_registro(tipo, ctx):
+    """Devuelve la lista de campos a pedir para cada tipo de registro,
+    en el mismo orden y con las mismas opciones que usan los formularios
+    de finanzas_ui.py, para que lo cargado por chat sea consistente con
+    lo que se ve ahí."""
+    fd = ctx.get('fd')
+    hoy = date.today().isoformat()
+    cat_ingresos = list(fd.CATEGORIAS_INGRESOS) if fd else list(_CATEGORIAS_INGRESO_KEYWORDS.keys()) + ['Otros']
+    cat_gastos = list(fd.CATEGORIAS_GASTOS) if fd else list(_CATEGORIAS_GASTO_KEYWORDS.keys())
+
+    if tipo == 'ingreso':
+        return [
+            dict(key='fecha', label='Fecha', tipo='fecha', opcional=True, default=hoy),
+            dict(key='descripcion', label='Descripción', tipo='texto', opcional=False),
+            dict(key='categoria', label='Categoría', tipo='opciones', opciones=cat_ingresos, opcional=False),
+            dict(key='monto', label='Monto', tipo='monto', opcional=False),
+            dict(key='cuenta', label='Cuenta', tipo='opciones',
+                 opciones=['Efectivo', 'Banco', 'Mercado Pago', 'Crypto', 'Otro'],
+                 opcional=True, default='Efectivo'),
+            dict(key='notas', label='Notas', tipo='texto', opcional=True, default=''),
+        ]
+    if tipo == 'gasto':
+        return [
+            dict(key='fecha', label='Fecha', tipo='fecha', opcional=True, default=hoy),
+            dict(key='descripcion', label='Descripción', tipo='texto', opcional=False),
+            dict(key='categoria', label='Categoría', tipo='opciones', opciones=cat_gastos, opcional=False),
+            dict(key='subcategoria', label='Subcategoría', tipo='texto', opcional=True, default=''),
+            dict(key='monto', label='Monto', tipo='monto', opcional=False),
+            dict(key='cuenta', label='Cuenta', tipo='opciones',
+                 opciones=['Efectivo', 'Débito', 'Crédito', 'Mercado Pago', 'Otro'],
+                 opcional=True, default='Efectivo'),
+            dict(key='notas', label='Notas', tipo='texto', opcional=True, default=''),
+        ]
+    if tipo == 'deuda':
+        return [
+            dict(key='acreedor', label='Acreedor / Institución', tipo='texto', opcional=False),
+            dict(key='tipo', label='Tipo de deuda', tipo='opciones',
+                 opciones=['Préstamo Personal', 'Tarjeta de Crédito', 'Hipoteca', 'Auto', 'Estudiante',
+                           'Familiar', 'Otros'], opcional=False),
+            dict(key='montoOriginal', label='Monto Original', tipo='monto', opcional=False),
+            dict(key='montoPendiente', label='Monto Pendiente', tipo='monto', opcional=False),
+            dict(key='cuotasTotales', label='Cuotas Totales', tipo='numero', opcional=True, default=0),
+            dict(key='cuotasPagadas', label='Cuotas Pagadas', tipo='numero', opcional=True, default=0),
+            dict(key='cuotaMensual', label='Cuota Mensual', tipo='monto', opcional=True, default=0),
+            dict(key='tasaInteres', label='Tasa Anual %', tipo='monto', opcional=True, default=0),
+            dict(key='fechaInicio', label='Fecha Inicio', tipo='fecha', opcional=True, default=hoy),
+            dict(key='fechaVencimiento', label='Fecha Vencimiento', tipo='fecha', opcional=False),
+            dict(key='estado', label='Estado', tipo='opciones',
+                 opciones=['Activa', 'En mora', 'Pagada', 'Refinanciada'], opcional=True, default='Activa'),
+            dict(key='notas', label='Notas', tipo='texto', opcional=True, default=''),
+        ]
+    if tipo == 'inv_corto':
+        return [
+            dict(key='nombre', label='Nombre', tipo='texto', opcional=False),
+            dict(key='tipo', label='Tipo', tipo='opciones',
+                 opciones=['Plazo Fijo', 'Crypto', 'Fondos Comunes', 'Bonos Corto', 'Cuenta Remunerada', 'Otros'],
+                 opcional=False),
+            dict(key='monto', label='Monto', tipo='monto', opcional=False),
+            dict(key='tasa', label='Tasa Anual %', tipo='monto', opcional=True, default=0),
+            dict(key='fechaInicio', label='Fecha Inicio', tipo='fecha', opcional=True, default=hoy),
+            dict(key='fechaVencimiento', label='Fecha Vencimiento', tipo='fecha', opcional=False),
+            dict(key='estado', label='Estado', tipo='opciones',
+                 opciones=['Activa', 'Vencida', 'Cancelada', 'Renovada'], opcional=True, default='Activa'),
+            dict(key='notas', label='Notas', tipo='texto', opcional=True, default=''),
+        ]
+    if tipo == 'inv_largo':
+        return [
+            dict(key='activo', label='Nombre del Activo', tipo='texto', opcional=False),
+            dict(key='tipo', label='Tipo', tipo='opciones',
+                 opciones=['Acción', 'ETF', 'Crypto', 'Bono', 'Fondo', 'REIT', 'Otro'], opcional=False),
+            dict(key='simbolo', label='Símbolo (Ticker)', tipo='texto', opcional=False),
+            dict(key='cantidad', label='Cantidad', tipo='monto', opcional=False),
+            dict(key='precioCompra', label='Precio de Compra', tipo='monto', opcional=False),
+            dict(key='fechaCompra', label='Fecha de Compra', tipo='fecha', opcional=True, default=hoy),
+            dict(key='estado', label='Estado', tipo='opciones',
+                 opciones=['Activo', 'Vendido', 'En espera'], opcional=True, default='Activo'),
+            dict(key='notas', label='Notas', tipo='texto', opcional=True, default=''),
+        ]
+    if tipo == 'trading':
+        return [
+            dict(key='simbolo', label='Par / Activo', tipo='texto', opcional=False),
+            dict(key='tipo', label='Tipo', tipo='opciones',
+                 opciones=['Acción', 'ETF', 'Crypto', 'Forex', 'Futuros', 'CFD', 'Opción'], opcional=False),
+            dict(key='direccion', label='Dirección', tipo='opciones',
+                 opciones=['Long (Compra)', 'Short (Venta)'], opcional=False),
+            dict(key='cantidad', label='Cantidad', tipo='monto', opcional=False),
+            dict(key='precioEntrada', label='Precio de Entrada', tipo='monto', opcional=False),
+            dict(key='fechaEntrada', label='Fecha de Entrada', tipo='fecha', opcional=True, default=hoy),
+            dict(key='stopLoss', label='Stop Loss', tipo='monto', opcional=True, default=0),
+            dict(key='takeProfit', label='Take Profit', tipo='monto', opcional=True, default=0),
+            dict(key='estrategia', label='Estrategia', tipo='opciones',
+                 opciones=['Scalping', 'Day Trade', 'Swing', 'Posición', 'Tendencia', 'Ruptura', 'Reversión',
+                           'Otros'], opcional=True, default=''),
+            dict(key='notas', label='Notas / Setup', tipo='texto', opcional=True, default=''),
+        ]
+    if tipo == 'objetivo':
+        return [
+            dict(key='nombre', label='Nombre del Objetivo', tipo='texto', opcional=False),
+            dict(key='categoria', label='Categoría', tipo='opciones',
+                 opciones=['Viaje', 'Auto', 'Casa', 'Fondo Emergencia', 'Educación', 'Tecnología', 'Inversión',
+                           'Boda', 'Jubilación', 'Otros'], opcional=False),
+            dict(key='meta', label='Monto Meta', tipo='monto', opcional=False),
+            dict(key='fechaInicio', label='Fecha Inicio', tipo='fecha', opcional=True, default=hoy),
+            dict(key='fechaMeta', label='Fecha Meta', tipo='fecha', opcional=False),
+            dict(key='estado', label='Estado', tipo='opciones',
+                 opciones=['Activo', 'Pausado', 'Cumplido', 'Cancelado'], opcional=True, default='Activo'),
+            dict(key='notas', label='Notas', tipo='texto', opcional=True, default=''),
+        ]
+    return []
+
+
+def _formatear_pregunta_campo(campo):
+    extra = ""
+    if campo['tipo'] == 'opciones':
+        lista = "\n".join(f"{i+1}. {o}" for i, o in enumerate(campo['opciones']))
+        extra = f"\n{lista}"
+    marca_opcional = " _(opcional — escribí '-' para dejarlo vacío/por defecto)_" if campo.get('opcional') else ""
+    return f"**{campo['label']}**{marca_opcional}:{extra}"
+
+
+def _parsear_fecha_usuario(texto):
+    t = texto.strip().lower()
+    if t == 'hoy':
+        return date.today().isoformat()
+    if t == 'ayer':
+        from datetime import timedelta
+        return (date.today() - timedelta(days=1)).isoformat()
+    m = re.match(r'^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})$', t)
+    if m:
+        d, mo, y = m.groups()
+        if len(y) == 2:
+            y = '20' + y
+        try:
+            return date(int(y), int(mo), int(d)).isoformat()
+        except ValueError:
+            return None
+    m2 = re.match(r'^(\d{4})-(\d{1,2})-(\d{1,2})$', t)
+    if m2:
+        y, mo, d = m2.groups()
+        try:
+            return date(int(y), int(mo), int(d)).isoformat()
+        except ValueError:
+            return None
+    return None
+
+
+def _parsear_respuesta_campo(campo, texto):
+    t = texto.strip()
+    tl = t.lower()
+    if campo.get('opcional') and tl in ('-', 'no', 'ninguna', 'ninguno', 'omitir', 'salteo', 'salta', 'skip', ''):
+        return True, campo.get('default', '')
+
+    if campo['tipo'] == 'texto':
+        if not t and not campo.get('opcional'):
+            return False, None
+        return True, t
+
+    if campo['tipo'] == 'monto':
+        val = extraer_monto(t)
+        if val is None:
+            return False, None
+        return True, val
+
+    if campo['tipo'] == 'numero':
+        try:
+            return True, int(re.sub(r'[^\d\-]', '', t) or 0)
+        except ValueError:
+            return False, None
+
+    if campo['tipo'] == 'fecha':
+        val = _parsear_fecha_usuario(t)
+        if val is None:
+            return False, None
+        return True, val
+
+    if campo['tipo'] == 'opciones':
+        opts = campo['opciones']
+        if t.isdigit():
+            idx = int(t) - 1
+            if 0 <= idx < len(opts):
+                return True, opts[idx]
+            return False, None
+        match = next((o for o in opts if o.lower() == tl), None)
+        if not match:
+            cercanos = difflib.get_close_matches(tl, [o.lower() for o in opts], n=1, cutoff=0.5)
+            if cercanos:
+                match = next(o for o in opts if o.lower() == cercanos[0])
+        if match:
+            return True, match
+        return False, None
+
+    return True, t
+
+
+def _iniciar_wizard(tipo, ctx):
+    campos = _campos_registro(tipo, ctx)
+    if not campos:
+        return "No reconocí ese tipo de registro. Probá de nuevo con uno de los números del menú."
+    st.session_state['ia_wizard'] = dict(tipo=tipo, paso=0, datos={})
+    return (f"Dale, vamos a cargar un **{_NOMBRE_TIPO_REGISTRO[tipo]}**. Te voy preguntando los datos uno "
+            f"por uno (podés escribir *cancelar* en cualquier momento).\n\n"
+            f"{_formatear_pregunta_campo(campos[0])}")
+
+
+def _continuar_wizard(texto_usuario, ctx):
+    wizard = st.session_state['ia_wizard']
+    tipo = wizard['tipo']
+    campos = _campos_registro(tipo, ctx)
+    campo = campos[wizard['paso']]
+
+    if texto_usuario.strip().lower() in ('cancelar', 'cancela', 'cancelá'):
+        st.session_state['ia_wizard'] = None
+        return "Listo, cancelé la carga."
+
+    ok, valor = _parsear_respuesta_campo(campo, texto_usuario)
+    if not ok:
+        pista = ""
+        if campo['tipo'] == 'monto':
+            pista = " Decime solo el número (ej: 15000)."
+        elif campo['tipo'] == 'numero':
+            pista = " Decime un número entero (ej: 12)."
+        elif campo['tipo'] == 'fecha':
+            pista = " Usá el formato DD/MM/AAAA, o escribí 'hoy'."
+        elif campo['tipo'] == 'opciones':
+            pista = " Elegí uno de la lista, por número o por nombre."
+        return f"No entendí ese valor.{pista}\n\n{_formatear_pregunta_campo(campo)}"
+
+    wizard['datos'][campo['key']] = valor
+    wizard['paso'] += 1
+
+    if wizard['paso'] < len(campos):
+        st.session_state['ia_wizard'] = wizard
+        return _formatear_pregunta_campo(campos[wizard['paso']])
+
+    st.session_state['ia_wizard'] = None
+    st.session_state['ia_pendiente_registro'] = dict(tipo=tipo, datos=wizard['datos'])
+    resumen = "\n".join(f"- **{c['label']}**: {wizard['datos'].get(c['key'], '')}" for c in campos)
+    return (f"Listo, esto es lo que voy a guardar como **{_NOMBRE_TIPO_REGISTRO[tipo]}**:\n\n{resumen}\n\n"
+            f"¿Confirmás? (respondé *sí* o *no*)")
+
+
+def _guardar_registro(ctx, tipo, datos):
+    fd = ctx.get('fd')
+    supabase = ctx.get('supabase')
+    user_id = ctx.get('user_id')
+    if fd is None or supabase is None or user_id is None:
+        return False, "No tengo conexión con Finanzas Personales desde acá."
+    try:
+        if tipo == 'ingreso':
+            r = fd.insertar_ingreso(supabase, user_id, datos)
+        elif tipo == 'gasto':
+            r = fd.insertar_gasto(supabase, user_id, datos)
+        elif tipo == 'deuda':
+            r = fd.insertar_deuda(supabase, user_id, datos)
+        elif tipo == 'inv_corto':
+            r = fd.insertar_inv_corto(supabase, user_id, datos)
+        elif tipo == 'inv_largo':
+            r = fd.insertar_inv_largo(supabase, user_id, datos)
+        elif tipo == 'trading':
+            r = fd.insertar_trading(supabase, user_id, datos)
+        elif tipo == 'objetivo':
+            r = fd.insertar_objetivo(supabase, user_id, datos)
+        else:
+            return False, "Tipo de registro desconocido."
+    except Exception as e:
+        return False, f"Error inesperado al guardar: {e}"
+    if r.get("ok"):
+        return True, None
+    return False, r.get("mensaje", "No se pudo guardar por un motivo desconocido.")
+
+
+# ==============================================================
+#  ADAPTADOR DE ESCRITURA — Finanzas Personales (flujo rápido de
+#  una sola frase para Ingreso/Gasto: "anotá que gasté 5000 en comida")
 #  ⚠️ AJUSTAR: el nombre/firma exacto de la función depende de tu
 #  finanzas_data.py. Se prueban varios nombres/firmas comunes; si
 #  ninguno coincide, decilo y actualizamos esta función una sola vez.
@@ -357,6 +676,36 @@ def responder(texto_usuario, ctx):
                 tipo_resuelto, pendiente_tipo['texto'], pendiente_tipo['monto'], ctx,
             )
         # Si no contestó con una opción válida, dejamos que siga como mensaje normal.
+
+    # ── 1.6) ¿Hay un registro completo (wizard) esperando confirmación? ──
+    pendiente_reg = st.session_state.get('ia_pendiente_registro')
+    if pendiente_reg:
+        t = texto_usuario.lower().strip()
+        if re.search(r'\b(s[ií]|confirmo|dale|ok|correcto)\b', t):
+            ok, err = _guardar_registro(ctx, pendiente_reg['tipo'], pendiente_reg['datos'])
+            st.session_state['ia_pendiente_registro'] = None
+            nombre = _NOMBRE_TIPO_REGISTRO.get(pendiente_reg['tipo'], pendiente_reg['tipo'])
+            if ok:
+                return f"✅ Listo, guardé el **{nombre}**. Ya lo vas a ver reflejado en Finanzas Personales."
+            return f"⚠️ No pude guardarlo. {err}"
+        if re.search(r'\b(no|cancel[aá]|cancelar)\b', t):
+            st.session_state['ia_pendiente_registro'] = None
+            return "Listo, no registré nada."
+        st.session_state['ia_pendiente_registro'] = None
+        # sigue como mensaje nuevo
+
+    # ── 1.7) ¿Hay un wizard de carga de datos en curso? ──
+    if st.session_state.get('ia_wizard'):
+        return _continuar_wizard(texto_usuario, ctx)
+
+    # ── 1.8) ¿Está esperando que elijas qué tipo de registro querés cargar? ──
+    if st.session_state.get('ia_registro_menu_pendiente'):
+        st.session_state['ia_registro_menu_pendiente'] = False
+        tipo_sel = _resolver_tipo_menu(texto_usuario)
+        if tipo_sel:
+            return _iniciar_wizard(tipo_sel, ctx)
+        st.session_state['ia_registro_menu_pendiente'] = True
+        return "No identifiqué esa opción. " + _texto_menu_registro()
 
     intencion = detectar_intencion(texto_usuario)
     tickers = extraer_tickers(texto_usuario, ctx['UNIVERSO_TICKERS_VALIDOS'], ctx['validar_ticker'])
@@ -450,7 +799,7 @@ def _respuesta_ayuda():
 - **🔄 Rotación y Pares** — *"scanner de pares"*
 - **🧮 Optimizador de cartera** — *"optimizame una cartera con NVDA, AAPL y KO"*
 - **💰 Tus finanzas** — *"cómo está mi presupuesto"*, *"cuánto debo"*
-- **✍️ Registrar movimientos** — *"anotá que gasté 5000 en comida"*, *"registrá un ingreso de 200000 por sueldo"*
+- **✍️ Registrar movimientos** — *"anotá que gasté 5000 en comida"*, *"registrá un ingreso de 200000 por sueldo"*, o simplemente escribí *"registrar"* para elegir entre Ingreso, Gasto, Deuda, Inversión Corto/Largo Plazo, Trading u Objetivo y te voy pidiendo los datos uno por uno
 - **📐 Simulaciones** — *"si invierto 1000 en AAPL en el último año"*
 - **📖 Glosario** — *"qué significa el Sharpe"*
 
@@ -474,7 +823,11 @@ Preguntame por cualquiera de estos y te doy lo que pueda calcular directo acá, 
 def _iniciar_registro_movimiento(texto, ctx):
     monto = extraer_monto(texto)
     if not monto:
-        return "¿Cuánto fue el monto? Decime algo como *'anotá que gasté 5000 en comida'*."
+        # Sin monto no hay forma de armar el registro rápido en una sola frase
+        # (ej: click en el botón "Registrar"), así que mostramos el menú
+        # completo de qué se puede cargar y arrancamos el wizard campo a campo.
+        st.session_state['ia_registro_menu_pendiente'] = True
+        return _texto_menu_registro()
 
     tipo = detectar_tipo_movimiento(texto)
 
@@ -800,10 +1153,9 @@ def _responder_optimizador(tickers, ctx):
 # ==============================================================
 
 _SUGERENCIAS_RAPIDAS = [
-    "¿Qué sectores están baratos?",
-    "Analizame NVDA",
-    "¿Cómo está mi presupuesto?",
-    "Anotá que gasté 5000 en comida",
+    "📉 Sectores más baratos",
+    "📊 Analizar una acción",
+    "✍️ Registrar",
 ]
 
 MESES_ES = [
@@ -869,4 +1221,7 @@ def modulo_ia_asistente(ctx):
         st.session_state['ia_mensajes'] = []
         st.session_state['ia_pendiente_mov'] = None
         st.session_state['ia_pendiente_tipo'] = None
+        st.session_state['ia_pendiente_registro'] = None
+        st.session_state['ia_wizard'] = None
+        st.session_state['ia_registro_menu_pendiente'] = False
         st.rerun()
