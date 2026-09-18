@@ -1,24 +1,33 @@
 # modulo_ia_asistente.py
 # ==============================================================
-#  ASISTENTE IA — v2
+#  ASISTENTE IA — v3
 #  Cubre: análisis de ticker, comparador, oportunidades (sectores/
 #  países/mercados/subsectores), simulador, glosario, finanzas
-#  personales (lectura + REGISTRO de movimientos con confirmación),
-#  Top-Down Cuantitativo, F-Score, Salud del Mercado, Renta Fija/
-#  Macro, Opciones, Rotación/Pares, Optimizador de Cartera.
+#  personales (lectura + REGISTRO de movimientos con confirmación
+#  y botones rápidos), Top-Down Cuantitativo, F-Score, Salud del
+#  Mercado, Renta Fija/Macro, Opciones, Rotación/Pares, Optimizador
+#  de Cartera, y un NUEVO pipeline de armado de cartera end-to-end
+#  (F-Score + TDC corto/largo + Optimizador Monte Carlo).
 #
 #  Todo lo que el asistente puede "computar" directamente depende
 #  de qué funciones le pasás en `ctx` (ver diccionario CTX_IA en el
 #  script principal). Si una función no está en ctx, el asistente
 #  degrada con gracia: explica el módulo y te dice dónde encontrarlo
 #  en la app en vez de fallar.
+#
+#  ⚠️ Para el pipeline de armado de cartera, `ctx` necesita además
+#  la clave 'ACCIONES_POR_INDUSTRIA' (dict industria -> lista de
+#  tickers). Ver el snippet de integración al final del archivo.
 # ==============================================================
 
 import re
 import random
 import difflib
 from datetime import datetime, date
+import numpy as np
+import pandas as pd
 import streamlit as st
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==============================================================
 #  INTENCIONES
@@ -51,6 +60,15 @@ _PATRONES_INTENCION = [
                   r'\bpayoff\b', r'\bstrike\b']),
     ('pares', [r'\brotaci[oó]n\b', r'\bpares?\b(?!.*\bde\s+un)', r'\bmean\s+reversion\b', r'\bz[\s\-]?score\s+de\s+ratio\b',
                r'\bcointegraci[oó]n\b']),
+    # ── NUEVO: pipeline de armado de cartera (F-Score + TDC + Optimizador) ──
+    # Va ANTES de 'optimizador' a propósito: "armame una cartera con X" debe
+    # disparar el pipeline completo, no la explicación genérica del módulo.
+    ('armar_cartera_ia', [
+        r'\barm[aá](?:me)?\s+(?:una\s+)?cartera\b', r'\barm[aá](?:me)?\s+(?:un\s+)?portafolio\b',
+        r'\bconstru[iy]\w*\s+(?:una\s+)?cartera\b', r'\bhaceme\s+una\s+cartera\b',
+        r'\bmontame\s+una\s+cartera\b', r'\barmame\s+una\s+cartera\s+con\b',
+        r'\bpipeline\s+de\s+cartera\b', r'\barma\s+un\s+portafolio\s+con\b',
+    ]),
     ('optimizador', [r'\boptimiz', r'\bmonte\s+carlo\b', r'\bfrontera\s+eficiente\b', r'\brebalance',
                       r'\bmi\s+cartera\b']),
     ('oportunidades', [r'\boportunidad', r'\brecomend', r'\bqu[eé]\s+me\s+recomend', r'\bideas?\s+de\s+inversi[oó]n\b',
@@ -694,9 +712,13 @@ def responder(texto_usuario, ctx):
         st.session_state['ia_pendiente_registro'] = None
         # sigue como mensaje nuevo
 
-    # ── 1.7) ¿Hay un wizard de carga de datos en curso? ──
+    # ── 1.7) ¿Hay un wizard de carga de datos (registro) en curso? ──
     if st.session_state.get('ia_wizard'):
         return _continuar_wizard(texto_usuario, ctx)
+
+    # ── 1.75) ¿Hay un wizard de ARMADO DE CARTERA en curso? ──
+    if st.session_state.get('ia_cartera_wizard'):
+        return _continuar_wizard_cartera(texto_usuario, ctx)
 
     # ── 1.8) ¿Está esperando que elijas qué tipo de registro querés cargar? ──
     if st.session_state.get('ia_registro_menu_pendiente'):
@@ -727,6 +749,9 @@ def responder(texto_usuario, ctx):
 
     if intencion == 'registrar_movimiento':
         return _iniciar_registro_movimiento(texto_usuario, ctx)
+
+    if intencion == 'armar_cartera_ia':
+        return _iniciar_wizard_cartera(texto_usuario, ctx)
 
     if intencion == 'finanzas':
         return _responder_finanzas(ctx)
@@ -780,6 +805,7 @@ def responder(texto_usuario, ctx):
     if not tickers:
         return ("No detecté ningún ticker en tu mensaje. Probá algo como *'analizame NVDA'*, "
                 "*'compará YPF y GGAL'*, *'semiconductores'*, *'F-Score de KO'*, "
+                "*'armame una cartera con semiconductores y bancos'*, "
                 "*'anotá que gasté 5000 en comida'*, o *'qué significa el Sharpe'*. "
                 "Escribí *ayuda* para ver todo lo que puedo hacer.")
     return _responder_analizar(tickers[0], ctx)
@@ -798,6 +824,7 @@ def _respuesta_ayuda():
 - **🎲 Opciones** — *"explicame griegas"*, *"opciones de TSLA"*
 - **🔄 Rotación y Pares** — *"scanner de pares"*
 - **🧮 Optimizador de cartera** — *"optimizame una cartera con NVDA, AAPL y KO"*
+- **🧩 Armar cartera automática (NUEVO)** — *"armame una cartera con semiconductores y bancos"*: corro F-Score (con el mínimo/máximo que me digas), filtro por score cuantitativo de corto y largo plazo, y termino con el optimizador Monte Carlo — te doy las 5 carteras candidatas
 - **💰 Tus finanzas** — *"cómo está mi presupuesto"*, *"cuánto debo"*
 - **✍️ Registrar movimientos** — *"anotá que gasté 5000 en comida"*, *"registrá un ingreso de 200000 por sueldo"*, o simplemente escribí *"registrar"* para elegir entre Ingreso, Gasto, Deuda, Inversión Corto/Largo Plazo, Trading u Objetivo y te voy pidiendo los datos uno por uno (con botones para elegir opciones)
 - **📐 Simulaciones** — *"si invierto 1000 en AAPL en el último año"*
@@ -811,7 +838,7 @@ def _respuesta_sistema():
 
 **Corto plazo** — Forex · Países · Sectores · Sub-sectores · Mercados (commodities/cripto) · Acciones por industria
 **Largo plazo** — Ranking cuantitativo · Reversión a la media · Por industria · Ticker individual · Fundamental · Top-Down Cuantitativo (MP/LP) · COT · TFF
-**Herramientas** — 🔍 Buscador universal · ⚖️ Comparador · 🧮 Optimizador de cartera · 📐 Promediador + Stop Loss · 📊 F-Score (Piotroski) · 📡 Salud del Mercado · 📉 Renta Fija y Macro · 🤖 este asistente
+**Herramientas** — 🔍 Buscador universal · ⚖️ Comparador · 🧮 Optimizador de cartera · 📐 Promediador + Stop Loss · 📊 F-Score (Piotroski) · 📡 Salud del Mercado · 📉 Renta Fija y Macro · 🤖 este asistente (incluye armado de cartera automático)
 **Trading** — 🔄 Rotación y Pares (mean reversion) · 🎯 Señales de Trading · 🎲 Valuación de Opciones
 **Cuenta** — 💰 Finanzas Personales · 📆 Calendario Económico · 📰 Noticias
 
@@ -1084,16 +1111,22 @@ def _responder_tdc(tk, ctx):
 
 def _responder_fscore(tk, ctx):
     fn = ctx.get('calcular_fscore')
-    if not fn:
-        return (f"El F-Score (Piotroski) de **{tk}** no está conectado directo acá — andá a "
-                f"🧰 Herramientas → F-Score (Piotroski) y buscalo ahí, te muestra el desglose de los 9 criterios.")
-    try:
-        r = fn(tk)
-    except Exception:
-        r = None
-    if not r:
-        return f"No pude calcular el F-Score de {tk} (puede no tener suficientes estados financieros disponibles)."
-    return f"**F-Score (Piotroski) de {tk}**: {r}"
+    r = None
+    if fn:
+        try:
+            r = fn(tk)
+        except Exception:
+            r = None
+    if r is None:
+        # Fallback: calculamos nosotros mismos el F-Score (misma lógica que el
+        # pipeline de armado de cartera), así funciona aunque la app principal
+        # no haya conectado 'calcular_fscore' en el ctx.
+        r = _car_calcular_fscore(tk)
+    if r is None:
+        return (f"No pude calcular el F-Score de {tk} (puede no tener suficientes estados financieros "
+                f"disponibles, o ser cripto/forex/commodity sin balance sheet). También lo encontrás en "
+                f"🧰 Herramientas → F-Score (Piotroski).")
+    return f"**F-Score (Piotroski) de {tk}**: {r:.2f}/9"
 
 
 def _responder_breadth(ctx):
@@ -1140,20 +1173,404 @@ def _responder_optimizador(tickers, ctx):
             "recomendada por Score Global), comparadas contra un benchmark. También tiene rebalanceo de tu "
             "cartera actual, riesgo avanzado (VaR/CVaR), simulador de crisis y ajuste por inflación.")
     if tickers:
-        base += (f"\n\nDetecté que mencionaste {', '.join(tickers)} — andá a 🧰 Herramientas → Optimizar cartera, "
-                  f"agregalos ahí y corré la simulación (necesita elegir benchmark, capital y cantidad de "
-                  f"simulaciones, por eso conviene hacerlo en esa pantalla).")
+        base += (f"\n\nDetecté que mencionaste {', '.join(tickers)}. Si querés que corra el optimizador acá mismo "
+                  f"con F-Score y Top-Down Cuantitativo incluidos, decime *'armame una cartera con {', '.join(tickers)}'*. "
+                  f"Si preferís el optimizador completo con benchmark, capital e inflación, andá a "
+                  f"🧰 Herramientas → Optimizar cartera.")
     else:
-        base += "\n\nEs una herramienta interactiva — abrila en 🧰 Herramientas → Optimizar cartera."
+        base += ("\n\nEs una herramienta interactiva — abrila en 🧰 Herramientas → Optimizar cartera, o pedime acá "
+                  "*'armame una cartera con <sectores o tickers>'* para el pipeline automático con F-Score incluido.")
     return base
+
+
+# ==============================================================
+#  ARMADO DE CARTERA (IA) — PIPELINE: F-Score → Top-Down Cuantitativo
+#  (corto + largo plazo) → Optimizador de Cartera (Monte Carlo)
+#  ==============================================================
+#  Flujo conversacional (wizard, 3 pasos):
+#    1) Sectores y/o tickers de interés (texto libre)
+#    2) F-Score mínimo aceptable (0-9)
+#    3) F-Score máximo aceptable (0-9)
+#  Con eso corre TODO el pipeline y devuelve las 5 carteras candidatas.
+#
+#  ⚠️ Requiere que ctx tenga 'ACCIONES_POR_INDUSTRIA' (dict industria ->
+#  lista de tickers). El resto de las funciones usadas (descargar_datos,
+#  get_close_series, calcular_atr, scores_corto, analizar_largo,
+#  validar_ticker) ya están en el ctx que arma app.py.
+# ==============================================================
+
+_CAR_MAX_UNIVERSO = 25   # tope de tickers a evaluar con F-Score (evita timeouts)
+_CAR_TOP_N_RANKING = 10  # cuántos activos, tras filtrar por F-Score, pasan al optimizador
+
+
+def _car_safe_row(df, key, col_idx):
+    if df is None or df.empty or key not in df.index:
+        return None
+    try:
+        val = df.loc[key]
+        if col_idx >= len(val):
+            return None
+        v = val.iloc[col_idx]
+        return None if pd.isna(v) else v
+    except Exception:
+        return None
+
+
+_CAR_ALIASES = {
+    'Total Debt': ['Total Debt', 'Net Debt'],
+    'Current Assets': ['Current Assets'],
+    'Current Liabilities': ['Current Liabilities'],
+    'Shares Outstanding': ['Ordinary Shares Number', 'Share Issued'],
+    'Operating Cash Flow': ['Operating Cash Flow', 'Cash Flow From Continuing Operating Activities'],
+}
+
+
+def _car_get_alias(df, canonical_key, col_idx):
+    for key in _CAR_ALIASES.get(canonical_key, [canonical_key]):
+        val = _car_safe_row(df, key, col_idx)
+        if val is not None:
+            return val
+    return None
+
+
+def _car_calcular_fscore(ticker):
+    """F-Score de Piotroski (0-9) para UN ticker, calculado on-demand (sin
+    caché de Streamlit), pensado para correr dentro de un ThreadPoolExecutor.
+    Misma lógica financiera que modulo_fscore.py, con umbral algo más laxo
+    (5 criterios evaluables en vez de 6) porque acá se corre sobre universos
+    más chicos elegidos por el usuario."""
+    try:
+        import yfinance as yf
+        stock = yf.Ticker(ticker)
+        income_statement = stock.financials
+        balance_sheet = stock.balance_sheet
+        cash_flow = stock.cashflow
+
+        if income_statement is None or income_statement.empty or \
+           balance_sheet is None or balance_sheet.empty or \
+           cash_flow is None or cash_flow.empty:
+            return None
+
+        net_income_0 = _car_safe_row(income_statement, 'Net Income', 0)
+        net_income_1 = _car_safe_row(income_statement, 'Net Income', 1)
+        total_assets_0 = _car_safe_row(balance_sheet, 'Total Assets', 0)
+        total_assets_1 = _car_safe_row(balance_sheet, 'Total Assets', 1)
+        ocf_0 = _car_get_alias(cash_flow, 'Operating Cash Flow', 0)
+        ocf_1 = _car_get_alias(cash_flow, 'Operating Cash Flow', 1)
+        debt_0 = _car_get_alias(balance_sheet, 'Total Debt', 0)
+        debt_1 = _car_get_alias(balance_sheet, 'Total Debt', 1)
+        curr_assets_0 = _car_get_alias(balance_sheet, 'Current Assets', 0)
+        curr_liab_0 = _car_get_alias(balance_sheet, 'Current Liabilities', 0)
+        shares_0 = _car_get_alias(balance_sheet, 'Shares Outstanding', 0)
+        shares_1 = _car_get_alias(balance_sheet, 'Shares Outstanding', 1)
+        gross_profit_0 = _car_safe_row(income_statement, 'Gross Profit', 0)
+        gross_profit_1 = _car_safe_row(income_statement, 'Gross Profit', 1)
+        total_revenue_0 = _car_safe_row(income_statement, 'Total Revenue', 0)
+
+        criterios = {}
+        if net_income_0 is not None and net_income_1 is not None:
+            criterios['net_income'] = net_income_0 >= net_income_1
+        if net_income_0 is not None and total_assets_0 and net_income_1 is not None and total_assets_1:
+            criterios['roa'] = (net_income_0 / total_assets_0) >= (net_income_1 / total_assets_1)
+        if ocf_0 is not None and ocf_1 is not None:
+            criterios['ocf_growth'] = ocf_0 >= ocf_1
+        if ocf_0 is not None and net_income_0 is not None:
+            criterios['ocf_vs_ni'] = ocf_0 > net_income_0
+        if debt_0 is not None and debt_1 is not None:
+            criterios['debt'] = debt_0 < debt_1
+        if curr_assets_0 is not None and curr_liab_0:
+            criterios['current_ratio'] = (curr_assets_0 / curr_liab_0) > 1
+        if shares_0 is not None and shares_1 is not None:
+            criterios['shares'] = shares_0 <= shares_1
+        if gross_profit_0 is not None and gross_profit_1 is not None:
+            criterios['gross_margin'] = gross_profit_0 >= gross_profit_1
+        if total_revenue_0 is not None and total_assets_1:
+            criterios['asset_turnover'] = (total_revenue_0 / total_assets_1) >= 1
+
+        if len(criterios) < 5:
+            return None
+
+        f_score = sum(criterios.values())
+        return round(f_score / len(criterios) * 9, 2)
+    except Exception:
+        return None
+
+
+def _car_construir_universo(texto, ctx):
+    """Convierte texto libre ('Semiconductores, Bancos y NVDA') en una lista
+    de tickers, combinando industrias conocidas (ctx['ACCIONES_POR_INDUSTRIA'])
+    y tickers sueltos validados."""
+    industrias = ctx.get('ACCIONES_POR_INDUSTRIA', {})
+    industrias_lower = {k.lower(): k for k in industrias.keys()}
+    tickers = []
+    partes = re.split(r'[,;]|\by\b|\be\b', texto, flags=re.IGNORECASE)
+    for parte in partes:
+        p = parte.strip(' .')
+        if not p:
+            continue
+        pl = p.lower()
+        match_ind = next(
+            (real for low, real in industrias_lower.items() if low == pl or low in pl or pl in low),
+            None,
+        )
+        if match_ind:
+            tickers.extend(industrias[match_ind])
+            continue
+        tk_val = ctx['validar_ticker'](p)
+        if tk_val:
+            tickers.append(tk_val)
+    return list(dict.fromkeys(tickers))
+
+
+def _car_simular_cartera(tickers, ctx, simulaciones=4000, periodo='2y', rf=0.0):
+    """Descarga precios (reutilizando ctx['descargar_datos']/['get_close_series'])
+    y corre una simulación Monte Carlo simplificada. Devuelve (dict de 5
+    carteras candidatas, lista de tickers realmente usados) o (None, None)
+    si no hay suficiente historial en común."""
+    precios = {}
+    for tk in tickers:
+        df = ctx['descargar_datos'](tk, periodo)
+        cl = ctx['get_close_series'](df) if df is not None else None
+        if cl is not None and len(cl.dropna()) > 100:
+            precios[tk] = cl.dropna()
+
+    if len(precios) < 2:
+        return None, None
+
+    df_precios = pd.DataFrame(precios).dropna()
+    if len(df_precios) < 100:
+        return None, None
+
+    tickers_ok = list(df_precios.columns)
+    retornos = df_precios.pct_change().dropna()
+    if len(retornos) < 50:
+        return None, None
+
+    rng = np.random.default_rng(42)
+    n = len(tickers_ok)
+    pesos = rng.dirichlet(np.ones(n), size=simulaciones)
+    ret_mat = retornos[tickers_ok].values
+    ret_cart = ret_mat @ pesos.T
+
+    equity = np.cumprod(1 + ret_cart, axis=0)
+    anios = ret_cart.shape[0] / 252
+    with np.errstate(invalid='ignore'):
+        cagr = equity[-1, :] ** (1 / anios) - 1
+    vol = ret_cart.std(axis=0, ddof=1) * np.sqrt(252)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        sharpe = np.where(vol != 0, (cagr - rf) / vol, np.nan)
+
+    neg = np.where(ret_cart < 0, ret_cart, np.nan)
+    with np.errstate(invalid='ignore'):
+        downside = np.nanstd(neg, axis=0) * np.sqrt(252)
+        sortino = np.where(downside != 0, (cagr - rf) / downside, np.nan)
+
+    running_max = np.maximum.accumulate(equity, axis=0)
+    dd = equity / running_max - 1
+    max_dd = dd.min(axis=0)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        calmar = np.where(max_dd != 0, cagr / np.abs(max_dd), np.nan)
+
+    df_sim = pd.DataFrame({
+        'CAGR': cagr, 'Volatilidad': vol, 'Sharpe': sharpe,
+        'Sortino': sortino, 'Max Drawdown': max_dd, 'Calmar': calmar,
+    })
+    for i, tk in enumerate(tickers_ok):
+        df_sim[tk] = pesos[:, i]
+
+    df_sim['Score Global'] = (
+        df_sim['CAGR'].rank(pct=True) * 0.35
+        + df_sim['Sharpe'].rank(pct=True) * 0.25
+        + df_sim['Sortino'].rank(pct=True) * 0.20
+        + df_sim['Calmar'].rank(pct=True) * 0.10
+        + (1 - df_sim['Max Drawdown'].abs().rank(pct=True)) * 0.10
+    )
+
+    candidatas_idx = {
+        'Más Rentable': df_sim['CAGR'].idxmax(),
+        'Mejor Sharpe': df_sim['Sharpe'].idxmax(),
+        'Mejor Sortino': df_sim['Sortino'].idxmax(),
+        'Menor Drawdown': df_sim['Max Drawdown'].idxmax(),
+        'Recomendada (Score Global)': df_sim['Score Global'].idxmax(),
+    }
+    carteras = {nombre: df_sim.loc[idx] for nombre, idx in candidatas_idx.items()}
+    return carteras, tickers_ok
+
+
+def _texto_pregunta_cartera_universo():
+    return ("Dale, armemos una cartera automática 🧩. Decime **sectores** (ej: *'Semiconductores, Bancos'*) "
+            "y/o **tickers puntuales** (ej: *'NVDA, AAPL, KO'*) — podés combinar ambos, separados por coma.\n\n"
+            "_(Voy a correr F-Score → Top-Down Cuantitativo corto/largo plazo → Optimizador Monte Carlo, "
+            "así que puede tardar un rato con universos grandes — hasta 25 tickers)_")
+
+
+def _texto_pregunta_cartera_fscore_min():
+    return "¿Cuál es el **F-Score (Piotroski) mínimo** aceptable? Va de 0 a 9 — escribí '-' para no poner piso."
+
+
+def _texto_pregunta_cartera_fscore_max():
+    return "¿Y el **F-Score máximo**? También de 0 a 9 — escribí '-' para no poner techo (9 = sin límite)."
+
+
+def _iniciar_wizard_cartera(texto, ctx):
+    st.session_state['ia_cartera_wizard'] = dict(paso='universo', universo=None, fscore_min=None, fscore_max=None)
+    return _texto_pregunta_cartera_universo()
+
+
+def _continuar_wizard_cartera(texto_usuario, ctx):
+    wizard = st.session_state['ia_cartera_wizard']
+    t = texto_usuario.strip()
+
+    if t.lower() in ('cancelar', 'cancela', 'cancelá'):
+        st.session_state['ia_cartera_wizard'] = None
+        return "Listo, cancelé el armado de la cartera."
+
+    if wizard['paso'] == 'universo':
+        wizard['universo'] = t
+        wizard['paso'] = 'fscore_min'
+        st.session_state['ia_cartera_wizard'] = wizard
+        return _texto_pregunta_cartera_fscore_min()
+
+    if wizard['paso'] == 'fscore_min':
+        val = extraer_monto(t)
+        wizard['fscore_min'] = 0.0 if (t == '-' or val is None) else max(0.0, min(9.0, val))
+        wizard['paso'] = 'fscore_max'
+        st.session_state['ia_cartera_wizard'] = wizard
+        return _texto_pregunta_cartera_fscore_max()
+
+    if wizard['paso'] == 'fscore_max':
+        val = extraer_monto(t)
+        wizard['fscore_max'] = 9.0 if (t == '-' or val is None) else max(0.0, min(9.0, val))
+        if wizard['fscore_max'] < wizard['fscore_min']:
+            wizard['fscore_min'], wizard['fscore_max'] = wizard['fscore_max'], wizard['fscore_min']
+        st.session_state['ia_cartera_wizard'] = None
+        return _responder_armar_cartera(wizard, ctx)
+
+    st.session_state['ia_cartera_wizard'] = None
+    return "Se desincronizó el asistente de carteras — probemos de nuevo: escribí *'armame una cartera'*."
+
+
+def _responder_armar_cartera(datos, ctx):
+    universo_texto = datos['universo']
+    fscore_min = datos['fscore_min']
+    fscore_max = datos['fscore_max']
+
+    tickers_universo = _car_construir_universo(universo_texto, ctx)
+    if not tickers_universo:
+        return ("No pude identificar sectores ni tickers válidos en lo que escribiste. Probá con nombres de "
+                "industria tal cual aparecen en la app (ej: *'Semiconductores, Bancos'*) o tickers "
+                "(ej: *'NVDA, AAPL, KO'*).")
+
+    truncado = len(tickers_universo) > _CAR_MAX_UNIVERSO
+    if truncado:
+        tickers_universo = tickers_universo[:_CAR_MAX_UNIVERSO]
+
+    # ── 1) F-Score (en paralelo) ──────────────────────────────────────
+    fscores = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futuros = {ex.submit(_car_calcular_fscore, tk): tk for tk in tickers_universo}
+        for fut in as_completed(futuros):
+            tk = futuros[fut]
+            r = fut.result()
+            if r is not None:
+                fscores[tk] = r
+
+    aprobados = [tk for tk, sc in fscores.items() if fscore_min <= sc <= fscore_max]
+    if len(aprobados) < 2:
+        detalle = ', '.join(f'{tk} ({sc:.1f})' for tk, sc in sorted(fscores.items(), key=lambda x: -x[1])[:12])
+        return (f"Con F-Score entre **{fscore_min:.1f}** y **{fscore_max:.1f}** quedaron solo "
+                f"**{len(aprobados)}** activo(s) de los {len(tickers_universo)} analizados "
+                f"({len(fscores)} con F-Score calculable) — necesito al menos 2 para armar una cartera.\n\n"
+                f"F-Scores calculados: {detalle or 'ninguno disponible (puede que sean cripto/forex/commodities '
+                'sin estados financieros, o poco líquidos en Yahoo Finance)'}.\n\n"
+                f"Probá ampliar el rango de F-Score o sumar más sectores/tickers.")
+
+    # ── 2) Top-Down Cuantitativo: corto plazo (scores_corto) + largo plazo (Global Score) ──
+    ranking = []
+    for tk in aprobados:
+        sa = None
+        df_v = ctx['descargar_datos'](tk, '3mo')
+        df_m = ctx['descargar_datos'](tk, '1mo')
+        if df_v is not None and df_m is not None:
+            cl_v = ctx['get_close_series'](df_v)
+            cl_m = ctx['get_close_series'](df_m)
+            if cl_v is not None and cl_m is not None and len(cl_v.dropna()) >= 15:
+                atr = ctx['calcular_atr'](df_m)
+                sa, sn, ss = ctx['scores_corto'](cl_v, cl_m, atr)
+
+        global_score = None
+        df_l = ctx['descargar_datos'](tk, '2y')
+        cl_l = ctx['get_close_series'](df_l) if df_l is not None else None
+        if cl_l is not None and len(cl_l) >= 150:
+            r_l = ctx['analizar_largo'](tk, cl_l)
+            if r_l:
+                global_score = r_l['global_score']
+
+        if sa is None and global_score is None:
+            continue
+        valores_validos = [v for v in (sa, global_score) if v is not None]
+        combinado = float(np.mean(valores_validos)) if valores_validos else 0.0
+        ranking.append(dict(tk=tk, fscore=fscores[tk], sa=sa, global_score=global_score, combinado=combinado))
+
+    if len(ranking) < 2:
+        return ("Los activos pasaron el filtro de F-Score, pero no pude calcular scores de corto/largo plazo "
+                "suficientes para ninguno (historial insuficiente). Probá con otros sectores/tickers.")
+
+    ranking.sort(key=lambda x: x['combinado'], reverse=True)
+    tickers_finales = [r['tk'] for r in ranking[:_CAR_TOP_N_RANKING]]
+
+    # ── 3) Optimizador de Cartera (Monte Carlo) ───────────────────────
+    carteras, tickers_ok = _car_simular_cartera(tickers_finales, ctx)
+    if carteras is None:
+        return ("Filtré los activos por F-Score y por score cuantitativo de corto/largo plazo, pero no logré "
+                "descargar suficiente historial de precios en común entre ellos para correr el optimizador "
+                "Monte Carlo. Probá con otra combinación de sectores/tickers.")
+
+    # ── Armado de la respuesta ─────────────────────────────────────────
+    partes = []
+    aviso_trunc = f" _(se truncó a los primeros {_CAR_MAX_UNIVERSO} para no demorar demasiado)_" if truncado else ""
+    partes.append(
+        f"**Pipeline ejecutado** 🧩 sobre {len(tickers_universo)} activos{aviso_trunc} → "
+        f"**{len(aprobados)}** pasaron el filtro F-Score ({fscore_min:.1f}–{fscore_max:.1f}) → "
+        f"top **{len(tickers_finales)}** por score cuantitativo → cartera optimizada con **{len(tickers_ok)}** activos "
+        f"(los que tenían historial de precios en común)."
+    )
+
+    partes.append("\n**Ranking usado (F-Score · Corto Acum. · Largo Global Score):**")
+    for r in ranking[:_CAR_TOP_N_RANKING]:
+        sa_txt = f"{r['sa']:.0f}" if r['sa'] is not None else 'N/D'
+        gl_txt = f"{r['global_score']:.0f}" if r['global_score'] is not None else 'N/D'
+        marca = " ✅ (en cartera final)" if r['tk'] in tickers_ok else ""
+        partes.append(f"- **{r['tk']}**: F-Score {r['fscore']:.1f} · Corto {sa_txt}/100 · Largo {gl_txt}/100{marca}")
+
+    partes.append("\n**Las 5 carteras candidatas (Monte Carlo, 2 años de historial):**")
+    for nombre, cart in carteras.items():
+        pesos_txt = ' · '.join(
+            f"{tk}: {cart[tk]*100:.1f}%" for tk in tickers_ok if cart[tk] > 0.01
+        )
+        partes.append(
+            f"\n**{nombre}** — CAGR {cart['CAGR']*100:+.1f}% · Sharpe {cart['Sharpe']:.2f} · "
+            f"Sortino {cart['Sortino']:.2f} · Vol {cart['Volatilidad']*100:.1f}% · "
+            f"Max Drawdown {cart['Max Drawdown']*100:.1f}%\n"
+            f"_{pesos_txt}_"
+        )
+
+    partes.append(
+        "\n\n*Todo esto es un cálculo cuantitativo sobre datos históricos — no es asesoramiento financiero. "
+        "Si querés afinar parámetros (benchmark, capital, más simulaciones, rebalanceo, VaR, inflación) usá "
+        "🧰 Herramientas → Optimizar cartera con estos mismos tickers cargados.*"
+    )
+    return "\n".join(partes)
 
 
 # ==============================================================
 #  BOTONES RÁPIDOS — evita tener que escribir cuando el asistente
 #  está esperando una opción de una lista fija (menú de registro,
 #  tipo de movimiento, campos con `tipo='opciones'` del wizard,
-#  confirmaciones sí/no). Devuelve una lista de (etiqueta, valor_a_enviar)
-#  o None si el siguiente paso espera texto libre (monto, fecha, texto).
+#  confirmaciones sí/no, y los F-Score min/máx del armado de
+#  cartera). Devuelve una lista de (etiqueta, valor_a_enviar) o
+#  None si el siguiente paso espera texto libre (monto, fecha, texto,
+#  sectores/tickers).
 # ==============================================================
 
 def _opciones_pendientes_botones(ctx):
@@ -1175,6 +1592,13 @@ def _opciones_pendientes_botones(ctx):
             ('5️⃣ Inversión Largo Plazo', 'Inversión Largo Plazo'),
             ('6️⃣ Trading', 'Trading'),
             ('7️⃣ Objetivo de Ahorro', 'Objetivo de Ahorro'),
+        ]
+
+    car_wizard = st.session_state.get('ia_cartera_wizard')
+    if car_wizard and car_wizard.get('paso') in ('fscore_min', 'fscore_max'):
+        return [
+            ('0 (sin piso/techo)', '0'), ('3', '3'), ('5', '5'),
+            ('6', '6'), ('7', '7'), ('9 (sin límite)', '9'),
         ]
 
     wizard = st.session_state.get('ia_wizard')
@@ -1214,6 +1638,7 @@ def _render_botones_rapidos(pares, turno):
 _SUGERENCIAS_RAPIDAS = [
     "📉 Sectores más baratos",
     "📊 Analizar una acción",
+    "🧩 Armar cartera",
     "✍️ Registrar",
 ]
 
@@ -1235,7 +1660,8 @@ def modulo_ia_asistente(ctx):
           </div>
           <div style="font-size:13px;color:#8b949e;max-width:480px;margin:0 auto">
             Actualizá tu plan para acceder al asistente que analiza activos, compara opciones,
-            revisa tus finanzas personales y te deja registrar movimientos por chat.
+            revisa tus finanzas personales, arma carteras automáticas (F-Score + Top-Down + Optimizador)
+            y te deja registrar movimientos por chat.
           </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1246,7 +1672,7 @@ def modulo_ia_asistente(ctx):
          border:1px solid #21262d; border-top:2px solid #bc8cff;
          border-radius:14px; padding:22px 26px; margin-bottom:18px;">
       <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:4px">🤖 Asistente Capital+</div>
-      <div style="font-size:12px;color:#6b7d9a">Preguntame por cualquier módulo de la app, o pedime que registre un gasto/ingreso. ⚠️ No es asesoramiento financiero.</div>
+      <div style="font-size:12px;color:#6b7d9a">Preguntame por cualquier módulo de la app, pedime que registre un gasto/ingreso, o decime "armame una cartera con..." para el pipeline automático. ⚠️ No es asesoramiento financiero.</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1297,5 +1723,24 @@ def modulo_ia_asistente(ctx):
         st.session_state['ia_pendiente_tipo'] = None
         st.session_state['ia_pendiente_registro'] = None
         st.session_state['ia_wizard'] = None
+        st.session_state['ia_cartera_wizard'] = None
         st.session_state['ia_registro_menu_pendiente'] = False
         st.rerun()
+
+# ==============================================================
+#  SNIPPET DE INTEGRACIÓN EN app.py (referencia, no se ejecuta)
+# ==============================================================
+#
+# Al diccionario CTX_IA que ya tenés en app.py, agregarle UNA línea
+# para que el pipeline de armado de cartera pueda traducir sectores
+# a listas de tickers:
+#
+#   CTX_IA = dict(
+#       ...,
+#       ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA,   # ← agregar esta línea
+#   )
+#
+# No hace falta ningún otro cambio en app.py: el resto de las claves
+# que usa el pipeline (descargar_datos, get_close_series, calcular_atr,
+# scores_corto, analizar_largo, validar_ticker) ya están en tu CTX_IA.
+# ==============================================================
