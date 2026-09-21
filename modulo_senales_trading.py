@@ -8,6 +8,24 @@
 #  coincidir EXACTAMENTE con el de esas políticas.
 #
 #  CAMBIOS DE ESTA VERSIÓN:
+#   - NUEVO: "Margen extra agregado" por entrada. Antes, cualquier
+#     margen cargado en una entrada se multiplicaba por el
+#     apalancamiento y agrandaba el tamaño (nominal) de la posición.
+#     Eso está bien para el margen CON EL QUE ABRÍS, pero no sirve
+#     para representar el caso real de "agregar margen a una posición
+#     YA ABIERTA" (un top-up para alejar la liquidación), que no debe
+#     sumar tamaño ni unidades. Ahora cada entrada separa:
+#       · Margen apertura (USD): define el tamaño → nominal = margen
+#         apertura × apalancamiento. Igual que antes.
+#       · Margen extra (USD): NO suma nominal ni unidades. Solo se
+#         suma al margen total de la posición, así que agranda el
+#         colchón contra la liquidación (y por lo tanto baja el
+#         apalancamiento EFECTIVO de la posición, porque el mismo
+#         tamaño ahora está respaldado por más capital).
+#     El precio de liquidación usa el margen total (apertura + extra)
+#     igual que antes; lo único que cambió es que el extra ya no
+#     infla el tamaño de la posición. Las señales viejas, guardadas
+#     sin "margen_extra", se siguen leyendo con ese campo en 0.
 #   - NUEVO: P&L en vivo para señales ABIERTAS en "Señales y Resultados".
 #     Cada señal abierta muestra un cartel con 🟢 GANANDO / 🔴 PERDIENDO
 #     y el % apalancado actual, calculado contra el precio más reciente
@@ -208,18 +226,20 @@ def fmt_unidades(u):
 # ==============================================================
 #  ENTRADAS MÚLTIPLES — helpers de posición
 #  Cada señal puede tener 1 o más "entradas". Cada entrada guarda:
-#     precio, costo_apertura (USD), apalancamiento, margen (USD)
+#     precio, costo_apertura (USD), apalancamiento, margen (USD),
+#     margen_extra (USD)
 #  en la columna jsonb "entradas". Los campos "precio_entrada" y
 #  "apalancamiento" de la señal se guardan también, como el precio
 #  promedio real y el apalancamiento efectivo de la posición, para
 #  que todo el resto del código siga funcionando igual.
 #  Compatibilidad: las señales viejas pueden tener entradas con
-#  "peso" (versión anterior) o ninguna entrada; se siguen leyendo.
+#  "peso" (versión anterior), sin "margen_extra", o ninguna entrada;
+#  se siguen leyendo (margen_extra cae a 0 si no está).
 # ==============================================================
 
 def _entradas_de_senal(senal):
     """Devuelve la lista de entradas normalizada:
-    [{'precio','costo_apertura','apalancamiento','margen','peso'}, ...].
+    [{'precio','costo_apertura','apalancamiento','margen','margen_extra','peso'}, ...].
     'margen' = 0 significa que la señal es vieja y no tiene margen
     cargado. 'peso' es solo de señales viejas."""
     apal_senal = float(senal.get("apalancamiento") or 1.0) or 1.0
@@ -236,6 +256,7 @@ def _entradas_de_senal(senal):
                     "costo_apertura": float(e.get("costo_apertura") or 0.0),
                     "apalancamiento": float(e.get("apalancamiento") or apal_senal) or 1.0,
                     "margen": float(e.get("margen") or 0.0),
+                    "margen_extra": float(e.get("margen_extra") or 0.0),
                     "peso": float(e.get("peso") or 1.0),
                 })
             except (TypeError, ValueError, AttributeError):
@@ -245,7 +266,8 @@ def _entradas_de_senal(senal):
     precio_unico = float(senal.get("precio_entrada") or 0)
     if precio_unico > 0:
         return [{"precio": precio_unico, "costo_apertura": 0.0,
-                 "apalancamiento": apal_senal, "margen": 0.0, "peso": 1.0}]
+                 "apalancamiento": apal_senal, "margen": 0.0,
+                 "margen_extra": 0.0, "peso": 1.0}]
     return []
 
 
@@ -253,11 +275,21 @@ def _resumen_posicion(entradas, es_largo, mantenimiento_pct=MARGEN_MANTENIMIENTO
     """Calcula la posición total a partir de las entradas.
 
     Para cada entrada:
-        nominal_i  = margen_i × apalancamiento_i
+        nominal_i  = margen_i × apalancamiento_i   (SOLO el margen de
+                     apertura define tamaño; el margen extra NO)
         unidades_i = nominal_i / precio_i
     Para la posición:
         precio promedio = Σ nominal / Σ unidades   (ponderado por tamaño)
-        apalancamiento efectivo = Σ nominal / Σ margen
+        margen total = Σ margen de apertura + Σ margen extra
+        apalancamiento efectivo = Σ nominal / margen total
+
+    El "margen extra" es capital que agregaste DESPUÉS de abrir una
+    entrada, para alejar la liquidación sin comprar más unidades —
+    igual que hacer un top-up de margen a una posición ya abierta en
+    un exchange real. No suma nominal ni unidades, pero sí suma al
+    margen total: por eso agranda el colchón de liquidación y baja el
+    apalancamiento efectivo (el mismo tamaño queda respaldado por más
+    capital).
 
     PRECIO DE LIQUIDACIÓN (margen aislado):
         colchón = margen total − costos de apertura − mantenimiento
@@ -280,7 +312,9 @@ def _resumen_posicion(entradas, es_largo, mantenimiento_pct=MARGEN_MANTENIMIENTO
 
     nominal = sum(e["margen"] * e["apalancamiento"] for e in validas)
     unidades = sum(e["margen"] * e["apalancamiento"] / e["precio"] for e in validas)
-    margen_total = sum(e["margen"] for e in validas)
+    margen_apertura_total = sum(e["margen"] for e in validas)
+    margen_extra_total = sum(float(e.get("margen_extra") or 0.0) for e in validas)
+    margen_total = margen_apertura_total + margen_extra_total
     costos_total = sum(float(e.get("costo_apertura") or 0.0) for e in validas)
     precio_prom = nominal / unidades
     apal_ef = nominal / margen_total
@@ -302,7 +336,8 @@ def _resumen_posicion(entradas, es_largo, mantenimiento_pct=MARGEN_MANTENIMIENTO
 
     return dict(
         precio_promedio=precio_prom, unidades=unidades, nominal=nominal,
-        margen_total=margen_total, costos_total=costos_total,
+        margen_total=margen_total, margen_apertura=margen_apertura_total,
+        margen_extra=margen_extra_total, costos_total=costos_total,
         apalancamiento_efectivo=apal_ef, colchon=colchon,
         precio_liquidacion=precio_liq, dist_liq_pct=dist_pct,
         sin_liquidacion=sin_liquidacion, liquidada_al_abrir=liquidada_al_abrir,
@@ -369,6 +404,8 @@ def _texto_entradas(entradas):
         t = f"Entrada {i + 1}: {fmt_precio_exacto(e['precio'])}"
         if e["margen"] > 0:
             t += f" · margen ${e['margen']:,.2f} · {fmt_apal(e['apalancamiento'])}"
+            if e.get("margen_extra", 0) > 0:
+                t += f" · +${e['margen_extra']:,.2f} extra"
             if e["costo_apertura"] > 0:
                 t += f" · costo ${e['costo_apertura']:,.2f}"
         elif abs(e["peso"] - 1.0) > 1e-9:
@@ -385,6 +422,15 @@ def _render_resumen_posicion(res, es_largo, stop_loss=None):
     m2.metric("Margen total", f"${res['margen_total']:,.2f}")
     m3.metric("Tamaño (nominal)", f"${res['nominal']:,.2f}")
     m4.metric("Apalanc. efectivo", fmt_apal(res["apalancamiento_efectivo"]))
+
+    if res.get("margen_extra", 0) > 0:
+        st.caption(
+            f"↳ Margen de apertura: ${res['margen_apertura']:,.2f} + margen extra agregado "
+            f"después: ${res['margen_extra']:,.2f}. El extra no suma tamaño a la posición "
+            "(el nominal y las unidades se calculan solo con el margen de apertura); solo "
+            "agranda el colchón contra la liquidación y por eso baja el apalancamiento "
+            "efectivo."
+        )
 
     n1, n2, n3, n4 = st.columns(4)
     n1.metric("Unidades", fmt_unidades(res["unidades"]))
@@ -414,9 +460,9 @@ def _render_resumen_posicion(res, es_largo, stop_loss=None):
 
     st.caption(
         "Fórmula: liquidación = precio promedio "
-        f"{'−' if es_largo else '+'} (margen total − costos de apertura − mantenimiento "
-        f"{MARGEN_MANTENIMIENTO_PCT:g}%) / unidades. Es una estimación con margen aislado; no "
-        "incluye funding/swap ni comisión de cierre. Cada bróker define su margen de "
+        f"{'−' if es_largo else '+'} (margen total [apertura + extra] − costos de apertura − "
+        f"mantenimiento {MARGEN_MANTENIMIENTO_PCT:g}%) / unidades. Es una estimación con margen "
+        "aislado; no incluye funding/swap ni comisión de cierre. Cada bróker define su margen de "
         "mantenimiento (ajustá MARGEN_MANTENIMIENTO_PCT al de tu bróker para máxima exactitud)."
     )
 
@@ -426,11 +472,12 @@ def _render_resumen_posicion(res, es_largo, stop_loss=None):
 # ----------------------------------------------------------------
 
 def _entrada_vacia(_id, apal=1.0):
-    return {"id": _id, "precio": 0.0, "costo": 0.0, "apal": float(apal), "margen": 0.0}
+    return {"id": _id, "precio": 0.0, "costo": 0.0, "apal": float(apal),
+            "margen": 0.0, "margen_extra": 0.0}
 
 
 def _limpiar_keys_entrada(ent):
-    for pref in ("precio", "costo", "apal", "margen"):
+    for pref in ("precio", "costo", "apal", "margen", "margen_extra"):
         st.session_state.pop(f"sen_entrada_{pref}_{ent['id']}", None)
 
 
@@ -454,7 +501,8 @@ def _entradas_para_guardar(entradas_form):
         {"precio": float(e["precio"]),
          "costo_apertura": float(e["costo"]),
          "apalancamiento": float(e["apal"]),
-         "margen": float(e["margen"])}
+         "margen": float(e["margen"]),
+         "margen_extra": float(e.get("margen_extra") or 0.0)}
         for e in entradas_form if e["precio"] > 0 and e["margen"] > 0
     ]
 
@@ -469,14 +517,17 @@ def _render_entradas_form(es_largo):
     st.caption(
         "Cargá una entrada por cada compra/venta si vas a promediar precio (ej: entraste en 2 "
         "o 3 tandas). Para cada una indicá el **precio**, el **costo de apertura** en USD "
-        "(comisión/spread), el **apalancamiento** que usaste y el **margen** en USD que "
-        "agregaste a la posición. Con eso la app calcula el precio promedio real, el "
-        "apalancamiento efectivo y el **precio de liquidación**."
+        "(comisión/spread), el **apalancamiento** que usaste y el **margen de apertura** en USD "
+        "con el que abriste esa entrada (define el tamaño de la posición). Si más adelante le "
+        "agregaste capital a esa misma entrada YA ABIERTA (sin comprar más unidades, solo para "
+        "alejar la liquidación), cargalo aparte en **margen extra**: no cambia el tamaño de la "
+        "posición, pero sí el precio de liquidación. Con eso la app calcula el precio promedio "
+        "real, el apalancamiento efectivo y el **precio de liquidación**."
     )
 
     a_borrar = None
     for i, ent in enumerate(entradas):
-        ce1, ce2, ce3, ce4, ce5 = st.columns([1.5, 1.2, 1.1, 1.3, 0.5])
+        ce1, ce2, ce3, ce4, ce5, ce6 = st.columns([1.3, 1.0, 0.9, 1.1, 1.1, 0.4])
         with ce1:
             ent["precio"] = st.number_input(
                 f"Precio — Entrada {i + 1}", min_value=0.0, format="%.5f",
@@ -493,10 +544,18 @@ def _render_entradas_form(es_largo):
                 help="Apalancamiento que usaste en esta entrada.")
         with ce4:
             ent["margen"] = st.number_input(
-                f"Margen (USD) {i + 1}", min_value=0.0, step=10.0, format="%.2f",
+                f"Margen apertura (USD) {i + 1}", min_value=0.0, step=10.0, format="%.2f",
                 value=float(ent.get("margen", 0.0)), key=f"sen_entrada_margen_{ent['id']}",
-                help="Margen en dólares que agregaste a la posición con esta entrada.")
+                help="Margen en dólares con el que ABRISTE esta entrada. Define el tamaño de la "
+                     "posición: nominal = margen apertura × apalancamiento.")
         with ce5:
+            ent["margen_extra"] = st.number_input(
+                f"Margen extra (USD) {i + 1}", min_value=0.0, step=10.0, format="%.2f",
+                value=float(ent.get("margen_extra", 0.0)), key=f"sen_entrada_margen_extra_{ent['id']}",
+                help="Margen que agregaste DESPUÉS de abrir esta entrada, sin comprar más "
+                     "unidades (top-up). No suma tamaño a la posición: solo agranda el colchón "
+                     "y aleja el precio de liquidación.")
+        with ce6:
             st.write("")
             st.write("")
             if len(entradas) > 1 and st.button("🗑️", key=f"sen_entrada_del_{ent['id']}",
@@ -517,7 +576,7 @@ def _render_entradas_form(es_largo):
 
     incompletas = [i + 1 for i, e in enumerate(entradas) if (e["precio"] > 0) != (e["margen"] > 0)]
     if incompletas:
-        st.warning("⚠️ Completá precio **y** margen en la(s) entrada(s): "
+        st.warning("⚠️ Completá precio **y** margen de apertura en la(s) entrada(s): "
                    + ", ".join(str(n) for n in incompletas)
                    + ". Las incompletas no se tienen en cuenta.")
 
@@ -1278,7 +1337,7 @@ def _calcular_fila_simulacion(s, precio_ref, capital_total, modo_calculo,
     return fila
 
 
-REPLICA_REF_PRIMERA = "Margen de la 1ª entrada"
+REPLICA_REF_PRIMERA = "Margen de la 1ª entrada (apertura + extra)"
 REPLICA_REF_TOTAL = "Margen total de la posición"
 MODO_REPLICA = "🔁 Replicar la posición del publicador (escalada a tu margen)"
 
@@ -1286,8 +1345,13 @@ MODO_REPLICA = "🔁 Replicar la posición del publicador (escalada a tu margen)
 def _factor_replica(res, entradas, base_usuario, referencia):
     """Factor de escala entre la posición del admin y la del usuario.
     El usuario pone un número (base_usuario) que se compara contra el
-    margen de la 1ª entrada del admin, o contra su margen total."""
-    ref = entradas[0]["margen"] if referencia == REPLICA_REF_PRIMERA else res["margen_total"]
+    margen (apertura + extra) de la 1ª entrada del admin, o contra su
+    margen total de la posición."""
+    if referencia == REPLICA_REF_PRIMERA:
+        primera = entradas[0]
+        ref = primera["margen"] + float(primera.get("margen_extra") or 0.0)
+    else:
+        ref = res["margen_total"]
     return (base_usuario / ref) if ref and ref > 0 else 0.0
 
 
@@ -1360,16 +1424,20 @@ def _calcular_fila_replica(s, res, precio_ref, factor, liquidada):
 
 
 def _filas_detalle_replica(s, entradas, factor):
-    """Detalle entrada por entrada de cómo queda replicada la posición."""
+    """Detalle entrada por entrada de cómo queda replicada la posición.
+    El margen de apertura y el margen extra se escalan por separado
+    (el extra sigue sin sumar tamaño/unidades)."""
     filas = []
     for i, e in enumerate(entradas):
         margen = e["margen"] * factor
+        margen_extra = float(e.get("margen_extra") or 0.0) * factor
         nominal = margen * e["apalancamiento"]
         filas.append({
             "Fecha": s.get("fecha"), "Ticker": s.get("ticker"), "Entrada": i + 1,
             "Precio": fmt_precio_exacto(e["precio"]),
             "Apalanc.": fmt_apal(e["apalancamiento"]),
-            "Tu margen (USD)": round(margen, 2),
+            "Tu margen apertura (USD)": round(margen, 2),
+            "Tu margen extra (USD)": round(margen_extra, 2),
             "Tu costo de apertura (USD)": round(e["costo_apertura"] * factor, 4),
             "Tamaño nominal (USD)": round(nominal, 2),
             "Unidades": round(nominal / e["precio"], 6),
@@ -1488,8 +1556,8 @@ def _tab_simulador(supabase):
                "con tu propio capital.")
     st.caption(
         "🧩 Para señales con varias entradas, acá se usa el precio promedio real de la posición "
-        "(ponderado por el tamaño de cada entrada: margen × apalancamiento). Las señales viejas "
-        "cargadas con 'peso relativo' siguen usando ese promedio."
+        "(ponderado por el tamaño de cada entrada: margen de apertura × apalancamiento). Las "
+        "señales viejas cargadas con 'peso relativo' siguen usando ese promedio."
     )
 
     senales = _obtener_senales(supabase, 200)
@@ -1595,12 +1663,14 @@ def _tab_simulador(supabase):
             format="%.2f", key="sim_replica_base")
         st.caption(
             "Ponés un solo número y la app copia la posición del publicador tal cual: mismas "
-            "entradas, mismos precios y mismo apalancamiento en cada una. El margen y el costo de "
-            "apertura de cada entrada se escalan en la misma proporción. Ej: si el publicador puso "
-            "100 de margen en cada una de sus 2 entradas y vos ponés 10 (referido a la 1ª entrada), "
-            "tu margen queda en 10 en cada una — un décimo de su posición. El precio de "
-            "liquidación es el mismo que el suyo. Las señales viejas, sin margen cargado, no se "
-            "pueden replicar y quedan afuera."
+            "entradas, mismos precios y mismo apalancamiento en cada una. El margen de apertura, "
+            "el margen extra y el costo de apertura de cada entrada se escalan en la misma "
+            "proporción (el margen extra sigue sin sumar tamaño a la posición, solo aleja la "
+            "liquidación en la misma medida que en la posición original). Ej: si el publicador "
+            "puso 100 de margen de apertura en cada una de sus 2 entradas y vos ponés 10 (referido "
+            "a la 1ª entrada), tu margen queda en 10 en cada una — un décimo de su posición. El "
+            "precio de liquidación es el mismo que el suyo. Las señales viejas, sin margen "
+            "cargado, no se pueden replicar y quedan afuera."
         )
 
     else:  # Comparar los 3 perfiles de riesgo
@@ -1775,7 +1845,8 @@ def render_senales_trading(supabase, user_id, user_email):
         ADD COLUMN IF NOT EXISTS riesgo_agresivo    float DEFAULT 3.0,
         ADD COLUMN IF NOT EXISTS entradas jsonb DEFAULT '[]'::jsonb;
     (Los campos nuevos de cada entrada —costo_apertura, apalancamiento,
-    margen— viven dentro del jsonb "entradas": no hace falta migrar nada más.)
+    margen, margen_extra— viven dentro del jsonb "entradas": no hace
+    falta migrar nada más.)
     """
     es_admin = _es_admin(user_email)
 
@@ -1788,11 +1859,11 @@ def render_senales_trading(supabase, user_id, user_email):
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
         Señales publicadas con fecha, hora, una o varias entradas (precio, costo de apertura,
-        apalancamiento y margen), precio de liquidación, stop loss, take profit, categoría y
-        perfiles de riesgo (🟢 Conservador / 🟡 Moderado / 🔴 Agresivo) — evaluación automática
-        de aciertos/desaciertos, P&L en vivo (actualizado cada 5 min) para las abiertas, y
-        simulador de capital (por monto, %, riesgo, lotes o comparando los 3 perfiles) para
-        cualquier usuario.
+        apalancamiento, margen de apertura y margen extra), precio de liquidación, stop loss,
+        take profit, categoría y perfiles de riesgo (🟢 Conservador / 🟡 Moderado / 🔴 Agresivo)
+        — evaluación automática de aciertos/desaciertos, P&L en vivo (actualizado cada 5 min)
+        para las abiertas, y simulador de capital (por monto, %, riesgo, lotes o comparando los
+        3 perfiles) para cualquier usuario.
       </div>
     </div>
     """, unsafe_allow_html=True)
