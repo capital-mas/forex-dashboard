@@ -8,7 +8,15 @@
 #  coincidir EXACTAMENTE con el de esas políticas.
 #
 #  CAMBIOS DE ESTA VERSIÓN:
-#   - NUEVO modo en el Simulador de Capital: "🔁 Replicar la posición
+#   - NUEVO: P&L en vivo para señales ABIERTAS en "Señales y Resultados".
+#     Cada señal abierta muestra un cartel con 🟢 GANANDO / 🔴 PERDIENDO
+#     y el % apalancado actual, calculado contra el precio más reciente
+#     disponible (caché propia de 5 minutos, separada de la caché de
+#     15 minutos que usa la evaluación automática de TP/SL). La pestaña
+#     se autorefresca cada 5 minutos para que el cartel se actualice
+#     solo. Arriba de la lista se agregó un resumen con cuántas
+#     posiciones abiertas están ganando y perdiendo ahora mismo.
+#   - NUEVO en el Simulador de Capital: "🔁 Replicar la posición
 #     del publicador". La persona pone UN solo número (su margen) y la
 #     app copia la posición del admin tal cual: mismas entradas, mismos
 #     precios, mismo apalancamiento en cada una, y el margen y el costo
@@ -76,6 +84,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import date, datetime, time as dt_time
+from streamlit_autorefresh import st_autorefresh
 
 ADMIN_EMAIL = "brainferreyra@gmail.com"
 TABLA_SENALES = "senales_trading"
@@ -594,6 +603,101 @@ def _historial_desde_fecha(ticker, fecha_inicio_str):
         return None
 
 
+# ── P&L EN VIVO (precio actualizado cada 5 minutos) ──────────────
+# Caché propia de 5 minutos, separada de la caché de 15 minutos que
+# usa _historial_desde_fecha (esa es para evaluar TP/SL con datos
+# diarios). Acá buscamos el precio más reciente posible para mostrar
+# si la posición abierta viene ganando o perdiendo AHORA.
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _precio_en_vivo(ticker):
+    """Último precio disponible, refrescado cada 5 minutos. Intenta
+    primero con velas de 1 minuto (intradía); si no hay datos
+    (mercado cerrado, activo sin intradía en Yahoo, etc.) cae a la
+    última vela diaria disponible. Devuelve (precio, hora_consulta)
+    o (None, None) si no se pudo obtener nada."""
+    try:
+        import yfinance as yf
+        df = yf.download(ticker, period="1d", interval="1m",
+                          auto_adjust=True, progress=False)
+        if df is None or df.empty:
+            df = yf.download(ticker, period="5d", interval="1d",
+                              auto_adjust=True, progress=False)
+        if df is None or df.empty:
+            return None, None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        serie = df["Close"].dropna()
+        if serie.empty:
+            return None, None
+        return float(serie.iloc[-1]), datetime.now()
+    except Exception:
+        return None, None
+
+
+def _pnl_vivo_senal(senal, precio_actual):
+    """P&L en vivo (%) de una señal ABIERTA contra el precio actual,
+    usando el precio promedio ponderado de las entradas y el
+    apalancamiento efectivo de la señal. Devuelve None si faltan
+    datos válidos para calcularlo."""
+    if precio_actual is None or precio_actual <= 0:
+        return None
+    entrada = _precio_promedio_ponderado(senal)
+    if not entrada or entrada <= 0:
+        return None
+    apalancamiento = float(senal.get("apalancamiento") or 1.0) or 1.0
+    es_largo = "LARGO" in str(senal.get("tipo", "")).upper()
+    ret_precio = (precio_actual - entrada) / entrada
+    if not es_largo:
+        ret_precio = -ret_precio
+    ret_apalancado = ret_precio * apalancamiento
+    return dict(
+        ret_precio=ret_precio * 100,
+        ret_apalancado=ret_apalancado * 100,
+        ganando=ret_apalancado > 0,
+        entrada=entrada,
+        precio_actual=precio_actual,
+    )
+
+
+def _render_badge_pnl_vivo(pnl, hora_actualizacion):
+    """Cartel grande de 🟢 GANANDO / 🔴 PERDIENDO con el % apalancado
+    en vivo. Si no hay datos, muestra un aviso discreto en vez de
+    romper el resto de la ficha de la señal."""
+    if pnl is None:
+        st.caption("⏳ No se pudo obtener el precio en vivo para esta señal en este momento.")
+        return
+
+    color = "#3fb950" if pnl["ganando"] else "#f85149"
+    bg = "rgba(63,185,80,0.12)" if pnl["ganando"] else "rgba(248,81,73,0.12)"
+    icono = "🟢" if pnl["ganando"] else "🔴"
+    texto = "GANANDO" if pnl["ganando"] else "PERDIENDO"
+
+    hace = ""
+    if hora_actualizacion:
+        mins = int((datetime.now() - hora_actualizacion).total_seconds() // 60)
+        hace = "recién" if mins <= 0 else f"hace {mins} min"
+
+    st.markdown(f"""
+    <div style="background:{bg};border:1px solid {color};border-radius:10px;
+         padding:10px 16px;margin:8px 0 4px 0;display:flex;align-items:center;
+         justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:11px;color:{color};font-weight:700;letter-spacing:.5px">
+          {icono} POSICIÓN EN VIVO — {texto}
+        </div>
+        <div style="font-size:10px;color:#8b949e;margin-top:2px">
+          Precio actual: {fmt_precio_exacto(pnl['precio_actual'])} · Entrada: {fmt_precio_exacto(pnl['entrada'])}
+          · actualizado {hace} (se refresca cada 5 min)
+        </div>
+      </div>
+      <div style="font-size:20px;font-weight:800;color:{color};white-space:nowrap">
+        {pnl['ret_apalancado']:+.2f}%
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def _evaluar_senal(senal):
     """Devuelve dict con: estado_calc, precio_ref (cierre o último precio),
     fecha_ref, tocó_tp, tocó_sl. No escribe en Supabase — eso lo hace
@@ -906,17 +1010,25 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
 #  Cada señal tiene un selector de perfil de riesgo que calcula el
 #  tamaño de posición sugerido. Si hay varias entradas, se muestran
 #  todas (precio, margen, apalancamiento, costo), el precio promedio
-#  real de la posición y el precio de liquidación.
+#  real de la posición y el precio de liquidación. Las señales
+#  ABIERTAS además muestran un cartel de P&L en vivo (🟢/🔴), con
+#  precio actualizado cada 5 minutos.
 # ==============================================================
 
 def _tab_senales(supabase, es_admin):
+    # Autorefresh cada 5 min: recalcula el P&L en vivo de las señales
+    # abiertas sin que el usuario tenga que tocar nada.
+    st_autorefresh(interval=5 * 60 * 1000, key="sen_autorefresh_pnl_vivo")
+
     top1, top2 = st.columns([3, 1])
     with top1:
-        st.caption("Historial de señales publicadas, con evaluación automática de resultado.")
+        st.caption("Historial de señales publicadas, con evaluación automática de resultado "
+                   "y P&L en vivo (se actualiza cada 5 min) para las que siguen abiertas.")
     with top2:
         if st.button("↺ Actualizar y evaluar", use_container_width=True, key="sen_refresh"):
             _obtener_senales.clear()
             _historial_desde_fecha.clear()
+            _precio_en_vivo.clear()
             st.rerun()
 
     senales = _obtener_senales(supabase, 200)
@@ -939,11 +1051,28 @@ def _tab_senales(supabase, es_admin):
     n_cerradas_total = n_acierto + n_desacierto
     winrate = (n_acierto / n_cerradas_total * 100) if n_cerradas_total > 0 else 0.0
 
-    k1, k2, k3, k4 = st.columns(4)
+    # ── Resumen de P&L en vivo de las posiciones ABIERTAS ──────────────
+    df_abiertas_kpi = df[df["estado"] == "ABIERTA"]
+    n_ganando_vivo = 0
+    n_perdiendo_vivo = 0
+    if not df_abiertas_kpi.empty:
+        with st.spinner("Consultando precios en vivo..."):
+            for _, row_ab in df_abiertas_kpi.iterrows():
+                precio_vivo_kpi, _ts_kpi = _precio_en_vivo(row_ab.get("ticker"))
+                pnl_vivo_kpi = _pnl_vivo_senal(row_ab.to_dict(), precio_vivo_kpi)
+                if pnl_vivo_kpi:
+                    if pnl_vivo_kpi["ganando"]:
+                        n_ganando_vivo += 1
+                    else:
+                        n_perdiendo_vivo += 1
+
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
     with k1: st.metric("🔵 Abiertas", n_abiertas)
     with k2: st.metric("✅ Aciertos (TP)", n_acierto)
     with k3: st.metric("❌ Desaciertos (SL)", n_desacierto)
     with k4: st.metric("🎯 Win Rate", f"{winrate:.1f}%" if n_cerradas_total > 0 else "—")
+    with k5: st.metric("🟢 Ganando ahora", n_ganando_vivo, "en vivo · cada 5 min")
+    with k6: st.metric("🔴 Perdiendo ahora", n_perdiendo_vivo, "en vivo · cada 5 min")
 
     st.divider()
     cap_col1, cap_col2 = st.columns([1, 3])
@@ -1000,6 +1129,12 @@ def _tab_senales(supabase, es_admin):
                 f'<div style="font-size:14px;font-weight:800;color:{col}">{estado}</div></div>',
                 unsafe_allow_html=True,
             )
+
+            # ── Cartel de P&L en vivo (solo para señales ABIERTAS) ──────
+            if estado == "ABIERTA":
+                precio_vivo_row, ts_vivo_row = _precio_en_vivo(row.get("ticker"))
+                pnl_vivo_row = _pnl_vivo_senal(row.to_dict(), precio_vivo_row)
+                _render_badge_pnl_vivo(pnl_vivo_row, ts_vivo_row)
 
             entradas_lista = _entradas_de_senal(row.to_dict())
             v1, v2, v3, v4 = st.columns(4)
@@ -1655,8 +1790,9 @@ def render_senales_trading(supabase, user_id, user_email):
         Señales publicadas con fecha, hora, una o varias entradas (precio, costo de apertura,
         apalancamiento y margen), precio de liquidación, stop loss, take profit, categoría y
         perfiles de riesgo (🟢 Conservador / 🟡 Moderado / 🔴 Agresivo) — evaluación automática
-        de aciertos/desaciertos y simulador de capital (por monto, %, riesgo, lotes o comparando
-        los 3 perfiles) para cualquier usuario.
+        de aciertos/desaciertos, P&L en vivo (actualizado cada 5 min) para las abiertas, y
+        simulador de capital (por monto, %, riesgo, lotes o comparando los 3 perfiles) para
+        cualquier usuario.
       </div>
     </div>
     """, unsafe_allow_html=True)
