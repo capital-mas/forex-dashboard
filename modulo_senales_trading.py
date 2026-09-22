@@ -1216,7 +1216,7 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                     + (f" a las {hora_cierre_txt}" if hora_cierre_txt else "")
                     + f" a {fmt_precio_local(row.get('precio_cierre'))}"
                 ))
-                        if row.get("notas"):
+            if row.get("notas"):
                 st.markdown(f"**Notas:** {row['notas']}")
 
             if estado_row == "ABIERTA":
@@ -1306,6 +1306,10 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
 #  apalancamiento, costo), el precio promedio real de la posición y
 #  el precio de liquidación. Las señales ABIERTAS además muestran un
 #  cartel de P&L en vivo (🟢/🔴), con precio actualizado cada 5 min.
+#  Ya NO permite agregar entradas ni cerrar manualmente una señal:
+#  esa gestión (agregar entrada para promediar / cerrar la posición)
+#  vive únicamente en "Publicar Señal", para que solo el admin la
+#  haga desde un único lugar.
 # ==============================================================
 
 def _tab_senales(supabase, es_admin):
@@ -1562,71 +1566,11 @@ def _tab_senales(supabase, es_admin):
                         _render_resumen_posicion(res_perfil, es_largo_row,
                                                   stop_loss=float(row.get("stop_loss") or 0))
 
-            if es_admin and estado == "ABIERTA":
+            if estado == "ABIERTA":
                 st.divider()
-                with st.expander("➕ Agregar otra entrada a esta posición (promediar / alejar liquidación)"):
-                    st.caption(
-                        "Sumá una entrada nueva a esta posición ABIERTA: sirve para promediar a "
-                        "un precio mejor (mueve el precio promedio) o para agregar margen y alejar "
-                        "la liquidación. Se recalcula el precio de entrada (promedio ponderado) y "
-                        "el apalancamiento de apertura de toda la posición."
-                    )
-                    ae1, ae2, ae3, ae4, ae5 = st.columns(5)
-                    with ae1:
-                        nueva_precio = st.number_input(
-                            "Precio", min_value=0.0, format="%.5f", key=f"sen_add_precio_{row['id']}")
-                    with ae2:
-                        nueva_costo = st.number_input(
-                            "Costo apertura (USD)", min_value=0.0, step=0.01, format="%.4f",
-                            key=f"sen_add_costo_{row['id']}")
-                    with ae3:
-                        nueva_apal = st.number_input(
-                            "Apalanc. (x)", min_value=1.0, max_value=125.0, step=1.0, format="%.1f",
-                            value=1.0, key=f"sen_add_apal_{row['id']}")
-                    with ae4:
-                        nueva_margen = st.number_input(
-                            "Margen apertura (USD)", min_value=0.0, step=10.0, format="%.2f",
-                            key=f"sen_add_margen_{row['id']}")
-                    with ae5:
-                        nueva_margen_extra = st.number_input(
-                            "Margen extra (USD)", min_value=0.0, step=10.0, format="%.2f",
-                            key=f"sen_add_margen_extra_{row['id']}")
-
-                    if st.button("➕ Agregar entrada a la posición", key=f"sen_add_btn_{row['id']}"):
-                        if nueva_precio <= 0 or nueva_margen <= 0:
-                            st.warning("⚠️ Completá al menos precio y margen de apertura de la nueva entrada.")
-                        else:
-                            entradas_actuales_fmt = _entradas_a_formato_guardado(entradas_lista)
-                            entradas_nuevas = entradas_actuales_fmt + [{
-                                "precio": nueva_precio, "costo_apertura": nueva_costo,
-                                "apalancamiento": nueva_apal, "margen": nueva_margen,
-                                "margen_extra": nueva_margen_extra,
-                            }]
-                            resumen_nuevo = _resumen_posicion(entradas_nuevas, es_largo_row)
-                            if resumen_nuevo is None:
-                                st.error("❌ No se pudo calcular la posición con esta entrada.")
-                            else:
-                                _agregar_entrada_senal(
-                                    supabase, row["id"], entradas_nuevas,
-                                    resumen_nuevo["precio_promedio"],
-                                    resumen_nuevo["apalancamiento_apertura"])
-                                _obtener_senales.clear()
-                                st.success("✅ Entrada agregada. Se recalculó el precio promedio "
-                                          "y el apalancamiento de apertura.")
-                                st.rerun()
-
-                st.divider()
-                precio_cierre_manual = st.number_input(
-                    "Precio de cierre manual", min_value=0.0, format="%.5f",
-                    key=f"sen_cierre_{row['id']}")
-                if st.button("🔒 Cerrar manualmente", key=f"sen_btn_cerrar_{row['id']}"):
-                    if precio_cierre_manual > 0:
-                        _cerrar_senal_manual(supabase, row["id"], precio_cierre_manual)
-                        _obtener_senales.clear()
-                        st.rerun()
-                    else:
-                        st.warning("Ingresá un precio de cierre válido.")
-                st.caption("🗑️ Para eliminar una señal, andá a la pestaña **Publicar Señal**.")
+                st.caption("🔧 Para agregar otra entrada a esta posición (promediar / alejar "
+                           "liquidación) o cerrarla manualmente, andá a la pestaña "
+                           "**📢 Publicar Señal** → 'Gestionar señales publicadas'.")
 
 
 # ==============================================================
