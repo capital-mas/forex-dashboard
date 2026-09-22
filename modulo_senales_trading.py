@@ -1492,11 +1492,11 @@ def _tab_senales(supabase, es_admin):
                         "margen_extra": 0.0,
                     }]
                     res_perfil = _resumen_posicion(entrada_sintetica, es_largo_row)
-                    if res_perfil:
+                                        if res_perfil:
                         _render_resumen_posicion(res_perfil, es_largo_row,
                                                   stop_loss=float(row.get("stop_loss") or 0))
 
-                        if es_admin and estado == "ABIERTA":
+            if es_admin and estado == "ABIERTA":
                 st.divider()
                 with st.expander("➕ Agregar otra entrada a esta posición (promediar / alejar liquidación)"):
                     st.caption(
@@ -1549,9 +1549,6 @@ def _tab_senales(supabase, es_admin):
                                           "y el apalancamiento de apertura.")
                                 st.rerun()
 
-                st.divider()
-                precio_cierre_manual = st.number_input(
-            if es_admin and estado == "ABIERTA":
                 st.divider()
                 precio_cierre_manual = st.number_input(
                     "Precio de cierre manual", min_value=0.0, format="%.5f",
