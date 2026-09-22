@@ -1331,6 +1331,14 @@ def _tab_senales(supabase, es_admin):
             v6.metric("Retorno apalancado", f"{ret_apalancado:+.1f}%",
                       delta=f"{ret_precio:+.2f}% precio", delta_color="off")
 
+            if row.get("precio_cierre") is not None:
+                hora_cierre_txt = row.get("hora_cierre")
+                st.caption(_md_dolar(
+                    f"Cerrada el {row.get('fecha_cierre','')}"
+                    + (f" a las {hora_cierre_txt}" if hora_cierre_txt else "")
+                    + f" a {fmt_precio_local(row.get('precio_cierre'))}"
+                ))
+
             if row.get("notas"):
                 st.markdown(f"**Notas:** {row['notas']}")
 
@@ -1364,6 +1372,91 @@ def _tab_senales(supabase, es_admin):
                         f"**${pnl_tp:,.2f}**. Si en cambio llega al Stop Loss, perderías los "
                         f"**${calc['riesgo_usd']:,.2f}** que definís al elegir este perfil."
                     ))
+
+                # Posición COMPLETA (el mismo cartel que aparece arriba, con margen,
+                # apalancamiento, unidades y precio de liquidación) que te quedaría si
+                # tomás esta señal con el tamaño sugerido para el perfil elegido.
+                apal_sugerido = _apalancamiento_apertura_de_senal(row.to_dict())
+                entrada_sugerida = float(row.get("precio_entrada") or 0)
+                if entrada_sugerida > 0 and apal_sugerido > 0:
+                    entradas_calc = [{
+                        "precio": entrada_sugerida, "costo_apertura": 0.0,
+                        "apalancamiento": apal_sugerido, "margen": calc["margen"],
+                        "margen_extra": 0.0,
+                    }]
+                    res_calc = _resumen_posicion(entradas_calc, es_largo_row)
+                    if res_calc:
+                        st.caption(
+                            f"Así te queda la posición completa si tomás esta señal con el "
+                            f"tamaño sugerido del perfil {perfil_label_sel}:"
+                        )
+                        _render_resumen_posicion(res_calc, es_largo_row,
+                                                  stop_loss=float(row.get("stop_loss") or 0))
+
+            # ------------------------------------------------------
+            #  Simulador rápido: replicar la posición tal cual la
+            #  publicó el admin, poniendo un solo número (tu margen).
+            #  Independiente del perfil elegido arriba.
+            # ------------------------------------------------------
+            if res_row:
+                st.divider()
+                st.markdown("##### 🔁 O replicá la posición tal cual la publicó el admin")
+                st.caption(
+                    "Poné un solo número (tu margen) y la app copia la posición del publicador "
+                    "tal cual: mismas entradas, mismos precios y el mismo apalancamiento en cada "
+                    "una. El margen de apertura y el margen extra de cada entrada se escalan en "
+                    "la misma proporción, y el precio de liquidación te queda igual que el del "
+                    "publicador (escalar la posición no lo cambia)."
+                )
+                rr1, rr2 = st.columns([1.3, 1])
+                with rr1:
+                    ref_replica_row = st.radio(
+                        "Tu número corresponde a:", [REPLICA_REF_PRIMERA, REPLICA_REF_TOTAL],
+                        horizontal=True, key=f"sen_hist_replica_ref_{row['id']}")
+                with rr2:
+                    base_replica_row = st.number_input(
+                        "Tu margen (USD)", min_value=0.01, value=10.0, step=1.0, format="%.2f",
+                        key=f"sen_hist_replica_base_{row['id']}")
+
+                entradas_replica = _entradas_de_senal(row.to_dict())
+                factor_replica_row = _factor_replica(res_row, entradas_replica, base_replica_row,
+                                                       ref_replica_row)
+                if factor_replica_row <= 0:
+                    st.caption("Cargá un número mayor a 0 para calcular tu posición.")
+                else:
+                    rrm1, rrm2, rrm3, rrm4 = st.columns(4)
+                    rrm1.metric("Margen de apertura a poner",
+                                f"${res_row['margen_apertura'] * factor_replica_row:,.2f}")
+                    rrm2.metric("Margen extra a poner",
+                                f"${res_row['margen_extra'] * factor_replica_row:,.2f}")
+                    rrm3.metric("Margen total a poner",
+                                f"${res_row['margen_total'] * factor_replica_row:,.2f}")
+                    rrm4.metric("Apalancamiento", fmt_apal(res_row["apalancamiento_apertura"]))
+
+                    if res_row["liquidada_al_abrir"]:
+                        st.error("🚨 Con este margen la posición nacería liquidada (los costos "
+                                 "de apertura superan el margen total).")
+                    elif res_row["sin_liquidacion"]:
+                        st.caption("Con este apalancamiento y margen, el activo tendría que "
+                                   "llegar a $0 para liquidarte.")
+                    else:
+                        rrl1, rrl2 = st.columns(2)
+                        rrl1.metric("💀 Precio de liquidación",
+                                    fmt_precio_exacto(res_row["precio_liquidacion"]))
+                        rrl2.metric("Distancia a liquidación",
+                                    f"{res_row['dist_liq_pct']:+.2f}%")
+
+                    if _sl_mas_alla_de_liquidacion(res_row, es_largo_row,
+                                                    float(row.get("stop_loss") or 0)):
+                        st.warning("⚠️ Con este margen, el Stop Loss queda más allá del precio de "
+                                   "liquidación: te liquidarían antes de que el SL se ejecute.")
+
+                    detalle_replica_row = _filas_detalle_replica(row.to_dict(), entradas_replica,
+                                                                   factor_replica_row)
+                    if len(detalle_replica_row) > 1:
+                        with st.expander("🔍 Ver el detalle por entrada"):
+                            st.dataframe(pd.DataFrame(detalle_replica_row),
+                                         use_container_width=True, hide_index=True)
 
             if es_admin and estado == "ABIERTA":
                 st.divider()
@@ -1662,30 +1755,33 @@ def _mostrar_mejor_peor(df_sim):
 
 # ==============================================================
 #  RENDER — TAB SIMULADOR (todos)
-#  Incluye el cálculo que antes vivía en "Gestor de Riesgo" (modo
-#  "% de riesgo por operación") y la comparación de los 3 perfiles.
-#  Cuando una señal tiene varias entradas, acá se usa el precio
-#  promedio real de la posición (ponderado por el tamaño de cada
-#  entrada), el mismo que se muestra en "Señales y Resultados".
+#  CAMBIO: se sacó el selector "Modo de asignación". Ahora el
+#  Simulador solo trabaja de una forma: le ponés un MONTO FIJO POR
+#  SEÑAL y te muestra 3 tablas (🟢 Conservador / 🟡 Moderado /
+#  🔴 Agresivo), una por cada perfil de riesgo. Las 3 tablas parten
+#  del MISMO monto fijo; lo que cambia entre ellas es el % de riesgo
+#  de cada perfil (definido por el admin al publicar cada señal), que
+#  determina el tamaño de posición sugerido — y por lo tanto cuánto
+#  margen terminás usando realmente en cada una. El apalancamiento que
+#  se usa en el cálculo es siempre el REAL de la señal (el que cargó
+#  el admin al publicarla), igual en las 3 tablas.
+#  El modo "Replicar la posición del publicador" y el resto de los
+#  modos anteriores (% del capital, por lotes) se sacaron de acá: la
+#  réplica exacta de una señal puntual ahora vive directamente en su
+#  ficha, dentro de "Señales y Resultados".
 # ==============================================================
 
-MODOS_SIM = [
-    "💵 Monto fijo por señal",
-    "📊 % del capital por señal",
-    "🎯 % de riesgo por operación (según Stop Loss)",
-    "📦 Por lotes (tamaño de posición)",
-    MODO_REPLICA,
-    "🎭 Comparar los 3 perfiles de riesgo",
-]
-
-
 def _tab_simulador(supabase):
-    st.caption("Simulá cuánto hubieras ganado o perdido replicando las señales publicadas, "
-               "con tu propio capital.")
+    st.caption(
+        "Simulá cuánto hubieras ganado o perdido con un monto fijo por señal, comparando los "
+        "3 perfiles de riesgo. Cada perfil arriesga un % distinto de ese monto si el precio "
+        "llega al Stop Loss — eso define el tamaño de posición sugerido de cada uno — pero "
+        "los 3 usan siempre el apalancamiento real con el que se publicó la señal."
+    )
     st.caption(
         "🧩 Para señales con varias entradas, acá se usa el precio promedio real de la posición "
-        "(ponderado por el tamaño de cada entrada: margen de apertura × apalancamiento). Las "
-        "señales viejas cargadas con 'peso relativo' siguen usando ese promedio."
+        "(ponderado por el tamaño de cada entrada). El apalancamiento y el precio de "
+        "liquidación exactos de cada señal están en 'Señales y Resultados'."
     )
 
     senales = _obtener_senales(supabase, 200)
@@ -1697,22 +1793,13 @@ def _tab_simulador(supabase):
         _sincronizar_estados(supabase, senales)
         senales = _obtener_senales(supabase, 200)
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     with c1:
-        capital_total = st.number_input("💰 Capital total (USD)", min_value=100.0,
-                                         value=1000.0, step=100.0, key="sim_capital")
+        monto_fijo = st.number_input("💵 Monto fijo por señal (USD)", min_value=10.0,
+                                      value=100.0, step=10.0, key="sim_monto_fijo")
     with c2:
-        modo = st.selectbox("Modo de asignación", MODOS_SIM, key="sim_modo")
-    with c3:
-        incluir_abiertas = st.checkbox("Incluir señales abiertas (P&L flotante)", value=True, key="sim_incluir_abiertas")
-
-    monto_por_senal = None
-    pct_por_senal = None
-    riesgo_pct_sim = None
-    unidades_por_categoria = {}
-    cantidad_lotes = None
-    ref_replica = None
-    base_replica = None
+        incluir_abiertas = st.checkbox("Incluir señales abiertas (P&L flotante)", value=True,
+                                        key="sim_incluir_abiertas")
 
     df_base = pd.DataFrame(senales)
     if "categoria" not in df_base.columns:
@@ -1721,250 +1808,62 @@ def _tab_simulador(supabase):
     if not incluir_abiertas:
         df_base = df_base[df_base["estado"] != "ABIERTA"]
 
-    if modo == "💵 Monto fijo por señal":
-        monto_por_senal = st.number_input("Monto por señal (USD)", min_value=10.0,
-                                           value=min(100.0, capital_total), step=10.0, key="sim_monto_fijo")
-
-    elif modo == "📊 % del capital por señal":
-        pct_por_senal = st.slider("% del capital por señal", 1, 100, 10, key="sim_pct")
-
-    elif modo == "🎯 % de riesgo por operación (según Stop Loss)":
-        riesgo_pct_sim = st.slider(
-            "% de tu capital dispuesto a arriesgar por operación", 0.1, 20.0, 1.0, step=0.1,
-            key="sim_riesgo_pct",
-            help="Si el precio llega al Stop Loss, esto es lo máximo que perderías en esa señal.")
-        st.caption(
-            "El monto por señal ya no se define a mano: se calcula solo a partir de este % y de "
-            "la distancia entre la entrada y el Stop Loss de cada señal (mismo cálculo que antes "
-            "vivía en 'Gestor de Riesgo')."
-        )
-
-    elif modo == "📦 Por lotes (tamaño de posición)":
-        st.markdown("#### 📦 Configuración de lotes")
-        st.caption(
-            "Un 'lote' es una cantidad estandarizada de unidades del activo. El P&L se calcula "
-            "como en un bróker real: movimiento de precio × tamaño de la posición. El "
-            "apalancamiento no cambia la ganancia/pérdida en dólares, solo el margen (capital) "
-            "que necesitás inmovilizar para abrir esa posición. **Cada bróker define distinto "
-            "cuántas unidades tiene 1 lote** (sobre todo en Forex, índices y commodities) — "
-            "ajustá los valores de abajo según cómo opera el tuyo."
-        )
-
-        categorias_presentes = sorted(df_base["categoria"].dropna().unique().tolist())
-        if not categorias_presentes:
-            categorias_presentes = CATEGORIAS
-
-        preset_fx = None
-        if "💱 Forex" in categorias_presentes:
-            preset_fx = st.selectbox(
-                "Preset de lote Forex (tamaños comunes de bróker)",
-                list(LOTES_FOREX_PRESETS.keys()) + ["Personalizado"],
-                key="sim_lote_fx_preset",
-            )
-
-        n_cols = min(len(categorias_presentes), 3) or 1
-        cols_upl = st.columns(n_cols)
-        for i, cat in enumerate(categorias_presentes):
-            default = DEFAULT_UNIDADES_LOTE.get(cat, 1.0)
-            if cat == "💱 Forex" and preset_fx and preset_fx != "Personalizado":
-                default = LOTES_FOREX_PRESETS[preset_fx]
-            with cols_upl[i % n_cols]:
-                unidades_por_categoria[cat] = st.number_input(
-                    f"Unid./lote — {cat}", min_value=0.01, value=float(default),
-                    step=1.0, key=f"sim_upl_{cat}",
-                    help="Unidades del activo que representa 1 lote completo para este bróker."
-                )
-
-        cantidad_lotes = st.number_input(
-            "Cantidad de lotes por operación", min_value=0.01, value=0.10, step=0.01,
-            format="%.2f", key="sim_cant_lotes",
-            help="Ej: 0.10 lotes en Forex estándar = 10.000 unidades de la divisa base."
-        )
-
-    elif modo == MODO_REPLICA:
-        st.markdown("#### 🔁 Replicar la posición del publicador")
-        ref_replica = st.radio(
-            "El número que ponés corresponde a:", [REPLICA_REF_PRIMERA, REPLICA_REF_TOTAL],
-            horizontal=True, key="sim_replica_ref")
-        base_replica = st.number_input(
-            f"Tu {ref_replica.lower()} (USD)", min_value=0.01, value=10.0, step=1.0,
-            format="%.2f", key="sim_replica_base")
-        st.caption(
-            "Ponés un solo número y la app copia la posición del publicador tal cual: mismas "
-            "entradas, mismos precios y mismo apalancamiento en cada una. El margen de apertura, "
-            "el margen extra y el costo de apertura de cada entrada se escalan en la misma "
-            "proporción (el margen extra sigue sin sumar tamaño a la posición, solo aleja la "
-            "liquidación en la misma medida que en la posición original). Ej: si el publicador "
-            "puso 100 de margen de apertura en cada una de sus 2 entradas y vos ponés 10 (referido "
-            "a la 1ª entrada), tu margen queda en 10 en cada una — un décimo de su posición. El "
-            "precio de liquidación es el mismo que el suyo. Las señales viejas, sin margen "
-            "cargado, no se pueden replicar y quedan afuera."
-        )
-
-    else:  # Comparar los 3 perfiles de riesgo
-        st.markdown("#### 🎭 Los 3 perfiles de riesgo")
-        st.caption(
-            "Cada señal ya tiene definido, desde que se publicó, qué % de capital arriesgaría "
-            "cada perfil. Acá corremos la simulación completa una vez por perfil, para que "
-            "compares el resultado."
-        )
-        for info in PERFILES_RIESGO.values():
-            st.markdown(f"**{info['label']}** — {info['desc']}")
-
     if df_base.empty:
         st.info("No hay señales para incluir en la simulación con estos filtros.")
         return
 
-    # ----------------------------------------------------------
-    #  Modo especial: comparar los 3 perfiles lado a lado
-    # ----------------------------------------------------------
-    if modo == "🎭 Comparar los 3 perfiles de riesgo":
-        st.divider()
-        tabs_perfiles = st.tabs([info["label"] for info in PERFILES_RIESGO.values()])
-        resumen_comparativo = []
+    st.divider()
+    tabs_perfiles = st.tabs([info["label"] for info in PERFILES_RIESGO.values()])
+    resumen_comparativo = []
 
-        for (perfil_key, info), tab in zip(PERFILES_RIESGO.items(), tabs_perfiles):
-            with tab:
-                st.caption(info["desc"])
-                filas = []
-                for _, row in df_base.iterrows():
-                    s = row.to_dict()
-                    s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
-                    precio_ref = s.get("precio_cierre")
-                    if precio_ref is None:
-                        ev = _evaluar_senal(s)
-                        precio_ref = ev["precio_ref"]
-                    if precio_ref is None:
-                        continue
-                    pct_signal = float(s.get(f"riesgo_{perfil_key}") or info["default_pct"])
-                    fila = _calcular_fila_simulacion(s, precio_ref, capital_total, "riesgo",
-                                                      riesgo_pct=pct_signal,
-                                                      fecha_cierre=s.get("fecha_cierre"),
-                                                      hora_cierre=s.get("hora_cierre"))
-                    if fila:
-                        filas.append(fila)
-
-                if not filas:
-                    st.info("No se pudo simular ninguna señal con este perfil (faltan datos de SL/entrada).")
+    for (perfil_key, info), tab in zip(PERFILES_RIESGO.items(), tabs_perfiles):
+        with tab:
+            st.caption(info["desc"])
+            filas = []
+            for _, row in df_base.iterrows():
+                s = row.to_dict()
+                s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
+                precio_ref = s.get("precio_cierre")
+                if precio_ref is None:
+                    ev = _evaluar_senal(s)
+                    precio_ref = ev["precio_ref"]
+                if precio_ref is None:
                     continue
+                pct_signal = float(s.get(f"riesgo_{perfil_key}") or info["default_pct"])
+                fila = _calcular_fila_simulacion(s, precio_ref, monto_fijo, "riesgo",
+                                                  riesgo_pct=pct_signal,
+                                                  fecha_cierre=s.get("fecha_cierre"),
+                                                  hora_cierre=s.get("hora_cierre"))
+                if fila:
+                    filas.append(fila)
 
-                df_perfil = pd.DataFrame(filas)
-                capital_usado, pnl_total = _mostrar_metricas_sim(df_perfil, "Margen total usado")
-                resumen_comparativo.append((info["label"], pnl_total, capital_usado))
-                _mostrar_tabla_estilizada(df_perfil)
-                _mostrar_mejor_peor(df_perfil)
+            if not filas:
+                st.info("No se pudo simular ninguna señal con este perfil (faltan datos de "
+                        "SL/entrada).")
+                continue
 
-        if resumen_comparativo:
-            st.divider()
-            st.markdown("##### 📊 Resumen comparativo")
-            df_resumen = pd.DataFrame(
-                resumen_comparativo, columns=["Perfil", "P&L Total (USD)", "Margen Usado (USD)"])
-            df_resumen["Rendimiento %"] = df_resumen.apply(
-                lambda r: round(r["P&L Total (USD)"] / r["Margen Usado (USD)"] * 100, 2)
-                if r["Margen Usado (USD)"] else 0.0, axis=1)
-            st.dataframe(df_resumen, use_container_width=True, hide_index=True)
+            df_perfil = pd.DataFrame(filas)
+            capital_usado, pnl_total = _mostrar_metricas_sim(df_perfil, "Margen total usado")
+            resumen_comparativo.append((info["label"], pnl_total, capital_usado))
+            _mostrar_tabla_estilizada(df_perfil)
+            _mostrar_mejor_peor(df_perfil)
 
-        st.caption("⚠️ Simulación educativa. No contempla comisiones, spread, financiamiento por "
-                   "apalancamiento, swap ni slippage. No constituye asesoramiento financiero.")
-        return
+    if resumen_comparativo:
+        st.divider()
+        st.markdown("##### 📊 Resumen comparativo")
+        df_resumen = pd.DataFrame(
+            resumen_comparativo, columns=["Perfil", "P&L Total (USD)", "Margen Usado (USD)"])
+        df_resumen["Rendimiento %"] = df_resumen.apply(
+            lambda r: round(r["P&L Total (USD)"] / r["Margen Usado (USD)"] * 100, 2)
+            if r["Margen Usado (USD)"] else 0.0, axis=1)
+        st.dataframe(df_resumen, use_container_width=True, hide_index=True)
 
-    # ----------------------------------------------------------
-    #  Resto de los modos: una sola tabla
-    # ----------------------------------------------------------
-    filas_sim = []
-    filas_detalle = []
-    omitidas_replica = 0
-    for _, row in df_base.iterrows():
-        s = row.to_dict()
-        s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
-        estado = s.get("estado", "ABIERTA")
-        precio_ref = s.get("precio_cierre")
-        if precio_ref is None:
-            ev = _evaluar_senal(s)
-            precio_ref = ev["precio_ref"]
-        if precio_ref is None:
-            continue
-        fecha_cierre_fila = s.get("fecha_cierre")
-        hora_cierre_fila = s.get("hora_cierre")
-
-        cat = s.get("categoria") or "🔹 Otro"
-        if modo == "📦 Por lotes (tamaño de posición)":
-            unidades_por_lote = unidades_por_categoria.get(cat, DEFAULT_UNIDADES_LOTE.get(cat, 1.0))
-            fila = _calcular_fila_simulacion(s, precio_ref, capital_total, "lotes",
-                                              unidades_por_lote=unidades_por_lote,
-                                              cantidad_lotes=cantidad_lotes,
-                                              fecha_cierre=fecha_cierre_fila,
-                                              hora_cierre=hora_cierre_fila)
-        elif modo == MODO_REPLICA:
-            fila = None
-            res_rep = _resumen_de_senal(row.to_dict())
-            if res_rep is None:
-                omitidas_replica += 1
-            else:
-                entradas_rep = _entradas_de_senal(row.to_dict())
-                factor_rep = _factor_replica(res_rep, entradas_rep, base_replica, ref_replica)
-                if factor_rep <= 0:
-                    omitidas_replica += 1
-                else:
-                    liquidada_rep = _liquidacion_tocada(row.to_dict(), res_rep)
-                    fila = _calcular_fila_replica(s, res_rep, precio_ref, factor_rep, liquidada_rep,
-                                                   fecha_cierre=fecha_cierre_fila,
-                                                   hora_cierre=hora_cierre_fila)
-                    filas_detalle.extend(_filas_detalle_replica(s, entradas_rep, factor_rep))
-        elif modo == "🎯 % de riesgo por operación (según Stop Loss)":
-            fila = _calcular_fila_simulacion(s, precio_ref, capital_total, "riesgo",
-                                              riesgo_pct=riesgo_pct_sim,
-                                              fecha_cierre=fecha_cierre_fila,
-                                              hora_cierre=hora_cierre_fila)
-        else:
-            fila = _calcular_fila_simulacion(s, precio_ref, capital_total, "monto_pct",
-                                              monto_por_senal=monto_por_senal,
-                                              pct_por_senal=pct_por_senal,
-                                              fecha_cierre=fecha_cierre_fila,
-                                              hora_cierre=hora_cierre_fila)
-        if fila:
-            filas_sim.append(fila)
-
-    if not filas_sim:
-        if modo == MODO_REPLICA and omitidas_replica:
-            st.info("No hay señales para replicar: las publicadas no tienen margen cargado en sus "
-                    "entradas (son de la versión anterior).")
-        else:
-            st.info("No se pudo simular ninguna señal (faltan precios de referencia o datos de SL/entrada).")
-        return
-
-    df_sim = pd.DataFrame(filas_sim)
-    label_capital = ("Margen total usado" if modo in MODOS_CON_MARGEN
-                      else "Capital asignado total")
-
-    capital_asignado_total, _ = _mostrar_metricas_sim(df_sim, label_capital)
-
-    if modo in MODOS_CON_MARGEN and capital_asignado_total > capital_total:
-        st.warning(
-            f"⚠️ El margen total requerido (USD {capital_asignado_total:,.2f}) supera tu "
-            f"capital declarado (USD {capital_total:,.2f}). Con esta configuración estarías "
-            "sobre-apalancado si abrieras todas estas operaciones a la vez."
-        )
-
-    _mostrar_tabla_estilizada(df_sim)
-    _mostrar_mejor_peor(df_sim)
-
-    if modo == MODO_REPLICA:
-        if omitidas_replica:
-            st.caption(f"ℹ️ {omitidas_replica} señal(es) quedaron afuera porque son de la versión "
-                       "anterior (sin margen cargado) y no se pueden replicar.")
-        if filas_detalle:
-            with st.expander("🔍 Ver cómo queda replicada cada entrada"):
-                st.dataframe(pd.DataFrame(filas_detalle), use_container_width=True, hide_index=True)
-        st.caption("En este modo el P&L ya descuenta los costos de apertura (escalados a tu margen) "
-                   "y, si el precio tocó la liquidación, se pierde todo el margen. No incluye "
-                   "funding/swap ni comisión de cierre.")
-
-    st.caption("⚠️ Simulación educativa. No contempla comisiones, spread, financiamiento por apalancamiento, "
-               "swap ni slippage. Cuando TP y SL se tocan el mismo día se asume el peor caso (SL). En los "
-               "modos por lotes y por % de riesgo, los valores usados (unidades por lote, distancia al SL) "
-               "son configurables o dependen de cada señal: verificá las especificaciones de tu bróker antes "
-               "de usarlos como referencia real. No constituye asesoramiento financiero.")
+    st.caption("⚠️ Simulación educativa. No contempla comisiones, spread, financiamiento por "
+               "apalancamiento, swap ni slippage. Cuando TP y SL se tocan el mismo día se asume "
+               "el peor caso (SL). El % de riesgo de cada perfil y el apalancamiento usado "
+               "dependen de cómo se cargó cada señal: verificá las especificaciones de tu "
+               "bróker antes de usarlos como referencia real. No constituye asesoramiento "
+               "financiero.")
 
 
 # ==============================================================
