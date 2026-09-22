@@ -1085,9 +1085,9 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
         st.error(_md_dolar(
             f"🚨 Tu Stop Loss ({fmt_precio_exacto(stop_loss)}) queda más allá del precio de "
             f"liquidación ({fmt_precio_exacto(resumen_pub['precio_liquidacion'])}): con el margen y "
-            "apalancamiento cargados te liquidarían antes de que el SL se ejecute."))
+                        "apalancamiento cargados te liquidarían antes de que el SL se ejecute."))
 
-        st.divider()
+    st.divider()
     st.markdown("#### 🎭 Apalancamiento sugerido por perfil")
     st.caption(
         "Definí con qué apalancamiento sugerís tomar esta señal en cada perfil de riesgo "
