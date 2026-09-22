@@ -8,6 +8,46 @@
 #  coincidir EXACTAMENTE con el de esas políticas.
 #
 #  CAMBIOS DE ESTA VERSIÓN:
+#   - CAMBIO: en "Señales y Resultados" y en "Publicar Señal", el
+#     cartel de posición ahora separa claramente el "Margen de
+#     apertura" del "Margen extra" agregado para alejar la
+#     liquidación (antes se mostraban sumados en un único "Margen
+#     total"). Y el "Apalancamiento" que se muestra en TODOS lados
+#     es el que usaste para ABRIR la posición: ya no baja solo
+#     porque agregaste margen extra (antes mostraba el apalancamiento
+#     "efectivo", diluido por ese extra). Este apalancamiento "de
+#     apertura" se recalcula siempre desde las entradas guardadas, así
+#     que también corrige — sin migrar nada — el cálculo que usan el
+#     Simulador de Capital, el selector "Elegí con qué perfil" y el
+#     P&L en vivo (antes todos leían el apalancamiento diluido que
+#     había quedado guardado en la señal). El apalancamiento efectivo
+#     (con el extra incluido) se sigue mostrando aparte, junto al
+#     margen total, solo quando cargaste margen extra.
+#   - FIX: el texto de "Si el precio llega al Take Profit, ganarías…"
+#     al elegir un perfil de riesgo se veía roto (palabras pegadas
+#     sin espacios). Era un bug de Streamlit: cuando un mismo texto
+#     tiene más de un signo "$", lo interpreta como una fórmula LaTeX
+#     en vez de texto. Se corrigió escapando los "$" en ese texto y en
+#     los demás avisos que mezclaban varios montos en dólares (el
+#     aviso de Stop Loss más allá de la liquidación y el detalle de
+#     entradas múltiples).
+#   - FIX: en el Simulador de Capital, la tarjeta "📉 Peor operación"
+#     se pintaba de rojo (y sin el signo "+") aunque esa operación
+#     hubiera sido ganadora — pasaba siempre que TODAS las operaciones
+#     simuladas ganaban plata, porque igual hay que elegir una como
+#     "la peor" del conjunto. Ahora el color y el signo de "Mejor" y
+#     "Peor" dependen del resultado real de cada una (verde/"+" si
+#     ganó, rojo/sin signo si perdió), así nunca se ve una ganancia
+#     pintada como pérdida.
+#   - NUEVO: "Mejor operación", "Peor operación" y la tabla del
+#     Simulador ahora muestran también la fecha (y hora, cuando se
+#     conoce) en que se cerró la señal. Para un cierre automático
+#     (TP/SL detectado por el sistema) la hora es aproximada: es el
+#     momento en que la app detectó el cierre, no el instante exacto
+#     de mercado (el historial usado para evaluar TP/SL es diario, no
+#     intradía). REQUIERE migrar la tabla en Supabase:
+#       ALTER TABLE senales_trading
+#       ADD COLUMN IF NOT EXISTS hora_cierre text;
 #   - NUEVO: "Margen extra agregado" por entrada. Antes, cualquier
 #     margen cargado en una entrada se multiplicaba por el
 #     apalancamiento y agrandaba el tamaño (nominal) de la posición.
@@ -66,7 +106,7 @@
 #     muestran precio de liquidación porque no tienen margen cargado.
 #     El campo "precio_entrada" ahora se guarda como el precio
 #     promedio real de la posición, y "apalancamiento" como el
-#     apalancamiento efectivo — así el resto del código (SL/TP,
+#     apalancamiento de apertura — así el resto del código (SL/TP,
 #     Señales y Resultados, evaluación automática, Simulador) sigue
 #     funcionando sin tocar nada más.
 #   - Múltiples entradas por señal (para promediar precio, ej.
@@ -223,6 +263,17 @@ def fmt_unidades(u):
     return s or "0"
 
 
+def _md_dolar(texto):
+    """Escapa los signos '$' antes de pasar un texto a st.caption /
+    st.warning / st.error / st.markdown. Streamlit interpreta lo que
+    queda ENTRE dos signos "$" como una fórmula LaTeX; si un mismo
+    texto tiene más de un monto en dólares (ej. "ganarías $X... y
+    perderías $Y..."), todo lo que hay en el medio se renderiza mal
+    (aparece pegado, sin espacios). Escapando el "$" como "\\$" se
+    evita ese problema y el signo se sigue viendo normal."""
+    return texto.replace("$", r"\$")
+
+
 # ==============================================================
 #  ENTRADAS MÚLTIPLES — helpers de posición
 #  Cada señal puede tener 1 o más "entradas". Cada entrada guarda:
@@ -230,7 +281,7 @@ def fmt_unidades(u):
 #     margen_extra (USD)
 #  en la columna jsonb "entradas". Los campos "precio_entrada" y
 #  "apalancamiento" de la señal se guardan también, como el precio
-#  promedio real y el apalancamiento efectivo de la posición, para
+#  promedio real y el apalancamiento de apertura de la posición, para
 #  que todo el resto del código siga funcionando igual.
 #  Compatibilidad: las señales viejas pueden tener entradas con
 #  "peso" (versión anterior), sin "margen_extra", o ninguna entrada;
@@ -281,7 +332,11 @@ def _resumen_posicion(entradas, es_largo, mantenimiento_pct=MARGEN_MANTENIMIENTO
     Para la posición:
         precio promedio = Σ nominal / Σ unidades   (ponderado por tamaño)
         margen total = Σ margen de apertura + Σ margen extra
+        apalancamiento de apertura = Σ nominal / Σ margen de apertura
+            (el que realmente usaste para abrir la posición)
         apalancamiento efectivo = Σ nominal / margen total
+            (el que queda una vez que sumás el margen extra — más bajo,
+            porque el mismo tamaño queda respaldado por más capital)
 
     El "margen extra" es capital que agregaste DESPUÉS de abrir una
     entrada, para alejar la liquidación sin comprar más unidades —
@@ -289,7 +344,8 @@ def _resumen_posicion(entradas, es_largo, mantenimiento_pct=MARGEN_MANTENIMIENTO
     un exchange real. No suma nominal ni unidades, pero sí suma al
     margen total: por eso agranda el colchón de liquidación y baja el
     apalancamiento efectivo (el mismo tamaño queda respaldado por más
-    capital).
+    capital). El apalancamiento DE APERTURA no se toca por el extra:
+    sigue siendo el que elegiste al abrir cada entrada.
 
     PRECIO DE LIQUIDACIÓN (margen aislado):
         colchón = margen total − costos de apertura − mantenimiento
@@ -318,6 +374,7 @@ def _resumen_posicion(entradas, es_largo, mantenimiento_pct=MARGEN_MANTENIMIENTO
     costos_total = sum(float(e.get("costo_apertura") or 0.0) for e in validas)
     precio_prom = nominal / unidades
     apal_ef = nominal / margen_total
+    apal_apertura = (nominal / margen_apertura_total) if margen_apertura_total else apal_ef
 
     mantenimiento_usd = nominal * mantenimiento_pct / 100.0
     colchon = margen_total - costos_total - mantenimiento_usd
@@ -338,7 +395,8 @@ def _resumen_posicion(entradas, es_largo, mantenimiento_pct=MARGEN_MANTENIMIENTO
         precio_promedio=precio_prom, unidades=unidades, nominal=nominal,
         margen_total=margen_total, margen_apertura=margen_apertura_total,
         margen_extra=margen_extra_total, costos_total=costos_total,
-        apalancamiento_efectivo=apal_ef, colchon=colchon,
+        apalancamiento_apertura=apal_apertura, apalancamiento_efectivo=apal_ef,
+        colchon=colchon,
         precio_liquidacion=precio_liq, dist_liq_pct=dist_pct,
         sin_liquidacion=sin_liquidacion, liquidada_al_abrir=liquidada_al_abrir,
         n_entradas=len(validas),
@@ -353,6 +411,22 @@ def _resumen_de_senal(senal):
         return None
     es_largo = "LARGO" in str(senal.get("tipo", "")).upper()
     return _resumen_posicion(entradas, es_largo)
+
+
+def _apalancamiento_apertura_de_senal(senal):
+    """Apalancamiento realmente usado para ABRIR la posición de una
+    señal: ignora la dilución que genera el margen extra agregado
+    después (que solo existe para alejar la liquidación, no cambia
+    cuánto se movió tu resultado por cada punto de precio). Se
+    recalcula siempre desde las entradas cuando hay margen cargado —
+    así corrige también señales viejas que se hubieran guardado con
+    el apalancamiento efectivo (diluido). Si no hay margen cargado en
+    las entradas (señal vieja de precio único), cae al apalancamiento
+    guardado en la señal."""
+    res = _resumen_de_senal(senal)
+    if res:
+        return res["apalancamiento_apertura"]
+    return float(senal.get("apalancamiento") or 1.0) or 1.0
 
 
 def _sl_mas_alla_de_liquidacion(res, es_largo, stop_loss):
@@ -414,22 +488,44 @@ def _texto_entradas(entradas):
     return " | ".join(partes)
 
 
+def _texto_cierre(estado, fecha_cierre, hora_cierre):
+    """Texto legible de cuándo se cerró una señal, para la tabla y las
+    tarjetas de mejor/peor operación del simulador. Si sigue abierta,
+    lo dice explícitamente. La hora solo aparece si se guardó (señales
+    cerradas antes de esta versión no la tienen)."""
+    if estado == "ABIERTA":
+        return "Sigue abierta"
+    if not fecha_cierre:
+        return "—"
+    if hora_cierre:
+        return f"{fecha_cierre} {hora_cierre}"
+    return str(fecha_cierre)
+
+
 def _render_resumen_posicion(res, es_largo, stop_loss=None):
-    """Muestra la posición total y el precio de liquidación."""
+    """Muestra la posición total y el precio de liquidación. El margen
+    de apertura y el apalancamiento de apertura van primero (son los
+    que reflejan cómo abriste la operación); el margen extra y el
+    apalancamiento efectivo (diluido por ese extra) se muestran aparte,
+    solo cuando corresponde, para no mezclarlos con lo anterior."""
     st.markdown("##### 🧮 Posición total y precio de liquidación")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Precio promedio", fmt_precio_exacto(res["precio_promedio"]))
-    m2.metric("Margen total", f"${res['margen_total']:,.2f}")
+    m2.metric("Margen de apertura", f"${res['margen_apertura']:,.2f}")
     m3.metric("Tamaño (nominal)", f"${res['nominal']:,.2f}")
-    m4.metric("Apalanc. efectivo", fmt_apal(res["apalancamiento_efectivo"]))
+    m4.metric("Apalancamiento usado", fmt_apal(res["apalancamiento_apertura"]))
 
     if res.get("margen_extra", 0) > 0:
+        e1, e2, e3 = st.columns(3)
+        e1.metric("Margen extra agregado", f"${res['margen_extra']:,.2f}")
+        e2.metric("Margen total (apertura + extra)", f"${res['margen_total']:,.2f}")
+        e3.metric("Apalanc. efectivo (con extra)", fmt_apal(res["apalancamiento_efectivo"]))
         st.caption(
-            f"↳ Margen de apertura: ${res['margen_apertura']:,.2f} + margen extra agregado "
-            f"después: ${res['margen_extra']:,.2f}. El extra no suma tamaño a la posición "
-            "(el nominal y las unidades se calculan solo con el margen de apertura); solo "
-            "agranda el colchón contra la liquidación y por eso baja el apalancamiento "
-            "efectivo."
+            "El margen extra no suma tamaño a la posición (el nominal y las unidades se "
+            "calculan solo con el margen de apertura): solo agranda el colchón contra la "
+            "liquidación. Por eso el apalancamiento EFECTIVO de la posición queda más bajo que "
+            "el apalancamiento que usaste al abrirla — no porque hayas cambiado de "
+            "apalancamiento, sino porque el mismo tamaño ahora está respaldado por más capital."
         )
 
     n1, n2, n3, n4 = st.columns(4)
@@ -453,10 +549,10 @@ def _render_resumen_posicion(res, es_largo, stop_loss=None):
                    "liquidarte (efectivamente, no hay liquidación en un largo).")
 
     if _sl_mas_alla_de_liquidacion(res, es_largo, stop_loss):
-        st.warning(
+        st.warning(_md_dolar(
             f"⚠️ El Stop Loss ({fmt_precio_exacto(stop_loss)}) queda más allá del precio de "
             f"liquidación ({fmt_precio_exacto(res['precio_liquidacion'])}): te liquidarían antes "
-            "de que el SL se ejecute.")
+            "de que el SL se ejecute."))
 
     st.caption(
         "Fórmula: liquidación = precio promedio "
@@ -521,8 +617,9 @@ def _render_entradas_form(es_largo):
         "con el que abriste esa entrada (define el tamaño de la posición). Si más adelante le "
         "agregaste capital a esa misma entrada YA ABIERTA (sin comprar más unidades, solo para "
         "alejar la liquidación), cargalo aparte en **margen extra**: no cambia el tamaño de la "
-        "posición, pero sí el precio de liquidación. Con eso la app calcula el precio promedio "
-        "real, el apalancamiento efectivo y el **precio de liquidación**."
+        "posición ni el apalancamiento con el que operás, pero sí el precio de liquidación. Con "
+        "eso la app calcula el precio promedio real, el apalancamiento usado y el **precio de "
+        "liquidación**."
     )
 
     a_borrar = None
@@ -553,8 +650,8 @@ def _render_entradas_form(es_largo):
                 f"Margen extra (USD) {i + 1}", min_value=0.0, step=10.0, format="%.2f",
                 value=float(ent.get("margen_extra", 0.0)), key=f"sen_entrada_margen_extra_{ent['id']}",
                 help="Margen que agregaste DESPUÉS de abrir esta entrada, sin comprar más "
-                     "unidades (top-up). No suma tamaño a la posición: solo agranda el colchón "
-                     "y aleja el precio de liquidación.")
+                     "unidades (top-up). No suma tamaño a la posición ni cambia el apalancamiento "
+                     "con el que operás: solo agranda el colchón y aleja el precio de liquidación.")
         with ce6:
             st.write("")
             st.write("")
@@ -607,7 +704,7 @@ def _guardar_senal(supabase, datos, user_id, user_email):
         "riesgo_agresivo": datos.get("riesgo_agresivo", PERFILES_RIESGO["agresivo"]["default_pct"]),
         "notas": datos.get("notas", ""),
         "estado": "ABIERTA",
-        "precio_cierre": None, "fecha_cierre": None,
+        "precio_cierre": None, "fecha_cierre": None, "hora_cierre": None,
     }
     supabase.table(TABLA_SENALES).insert(row).execute()
 
@@ -619,11 +716,12 @@ def _obtener_senales(_supabase, limite=200):
     return res.data or []
 
 
-def _actualizar_estado_senal(supabase, senal_id, estado, precio_cierre, fecha_cierre):
+def _actualizar_estado_senal(supabase, senal_id, estado, precio_cierre, fecha_cierre, hora_cierre=None):
     supabase.table(TABLA_SENALES).update({
         "estado": estado,
         "precio_cierre": precio_cierre,
         "fecha_cierre": str(fecha_cierre) if fecha_cierre else None,
+        "hora_cierre": hora_cierre,
     }).eq("id", senal_id).execute()
 
 
@@ -636,6 +734,7 @@ def _cerrar_senal_manual(supabase, senal_id, precio_cierre):
         "estado": "CERRADA MANUAL",
         "precio_cierre": precio_cierre,
         "fecha_cierre": str(date.today()),
+        "hora_cierre": datetime.now().strftime("%H:%M:%S"),
     }).eq("id", senal_id).execute()
 
 
@@ -697,14 +796,15 @@ def _precio_en_vivo(ticker):
 def _pnl_vivo_senal(senal, precio_actual):
     """P&L en vivo (%) de una señal ABIERTA contra el precio actual,
     usando el precio promedio ponderado de las entradas y el
-    apalancamiento efectivo de la señal. Devuelve None si faltan
-    datos válidos para calcularlo."""
+    apalancamiento DE APERTURA de la señal (el que realmente usaste,
+    sin diluir por margen extra). Devuelve None si faltan datos
+    válidos para calcularlo."""
     if precio_actual is None or precio_actual <= 0:
         return None
     entrada = _precio_promedio_ponderado(senal)
     if not entrada or entrada <= 0:
         return None
-    apalancamiento = float(senal.get("apalancamiento") or 1.0) or 1.0
+    apalancamiento = _apalancamiento_apertura_de_senal(senal)
     es_largo = "LARGO" in str(senal.get("tipo", "")).upper()
     ret_precio = (precio_actual - entrada) / entrada
     if not es_largo:
@@ -799,7 +899,10 @@ def _evaluar_senal(senal):
 
 def _sincronizar_estados(supabase, senales):
     """Recorre las señales ABIERTAS y, si la evaluación automática
-    determinó un cierre (TP o SL), lo persiste en Supabase."""
+    determinó un cierre (TP o SL), lo persiste en Supabase. La hora de
+    cierre que se guarda es la del momento en que ESTA función detectó
+    el cierre (no la hora exacta de mercado: el historial usado es
+    diario, no intradía) — es la mejor aproximación disponible."""
     actualizadas = False
     for s in senales:
         if s.get("estado") != "ABIERTA":
@@ -807,7 +910,8 @@ def _sincronizar_estados(supabase, senales):
         ev = _evaluar_senal(s)
         if ev["es_final"] and ev["estado_calc"] != "ABIERTA":
             _actualizar_estado_senal(supabase, s["id"], ev["estado_calc"],
-                                      ev["precio_ref"], ev["fecha_ref"])
+                                      ev["precio_ref"], ev["fecha_ref"],
+                                      hora_cierre=datetime.now().strftime("%H:%M:%S"))
             actualizadas = True
     if actualizadas:
         _obtener_senales.clear()
@@ -818,16 +922,19 @@ def _sincronizar_estados(supabase, senales):
 #  CÁLCULO DE RETORNO / P&L
 #  Estas funciones siguen leyendo senal["precio_entrada"] como
 #  siempre. Ese campo se guarda como el precio PROMEDIO REAL de la
-#  posición (ponderado por el tamaño de cada entrada), y
-#  senal["apalancamiento"] como el apalancamiento efectivo, así
-#  que todo queda consistente sin tocar nada más.
+#  posición (ponderado por el tamaño de cada entrada). El
+#  apalancamiento, en cambio, YA NO se lee directo de
+#  senal["apalancamiento"]: se recalcula con
+#  _apalancamiento_apertura_de_senal para no arrastrar la dilución
+#  que genera el margen extra (ver esa función).
 # ==============================================================
 
 def _calcular_retorno(senal, precio_salida):
     """Modo 'capital': el retorno % se aplica directamente sobre el
-    monto asignado, multiplicado por el apalancamiento de la señal."""
+    monto asignado, multiplicado por el apalancamiento de apertura de
+    la señal."""
     entrada = float(senal["precio_entrada"])
-    apalancamiento = float(senal["apalancamiento"])
+    apalancamiento = _apalancamiento_apertura_de_senal(senal)
     es_largo = "LARGO" in senal["tipo"].upper()
     if entrada == 0:
         return 0.0, 0.0
@@ -848,7 +955,7 @@ def _calcular_pnl_lotes(senal, precio_salida, unidades):
     Devuelve: (pnl_usd, margen_usado, retorno_%_sobre_margen)
     """
     entrada = float(senal["precio_entrada"])
-    apalancamiento = float(senal.get("apalancamiento", 1)) or 1.0
+    apalancamiento = _apalancamiento_apertura_de_senal(senal)
     es_largo = "LARGO" in senal["tipo"].upper()
     if entrada == 0 or unidades <= 0:
         return 0.0, 0.0, 0.0
@@ -867,7 +974,7 @@ def _tamano_posicion_por_riesgo(senal, capital, pct_riesgo):
     si faltan datos válidos)."""
     entrada = float(senal.get("precio_entrada") or 0)
     sl = float(senal.get("stop_loss") or 0)
-    apalancamiento = float(senal.get("apalancamiento", 1)) or 1.0
+    apalancamiento = _apalancamiento_apertura_de_senal(senal)
     distancia_precio = abs(entrada - sl)
     if entrada <= 0 or distancia_precio <= 0:
         return None
@@ -911,7 +1018,7 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
     entradas_guardar = _entradas_para_guardar(entradas_form)
     resumen_pub = _resumen_posicion(entradas_guardar, es_largo_pub)
     precio_entrada_pos = resumen_pub["precio_promedio"] if resumen_pub else 0.0
-    apal_efectivo = resumen_pub["apalancamiento_efectivo"] if resumen_pub else 1.0
+    apal_apertura_pub = resumen_pub["apalancamiento_apertura"] if resumen_pub else 1.0
 
     st.divider()
     p2, p3 = st.columns(2)
@@ -932,10 +1039,10 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                        "(Se valida contra el precio promedio de las entradas.)")
 
     if resumen_pub and _sl_mas_alla_de_liquidacion(resumen_pub, es_largo_pub, stop_loss):
-        st.error(
+        st.error(_md_dolar(
             f"🚨 Tu Stop Loss ({fmt_precio_exacto(stop_loss)}) queda más allá del precio de "
             f"liquidación ({fmt_precio_exacto(resumen_pub['precio_liquidacion'])}): con el margen y "
-            "apalancamiento cargados te liquidarían antes de que el SL se ejecute.")
+            "apalancamiento cargados te liquidarían antes de que el SL se ejecute."))
 
     st.divider()
     st.markdown("#### 🎭 Perfiles de riesgo para esta señal")
@@ -969,7 +1076,7 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
             datos = dict(ticker=ticker, categoria=categoria, tipo=tipo, fecha=fecha, hora=hora,
                          precio_entrada=precio_entrada_pos, entradas=entradas_guardar,
                          stop_loss=stop_loss, take_profit=take_profit,
-                         apalancamiento=apal_efectivo, notas=notas,
+                         apalancamiento=apal_apertura_pub, notas=notas,
                          riesgo_conservador=riesgo_conservador, riesgo_moderado=riesgo_moderado,
                          riesgo_agresivo=riesgo_agresivo)
             try:
@@ -1032,10 +1139,10 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                       fmt_precio_local(row.get("precio_entrada")))
             v2.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
             v3.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
-            v4.metric("Apalancamiento", fmt_apal(row.get("apalancamiento", 1)))
+            v4.metric("Apalancamiento", fmt_apal(_apalancamiento_apertura_de_senal(row.to_dict())))
 
             if len(entradas_lista) > 1:
-                st.caption(f"🧩 {len(entradas_lista)} entradas → {_texto_entradas(entradas_lista)}")
+                st.caption(_md_dolar(f"🧩 {len(entradas_lista)} entradas → {_texto_entradas(entradas_lista)}"))
 
             es_largo_row = "LARGO" in str(row.get("tipo", "")).upper()
             res_row = _resumen_de_senal(row.to_dict())
@@ -1049,8 +1156,12 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                 f"🔴 {row.get('riesgo_agresivo', PERFILES_RIESGO['agresivo']['default_pct']):.1f}%"
             )
             if row.get("precio_cierre") is not None:
-                st.caption(f"Cerrada el {row.get('fecha_cierre','')} a "
-                           f"{fmt_precio_local(row.get('precio_cierre'))}")
+                hora_cierre_txt = row.get("hora_cierre")
+                st.caption(_md_dolar(
+                    f"Cerrada el {row.get('fecha_cierre','')}"
+                    + (f" a las {hora_cierre_txt}" if hora_cierre_txt else "")
+                    + f" a {fmt_precio_local(row.get('precio_cierre'))}"
+                ))
             if row.get("notas"):
                 st.markdown(f"**Notas:** {row['notas']}")
 
@@ -1201,10 +1312,10 @@ def _tab_senales(supabase, es_admin):
                       fmt_precio_local(row.get("precio_entrada")))
             v2.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
             v3.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
-            v4.metric("Apalancamiento", fmt_apal(row.get("apalancamiento", 1)))
+            v4.metric("Apalancamiento", fmt_apal(_apalancamiento_apertura_de_senal(row.to_dict())))
 
             if len(entradas_lista) > 1:
-                st.caption(f"🧩 {len(entradas_lista)} entradas cargadas → {_texto_entradas(entradas_lista)}")
+                st.caption(_md_dolar(f"🧩 {len(entradas_lista)} entradas cargadas → {_texto_entradas(entradas_lista)}"))
                 st.caption("El precio de entrada de arriba es el promedio real de la posición "
                            "(ponderado por el tamaño de cada entrada). El Simulador de Capital usa "
                            "ese mismo precio.")
@@ -1248,11 +1359,11 @@ def _tab_senales(supabase, es_admin):
                 tp_row = float(row.get("take_profit") or 0)
                 if tp_row > 0:
                     pnl_tp, _, _ = _calcular_pnl_lotes(row.to_dict(), tp_row, calc["unidades"])
-                    st.caption(
+                    st.caption(_md_dolar(
                         f"Si el precio llega al Take Profit, ganarías aproximadamente "
                         f"**${pnl_tp:,.2f}**. Si en cambio llega al Stop Loss, perderías los "
                         f"**${calc['riesgo_usd']:,.2f}** que definís al elegir este perfil."
-                    )
+                    ))
 
             if es_admin and estado == "ABIERTA":
                 st.divider()
@@ -1275,7 +1386,8 @@ def _tab_senales(supabase, es_admin):
 
 def _calcular_fila_simulacion(s, precio_ref, capital_total, modo_calculo,
                                monto_por_senal=None, pct_por_senal=None, riesgo_pct=None,
-                               unidades_por_lote=None, cantidad_lotes=None):
+                               unidades_por_lote=None, cantidad_lotes=None,
+                               fecha_cierre=None, hora_cierre=None):
     """Arma la fila de la tabla del simulador para una señal, según el
     modo de cálculo elegido. Devuelve None si faltan datos para calcular.
     IMPORTANTE: 's' ya debe venir con precio_entrada = promedio real de
@@ -1324,7 +1436,8 @@ def _calcular_fila_simulacion(s, precio_ref, capital_total, modo_calculo,
         "Fecha": s.get("fecha"), "Ticker": s.get("ticker"), "Categoría": cat, "Tipo": s.get("tipo"),
         "Entrada usada (ponderada)": fmt_precio_local(s.get("precio_entrada")),
         "Estado": "💀 LIQUIDADA" if liquidada else estado,
-        "Apalanc.": fmt_apal(s.get("apalancamiento", 1)),
+        "Cierre": _texto_cierre(estado, fecha_cierre, hora_cierre),
+        "Apalanc.": fmt_apal(_apalancamiento_apertura_de_senal(s)),
     }
     fila.update(extra_cols)
     fila.update({
@@ -1385,7 +1498,7 @@ def _liquidacion_tocada(senal, res):
     return False
 
 
-def _calcular_fila_replica(s, res, precio_ref, factor, liquidada):
+def _calcular_fila_replica(s, res, precio_ref, factor, liquidada, fecha_cierre=None, hora_cierre=None):
     """Fila del simulador replicando la posición del admin a escala.
     unidades/margen/costos = los del admin × factor. El P&L es el de la
     posición completa (Σ unidades × movimiento de precio) menos los
@@ -1412,7 +1525,8 @@ def _calcular_fila_replica(s, res, precio_ref, factor, liquidada):
         "Categoría": s.get("categoria") or "🔹 Otro", "Tipo": s.get("tipo"),
         "Entrada usada (ponderada)": fmt_precio_local(precio_prom),
         "Estado": "💀 LIQUIDADA" if liquidada else estado,
-        "Apalanc.": fmt_apal(res["apalancamiento_efectivo"]),
+        "Cierre": _texto_cierre(estado, fecha_cierre, hora_cierre),
+        "Apalanc.": fmt_apal(res["apalancamiento_apertura"]),
         "Escala": f"x{factor:.4g}",
         "Costos apertura": round(costos, 2),
         "Ret. Precio %": round(ret_precio, 2),
@@ -1507,29 +1621,43 @@ def _mostrar_tabla_estilizada(df_sim):
 
 
 def _mostrar_mejor_peor(df_sim):
+    """Tarjetas de mejor y peor operación. El color y el signo dependen
+    del resultado REAL de cada una (verde/"+" si ganó plata, rojo/sin
+    signo si perdió) — antes "peor" se pintaba siempre de rojo aunque
+    esa operación hubiera sido ganadora (pasa cuando TODAS las
+    operaciones simuladas ganan y aun así hay que elegir una como "la
+    peor" del conjunto). También se muestra cuándo se cerró la señal."""
     if df_sim.empty:
         return
     mejor = df_sim.loc[df_sim["P&L (USD)"].idxmax()]
     peor = df_sim.loc[df_sim["P&L (USD)"].idxmin()]
+
+    def _tarjeta_html(row, titulo, emoji):
+        val = float(row["P&L (USD)"])
+        positivo = val >= 0
+        color = "#3fb950" if positivo else "#f85149"
+        signo = "+" if positivo else ""
+        cierre = row.get("Cierre")
+        if cierre and cierre not in ("Sigue abierta", "—"):
+            sub_cierre = f" · cierre {cierre}"
+        elif cierre == "Sigue abierta":
+            sub_cierre = " · sigue abierta"
+        else:
+            sub_cierre = ""
+        return f"""
+        <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid {color};
+             border-radius:8px;padding:12px 16px">
+          <div style="font-size:11px;color:{color};font-weight:700">{emoji} {titulo}</div>
+          <div style="font-size:13px;color:#e6edf3;margin-top:4px">{row['Ticker']} · {row['Fecha']}{sub_cierre}</div>
+          <div style="font-size:16px;font-weight:800;color:{color}">{signo}${val:,.2f}</div>
+        </div>
+        """
+
     cM, cP = st.columns(2)
     with cM:
-        st.markdown(f"""
-        <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid #3fb950;
-             border-radius:8px;padding:12px 16px">
-          <div style="font-size:11px;color:#3fb950;font-weight:700">🏆 MEJOR OPERACIÓN</div>
-          <div style="font-size:13px;color:#e6edf3;margin-top:4px">{mejor['Ticker']} · {mejor['Fecha']}</div>
-          <div style="font-size:16px;font-weight:800;color:#3fb950">+${mejor['P&L (USD)']:,.2f}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(_tarjeta_html(mejor, "MEJOR OPERACIÓN", "🏆"), unsafe_allow_html=True)
     with cP:
-        st.markdown(f"""
-        <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid #f85149;
-             border-radius:8px;padding:12px 16px">
-          <div style="font-size:11px;color:#f85149;font-weight:700">📉 PEOR OPERACIÓN</div>
-          <div style="font-size:13px;color:#e6edf3;margin-top:4px">{peor['Ticker']} · {peor['Fecha']}</div>
-          <div style="font-size:16px;font-weight:800;color:#f85149">${peor['P&L (USD)']:,.2f}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(_tarjeta_html(peor, "PEOR OPERACIÓN", "📉"), unsafe_allow_html=True)
 
 
 # ==============================================================
@@ -1710,7 +1838,9 @@ def _tab_simulador(supabase):
                         continue
                     pct_signal = float(s.get(f"riesgo_{perfil_key}") or info["default_pct"])
                     fila = _calcular_fila_simulacion(s, precio_ref, capital_total, "riesgo",
-                                                      riesgo_pct=pct_signal)
+                                                      riesgo_pct=pct_signal,
+                                                      fecha_cierre=s.get("fecha_cierre"),
+                                                      hora_cierre=s.get("hora_cierre"))
                     if fila:
                         filas.append(fila)
 
@@ -1754,13 +1884,17 @@ def _tab_simulador(supabase):
             precio_ref = ev["precio_ref"]
         if precio_ref is None:
             continue
+        fecha_cierre_fila = s.get("fecha_cierre")
+        hora_cierre_fila = s.get("hora_cierre")
 
         cat = s.get("categoria") or "🔹 Otro"
         if modo == "📦 Por lotes (tamaño de posición)":
             unidades_por_lote = unidades_por_categoria.get(cat, DEFAULT_UNIDADES_LOTE.get(cat, 1.0))
             fila = _calcular_fila_simulacion(s, precio_ref, capital_total, "lotes",
                                               unidades_por_lote=unidades_por_lote,
-                                              cantidad_lotes=cantidad_lotes)
+                                              cantidad_lotes=cantidad_lotes,
+                                              fecha_cierre=fecha_cierre_fila,
+                                              hora_cierre=hora_cierre_fila)
         elif modo == MODO_REPLICA:
             fila = None
             res_rep = _resumen_de_senal(row.to_dict())
@@ -1773,15 +1907,21 @@ def _tab_simulador(supabase):
                     omitidas_replica += 1
                 else:
                     liquidada_rep = _liquidacion_tocada(row.to_dict(), res_rep)
-                    fila = _calcular_fila_replica(s, res_rep, precio_ref, factor_rep, liquidada_rep)
+                    fila = _calcular_fila_replica(s, res_rep, precio_ref, factor_rep, liquidada_rep,
+                                                   fecha_cierre=fecha_cierre_fila,
+                                                   hora_cierre=hora_cierre_fila)
                     filas_detalle.extend(_filas_detalle_replica(s, entradas_rep, factor_rep))
         elif modo == "🎯 % de riesgo por operación (según Stop Loss)":
             fila = _calcular_fila_simulacion(s, precio_ref, capital_total, "riesgo",
-                                              riesgo_pct=riesgo_pct_sim)
+                                              riesgo_pct=riesgo_pct_sim,
+                                              fecha_cierre=fecha_cierre_fila,
+                                              hora_cierre=hora_cierre_fila)
         else:
             fila = _calcular_fila_simulacion(s, precio_ref, capital_total, "monto_pct",
                                               monto_por_senal=monto_por_senal,
-                                              pct_por_senal=pct_por_senal)
+                                              pct_por_senal=pct_por_senal,
+                                              fecha_cierre=fecha_cierre_fila,
+                                              hora_cierre=hora_cierre_fila)
         if fila:
             filas_sim.append(fila)
 
@@ -1843,10 +1983,13 @@ def render_senales_trading(supabase, user_id, user_email):
         ADD COLUMN IF NOT EXISTS riesgo_conservador float DEFAULT 1.0,
         ADD COLUMN IF NOT EXISTS riesgo_moderado    float DEFAULT 2.0,
         ADD COLUMN IF NOT EXISTS riesgo_agresivo    float DEFAULT 3.0,
-        ADD COLUMN IF NOT EXISTS entradas jsonb DEFAULT '[]'::jsonb;
+        ADD COLUMN IF NOT EXISTS entradas jsonb DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS hora_cierre text;
     (Los campos nuevos de cada entrada —costo_apertura, apalancamiento,
     margen, margen_extra— viven dentro del jsonb "entradas": no hace
-    falta migrar nada más.)
+    falta migrar nada más. "hora_cierre" es nueva en esta versión: sin
+    ella, las señales cerradas antes de correr esta migración van a
+    mostrar el cierre solo con fecha, sin hora, y eso es normal.)
     """
     es_admin = _es_admin(user_email)
 
