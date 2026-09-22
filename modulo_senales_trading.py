@@ -1760,19 +1760,14 @@ def _tab_senales(supabase, es_admin):
                     "la misma proporción, y el precio de liquidación te queda igual que el del "
                     "publicador (escalar la posición no lo cambia)."
                 )
-                rr1, rr2 = st.columns([1.3, 1])
-                with rr1:
-                    ref_replica_row = st.radio(
-                        "Tu número corresponde a:", [REPLICA_REF_PRIMERA, REPLICA_REF_TOTAL],
-                        horizontal=True, key=f"sen_hist_replica_ref_{row['id']}")
-                with rr2:
-                    base_replica_row = st.number_input(
-                        "Tu margen (USD)", min_value=0.01, value=10.0, step=1.0, format="%.2f",
-                        key=f"sen_hist_replica_base_{row['id']}")
+                base_replica_row = st.number_input(
+                    "Tu margen (USD) — margen de la 1ª entrada (apertura + extra)",
+                    min_value=0.01, value=10.0, step=1.0, format="%.2f",
+                    key=f"sen_hist_replica_base_{row['id']}")
 
                 entradas_replica = _entradas_de_senal(row.to_dict())
                 factor_replica_row = _factor_replica(res_row, entradas_replica, base_replica_row,
-                                                       ref_replica_row)
+                                                       REPLICA_REF_PRIMERA)
                 if factor_replica_row <= 0:
                     st.caption("Cargá un número mayor a 0 para calcular tu posición.")
                 else:
@@ -1809,12 +1804,6 @@ def _tab_senales(supabase, es_admin):
                         with st.expander("🔍 Ver el detalle por entrada"):
                             st.dataframe(pd.DataFrame(detalle_replica_row),
                                          use_container_width=True, hide_index=True)
-
-            if estado == "ABIERTA":
-                st.divider()
-                st.caption("🔧 Para agregar otra entrada a esta posición (promediar / alejar "
-                           "liquidación) o cerrarla manualmente, andá a la pestaña "
-                           "**📢 Publicar Señal** → 'Gestionar señales publicadas'.")
 
 
 # ==============================================================
