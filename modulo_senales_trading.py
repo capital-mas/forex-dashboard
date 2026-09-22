@@ -8,6 +8,30 @@
 #  coincidir EXACTAMENTE con el de esas políticas.
 #
 #  CAMBIOS DE ESTA VERSIÓN:
+#   - CAMBIO: se eliminó, en "Señales y Resultados", el selector
+#     "Elegí con qué perfil querés tomar esta señal" (el que sugería
+#     un tamaño de posición a partir de un % de riesgo sobre el
+#     Stop Loss). Ese cálculo ignoraba el precio de liquidación y
+#     podía sugerir una posición que te liquidaba ANTES de que el SL
+#     llegara a ejecutarse — quedaba un cartel de advertencia sin
+#     forma de corregirlo desde ahí. Se reemplaza por lo de abajo.
+#   - NUEVO: en "🔁 Replicá la posición", ahora se puede elegir CON
+#     QUÉ APALANCAMIENTO replicarla: el de apertura original (default,
+#     mismo comportamiento de siempre: escala TODAS las entradas tal
+#     cual) o uno de los 3 apalancamientos sugeridos que el admin
+#     carga por señal (🟢 Conservador / 🟡 Moderado / 🔴 Agresivo).
+#     Si elegís un perfil, se arma una posición nueva (una sola
+#     entrada) al precio promedio de la señal, con TU margen y el
+#     apalancamiento de ese perfil — mostrando su propio precio de
+#     liquidación — en vez de escalar las entradas originales.
+#     REQUIERE migrar la tabla en Supabase:
+#       ALTER TABLE senales_trading
+#       ADD COLUMN IF NOT EXISTS apal_conservador float,
+#       ADD COLUMN IF NOT EXISTS apal_moderado    float,
+#       ADD COLUMN IF NOT EXISTS apal_agresivo    float;
+#     Las señales viejas, sin estos campos, simplemente no ofrecen
+#     esos 3 perfiles como opción de apalancamiento en la réplica
+#     (solo queda disponible "Apertura").
 #   - CAMBIO: en "Señales y Resultados" y en "Publicar Señal", el
 #     cartel de posición ahora separa claramente el "Margen de
 #     apertura" del "Margen extra" agregado para alejar la
@@ -128,10 +152,6 @@
 #       ADD COLUMN IF NOT EXISTS riesgo_moderado    float DEFAULT 2.0,
 #       ADD COLUMN IF NOT EXISTS riesgo_agresivo    float DEFAULT 3.0;
 #     (además de la columna "categoria" agregada en versiones previas)
-#   - En "Señales y Resultados", cada señal tiene un selector de
-#     perfil de riesgo: el usuario elige con qué perfil quiere tomar
-#     esa señal y la app calcula solo el tamaño de posición sugerido,
-#     el capital que usaría de margen y el riesgo/premio en dólares.
 #   - En el Simulador de Capital se agregó el modo "🎭 Comparar los
 #     3 perfiles de riesgo": corre la simulación completa una vez
 #     por perfil (usando el % que definió el admin en cada señal) y
@@ -191,7 +211,10 @@ LOTES_FOREX_PRESETS = {
 # Perfiles de riesgo: el % de cada perfil se define POR SEÑAL, al
 # publicarla (así el admin puede ser más o menos permisivo según el
 # instrumento o la convicción de la señal). Estos valores son solo
-# los defaults que se muestran al cargar el formulario.
+# los defaults que se muestran al cargar el formulario. Se siguen
+# usando para el Simulador de Capital (pestaña "Comparar los 3
+# perfiles"). Para la réplica de una posición puntual en "Señales y
+# Resultados", ver los campos apal_conservador/moderado/agresivo.
 PERFILES_RIESGO = {
     "conservador": {
         "label": "🟢 Conservador",
@@ -702,6 +725,9 @@ def _guardar_senal(supabase, datos, user_id, user_email):
         "riesgo_conservador": datos.get("riesgo_conservador", PERFILES_RIESGO["conservador"]["default_pct"]),
         "riesgo_moderado": datos.get("riesgo_moderado", PERFILES_RIESGO["moderado"]["default_pct"]),
         "riesgo_agresivo": datos.get("riesgo_agresivo", PERFILES_RIESGO["agresivo"]["default_pct"]),
+        "apal_conservador": datos.get("apal_conservador"),
+        "apal_moderado": datos.get("apal_moderado"),
+        "apal_agresivo": datos.get("apal_agresivo"),
         "notas": datos.get("notas", ""),
         "estado": "ABIERTA",
         "precio_cierre": None, "fecha_cierre": None, "hora_cierre": None,
@@ -1047,26 +1073,42 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
     st.divider()
     st.markdown("#### 🎭 Perfiles de riesgo para esta señal")
     st.caption(
-        "Definí qué % de capital arriesgaría cada perfil si el precio llega al Stop Loss. "
-        "Quien vea esta señal va a poder elegir con qué perfil quiere tomarla, y la app le va "
-        "a calcular sola el tamaño de posición sugerido."
+        "Definí qué % de capital arriesgaría cada perfil si el precio llega al Stop Loss "
+        "(se usa en el Simulador de Capital, pestaña 'Comparar los 3 perfiles') y con qué "
+        "apalancamiento sugerís tomar la señal en cada perfil (se usa en 'Señales y "
+        "Resultados', al replicar la posición con un apalancamiento distinto al de apertura)."
     )
     rp1, rp2, rp3 = st.columns(3)
     with rp1:
         riesgo_conservador = st.number_input(
             f"{PERFILES_RIESGO['conservador']['label']} — % de riesgo", min_value=0.1, max_value=50.0,
             value=PERFILES_RIESGO['conservador']['default_pct'], step=0.1, key="sen_riesgo_conservador")
+        apal_conservador = st.number_input(
+            f"{PERFILES_RIESGO['conservador']['label']} — apalancamiento sugerido", min_value=1.0,
+            max_value=125.0, value=float(apal_apertura_pub), step=1.0, format="%.1f",
+            key="sen_apal_conservador")
     with rp2:
         riesgo_moderado = st.number_input(
             f"{PERFILES_RIESGO['moderado']['label']} — % de riesgo", min_value=0.1, max_value=50.0,
             value=PERFILES_RIESGO['moderado']['default_pct'], step=0.1, key="sen_riesgo_moderado")
+        apal_moderado = st.number_input(
+            f"{PERFILES_RIESGO['moderado']['label']} — apalancamiento sugerido", min_value=1.0,
+            max_value=125.0, value=float(apal_apertura_pub), step=1.0, format="%.1f",
+            key="sen_apal_moderado")
     with rp3:
         riesgo_agresivo = st.number_input(
             f"{PERFILES_RIESGO['agresivo']['label']} — % de riesgo", min_value=0.1, max_value=50.0,
             value=PERFILES_RIESGO['agresivo']['default_pct'], step=0.1, key="sen_riesgo_agresivo")
+        apal_agresivo = st.number_input(
+            f"{PERFILES_RIESGO['agresivo']['label']} — apalancamiento sugerido", min_value=1.0,
+            max_value=125.0, value=float(apal_apertura_pub), step=1.0, format="%.1f",
+            key="sen_apal_agresivo")
 
     if not (riesgo_conservador <= riesgo_moderado <= riesgo_agresivo):
         st.warning("⚠️ Lo lógico es que Conservador ≤ Moderado ≤ Agresivo en % de riesgo.")
+    if not (apal_conservador <= apal_moderado <= apal_agresivo):
+        st.warning("⚠️ Lo lógico es que Conservador ≤ Moderado ≤ Agresivo también en el "
+                   "apalancamiento sugerido.")
 
     if st.button("📢 Publicar señal", type="primary", key="sen_btn_publicar"):
         if not ticker or not resumen_pub or stop_loss <= 0 or take_profit <= 0:
@@ -1078,7 +1120,9 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                          stop_loss=stop_loss, take_profit=take_profit,
                          apalancamiento=apal_apertura_pub, notas=notas,
                          riesgo_conservador=riesgo_conservador, riesgo_moderado=riesgo_moderado,
-                         riesgo_agresivo=riesgo_agresivo)
+                         riesgo_agresivo=riesgo_agresivo,
+                         apal_conservador=apal_conservador, apal_moderado=apal_moderado,
+                         apal_agresivo=apal_agresivo)
             try:
                 _guardar_senal(supabase, datos, user_id, user_email)
                 _obtener_senales.clear()
@@ -1177,12 +1221,15 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
 # ==============================================================
 #  RENDER — TAB SEÑALES Y RESULTADOS (todos ven)
 #  Ya NO tiene botón de eliminar — eso vive en "Publicar Señal".
-#  Cada señal tiene un selector de perfil de riesgo que calcula el
-#  tamaño de posición sugerido. Si hay varias entradas, se muestran
-#  todas (precio, margen, apalancamiento, costo), el precio promedio
-#  real de la posición y el precio de liquidación. Las señales
-#  ABIERTAS además muestran un cartel de P&L en vivo (🟢/🔴), con
-#  precio actualizado cada 5 minutos.
+#  Ya NO tiene selector de "elegí con qué perfil tomar la señal"
+#  (calculaba un tamaño de posición a partir de un % de riesgo, sin
+#  chequear el precio de liquidación). En su lugar, "Replicá la
+#  posición" deja elegir directamente el apalancamiento (apertura o
+#  uno de los 3 sugeridos por el admin) con el que armar la posición.
+#  Si hay varias entradas, se muestran todas (precio, margen,
+#  apalancamiento, costo), el precio promedio real de la posición y
+#  el precio de liquidación. Las señales ABIERTAS además muestran un
+#  cartel de P&L en vivo (🟢/🔴), con precio actualizado cada 5 min.
 # ==============================================================
 
 def _tab_senales(supabase, es_admin):
@@ -1245,15 +1292,6 @@ def _tab_senales(supabase, es_admin):
     with k6: st.metric("🔴 Perdiendo ahora", n_perdiendo_vivo, "en vivo · cada 5 min")
 
     st.divider()
-    cap_col1, cap_col2 = st.columns([1, 3])
-    with cap_col1:
-        capital_usuario = st.number_input(
-            "💰 Tu capital", min_value=100.0, value=1000.0, step=100.0, key="sen_hist_capital")
-    with cap_col2:
-        st.caption(
-            "Con este capital calculamos el tamaño de posición sugerido cuando elijas un "
-            "perfil de riesgo dentro de cada señal."
-        )
 
     fc1, fc2, fc3, fc4 = st.columns(4)
     with fc1:
@@ -1343,120 +1381,110 @@ def _tab_senales(supabase, es_admin):
                 st.markdown(f"**Notas:** {row['notas']}")
 
             # ------------------------------------------------------
-            #  Selector de perfil de riesgo para esta señal puntual
-            # ------------------------------------------------------
-            st.divider()
-            st.markdown("##### 🎯 Elegí con qué perfil querés tomar esta señal")
-            perfil_label_sel = st.radio(
-                "Perfil de riesgo", [info["label"] for info in PERFILES_RIESGO.values()],
-                horizontal=True, key=f"sen_perfil_{row['id']}")
-            perfil_key = PERFILES_LABEL_A_KEY[perfil_label_sel]
-            pct_signal = float(row.get(f"riesgo_{perfil_key}") or PERFILES_RIESGO[perfil_key]["default_pct"])
-            st.caption(PERFILES_RIESGO[perfil_key]["desc"])
-
-            calc = _tamano_posicion_por_riesgo(row.to_dict(), capital_usuario, pct_signal)
-            if calc is None:
-                st.caption("No se puede calcular el tamaño sugerido: faltan precio de entrada o "
-                           "stop loss válidos.")
-            else:
-                rc1, rc2, rc3 = st.columns(3)
-                rc1.metric(f"Riesgo si toca el SL ({pct_signal:.1f}%)", f"${calc['riesgo_usd']:,.2f}")
-                rc2.metric("Tamaño de posición sugerido", f"${calc['nominal']:,.2f}")
-                rc3.metric("Capital que usarías (margen)", f"${calc['margen']:,.2f}")
-
-                tp_row = float(row.get("take_profit") or 0)
-                if tp_row > 0:
-                    pnl_tp, _, _ = _calcular_pnl_lotes(row.to_dict(), tp_row, calc["unidades"])
-                    st.caption(_md_dolar(
-                        f"Si el precio llega al Take Profit, ganarías aproximadamente "
-                        f"**${pnl_tp:,.2f}**. Si en cambio llega al Stop Loss, perderías los "
-                        f"**${calc['riesgo_usd']:,.2f}** que definís al elegir este perfil."
-                    ))
-
-                # Posición COMPLETA (el mismo cartel que aparece arriba, con margen,
-                # apalancamiento, unidades y precio de liquidación) que te quedaría si
-                # tomás esta señal con el tamaño sugerido para el perfil elegido.
-                apal_sugerido = _apalancamiento_apertura_de_senal(row.to_dict())
-                entrada_sugerida = float(row.get("precio_entrada") or 0)
-                if entrada_sugerida > 0 and apal_sugerido > 0:
-                    entradas_calc = [{
-                        "precio": entrada_sugerida, "costo_apertura": 0.0,
-                        "apalancamiento": apal_sugerido, "margen": calc["margen"],
-                        "margen_extra": 0.0,
-                    }]
-                    res_calc = _resumen_posicion(entradas_calc, es_largo_row)
-                    if res_calc:
-                        st.caption(
-                            f"Así te queda la posición completa si tomás esta señal con el "
-                            f"tamaño sugerido del perfil {perfil_label_sel}:"
-                        )
-                        _render_resumen_posicion(res_calc, es_largo_row,
-                                                  stop_loss=float(row.get("stop_loss") or 0))
-
-            # ------------------------------------------------------
-            #  Simulador rápido: replicar la posición tal cual la
-            #  publicó el admin, poniendo un solo número (tu margen).
-            #  Independiente del perfil elegido arriba.
+            #  Replicar la posición — elegís CON QUÉ APALANCAMIENTO:
+            #  el de apertura original (escala tal cual todas las
+            #  entradas del admin) o uno de los 3 sugeridos por perfil
+            #  (arma una posición nueva, de una sola entrada, al
+            #  precio promedio de la señal, con tu margen).
             # ------------------------------------------------------
             if res_row:
                 st.divider()
-                st.markdown("##### 🔁 O replicá la posición tal cual la publicó el admin")
-                st.caption(
-                    "Poné un solo número (tu margen) y la app copia la posición del publicador "
-                    "tal cual: mismas entradas, mismos precios y el mismo apalancamiento en cada "
-                    "una. El margen de apertura y el margen extra de cada entrada se escalan en "
-                    "la misma proporción, y el precio de liquidación te queda igual que el del "
-                    "publicador (escalar la posición no lo cambia)."
-                )
-                rr1, rr2 = st.columns([1.3, 1])
-                with rr1:
-                    ref_replica_row = st.radio(
-                        "Tu número corresponde a:", [REPLICA_REF_PRIMERA, REPLICA_REF_TOTAL],
-                        horizontal=True, key=f"sen_hist_replica_ref_{row['id']}")
-                with rr2:
-                    base_replica_row = st.number_input(
-                        "Tu margen (USD)", min_value=0.01, value=10.0, step=1.0, format="%.2f",
-                        key=f"sen_hist_replica_base_{row['id']}")
+                st.markdown("##### 🔁 Replicá la posición")
 
-                entradas_replica = _entradas_de_senal(row.to_dict())
-                factor_replica_row = _factor_replica(res_row, entradas_replica, base_replica_row,
-                                                       ref_replica_row)
-                if factor_replica_row <= 0:
-                    st.caption("Cargá un número mayor a 0 para calcular tu posición.")
-                else:
-                    rrm1, rrm2, rrm3, rrm4 = st.columns(4)
-                    rrm1.metric("Margen de apertura a poner",
-                                f"${res_row['margen_apertura'] * factor_replica_row:,.2f}")
-                    rrm2.metric("Margen extra a poner",
-                                f"${res_row['margen_extra'] * factor_replica_row:,.2f}")
-                    rrm3.metric("Margen total a poner",
-                                f"${res_row['margen_total'] * factor_replica_row:,.2f}")
-                    rrm4.metric("Apalancamiento", fmt_apal(res_row["apalancamiento_apertura"]))
+                opciones_apal_replica = {
+                    f"Apertura ({fmt_apal(res_row['apalancamiento_apertura'])})":
+                        ("apertura", res_row["apalancamiento_apertura"]),
+                }
+                for perfil_key_r in PERFILES_RIESGO:
+                    apal_perfil_r = row.get(f"apal_{perfil_key_r}")
+                    if apal_perfil_r:
+                        label_perfil_r = (f"{PERFILES_RIESGO[perfil_key_r]['label']} "
+                                          f"({fmt_apal(apal_perfil_r)})")
+                        opciones_apal_replica[label_perfil_r] = (perfil_key_r, float(apal_perfil_r))
 
-                    if res_row["liquidada_al_abrir"]:
-                        st.error("🚨 Con este margen la posición nacería liquidada (los costos "
-                                 "de apertura superan el margen total).")
-                    elif res_row["sin_liquidacion"]:
-                        st.caption("Con este apalancamiento y margen, el activo tendría que "
-                                   "llegar a $0 para liquidarte.")
+                apal_sel_label = st.radio(
+                    "Apalancamiento a usar", list(opciones_apal_replica.keys()),
+                    horizontal=True, key=f"sen_hist_replica_apal_{row['id']}")
+                modo_apal_sel, apal_valor_sel = opciones_apal_replica[apal_sel_label]
+
+                if modo_apal_sel == "apertura":
+                    st.caption(
+                        "Poné un solo número (tu margen) y la app copia la posición del publicador "
+                        "tal cual: mismas entradas, mismos precios y el mismo apalancamiento en cada "
+                        "una. El margen de apertura y el margen extra de cada entrada se escalan en "
+                        "la misma proporción, y el precio de liquidación te queda igual que el del "
+                        "publicador (escalar la posición no lo cambia)."
+                    )
+                    rr1, rr2 = st.columns([1.3, 1])
+                    with rr1:
+                        ref_replica_row = st.radio(
+                            "Tu número corresponde a:", [REPLICA_REF_PRIMERA, REPLICA_REF_TOTAL],
+                            horizontal=True, key=f"sen_hist_replica_ref_{row['id']}")
+                    with rr2:
+                        base_replica_row = st.number_input(
+                            "Tu margen (USD)", min_value=0.01, value=10.0, step=1.0, format="%.2f",
+                            key=f"sen_hist_replica_base_{row['id']}")
+
+                    entradas_replica = _entradas_de_senal(row.to_dict())
+                    factor_replica_row = _factor_replica(res_row, entradas_replica, base_replica_row,
+                                                           ref_replica_row)
+                    if factor_replica_row <= 0:
+                        st.caption("Cargá un número mayor a 0 para calcular tu posición.")
                     else:
-                        rrl1, rrl2 = st.columns(2)
-                        rrl1.metric("💀 Precio de liquidación",
-                                    fmt_precio_exacto(res_row["precio_liquidacion"]))
-                        rrl2.metric("Distancia a liquidación",
-                                    f"{res_row['dist_liq_pct']:+.2f}%")
+                        rrm1, rrm2, rrm3, rrm4 = st.columns(4)
+                        rrm1.metric("Margen de apertura a poner",
+                                    f"${res_row['margen_apertura'] * factor_replica_row:,.2f}")
+                        rrm2.metric("Margen extra a poner",
+                                    f"${res_row['margen_extra'] * factor_replica_row:,.2f}")
+                        rrm3.metric("Margen total a poner",
+                                    f"${res_row['margen_total'] * factor_replica_row:,.2f}")
+                        rrm4.metric("Apalancamiento", fmt_apal(res_row["apalancamiento_apertura"]))
 
-                    if _sl_mas_alla_de_liquidacion(res_row, es_largo_row,
-                                                    float(row.get("stop_loss") or 0)):
-                        st.warning("⚠️ Con este margen, el Stop Loss queda más allá del precio de "
-                                   "liquidación: te liquidarían antes de que el SL se ejecute.")
+                        if res_row["liquidada_al_abrir"]:
+                            st.error("🚨 Con este margen la posición nacería liquidada (los costos "
+                                     "de apertura superan el margen total).")
+                        elif res_row["sin_liquidacion"]:
+                            st.caption("Con este apalancamiento y margen, el activo tendría que "
+                                       "llegar a $0 para liquidarte.")
+                        else:
+                            rrl1, rrl2 = st.columns(2)
+                            rrl1.metric("💀 Precio de liquidación",
+                                        fmt_precio_exacto(res_row["precio_liquidacion"]))
+                            rrl2.metric("Distancia a liquidación",
+                                        f"{res_row['dist_liq_pct']:+.2f}%")
 
-                    detalle_replica_row = _filas_detalle_replica(row.to_dict(), entradas_replica,
-                                                                   factor_replica_row)
-                    if len(detalle_replica_row) > 1:
-                        with st.expander("🔍 Ver el detalle por entrada"):
-                            st.dataframe(pd.DataFrame(detalle_replica_row),
-                                         use_container_width=True, hide_index=True)
+                        if _sl_mas_alla_de_liquidacion(res_row, es_largo_row,
+                                                        float(row.get("stop_loss") or 0)):
+                            st.warning("⚠️ Con este margen, el Stop Loss queda más allá del precio de "
+                                       "liquidación: te liquidarían antes de que el SL se ejecute.")
+
+                        detalle_replica_row = _filas_detalle_replica(row.to_dict(), entradas_replica,
+                                                                       factor_replica_row)
+                        if len(detalle_replica_row) > 1:
+                            with st.expander("🔍 Ver el detalle por entrada"):
+                                st.dataframe(pd.DataFrame(detalle_replica_row),
+                                             use_container_width=True, hide_index=True)
+                else:
+                    st.caption(
+                        f"Se arma una posición nueva al precio promedio de la señal "
+                        f"({fmt_precio_exacto(res_row['precio_promedio'])}), con el apalancamiento "
+                        f"sugerido para el perfil {PERFILES_RIESGO[modo_apal_sel]['label']} "
+                        f"({fmt_apal(apal_valor_sel)}) en vez del apalancamiento de apertura de la "
+                        "señal. No es una escala de las entradas originales: es tu margen a ese "
+                        "apalancamiento."
+                    )
+                    base_replica_perfil = st.number_input(
+                        "Tu margen (USD)", min_value=0.01, value=10.0, step=1.0, format="%.2f",
+                        key=f"sen_hist_replica_perfil_base_{row['id']}")
+                    entrada_sintetica = [{
+                        "precio": res_row["precio_promedio"], "costo_apertura": 0.0,
+                        "apalancamiento": apal_valor_sel, "margen": base_replica_perfil,
+                        "margen_extra": 0.0,
+                    }]
+                    res_perfil = _resumen_posicion(entrada_sintetica, es_largo_row)
+                    if res_perfil:
+                        _render_resumen_posicion(res_perfil, es_largo_row,
+                                                  stop_loss=float(row.get("stop_loss") or 0))
 
             if es_admin and estado == "ABIERTA":
                 st.divider()
@@ -1882,13 +1910,19 @@ def render_senales_trading(supabase, user_id, user_email):
         ADD COLUMN IF NOT EXISTS riesgo_conservador float DEFAULT 1.0,
         ADD COLUMN IF NOT EXISTS riesgo_moderado    float DEFAULT 2.0,
         ADD COLUMN IF NOT EXISTS riesgo_agresivo    float DEFAULT 3.0,
+        ADD COLUMN IF NOT EXISTS apal_conservador   float,
+        ADD COLUMN IF NOT EXISTS apal_moderado      float,
+        ADD COLUMN IF NOT EXISTS apal_agresivo      float,
         ADD COLUMN IF NOT EXISTS entradas jsonb DEFAULT '[]'::jsonb,
         ADD COLUMN IF NOT EXISTS hora_cierre text;
     (Los campos nuevos de cada entrada —costo_apertura, apalancamiento,
     margen, margen_extra— viven dentro del jsonb "entradas": no hace
     falta migrar nada más. "hora_cierre" es nueva en esta versión: sin
     ella, las señales cerradas antes de correr esta migración van a
-    mostrar el cierre solo con fecha, sin hora, y eso es normal.)
+    mostrar el cierre solo con fecha, sin hora, y eso es normal.
+    "apal_conservador/moderado/agresivo" son nuevos: sin ellos, las
+    señales viejas solo ofrecen "Apertura" como apalancamiento al
+    replicar la posición en "Señales y Resultados".)
     """
     es_admin = _es_admin(user_email)
 
@@ -1904,8 +1938,9 @@ def render_senales_trading(supabase, user_id, user_email):
         apalancamiento, margen de apertura y margen extra), precio de liquidación, stop loss,
         take profit, categoría y perfiles de riesgo (🟢 Conservador / 🟡 Moderado / 🔴 Agresivo)
         — evaluación automática de aciertos/desaciertos, P&L en vivo (actualizado cada 5 min)
-        para las abiertas, y simulador de capital (por monto, %, riesgo, lotes o comparando los
-        3 perfiles) para cualquier usuario.
+        para las abiertas, réplica de la posición con distintos apalancamientos sugeridos, y
+        simulador de capital (por monto, %, riesgo, lotes o comparando los 3 perfiles) para
+        cualquier usuario.
       </div>
     </div>
     """, unsafe_allow_html=True)
