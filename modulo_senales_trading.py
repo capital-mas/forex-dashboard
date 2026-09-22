@@ -2032,8 +2032,8 @@ def _mostrar_tabla_estilizada(df_sim):
         format_dict["% Riesgo"] = "{:.2f}%"
     if "Costos apertura" in df_sim.columns:
         format_dict["Costos apertura"] = "${:,.2f}"
-    if "Margen extra (real)" in df_sim.columns:
-        format_dict["Margen extra (real)"] = "${:,.2f}"
+    if "Margen extra (según tu monto)" in df_sim.columns:
+        format_dict["Margen extra (según tu monto)"] = "${:,.2f}"
 
     _map = "map" if hasattr(df_sim.style, "map") else "applymap"
     styled = (df_sim.style
@@ -2099,11 +2099,11 @@ def _mostrar_mejor_peor(df_sim):
 #  monto distinto por cada una. El cálculo sigue siendo el mismo
 #  directo y confiable (usa el apalancamiento real con el que se
 #  publicó cada señal).
-#  NUEVO: se agregó el "Margen extra agregado", la suma del margen
-#  extra REAL que el publicador cargó en las posiciones originales
-#  (para alejar su liquidación) de las señales incluidas en la
-#  simulación. Es solo informativo: no es parte del monto que vos
-#  cargás para simular ni cambia el P&L calculado.
+#  NUEVO: se agregó el "Margen extra agregado", escalado según el
+#  monto que VOS elegiste para cada señal (misma proporción que usó
+#  el publicador entre margen de apertura y margen extra en su
+#  posición original). Es solo informativo: no es parte del monto que
+#  vos cargás para simular ni cambia el P&L calculado.
 #  Las órdenes PENDIENTES (todavía no activadas) se excluyen del
 #  simulador: no hay una posición real para simular hasta que se
 #  active.
@@ -2193,7 +2193,7 @@ def _tab_simulador(supabase):
                 key=f"sim_monto_ind_{row['id']}")
 
     filas = []
-    margen_extra_total_real = 0.0
+    margen_extra_total_usuario = 0.0
     for _, row in df_base.iterrows():
         s = row.to_dict()
         s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
@@ -2207,16 +2207,24 @@ def _tab_simulador(supabase):
         if monto_signal <= 0:
             continue
 
+        # Margen extra escalado a TU monto: mantiene la misma proporción
+        # que tenía el publicador entre margen de apertura y margen extra
+        # en la posición original. Si la señal no tiene margen de
+        # apertura cargado (señal vieja), no hay base para escalar y
+        # queda en 0.
         res_signal = _resumen_de_senal(s)
-        margen_extra_real = res_signal["margen_extra"] if res_signal else 0.0
-        margen_extra_total_real += margen_extra_real
+        margen_extra_usuario = 0.0
+        if res_signal and res_signal.get("margen_apertura", 0) > 0:
+            factor_monto = monto_signal / res_signal["margen_apertura"]
+            margen_extra_usuario = res_signal["margen_extra"] * factor_monto
+        margen_extra_total_usuario += margen_extra_usuario
 
         fila = _calcular_fila_simulacion(s, precio_ref, monto_signal, "monto_pct",
                                           monto_por_senal=monto_signal,
                                           fecha_cierre=s.get("fecha_cierre"),
                                           hora_cierre=s.get("hora_cierre"))
         if fila:
-            fila["Margen extra (real)"] = round(margen_extra_real, 2)
+            fila["Margen extra (según tu monto)"] = round(margen_extra_usuario, 2)
             filas.append(fila)
 
     if not filas:
@@ -2226,13 +2234,14 @@ def _tab_simulador(supabase):
     df_sim = pd.DataFrame(filas)
     st.divider()
     _mostrar_metricas_sim(df_sim, "Capital total usado")
-    st.metric("➕ Margen extra agregado (en las posiciones originales)",
-              f"USD {margen_extra_total_real:,.2f}")
+    st.metric("➕ Margen extra agregado (según el monto que pusiste)",
+              f"USD {margen_extra_total_usuario:,.2f}")
     st.caption(
-        "El margen extra es capital que el publicador sumó DESPUÉS de abrir cada posición, solo "
-        "para alejar su liquidación (no cambia el tamaño ni el resultado de la operación). Se "
-        "muestra acá a modo informativo: no forma parte del monto que vos cargaste para simular "
-        "ni afecta el P&L calculado."
+        "Si replicaras cada posición con el monto que elegiste arriba —manteniendo la misma "
+        "proporción que usó el publicador entre margen de apertura y margen extra— este sería "
+        "el margen extra que te correspondería agregar para conservar la misma distancia "
+        "relativa a liquidación. Es informativo: no forma parte del monto que cargaste para "
+        "simular ni afecta el P&L calculado."
     )
     _mostrar_tabla_estilizada(df_sim)
     _mostrar_mejor_peor(df_sim)
