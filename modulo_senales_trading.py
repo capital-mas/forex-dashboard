@@ -1492,7 +1492,7 @@ def _tab_senales(supabase, es_admin):
                         "margen_extra": 0.0,
                     }]
                     res_perfil = _resumen_posicion(entrada_sintetica, es_largo_row)
-                                        if res_perfil:
+                    if res_perfil:
                         _render_resumen_posicion(res_perfil, es_largo_row,
                                                   stop_loss=float(row.get("stop_loss") or 0))
 
