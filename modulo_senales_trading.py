@@ -2088,31 +2088,25 @@ def _mostrar_mejor_peor(df_sim):
 
 # ==============================================================
 #  RENDER — TAB SIMULADOR (todos)
-#  CAMBIO: se sacó el selector "Modo de asignación". Ahora el
-#  Simulador solo trabaja de una forma: le ponés un MONTO FIJO POR
-#  SEÑAL y te muestra 3 tablas (🟢 Conservador / 🟡 Moderado /
-#  🔴 Agresivo), una por cada perfil de riesgo. Las 3 tablas parten
-#  del MISMO monto fijo; lo que cambia entre ellas es el % de riesgo
-#  de cada perfil (definido por el admin al publicar cada señal), que
-#  determina el tamaño de posición sugerido — y por lo tanto cuánto
-#  margen terminás usando realmente en cada una. El apalancamiento que
-#  se usa en el cálculo es siempre el REAL de la señal (el que cargó
-#  el admin al publicarla), igual en las 3 tablas.
+#  CAMBIO: se sacaron las 3 pestañas por perfil de riesgo (🟢🟡🔴) y el
+#  modo "riesgo" (tamaño de posición a partir de un % del capital y la
+#  distancia al Stop Loss) — ese cálculo podía devolver valores rotos
+#  (P&L y Ret. Apalancado en blanco) en señales todavía abiertas, según
+#  cómo quedara la distancia entrada→SL. Ahora el Simulador vuelve a
+#  ser UNA sola tabla: le ponés un MONTO FIJO POR SEÑAL (el mismo
+#  monto para todas, editable) y calcula el resultado directo con el
+#  apalancamiento real con el que se publicó cada señal — el mismo
+#  cálculo simple y confiable que ya se usa para mostrar el "Retorno
+#  apalancado" en la pestaña "Señales y Resultados".
 #  Las órdenes PENDIENTES (todavía no activadas) se excluyen del
 #  simulador: no hay una posición real para simular hasta que se
 #  active.
-#  El modo "Replicar la posición del publicador" y el resto de los
-#  modos anteriores (% del capital, por lotes) se sacaron de acá: la
-#  réplica exacta de una señal puntual ahora vive directamente en su
-#  ficha, dentro de "Señales y Resultados".
 # ==============================================================
 
 def _tab_simulador(supabase):
     st.caption(
-        "Simulá cuánto hubieras ganado o perdido con un monto fijo por señal, comparando los "
-        "3 perfiles de riesgo. Cada perfil arriesga un % distinto de ese monto si el precio "
-        "llega al Stop Loss — eso define el tamaño de posición sugerido de cada uno — pero "
-        "los 3 usan siempre el apalancamiento real con el que se publicó la señal."
+        "Simulá cuánto hubieras ganado o perdido asignando el mismo monto fijo a cada señal, "
+        "usando siempre el apalancamiento real con el que se publicó."
     )
     st.caption(
         "🧩 Para señales con varias entradas, acá se usa el precio promedio real de la posición "
@@ -2132,8 +2126,10 @@ def _tab_simulador(supabase):
 
     c1, c2 = st.columns(2)
     with c1:
-        monto_fijo = st.number_input("💵 Monto fijo por señal (USD)", min_value=10.0,
-                                      value=100.0, step=10.0, key="sim_monto_fijo")
+        monto_fijo = st.number_input("💵 Monto fijo por señal (USD)", min_value=1.0,
+                                      value=100.0, step=10.0, key="sim_monto_fijo",
+                                      help="Se aplica el mismo monto a todas las señales de la "
+                                           "simulación. Podés poner el valor que quieras.")
     with c2:
         incluir_abiertas = st.checkbox("Incluir señales abiertas (P&L flotante)", value=True,
                                         key="sim_incluir_abiertas")
@@ -2150,58 +2146,36 @@ def _tab_simulador(supabase):
         st.info("No hay señales para incluir en la simulación con estos filtros.")
         return
 
+    filas = []
+    for _, row in df_base.iterrows():
+        s = row.to_dict()
+        s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
+        precio_ref = s.get("precio_cierre")
+        if precio_ref is None:
+            ev = _evaluar_senal(s)
+            precio_ref = ev["precio_ref"]
+        if precio_ref is None:
+            continue
+        fila = _calcular_fila_simulacion(s, precio_ref, monto_fijo, "monto_pct",
+                                          monto_por_senal=monto_fijo,
+                                          fecha_cierre=s.get("fecha_cierre"),
+                                          hora_cierre=s.get("hora_cierre"))
+        if fila:
+            filas.append(fila)
+
+    if not filas:
+        st.info("No se pudo simular ninguna señal (faltan datos de entrada).")
+        return
+
+    df_sim = pd.DataFrame(filas)
     st.divider()
-    tabs_perfiles = st.tabs([info["label"] for info in PERFILES_RIESGO.values()])
-    resumen_comparativo = []
-
-    for (perfil_key, info), tab in zip(PERFILES_RIESGO.items(), tabs_perfiles):
-        with tab:
-            st.caption(info["desc"])
-            filas = []
-            for _, row in df_base.iterrows():
-                s = row.to_dict()
-                s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
-                precio_ref = s.get("precio_cierre")
-                if precio_ref is None:
-                    ev = _evaluar_senal(s)
-                    precio_ref = ev["precio_ref"]
-                if precio_ref is None:
-                    continue
-                pct_signal = float(s.get(f"riesgo_{perfil_key}") or info["default_pct"])
-                fila = _calcular_fila_simulacion(s, precio_ref, monto_fijo, "riesgo",
-                                                  riesgo_pct=pct_signal,
-                                                  fecha_cierre=s.get("fecha_cierre"),
-                                                  hora_cierre=s.get("hora_cierre"))
-                if fila:
-                    filas.append(fila)
-
-            if not filas:
-                st.info("No se pudo simular ninguna señal con este perfil (faltan datos de "
-                        "SL/entrada).")
-                continue
-
-            df_perfil = pd.DataFrame(filas)
-            capital_usado, pnl_total = _mostrar_metricas_sim(df_perfil, "Margen total usado")
-            resumen_comparativo.append((info["label"], pnl_total, capital_usado))
-            _mostrar_tabla_estilizada(df_perfil)
-            _mostrar_mejor_peor(df_perfil)
-
-    if resumen_comparativo:
-        st.divider()
-        st.markdown("##### 📊 Resumen comparativo")
-        df_resumen = pd.DataFrame(
-            resumen_comparativo, columns=["Perfil", "P&L Total (USD)", "Margen Usado (USD)"])
-        df_resumen["Rendimiento %"] = df_resumen.apply(
-            lambda r: round(r["P&L Total (USD)"] / r["Margen Usado (USD)"] * 100, 2)
-            if r["Margen Usado (USD)"] else 0.0, axis=1)
-        st.dataframe(df_resumen, use_container_width=True, hide_index=True)
+    _mostrar_metricas_sim(df_sim, "Capital total usado")
+    _mostrar_tabla_estilizada(df_sim)
+    _mostrar_mejor_peor(df_sim)
 
     st.caption("⚠️ Simulación educativa. No contempla comisiones, spread, financiamiento por "
                "apalancamiento, swap ni slippage. Cuando TP y SL se tocan en la misma vela se "
-               "asume el peor caso (SL). El % de riesgo de cada perfil y el apalancamiento usado "
-               "dependen de cómo se cargó cada señal: verificá las especificaciones de tu "
-               "bróker antes de usarlos como referencia real. No constituye asesoramiento "
-               "financiero.")
+               "asume el peor caso (SL). No constituye asesoramiento financiero.")
 
 
 # ==============================================================
