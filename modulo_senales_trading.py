@@ -1748,9 +1748,11 @@ def _tab_senales(supabase, es_admin):
             #  Replicar la posición — pone UN solo número (su margen) y
             #  la app copia la posición del admin tal cual: mismas
             #  entradas, mismos precios, mismo apalancamiento de
-            #  apertura en cada una.
+            #  apertura en cada una. Solo tiene sentido para posiciones
+            #  ABIERTAS: una señal ya cerrada (TP/SL/cierre manual) no
+            #  es algo que se pueda replicar hacia adelante.
             # ------------------------------------------------------
-            if res_row:
+            if estado == "ABIERTA" and res_row:
                 st.divider()
                 st.markdown("##### 🔁 Replicá la posición")
                 st.caption(
