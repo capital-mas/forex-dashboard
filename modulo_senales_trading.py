@@ -2032,6 +2032,8 @@ def _mostrar_tabla_estilizada(df_sim):
         format_dict["% Riesgo"] = "{:.2f}%"
     if "Costos apertura" in df_sim.columns:
         format_dict["Costos apertura"] = "${:,.2f}"
+    if "Margen extra (real)" in df_sim.columns:
+        format_dict["Margen extra (real)"] = "${:,.2f}"
 
     _map = "map" if hasattr(df_sim.style, "map") else "applymap"
     styled = (df_sim.style
@@ -2090,16 +2092,18 @@ def _mostrar_mejor_peor(df_sim):
 
 # ==============================================================
 #  RENDER — TAB SIMULADOR (todos)
-#  CAMBIO: se sacaron las 3 pestañas por perfil de riesgo (🟢🟡🔴) y el
-#  modo "riesgo" (tamaño de posición a partir de un % del capital y la
-#  distancia al Stop Loss) — ese cálculo podía devolver valores rotos
-#  (P&L y Ret. Apalancado en blanco) en señales todavía abiertas, según
-#  cómo quedara la distancia entrada→SL. Ahora el Simulador vuelve a
-#  ser UNA sola tabla: le ponés un MONTO FIJO POR SEÑAL (el mismo
-#  monto para todas, editable) y calcula el resultado directo con el
-#  apalancamiento real con el que se publicó cada señal — el mismo
-#  cálculo simple y confiable que ya se usa para mostrar el "Retorno
-#  apalancado" en la pestaña "Señales y Resultados".
+#  CAMBIO: ahora podés elegir CON QUÉ SEÑALES simular (multiselect,
+#  por defecto todas las que pasan el filtro de "incluir abiertas") en
+#  vez de simular siempre con todas. También podés elegir el MONTO: o
+#  bien el mismo monto fijo para todas las señales elegidas, o un
+#  monto distinto por cada una. El cálculo sigue siendo el mismo
+#  directo y confiable (usa el apalancamiento real con el que se
+#  publicó cada señal).
+#  NUEVO: se agregó el "Margen extra agregado", la suma del margen
+#  extra REAL que el publicador cargó en las posiciones originales
+#  (para alejar su liquidación) de las señales incluidas en la
+#  simulación. Es solo informativo: no es parte del monto que vos
+#  cargás para simular ni cambia el P&L calculado.
 #  Las órdenes PENDIENTES (todavía no activadas) se excluyen del
 #  simulador: no hay una posición real para simular hasta que se
 #  active.
@@ -2107,8 +2111,8 @@ def _mostrar_mejor_peor(df_sim):
 
 def _tab_simulador(supabase):
     st.caption(
-        "Simulá cuánto hubieras ganado o perdido asignando el mismo monto fijo a cada señal, "
-        "usando siempre el apalancamiento real con el que se publicó."
+        "Simulá cuánto hubieras ganado o perdido con las señales que elijas, asignándole a cada "
+        "una el monto que quieras — siempre con el apalancamiento real con el que se publicó."
     )
     st.caption(
         "🧩 Para señales con varias entradas, acá se usa el precio promedio real de la posición "
@@ -2126,21 +2130,14 @@ def _tab_simulador(supabase):
         _sincronizar_estados(supabase, senales)
         senales = _obtener_senales(supabase, 200)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        monto_fijo = st.number_input("💵 Monto fijo por señal (USD)", min_value=1.0,
-                                      value=100.0, step=10.0, key="sim_monto_fijo",
-                                      help="Se aplica el mismo monto a todas las señales de la "
-                                           "simulación. Podés poner el valor que quieras.")
-    with c2:
-        incluir_abiertas = st.checkbox("Incluir señales abiertas (P&L flotante)", value=True,
-                                        key="sim_incluir_abiertas")
-
     df_base = pd.DataFrame(senales)
     if "categoria" not in df_base.columns:
         df_base["categoria"] = "🔹 Otro"
     df_base["categoria"] = df_base["categoria"].fillna("🔹 Otro")
     df_base = df_base[df_base["estado"] != "PENDIENTE"]
+
+    incluir_abiertas = st.checkbox("Incluir señales abiertas (P&L flotante)", value=True,
+                                    key="sim_incluir_abiertas")
     if not incluir_abiertas:
         df_base = df_base[df_base["estado"] != "ABIERTA"]
 
@@ -2148,7 +2145,55 @@ def _tab_simulador(supabase):
         st.info("No hay señales para incluir en la simulación con estos filtros.")
         return
 
+    # ── Elegir con qué señales simular ─────────────────────────────
+    st.markdown("#### 🗂️ Elegí las señales a simular")
+    opciones_label = {}
+    for _, row in df_base.iterrows():
+        estado_lbl = row.get("estado", "ABIERTA")
+        _col, _bg, _emoji = ESTADO_COLOR.get(estado_lbl, ("#8b949e", "", "⚪"))
+        label = (f"{_emoji} {row.get('fecha','')} · {row.get('ticker','')} · "
+                 f"{row.get('tipo','')} · {estado_lbl}")
+        opciones_label[label] = row["id"]
+
+    labels_todas = list(opciones_label.keys())
+    seleccionadas = st.multiselect(
+        "Señales a incluir (por defecto, todas)", labels_todas, default=labels_todas,
+        key="sim_senales_sel")
+
+    if not seleccionadas:
+        st.info("Seleccioná al menos una señal para simular.")
+        return
+
+    ids_sel = [opciones_label[l] for l in seleccionadas]
+    df_base = df_base[df_base["id"].isin(ids_sel)]
+
+    # ── Monto a simular: mismo para todas, o uno distinto por señal ─
+    st.divider()
+    modo_monto = st.radio(
+        "💵 Monto a simular",
+        ["Mismo monto para todas las señales elegidas", "Elegir un monto distinto por señal"],
+        horizontal=True, key="sim_modo_monto")
+
+    montos = {}
+    if modo_monto == "Mismo monto para todas las señales elegidas":
+        monto_fijo = st.number_input("Monto por señal (USD)", min_value=1.0, value=100.0,
+                                      step=10.0, key="sim_monto_fijo",
+                                      help="Se aplica el mismo monto a todas las señales "
+                                           "seleccionadas arriba.")
+        for sid in df_base["id"]:
+            montos[sid] = monto_fijo
+    else:
+        st.caption("Cargá el monto que le vas a asignar a cada señal seleccionada:")
+        for _, row in df_base.iterrows():
+            estado_lbl = row.get("estado", "ABIERTA")
+            _col, _bg, _emoji = ESTADO_COLOR.get(estado_lbl, ("#8b949e", "", "⚪"))
+            label = f"{_emoji} {row.get('fecha','')} · {row.get('ticker','')} · {row.get('tipo','')}"
+            montos[row["id"]] = st.number_input(
+                f"Monto (USD) — {label}", min_value=1.0, value=100.0, step=10.0,
+                key=f"sim_monto_ind_{row['id']}")
+
     filas = []
+    margen_extra_total_real = 0.0
     for _, row in df_base.iterrows():
         s = row.to_dict()
         s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
@@ -2158,11 +2203,20 @@ def _tab_simulador(supabase):
             precio_ref = ev["precio_ref"]
         if precio_ref is None:
             continue
-        fila = _calcular_fila_simulacion(s, precio_ref, monto_fijo, "monto_pct",
-                                          monto_por_senal=monto_fijo,
+        monto_signal = montos.get(row["id"]) or 0.0
+        if monto_signal <= 0:
+            continue
+
+        res_signal = _resumen_de_senal(s)
+        margen_extra_real = res_signal["margen_extra"] if res_signal else 0.0
+        margen_extra_total_real += margen_extra_real
+
+        fila = _calcular_fila_simulacion(s, precio_ref, monto_signal, "monto_pct",
+                                          monto_por_senal=monto_signal,
                                           fecha_cierre=s.get("fecha_cierre"),
                                           hora_cierre=s.get("hora_cierre"))
         if fila:
+            fila["Margen extra (real)"] = round(margen_extra_real, 2)
             filas.append(fila)
 
     if not filas:
@@ -2172,6 +2226,14 @@ def _tab_simulador(supabase):
     df_sim = pd.DataFrame(filas)
     st.divider()
     _mostrar_metricas_sim(df_sim, "Capital total usado")
+    st.metric("➕ Margen extra agregado (en las posiciones originales)",
+              f"USD {margen_extra_total_real:,.2f}")
+    st.caption(
+        "El margen extra es capital que el publicador sumó DESPUÉS de abrir cada posición, solo "
+        "para alejar su liquidación (no cambia el tamaño ni el resultado de la operación). Se "
+        "muestra acá a modo informativo: no forma parte del monto que vos cargaste para simular "
+        "ni afecta el P&L calculado."
+    )
     _mostrar_tabla_estilizada(df_sim)
     _mostrar_mejor_peor(df_sim)
 
@@ -2230,12 +2292,11 @@ def render_senales_trading(supabase, user_id, user_email):
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
         Señales publicadas con fecha, hora, una o varias entradas (precio, costo de apertura,
         apalancamiento, margen de apertura y margen extra), precio de liquidación, stop loss,
-        take profit, categoría y perfiles de riesgo (🟢 Conservador / 🟡 Moderado / 🔴 Agresivo)
-        — o cargadas como órdenes pendientes (🕓) que se activan solas cuando el precio toca la
-        entrada. Evaluación automática de aciertos/desaciertos (contada desde la publicación o
-        desde la activación, según corresponda), P&L en vivo (actualizado cada 5 min) para las
-        abiertas, réplica de la posición a tu margen, y simulador de capital (comparando los 3
-        perfiles) para cualquier usuario.
+        take profit y categoría — o cargadas como órdenes pendientes (🕓) que se activan solas
+        cuando el precio toca la entrada. Evaluación automática de aciertos/desaciertos (contada
+        desde la publicación o desde la activación, según corresponda), P&L en vivo (actualizado
+        cada 5 min) para las abiertas, réplica de la posición a tu margen, y simulador de capital
+        (elegís qué señales simular y con qué monto) para cualquier usuario.
       </div>
     </div>
     """, unsafe_allow_html=True)
