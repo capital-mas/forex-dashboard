@@ -762,6 +762,23 @@ def _cerrar_senal_manual(supabase, senal_id, precio_cierre):
         "fecha_cierre": str(date.today()),
         "hora_cierre": datetime.now().strftime("%H:%M:%S"),
     }).eq("id", senal_id).execute()
+def _entradas_a_formato_guardado(entradas):
+    """Convierte entradas normalizadas (con 'peso') al formato que se
+    guarda en la columna jsonb 'entradas' (sin 'peso')."""
+    return [
+        {"precio": e["precio"], "costo_apertura": e["costo_apertura"],
+         "apalancamiento": e["apalancamiento"], "margen": e["margen"],
+         "margen_extra": e.get("margen_extra", 0.0)}
+        for e in entradas
+    ]
+
+
+def _agregar_entrada_senal(supabase, senal_id, entradas, precio_entrada, apalancamiento):
+    supabase.table(TABLA_SENALES).update({
+        "entradas": entradas,
+        "precio_entrada": precio_entrada,
+        "apalancamiento": apalancamiento,
+    }).eq("id", senal_id).execute()
 
 
 # ==============================================================
@@ -1070,45 +1087,38 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
             f"liquidación ({fmt_precio_exacto(resumen_pub['precio_liquidacion'])}): con el margen y "
             "apalancamiento cargados te liquidarían antes de que el SL se ejecute."))
 
-    st.divider()
-    st.markdown("#### 🎭 Perfiles de riesgo para esta señal")
+        st.divider()
+    st.markdown("#### 🎭 Apalancamiento sugerido por perfil")
     st.caption(
-        "Definí qué % de capital arriesgaría cada perfil si el precio llega al Stop Loss "
-        "(se usa en el Simulador de Capital, pestaña 'Comparar los 3 perfiles') y con qué "
-        "apalancamiento sugerís tomar la señal en cada perfil (se usa en 'Señales y "
-        "Resultados', al replicar la posición con un apalancamiento distinto al de apertura)."
+        "Definí con qué apalancamiento sugerís tomar esta señal en cada perfil de riesgo "
+        "(se usa en 'Señales y Resultados', al replicar la posición con un apalancamiento "
+        "distinto al de apertura)."
     )
     rp1, rp2, rp3 = st.columns(3)
     with rp1:
-        riesgo_conservador = st.number_input(
-            f"{PERFILES_RIESGO['conservador']['label']} — % de riesgo", min_value=0.1, max_value=50.0,
-            value=PERFILES_RIESGO['conservador']['default_pct'], step=0.1, key="sen_riesgo_conservador")
         apal_conservador = st.number_input(
             f"{PERFILES_RIESGO['conservador']['label']} — apalancamiento sugerido", min_value=1.0,
             max_value=125.0, value=float(apal_apertura_pub), step=1.0, format="%.1f",
             key="sen_apal_conservador")
     with rp2:
-        riesgo_moderado = st.number_input(
-            f"{PERFILES_RIESGO['moderado']['label']} — % de riesgo", min_value=0.1, max_value=50.0,
-            value=PERFILES_RIESGO['moderado']['default_pct'], step=0.1, key="sen_riesgo_moderado")
         apal_moderado = st.number_input(
             f"{PERFILES_RIESGO['moderado']['label']} — apalancamiento sugerido", min_value=1.0,
             max_value=125.0, value=float(apal_apertura_pub), step=1.0, format="%.1f",
             key="sen_apal_moderado")
     with rp3:
-        riesgo_agresivo = st.number_input(
-            f"{PERFILES_RIESGO['agresivo']['label']} — % de riesgo", min_value=0.1, max_value=50.0,
-            value=PERFILES_RIESGO['agresivo']['default_pct'], step=0.1, key="sen_riesgo_agresivo")
         apal_agresivo = st.number_input(
             f"{PERFILES_RIESGO['agresivo']['label']} — apalancamiento sugerido", min_value=1.0,
             max_value=125.0, value=float(apal_apertura_pub), step=1.0, format="%.1f",
             key="sen_apal_agresivo")
 
-    if not (riesgo_conservador <= riesgo_moderado <= riesgo_agresivo):
-        st.warning("⚠️ Lo lógico es que Conservador ≤ Moderado ≤ Agresivo en % de riesgo.")
     if not (apal_conservador <= apal_moderado <= apal_agresivo):
-        st.warning("⚠️ Lo lógico es que Conservador ≤ Moderado ≤ Agresivo también en el "
-                   "apalancamiento sugerido.")
+        st.warning("⚠️ Lo lógico es que Conservador ≤ Moderado ≤ Agresivo en el apalancamiento sugerido.")
+
+    # El % de riesgo por perfil ya no se pide al publicar: se usan los defaults
+    # (1% / 2% / 3%) solo para el Simulador de Capital, pestaña "Comparar perfiles".
+    riesgo_conservador = PERFILES_RIESGO["conservador"]["default_pct"]
+    riesgo_moderado = PERFILES_RIESGO["moderado"]["default_pct"]
+    riesgo_agresivo = PERFILES_RIESGO["agresivo"]["default_pct"]
 
     if st.button("📢 Publicar señal", type="primary", key="sen_btn_publicar"):
         if not ticker or not resumen_pub or stop_loss <= 0 or take_profit <= 0:
@@ -1486,6 +1496,61 @@ def _tab_senales(supabase, es_admin):
                         _render_resumen_posicion(res_perfil, es_largo_row,
                                                   stop_loss=float(row.get("stop_loss") or 0))
 
+                        if es_admin and estado == "ABIERTA":
+                st.divider()
+                with st.expander("➕ Agregar otra entrada a esta posición (promediar / alejar liquidación)"):
+                    st.caption(
+                        "Sumá una entrada nueva a esta posición ABIERTA: sirve para promediar a "
+                        "un precio mejor (mueve el precio promedio) o para agregar margen y alejar "
+                        "la liquidación. Se recalcula el precio de entrada (promedio ponderado) y "
+                        "el apalancamiento de apertura de toda la posición."
+                    )
+                    ae1, ae2, ae3, ae4, ae5 = st.columns(5)
+                    with ae1:
+                        nueva_precio = st.number_input(
+                            "Precio", min_value=0.0, format="%.5f", key=f"sen_add_precio_{row['id']}")
+                    with ae2:
+                        nueva_costo = st.number_input(
+                            "Costo apertura (USD)", min_value=0.0, step=0.01, format="%.4f",
+                            key=f"sen_add_costo_{row['id']}")
+                    with ae3:
+                        nueva_apal = st.number_input(
+                            "Apalanc. (x)", min_value=1.0, max_value=125.0, step=1.0, format="%.1f",
+                            value=1.0, key=f"sen_add_apal_{row['id']}")
+                    with ae4:
+                        nueva_margen = st.number_input(
+                            "Margen apertura (USD)", min_value=0.0, step=10.0, format="%.2f",
+                            key=f"sen_add_margen_{row['id']}")
+                    with ae5:
+                        nueva_margen_extra = st.number_input(
+                            "Margen extra (USD)", min_value=0.0, step=10.0, format="%.2f",
+                            key=f"sen_add_margen_extra_{row['id']}")
+
+                    if st.button("➕ Agregar entrada a la posición", key=f"sen_add_btn_{row['id']}"):
+                        if nueva_precio <= 0 or nueva_margen <= 0:
+                            st.warning("⚠️ Completá al menos precio y margen de apertura de la nueva entrada.")
+                        else:
+                            entradas_actuales_fmt = _entradas_a_formato_guardado(entradas_lista)
+                            entradas_nuevas = entradas_actuales_fmt + [{
+                                "precio": nueva_precio, "costo_apertura": nueva_costo,
+                                "apalancamiento": nueva_apal, "margen": nueva_margen,
+                                "margen_extra": nueva_margen_extra,
+                            }]
+                            resumen_nuevo = _resumen_posicion(entradas_nuevas, es_largo_row)
+                            if resumen_nuevo is None:
+                                st.error("❌ No se pudo calcular la posición con esta entrada.")
+                            else:
+                                _agregar_entrada_senal(
+                                    supabase, row["id"], entradas_nuevas,
+                                    resumen_nuevo["precio_promedio"],
+                                    resumen_nuevo["apalancamiento_apertura"])
+                                _obtener_senales.clear()
+                                st.success("✅ Entrada agregada. Se recalculó el precio promedio "
+                                          "y el apalancamiento de apertura.")
+                                st.rerun()
+
+                st.divider()
+                precio_cierre_manual = st.number_input(
             if es_admin and estado == "ABIERTA":
                 st.divider()
                 precio_cierre_manual = st.number_input(
