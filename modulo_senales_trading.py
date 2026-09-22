@@ -8,7 +8,54 @@
 #  coincidir EXACTAMENTE con el de esas políticas.
 #
 #  CAMBIOS DE ESTA VERSIÓN:
-#   - CAMBIO: se eliminó, en "Señales y Resultados", el selector
+#   - FIX IMPORTANTE: la evaluación automática de TP/SL contaba como
+#     "tocado" cualquier movimiento de precio ocurrido en TODO el día
+#     de publicación (porque usaba velas diarias, con el High/Low del
+#     día completo) — incluyendo movimientos ANTERIORES al momento en
+#     que se publicó la señal. Eso hacía que una señal se cerrara
+#     "apenas publicada" si el precio ya había tocado el TP/SL esa
+#     misma mañana, antes de cargarla. Ahora la evaluación arranca
+#     estrictamente desde la fecha+hora de publicación: primero revisa
+#     velas HORARIAS (últimas ~7 días, filtradas a partir de ese
+#     momento exacto) y, para los días siguientes, sigue con velas
+#     diarias como antes. Esto aplica tanto a señales publicadas como
+#     posición ya abierta, como al momento en que se activa una orden
+#     pendiente (ver el punto siguiente). NOTA: yfinance devuelve las
+#     velas horarias en la zona horaria del mercado del ticker (ej.
+#     hora de Nueva York para acciones de EE.UU.), mientras que la
+#     fecha/hora que cargás al publicar es tu hora local — se comparan
+#     sin ajustar zona horaria, así que puede haber un corrimiento de
+#     algunas horas según el instrumento. Sigue siendo mucho más
+#     preciso que antes (que ni siquiera miraba la hora).
+#   - NUEVO: "🕓 Dejar como orden pendiente". Al publicar, ahora hay un
+#     checkbox para cargar la señal como una ORDEN LÍMITE en vez de una
+#     posición ya abierta: el/los precio(s) de "Entradas" se guardan
+#     como precio objetivo, la señal queda en estado PENDIENTE y NO se
+#     evalúa Take Profit / Stop Loss todavía. En segundo plano (cada
+#     vez que se abre "Señales y Resultados" o se le da a "Actualizar y
+#     evaluar") se revisa el precio de mercado desde la publicación en
+#     adelante (con el mismo mecanismo horario+diario de arriba) y, en
+#     cuanto el precio toca el precio de una entrada, esa entrada queda
+#     "activada". Cuando TODAS las entradas de la orden se activaron,
+#     la señal pasa sola a ABIERTA — y ahí arranca recién la evaluación
+#     de TP/SL, contada desde el momento de esa activación (no desde la
+#     publicación). Mientras una orden está PENDIENTE no cuenta para el
+#     Win Rate ni se incluye en el Simulador de Capital, y no muestra
+#     P&L en vivo ni la sección de "Replicar la posición" (no hay
+#     margen puesto todavía) — sí muestra una vista previa de cómo
+#     quedaría la posición (precio de liquidación estimado) una vez que
+#     se llene, con el margen/apalancamiento que cargaste.
+#     REQUIERE migrar la tabla en Supabase:
+#       ALTER TABLE senales_trading
+#       ADD COLUMN IF NOT EXISTS fecha_activacion date,
+#       ADD COLUMN IF NOT EXISTS hora_activacion text;
+#     (Los campos "activada"/"fecha_activacion"/"hora_activacion" de
+#     CADA entrada viven dentro del jsonb "entradas": no hace falta
+#     migrar nada más para eso.) Si tu columna "estado" tiene un CHECK
+#     constraint con los valores permitidos, agregale "PENDIENTE" a la
+#     lista. Las señales viejas (sin este campo) se siguen leyendo
+#     igual que siempre: se tratan como ya abiertas/activadas.
+#   - NUEVO: se eliminó, en "Señales y Resultados", el selector
 #     "Elegí con qué perfil querés tomar esta señal" (el que sugería
 #     un tamaño de posición a partir de un % de riesgo sobre el
 #     Stop Loss). Ese cálculo ignoraba el precio de liquidación y
@@ -161,7 +208,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import date, datetime, time as dt_time
+from datetime import date, datetime, time as dt_time, timedelta
 from streamlit_autorefresh import st_autorefresh
 
 ADMIN_EMAIL = "brainferreyra@gmail.com"
@@ -176,6 +223,7 @@ TABLA_SENALES = "senales_trading"
 MARGEN_MANTENIMIENTO_PCT = 0.0
 
 ESTADO_COLOR = {
+    "PENDIENTE":            ("#a371f7", "rgba(163,113,247,0.12)", "🕓"),
     "ABIERTA":              ("#3a7bd5", "rgba(58,123,213,0.12)", "🔵"),
     "ACIERTO (TP)":         ("#3fb950", "rgba(63,185,80,0.12)",  "✅"),
     "DESACIERTO (SL)":      ("#f85149", "rgba(248,81,73,0.12)",  "❌"),
@@ -301,11 +349,19 @@ def _md_dolar(texto):
 #  ENTRADAS MÚLTIPLES — helpers de posición
 #  Cada señal puede tener 1 o más "entradas". Cada entrada guarda:
 #     precio, costo_apertura (USD), apalancamiento, margen (USD),
-#     margen_extra (USD)
+#     margen_extra (USD), activada (bool), fecha_activacion,
+#     hora_activacion
 #  en la columna jsonb "entradas". Los campos "precio_entrada" y
 #  "apalancamiento" de la señal se guardan también, como el precio
 #  promedio real y el apalancamiento de apertura de la posición, para
 #  que todo el resto del código siga funcionando igual.
+#  "activada"/"fecha_activacion"/"hora_activacion" solo importan para
+#  señales publicadas como orden PENDIENTE (ver más abajo): indican si
+#  el precio ya tocó esa entrada y cuándo. Para una señal publicada
+#  como posición YA ABIERTA (el caso de siempre), todas las entradas se
+#  consideran activadas desde la publicación — por eso, si el campo no
+#  está guardado (señales viejas), se asume activada=True salvo que la
+#  señal esté en estado PENDIENTE.
 #  Compatibilidad: las señales viejas pueden tener entradas con
 #  "peso" (versión anterior), sin "margen_extra", o ninguna entrada;
 #  se siguen leyendo (margen_extra cae a 0 si no está).
@@ -313,10 +369,12 @@ def _md_dolar(texto):
 
 def _entradas_de_senal(senal):
     """Devuelve la lista de entradas normalizada:
-    [{'precio','costo_apertura','apalancamiento','margen','margen_extra','peso'}, ...].
+    [{'precio','costo_apertura','apalancamiento','margen','margen_extra',
+      'peso','activada','fecha_activacion','hora_activacion'}, ...].
     'margen' = 0 significa que la señal es vieja y no tiene margen
     cargado. 'peso' es solo de señales viejas."""
     apal_senal = float(senal.get("apalancamiento") or 1.0) or 1.0
+    default_activada = senal.get("estado") != "PENDIENTE"
     entradas = senal.get("entradas")
     if entradas and isinstance(entradas, list):
         limpio = []
@@ -332,6 +390,9 @@ def _entradas_de_senal(senal):
                     "margen": float(e.get("margen") or 0.0),
                     "margen_extra": float(e.get("margen_extra") or 0.0),
                     "peso": float(e.get("peso") or 1.0),
+                    "activada": bool(e.get("activada", default_activada)),
+                    "fecha_activacion": e.get("fecha_activacion"),
+                    "hora_activacion": e.get("hora_activacion"),
                 })
             except (TypeError, ValueError, AttributeError):
                 continue
@@ -341,7 +402,9 @@ def _entradas_de_senal(senal):
     if precio_unico > 0:
         return [{"precio": precio_unico, "costo_apertura": 0.0,
                  "apalancamiento": apal_senal, "margen": 0.0,
-                 "margen_extra": 0.0, "peso": 1.0}]
+                 "margen_extra": 0.0, "peso": 1.0,
+                 "activada": default_activada, "fecha_activacion": None,
+                 "hora_activacion": None}]
     return []
 
 
@@ -613,37 +676,51 @@ def _reset_entradas_state():
     st.session_state["sen_entrada_next_id"] = 1
 
 
-def _entradas_para_guardar(entradas_form):
+def _entradas_para_guardar(entradas_form, es_pendiente=False):
     """Solo las entradas completas (precio > 0 y margen > 0), en el
-    formato que se guarda en la columna jsonb 'entradas'."""
+    formato que se guarda en la columna jsonb 'entradas'. Si
+    es_pendiente=True, se guardan como no activadas todavía (orden
+    límite esperando que el precio las toque); si no, se guardan como
+    ya activadas (posición ya abierta, comportamiento de siempre)."""
     return [
         {"precio": float(e["precio"]),
          "costo_apertura": float(e["costo"]),
          "apalancamiento": float(e["apal"]),
          "margen": float(e["margen"]),
-         "margen_extra": float(e.get("margen_extra") or 0.0)}
+         "margen_extra": float(e.get("margen_extra") or 0.0),
+         "activada": not es_pendiente,
+         "fecha_activacion": None,
+         "hora_activacion": None}
         for e in entradas_form if e["precio"] > 0 and e["margen"] > 0
     ]
 
 
-def _render_entradas_form(es_largo):
+def _render_entradas_form(es_largo, es_pendiente=False):
     """Renderiza el formulario dinámico de entradas (1 o más, sin
     límite) y devuelve la lista de entradas cargadas en session_state."""
     _init_entradas_state()
     entradas = st.session_state["sen_entradas"]
 
     st.markdown("#### 🎯💰 Entradas")
-    st.caption(
-        "Cargá una entrada por cada compra/venta si vas a promediar precio (ej: entraste en 2 "
-        "o 3 tandas). Para cada una indicá el **precio**, el **costo de apertura** en USD "
-        "(comisión/spread), el **apalancamiento** que usaste y el **margen de apertura** en USD "
-        "con el que abriste esa entrada (define el tamaño de la posición). Si más adelante le "
-        "agregaste capital a esa misma entrada YA ABIERTA (sin comprar más unidades, solo para "
-        "alejar la liquidación), cargalo aparte en **margen extra**: no cambia el tamaño de la "
-        "posición ni el apalancamiento con el que operás, pero sí el precio de liquidación. Con "
-        "eso la app calcula el precio promedio real, el apalancamiento usado y el **precio de "
-        "liquidación**."
-    )
+    if es_pendiente:
+        st.caption(
+            "Como marcaste **orden pendiente**, el precio que cargues acá es el precio "
+            "OBJETIVO (de entrada límite): la posición todavía no está abierta. Cargá igual el "
+            "costo de apertura, apalancamiento y margen que pensás usar CUANDO se active, para "
+            "que la app te muestre una vista previa del precio de liquidación que tendría."
+        )
+    else:
+        st.caption(
+            "Cargá una entrada por cada compra/venta si vas a promediar precio (ej: entraste en 2 "
+            "o 3 tandas). Para cada una indicá el **precio**, el **costo de apertura** en USD "
+            "(comisión/spread), el **apalancamiento** que usaste y el **margen de apertura** en USD "
+            "con el que abriste esa entrada (define el tamaño de la posición). Si más adelante le "
+            "agregaste capital a esa misma entrada YA ABIERTA (sin comprar más unidades, solo para "
+            "alejar la liquidación), cargalo aparte en **margen extra**: no cambia el tamaño de la "
+            "posición ni el apalancamiento con el que operás, pero sí el precio de liquidación. Con "
+            "eso la app calcula el precio promedio real, el apalancamiento usado y el **precio de "
+            "liquidación**."
+        )
 
     a_borrar = None
     for i, ent in enumerate(entradas):
@@ -700,7 +777,7 @@ def _render_entradas_form(es_largo):
                    + ", ".join(str(n) for n in incompletas)
                    + ". Las incompletas no se tienen en cuenta.")
 
-    resumen = _resumen_posicion(_entradas_para_guardar(entradas), es_largo)
+    resumen = _resumen_posicion(_entradas_para_guardar(entradas, es_pendiente), es_largo)
     if resumen:
         _render_resumen_posicion(resumen, es_largo)
 
@@ -729,7 +806,8 @@ def _guardar_senal(supabase, datos, user_id, user_email):
         "apal_moderado": datos.get("apal_moderado"),
         "apal_agresivo": datos.get("apal_agresivo"),
         "notas": datos.get("notas", ""),
-        "estado": "ABIERTA",
+        "estado": datos.get("estado", "ABIERTA"),
+        "fecha_activacion": None, "hora_activacion": None,
         "precio_cierre": None, "fecha_cierre": None, "hora_cierre": None,
     }
     supabase.table(TABLA_SENALES).insert(row).execute()
@@ -762,13 +840,19 @@ def _cerrar_senal_manual(supabase, senal_id, precio_cierre):
         "fecha_cierre": str(date.today()),
         "hora_cierre": datetime.now().strftime("%H:%M:%S"),
     }).eq("id", senal_id).execute()
+
+
 def _entradas_a_formato_guardado(entradas):
     """Convierte entradas normalizadas (con 'peso') al formato que se
-    guarda en la columna jsonb 'entradas' (sin 'peso')."""
+    guarda en la columna jsonb 'entradas' (sin 'peso'), preservando el
+    estado de activación de cada entrada (para órdenes pendientes)."""
     return [
         {"precio": e["precio"], "costo_apertura": e["costo_apertura"],
          "apalancamiento": e["apalancamiento"], "margen": e["margen"],
-         "margen_extra": e.get("margen_extra", 0.0)}
+         "margen_extra": e.get("margen_extra", 0.0),
+         "activada": e.get("activada", True),
+         "fecha_activacion": e.get("fecha_activacion"),
+         "hora_activacion": e.get("hora_activacion")}
         for e in entradas
     ]
 
@@ -782,11 +866,15 @@ def _agregar_entrada_senal(supabase, senal_id, entradas, precio_entrada, apalanc
 
 
 # ==============================================================
-#  EVALUACIÓN AUTOMÁTICA — ¿tocó TP o SL primero?
-#  Usa High/Low diario desde la fecha de publicación de la señal.
-#  Si TP y SL se tocan el mismo día, se asume el peor caso (SL)
-#  porque no tenemos el orden intradiario exacto — es una
-#  simplificación conservadora, no una garantía de precisión.
+#  EVALUACIÓN AUTOMÁTICA — ¿tocó TP o SL primero? / ¿se activó la
+#  entrada de una orden pendiente?
+#  Usa velas HORARIAS (últimos 7 días, filtradas desde el momento
+#  exacto de referencia) para no contar movimientos de precio
+#  ANTERIORES a ese momento el mismo día, y velas diarias (High/Low)
+#  para los días siguientes (yfinance no tiene 1h para rangos largos).
+#  Si TP y SL se tocan en la misma vela, se asume el peor caso (SL)
+#  porque no siempre tenemos el orden exacto dentro de la vela — es
+#  una simplificación conservadora, no una garantía de precisión.
 # ==============================================================
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -804,11 +892,83 @@ def _historial_desde_fecha(ticker, fecha_inicio_str):
         return None
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _historial_intradia_desde(ticker, fecha_str, hora_str):
+    """Velas horarias (1h) de los últimos 7 días, filtradas a partir del
+    momento de referencia (fecha_str + hora_str) en adelante. Sirve para
+    no contar como 'tocado' un TP/SL/precio de entrada que el mercado ya
+    había tocado ANTES de ese momento, si eso pasó el mismo día.
+    NOTA: yfinance devuelve el índice en la zona horaria del mercado del
+    ticker (ej. hora de Nueva York para acciones de EE.UU.), mientras que
+    fecha_str/hora_str son la fecha/hora locales de quien publicó la
+    señal. Se comparan como si fueran la misma zona horaria (se descarta
+    el tz-info de ambos lados) — es una aproximación, igual que las
+    demás simplificaciones horarias de este módulo; puede haber un
+    corrimiento de algunas horas según el instrumento."""
+    try:
+        import yfinance as yf
+        df = yf.download(ticker, period="7d", interval="1h",
+                          auto_adjust=True, progress=False)
+        if df is None or df.empty:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.dropna(subset=["Close"])
+        if df.empty:
+            return None
+        df = df.copy()
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        try:
+            corte = pd.Timestamp(f"{fecha_str} {hora_str or '00:00:00'}")
+        except Exception:
+            return df
+        df = df[df.index >= corte]
+        return df if not df.empty else None
+    except Exception:
+        return None
+
+
+def _construir_historial_activacion(ticker, fecha_anchor, hora_anchor):
+    """Historial combinado (velas horarias recientes + velas diarias)
+    desde un momento de referencia (fecha_anchor + hora_anchor) en
+    adelante, como lista de tuplas (timestamp, high, low, es_intradia)
+    ordenada cronológicamente. Se usa tanto para detectar cuándo se
+    activa una orden pendiente como para evaluar TP/SL de una posición
+    ya abierta, evitando contar movimientos de precio ANTERIORES al
+    momento de referencia si eso pasó el mismo día."""
+    filas = []
+    hist_intra = _historial_intradia_desde(
+        ticker, str(fecha_anchor), str(hora_anchor) if hora_anchor else None)
+    if hist_intra is not None and not hist_intra.empty:
+        for ts, fila in hist_intra.iterrows():
+            hi = float(fila["High"]) if "High" in fila else float(fila["Close"])
+            lo = float(fila["Low"]) if "Low" in fila else float(fila["Close"])
+            filas.append((ts, hi, lo, True))
+
+    try:
+        fecha_dt = datetime.strptime(str(fecha_anchor), "%Y-%m-%d").date()
+        fecha_desde_diario = str(fecha_dt + timedelta(days=1))
+    except Exception:
+        fecha_desde_diario = str(fecha_anchor)
+
+    hist_d = _historial_desde_fecha(ticker, fecha_desde_diario)
+    if hist_d is not None and not hist_d.empty:
+        for ts, fila in hist_d.iterrows():
+            hi = float(fila["High"]) if "High" in fila else float(fila["Close"])
+            lo = float(fila["Low"]) if "Low" in fila else float(fila["Close"])
+            filas.append((ts, hi, lo, False))
+
+    filas.sort(key=lambda x: x[0])
+    return filas
+
+
 # ── P&L EN VIVO (precio actualizado cada 5 minutos) ──────────────
 # Caché propia de 5 minutos, separada de la caché de 15 minutos que
-# usa _historial_desde_fecha (esa es para evaluar TP/SL con datos
-# diarios). Acá buscamos el precio más reciente posible para mostrar
-# si la posición abierta viene ganando o perdiendo AHORA.
+# usa _historial_desde_fecha / _historial_intradia_desde (esas son
+# para evaluar TP/SL y activaciones con datos horarios/diarios). Acá
+# buscamos el precio más reciente posible para mostrar si la posición
+# abierta viene ganando o perdiendo AHORA.
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _precio_en_vivo(ticker):
@@ -900,61 +1060,134 @@ def _render_badge_pnl_vivo(pnl, hora_actualizacion):
     """, unsafe_allow_html=True)
 
 
+def _evaluar_pendiente(senal):
+    """Recorre el historial desde la publicación de una orden PENDIENTE
+    y marca qué entradas se activaron (el precio de mercado las tocó,
+    dentro del rango High/Low de cada vela). Devuelve
+    (entradas_actualizadas, todas_activadas, fecha_activacion,
+    hora_activacion) — 'fecha_activacion'/'hora_activacion' son las de
+    la ÚLTIMA entrada en activarse (el momento en que la posición queda
+    completamente abierta, desde donde arranca después la evaluación
+    de TP/SL). No escribe en Supabase, eso lo hace el caller."""
+    entradas = _entradas_de_senal(senal)
+    pendientes_idx = [i for i, e in enumerate(entradas) if not e.get("activada")]
+    if not pendientes_idx:
+        return entradas, True, senal.get("fecha_activacion"), senal.get("hora_activacion")
+
+    filas = _construir_historial_activacion(senal["ticker"], senal["fecha"], senal.get("hora"))
+    ultima_fecha_act = senal.get("fecha_activacion")
+    ultima_hora_act = senal.get("hora_activacion")
+
+    for ts, hi, lo, es_intradia in filas:
+        if not pendientes_idx:
+            break
+        for i in list(pendientes_idx):
+            precio_obj = entradas[i]["precio"]
+            if lo <= precio_obj <= hi:
+                entradas[i]["activada"] = True
+                entradas[i]["fecha_activacion"] = str(ts.date())
+                entradas[i]["hora_activacion"] = ts.strftime("%H:%M:%S") if es_intradia else None
+                ultima_fecha_act = entradas[i]["fecha_activacion"]
+                ultima_hora_act = entradas[i]["hora_activacion"] or ultima_hora_act
+                pendientes_idx.remove(i)
+
+    todas = len(pendientes_idx) == 0
+    return entradas, todas, ultima_fecha_act, ultima_hora_act
+
+
 def _evaluar_senal(senal):
-    """Devuelve dict con: estado_calc, precio_ref (cierre o último precio),
-    fecha_ref, tocó_tp, tocó_sl. No escribe en Supabase — eso lo hace
-    el caller si corresponde."""
+    """Devuelve dict con: estado_calc, precio_ref (cierre o último
+    precio), fecha_ref, hora_ref (si se pudo determinar con precisión
+    horaria), es_final. No escribe en Supabase — eso lo hace el caller
+    si corresponde. El punto de partida para buscar toques de TP/SL es
+    'fecha_activacion'/'hora_activacion' si la señal viene de una orden
+    pendiente que ya se llenó, o 'fecha'/'hora' (momento de
+    publicación) si se publicó directamente como posición abierta."""
     if senal.get("estado") in ("CERRADA MANUAL",):
         return dict(estado_calc=senal["estado"], precio_ref=senal.get("precio_cierre"),
-                    fecha_ref=senal.get("fecha_cierre"), es_final=True)
+                    fecha_ref=senal.get("fecha_cierre"), hora_ref=senal.get("hora_cierre"),
+                    es_final=True)
 
     ticker = senal["ticker"]
     tipo = senal["tipo"]
     entrada = _precio_promedio_ponderado(senal)
     sl = float(senal["stop_loss"])
     tp = float(senal["take_profit"])
-
-    hist = _historial_desde_fecha(ticker, senal["fecha"])
-    if hist is None or hist.empty:
-        return dict(estado_calc="ABIERTA", precio_ref=entrada, fecha_ref=None, es_final=False)
-
     es_largo = tipo.startswith("🟢") or "LARGO" in tipo.upper()
 
-    for fecha_idx, fila in hist.iterrows():
-        hi = float(fila["High"]) if "High" in fila else float(fila["Close"])
-        lo = float(fila["Low"]) if "Low" in fila else float(fila["Close"])
+    fecha_anchor = senal.get("fecha_activacion") or senal.get("fecha")
+    hora_anchor = senal.get("hora_activacion") or senal.get("hora")
+
+    filas = _construir_historial_activacion(ticker, fecha_anchor, hora_anchor)
+    if not filas:
+        return dict(estado_calc="ABIERTA", precio_ref=entrada, fecha_ref=None,
+                    hora_ref=None, es_final=False)
+
+    for ts, hi, lo, es_intradia in filas:
         if es_largo:
             toco_sl = lo <= sl
             toco_tp = hi >= tp
         else:
             toco_sl = hi >= sl
             toco_tp = lo <= tp
-        if toco_sl:  # peor caso primero si ambos ocurren el mismo día
-            return dict(estado_calc="DESACIERTO (SL)", precio_ref=sl,
-                        fecha_ref=fecha_idx.date(), es_final=True)
+        if toco_sl:
+            return dict(estado_calc="DESACIERTO (SL)", precio_ref=sl, fecha_ref=ts.date(),
+                        hora_ref=ts.strftime("%H:%M:%S") if es_intradia else None, es_final=True)
         if toco_tp:
-            return dict(estado_calc="ACIERTO (TP)", precio_ref=tp,
-                        fecha_ref=fecha_idx.date(), es_final=True)
+            return dict(estado_calc="ACIERTO (TP)", precio_ref=tp, fecha_ref=ts.date(),
+                        hora_ref=ts.strftime("%H:%M:%S") if es_intradia else None, es_final=True)
 
-    ultimo_precio = float(hist["Close"].iloc[-1])
-    return dict(estado_calc="ABIERTA", precio_ref=ultimo_precio, fecha_ref=None, es_final=False)
+    ultimo_precio, _ts = _precio_en_vivo(ticker)
+    if ultimo_precio is None:
+        ultimo_precio = entrada
+    return dict(estado_calc="ABIERTA", precio_ref=ultimo_precio, fecha_ref=None,
+                hora_ref=None, es_final=False)
 
 
 def _sincronizar_estados(supabase, senales):
-    """Recorre las señales ABIERTAS y, si la evaluación automática
-    determinó un cierre (TP o SL), lo persiste en Supabase. La hora de
-    cierre que se guarda es la del momento en que ESTA función detectó
-    el cierre (no la hora exacta de mercado: el historial usado es
-    diario, no intradía) — es la mejor aproximación disponible."""
+    """Recorre las señales PENDIENTES (órdenes límite todavía no
+    ejecutadas) y las ABIERTAS. Para las pendientes, revisa si el
+    precio ya tocó cada entrada desde la publicación y, cuando TODAS
+    se activaron, pasa la señal a ABIERTA (recién ahí arranca la
+    evaluación de TP/SL, desde el momento de esa activación). Para las
+    abiertas, si la evaluación automática determinó un cierre (TP o
+    SL), lo persiste. La hora de cierre es la exacta si se detectó con
+    velas horarias recientes; si no, es la del momento en que ESTA
+    función detectó el cierre (aproximada)."""
     actualizadas = False
     for s in senales:
-        if s.get("estado") != "ABIERTA":
+        estado_s = s.get("estado")
+
+        if estado_s == "PENDIENTE":
+            entradas_act, todas, f_act, h_act = _evaluar_pendiente(s)
+            entradas_fmt = _entradas_a_formato_guardado(entradas_act)
+            if todas:
+                es_largo_s = "LARGO" in str(s.get("tipo", "")).upper()
+                res_final = _resumen_posicion(entradas_fmt, es_largo_s)
+                supabase.table(TABLA_SENALES).update({
+                    "entradas": entradas_fmt,
+                    "estado": "ABIERTA",
+                    "fecha_activacion": f_act,
+                    "hora_activacion": h_act,
+                    "precio_entrada": (res_final["precio_promedio"] if res_final
+                                       else s.get("precio_entrada")),
+                    "apalancamiento": (res_final["apalancamiento_apertura"] if res_final
+                                       else s.get("apalancamiento")),
+                }).eq("id", s["id"]).execute()
+                actualizadas = True
+            elif any(e.get("activada") for e in entradas_act):
+                supabase.table(TABLA_SENALES).update(
+                    {"entradas": entradas_fmt}).eq("id", s["id"]).execute()
+                actualizadas = True
+            continue
+
+        if estado_s != "ABIERTA":
             continue
         ev = _evaluar_senal(s)
         if ev["es_final"] and ev["estado_calc"] != "ABIERTA":
             _actualizar_estado_senal(supabase, s["id"], ev["estado_calc"],
                                       ev["precio_ref"], ev["fecha_ref"],
-                                      hora_cierre=datetime.now().strftime("%H:%M:%S"))
+                                      hora_cierre=ev.get("hora_ref") or datetime.now().strftime("%H:%M:%S"))
             actualizadas = True
     if actualizadas:
         _obtener_senales.clear()
@@ -1056,9 +1289,21 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
     with f2:
         hora = st.time_input("🕐 Hora", value=datetime.now().time().replace(microsecond=0), key="sen_hora")
 
+    es_pendiente_pub = st.checkbox(
+        "🕓 Dejar como orden pendiente (se activa sola cuando el precio toque la entrada)",
+        key="sen_es_pendiente",
+        help="Si lo marcás, el/los precio(s) de 'Entradas' de abajo se guardan como una orden "
+             "límite: la señal queda en estado PENDIENTE y NO empieza a evaluar Take Profit / "
+             "Stop Loss todavía. En segundo plano se revisa el precio de mercado desde este "
+             "momento en adelante y, apenas toca el precio de una entrada, esa entrada se marca "
+             "activada. Cuando TODAS las entradas se activaron, la señal pasa sola a ABIERTA y "
+             "recién ahí arranca la evaluación de TP/SL (desde el momento de esa activación, no "
+             "desde ahora) — así se evita que el precio ya hubiera tocado el TP o el SL antes de "
+             "que la orden se ejecutara.")
+
     st.divider()
-    entradas_form = _render_entradas_form(es_largo_pub)
-    entradas_guardar = _entradas_para_guardar(entradas_form)
+    entradas_form = _render_entradas_form(es_largo_pub, es_pendiente_pub)
+    entradas_guardar = _entradas_para_guardar(entradas_form, es_pendiente_pub)
     resumen_pub = _resumen_posicion(entradas_guardar, es_largo_pub)
     precio_entrada_pos = resumen_pub["precio_promedio"] if resumen_pub else 0.0
     apal_apertura_pub = resumen_pub["apalancamiento_apertura"] if resumen_pub else 1.0
@@ -1073,7 +1318,8 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
     notas = st.text_area("💬 Notas / justificación", key="sen_notas", height=80,
                           placeholder="Motivo de la señal, contexto técnico o fundamental...")
 
-    # Validación visual rápida antes de guardar (contra el precio promedio real)
+    # Validación visual rápida antes de guardar (contra el precio promedio real,
+    # que en una orden pendiente es el precio OBJETIVO de entrada)
     if precio_entrada_pos > 0 and stop_loss > 0 and take_profit > 0:
         ok_niveles = (stop_loss < precio_entrada_pos < take_profit) if es_largo_pub \
             else (take_profit < precio_entrada_pos < stop_loss)
@@ -1120,7 +1366,8 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
     riesgo_moderado = PERFILES_RIESGO["moderado"]["default_pct"]
     riesgo_agresivo = PERFILES_RIESGO["agresivo"]["default_pct"]
 
-    if st.button("📢 Publicar señal", type="primary", key="sen_btn_publicar"):
+    label_btn_pub = "🕓 Dejar orden pendiente" if es_pendiente_pub else "📢 Publicar señal"
+    if st.button(label_btn_pub, type="primary", key="sen_btn_publicar"):
         if not ticker or not resumen_pub or stop_loss <= 0 or take_profit <= 0:
             st.warning("⚠️ Completá ticker, al menos una entrada con precio y margen válidos, "
                        "stop loss y take profit.")
@@ -1132,11 +1379,16 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                          riesgo_conservador=riesgo_conservador, riesgo_moderado=riesgo_moderado,
                          riesgo_agresivo=riesgo_agresivo,
                          apal_conservador=apal_conservador, apal_moderado=apal_moderado,
-                         apal_agresivo=apal_agresivo)
+                         apal_agresivo=apal_agresivo,
+                         estado="PENDIENTE" if es_pendiente_pub else "ABIERTA")
             try:
                 _guardar_senal(supabase, datos, user_id, user_email)
                 _obtener_senales.clear()
-                st.success("✅ Señal publicada.")
+                if es_pendiente_pub:
+                    st.success("✅ Orden pendiente creada. Se activará sola en cuanto el precio "
+                               "toque cada entrada.")
+                else:
+                    st.success("✅ Señal publicada.")
                 for k in ["sen_ticker", "sen_notas"]:
                     st.session_state.pop(k, None)
                 _reset_entradas_state()
@@ -1149,8 +1401,8 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
     # ----------------------------------------------------------
     st.divider()
     st.markdown("#### 🗂️ Gestionar señales publicadas")
-    st.caption("Eliminá cualquier señal —abierta o cerrada— desde acá. El resto de los "
-               "usuarios solo puede ver y simular, nunca borrar.")
+    st.caption("Eliminá cualquier señal —pendiente, abierta o cerrada— desde acá. El resto de "
+               "los usuarios solo puede ver y simular, nunca borrar.")
 
     senales_admin = _obtener_senales(supabase, 200)
     if not senales_admin:
@@ -1194,6 +1446,10 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
             v2.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
             v3.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
             v4.metric("Apalancamiento", fmt_apal(_apalancamiento_apertura_de_senal(row.to_dict())))
+
+            if estado_row == "PENDIENTE":
+                n_act = sum(1 for e in entradas_lista if e.get("activada"))
+                st.caption(f"🕓 Orden pendiente — {n_act}/{len(entradas_lista)} entradas activadas.")
 
             if len(entradas_lista) > 1:
                 st.caption(_md_dolar(f"🧩 {len(entradas_lista)} entradas → {_texto_entradas(entradas_lista)}"))
@@ -1258,6 +1514,7 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                                 "precio": nueva_precio, "costo_apertura": nueva_costo,
                                 "apalancamiento": nueva_apal, "margen": nueva_margen,
                                 "margen_extra": nueva_margen_extra,
+                                "activada": True, "fecha_activacion": None, "hora_activacion": None,
                             }]
                             resumen_nuevo = _resumen_posicion(entradas_nuevas, es_largo_row)
                             if resumen_nuevo is None:
@@ -1284,6 +1541,10 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                     else:
                         st.warning("Ingresá un precio de cierre válido.")
 
+            if estado_row == "PENDIENTE":
+                st.caption("🔧 Esta orden todavía no se puede cerrar ni ampliar manualmente: "
+                           "esperá a que se active sola, o eliminala si ya no la querés.")
+
             st.divider()
             confirmar = st.checkbox("Confirmar eliminación", key=f"sen_admin_confirm_del_{row['id']}")
             if st.button("🗑️ Eliminar señal", key=f"sen_admin_btn_del_{row['id']}",
@@ -1306,6 +1567,9 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
 #  apalancamiento, costo), el precio promedio real de la posición y
 #  el precio de liquidación. Las señales ABIERTAS además muestran un
 #  cartel de P&L en vivo (🟢/🔴), con precio actualizado cada 5 min.
+#  Las señales PENDIENTES (órdenes límite) muestran en cambio qué
+#  entradas ya se activaron y una vista previa de la posición, sin
+#  P&L en vivo ni "Replicar" (todavía no hay margen puesto).
 #  Ya NO permite agregar entradas ni cerrar manualmente una señal:
 #  esa gestión (agregar entrada para promediar / cerrar la posición)
 #  vive únicamente en "Publicar Señal", para que solo el admin la
@@ -1314,17 +1578,20 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
 
 def _tab_senales(supabase, es_admin):
     # Autorefresh cada 5 min: recalcula el P&L en vivo de las señales
-    # abiertas sin que el usuario tenga que tocar nada.
+    # abiertas y revisa activaciones de órdenes pendientes sin que el
+    # usuario tenga que tocar nada.
     st_autorefresh(interval=5 * 60 * 1000, key="sen_autorefresh_pnl_vivo")
 
     top1, top2 = st.columns([3, 1])
     with top1:
-        st.caption("Historial de señales publicadas, con evaluación automática de resultado "
-                   "y P&L en vivo (se actualiza cada 5 min) para las que siguen abiertas.")
+        st.caption("Historial de señales publicadas y órdenes pendientes, con evaluación "
+                   "automática de resultado y P&L en vivo (se actualiza cada 5 min) para las "
+                   "que siguen abiertas.")
     with top2:
         if st.button("↺ Actualizar y evaluar", use_container_width=True, key="sen_refresh"):
             _obtener_senales.clear()
             _historial_desde_fecha.clear()
+            _historial_intradia_desde.clear()
             _precio_en_vivo.clear()
             st.rerun()
 
@@ -1333,7 +1600,7 @@ def _tab_senales(supabase, es_admin):
         st.info("Todavía no hay señales publicadas.")
         return
 
-    with st.spinner("Evaluando señales abiertas contra el precio de mercado..."):
+    with st.spinner("Evaluando señales pendientes y abiertas contra el precio de mercado..."):
         _sincronizar_estados(supabase, senales)
         senales = _obtener_senales(supabase, 200)
 
@@ -1342,6 +1609,7 @@ def _tab_senales(supabase, es_admin):
         df["categoria"] = "🔹 Otro"
     df["categoria"] = df["categoria"].fillna("🔹 Otro")
 
+    n_pendientes = int((df["estado"] == "PENDIENTE").sum())
     n_abiertas = int((df["estado"] == "ABIERTA").sum())
     n_acierto = int((df["estado"] == "ACIERTO (TP)").sum())
     n_desacierto = int((df["estado"] == "DESACIERTO (SL)").sum())
@@ -1363,7 +1631,8 @@ def _tab_senales(supabase, es_admin):
                     else:
                         n_perdiendo_vivo += 1
 
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k0, k1, k2, k3, k4, k5, k6 = st.columns(7)
+    with k0: st.metric("🕓 Pendientes", n_pendientes)
     with k1: st.metric("🔵 Abiertas", n_abiertas)
     with k2: st.metric("✅ Aciertos (TP)", n_acierto)
     with k3: st.metric("❌ Desaciertos (SL)", n_desacierto)
@@ -1399,12 +1668,15 @@ def _tab_senales(supabase, es_admin):
         estado = row.get("estado", "ABIERTA")
         col, bg, emoji = ESTADO_COLOR.get(estado, ("#8b949e", "rgba(139,148,158,0.12)", "⚪"))
 
-        precio_ref = row.get("precio_cierre") if row.get("precio_cierre") is not None else None
-        if precio_ref is None:
-            ev = _evaluar_senal(row.to_dict())
-            precio_ref = ev["precio_ref"]
-
-        ret_precio, ret_apalancado = _calcular_retorno(row.to_dict(), precio_ref) if precio_ref else (0, 0)
+        if estado != "PENDIENTE":
+            precio_ref = row.get("precio_cierre") if row.get("precio_cierre") is not None else None
+            if precio_ref is None:
+                ev = _evaluar_senal(row.to_dict())
+                precio_ref = ev["precio_ref"]
+            ret_precio, ret_apalancado = _calcular_retorno(row.to_dict(), precio_ref) if precio_ref else (0, 0)
+        else:
+            precio_ref = None
+            ret_precio = ret_apalancado = 0
 
         categoria_row = row.get("categoria") or "🔹 Otro"
         titulo = (f"{row.get('fecha','')} {row.get('hora','')} · {row.get('ticker','')} · "
@@ -1417,6 +1689,40 @@ def _tab_senales(supabase, es_admin):
                 f'<div style="font-size:14px;font-weight:800;color:{col}">{estado}</div></div>',
                 unsafe_allow_html=True,
             )
+
+            # ── Orden PENDIENTE: mostrar qué entradas se activaron y una
+            #    vista previa de la posición, y cortar acá (sin P&L,
+            #    replicar, etc. — todavía no hay posición real abierta) ──
+            if estado == "PENDIENTE":
+                entradas_lista = _entradas_de_senal(row.to_dict())
+                n_act = sum(1 for e in entradas_lista if e.get("activada"))
+                st.info(f"🕓 Orden pendiente — {n_act}/{len(entradas_lista)} entradas activadas. "
+                        "Se activa sola en cuanto el precio de mercado toque el precio de cada "
+                        "entrada. Mientras está pendiente no cuenta para el Win Rate ni para el "
+                        "Simulador de Capital.")
+                for i, e in enumerate(entradas_lista):
+                    if e.get("activada"):
+                        detalle = f" el {e.get('fecha_activacion','')}"
+                        if e.get("hora_activacion"):
+                            detalle += f" {e['hora_activacion']}"
+                        st.caption(f"✅ Entrada {i+1} ({fmt_precio_exacto(e['precio'])}) "
+                                   f"activada{detalle}.")
+                    else:
+                        st.caption(f"⏳ Entrada {i+1} ({fmt_precio_exacto(e['precio'])}) "
+                                   "esperando que el precio la toque.")
+                v1, v2 = st.columns(2)
+                v1.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
+                v2.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
+                es_largo_row = "LARGO" in str(row.get("tipo", "")).upper()
+                res_preview = _resumen_de_senal(row.to_dict())
+                if res_preview:
+                    st.caption("Vista previa de la posición una vez que se activen todas las "
+                               "entradas (con el margen y apalancamiento que se cargaron):")
+                    _render_resumen_posicion(res_preview, es_largo_row,
+                                              stop_loss=float(row.get("stop_loss") or 0))
+                if row.get("notas"):
+                    st.markdown(f"**Notas:** {row['notas']}")
+                continue
 
             # ── Cartel de P&L en vivo (solo para señales ABIERTAS) ──────
             if estado == "ABIERTA":
@@ -1431,6 +1737,13 @@ def _tab_senales(supabase, es_admin):
             v2.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
             v3.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
             v4.metric("Apalancamiento", fmt_apal(_apalancamiento_apertura_de_senal(row.to_dict())))
+
+            if row.get("fecha_activacion"):
+                detalle_act = f"{row.get('fecha_activacion')}"
+                if row.get("hora_activacion"):
+                    detalle_act += f" {row.get('hora_activacion')}"
+                st.caption(f"🕓 Esta posición venía de una orden pendiente: se activó el {detalle_act}. "
+                           "El Take Profit / Stop Loss se evalúa desde ese momento en adelante.")
 
             if len(entradas_lista) > 1:
                 st.caption(_md_dolar(f"🧩 {len(entradas_lista)} entradas cargadas → {_texto_entradas(entradas_lista)}"))
@@ -1865,6 +2178,9 @@ def _mostrar_mejor_peor(df_sim):
 #  margen terminás usando realmente en cada una. El apalancamiento que
 #  se usa en el cálculo es siempre el REAL de la señal (el que cargó
 #  el admin al publicarla), igual en las 3 tablas.
+#  Las órdenes PENDIENTES (todavía no activadas) se excluyen del
+#  simulador: no hay una posición real para simular hasta que se
+#  active.
 #  El modo "Replicar la posición del publicador" y el resto de los
 #  modos anteriores (% del capital, por lotes) se sacaron de acá: la
 #  réplica exacta de una señal puntual ahora vive directamente en su
@@ -1881,7 +2197,8 @@ def _tab_simulador(supabase):
     st.caption(
         "🧩 Para señales con varias entradas, acá se usa el precio promedio real de la posición "
         "(ponderado por el tamaño de cada entrada). El apalancamiento y el precio de "
-        "liquidación exactos de cada señal están en 'Señales y Resultados'."
+        "liquidación exactos de cada señal están en 'Señales y Resultados'. Las órdenes "
+        "pendientes (todavía no activadas) no se incluyen acá."
     )
 
     senales = _obtener_senales(supabase, 200)
@@ -1905,6 +2222,7 @@ def _tab_simulador(supabase):
     if "categoria" not in df_base.columns:
         df_base["categoria"] = "🔹 Otro"
     df_base["categoria"] = df_base["categoria"].fillna("🔹 Otro")
+    df_base = df_base[df_base["estado"] != "PENDIENTE"]
     if not incluir_abiertas:
         df_base = df_base[df_base["estado"] != "ABIERTA"]
 
@@ -1959,8 +2277,8 @@ def _tab_simulador(supabase):
         st.dataframe(df_resumen, use_container_width=True, hide_index=True)
 
     st.caption("⚠️ Simulación educativa. No contempla comisiones, spread, financiamiento por "
-               "apalancamiento, swap ni slippage. Cuando TP y SL se tocan el mismo día se asume "
-               "el peor caso (SL). El % de riesgo de cada perfil y el apalancamiento usado "
+               "apalancamiento, swap ni slippage. Cuando TP y SL se tocan en la misma vela se "
+               "asume el peor caso (SL). El % de riesgo de cada perfil y el apalancamiento usado "
                "dependen de cómo se cargó cada señal: verificá las especificaciones de tu "
                "bróker antes de usarlos como referencia real. No constituye asesoramiento "
                "financiero.")
@@ -1986,15 +2304,24 @@ def render_senales_trading(supabase, user_id, user_email):
         ADD COLUMN IF NOT EXISTS apal_moderado      float,
         ADD COLUMN IF NOT EXISTS apal_agresivo      float,
         ADD COLUMN IF NOT EXISTS entradas jsonb DEFAULT '[]'::jsonb,
-        ADD COLUMN IF NOT EXISTS hora_cierre text;
+        ADD COLUMN IF NOT EXISTS hora_cierre text,
+        ADD COLUMN IF NOT EXISTS fecha_activacion date,
+        ADD COLUMN IF NOT EXISTS hora_activacion text;
     (Los campos nuevos de cada entrada —costo_apertura, apalancamiento,
-    margen, margen_extra— viven dentro del jsonb "entradas": no hace
-    falta migrar nada más. "hora_cierre" es nueva en esta versión: sin
-    ella, las señales cerradas antes de correr esta migración van a
-    mostrar el cierre solo con fecha, sin hora, y eso es normal.
+    margen, margen_extra, activada, fecha_activacion, hora_activacion—
+    viven dentro del jsonb "entradas": no hace falta migrar nada más
+    para esos. "fecha_activacion"/"hora_activacion" A NIVEL SEÑAL son
+    nuevos en esta versión: guardan cuándo terminó de activarse una
+    orden pendiente, para que la evaluación de TP/SL arranque desde
+    ahí. "hora_cierre" guarda el momento del cierre; sin ella, las
+    señales cerradas antes de correr esta migración van a mostrar el
+    cierre solo con fecha, sin hora, y eso es normal.
     "apal_conservador/moderado/agresivo" son nuevos: sin ellos, las
     señales viejas solo ofrecen "Apertura" como apalancamiento al
-    replicar la posición en "Señales y Resultados".)
+    replicar la posición en "Señales y Resultados". IMPORTANTE: si tu
+    columna "estado" tiene un CHECK constraint con los valores
+    permitidos (ej. solo 'ABIERTA'/'ACIERTO (TP)'/etc.), agregale
+    'PENDIENTE' a la lista para poder usar las órdenes pendientes.)
     """
     es_admin = _es_admin(user_email)
 
@@ -2009,10 +2336,11 @@ def render_senales_trading(supabase, user_id, user_email):
         Señales publicadas con fecha, hora, una o varias entradas (precio, costo de apertura,
         apalancamiento, margen de apertura y margen extra), precio de liquidación, stop loss,
         take profit, categoría y perfiles de riesgo (🟢 Conservador / 🟡 Moderado / 🔴 Agresivo)
-        — evaluación automática de aciertos/desaciertos, P&L en vivo (actualizado cada 5 min)
-        para las abiertas, réplica de la posición con distintos apalancamientos sugeridos, y
-        simulador de capital (por monto, %, riesgo, lotes o comparando los 3 perfiles) para
-        cualquier usuario.
+        — o cargadas como órdenes pendientes (🕓) que se activan solas cuando el precio toca la
+        entrada. Evaluación automática de aciertos/desaciertos (contada desde la publicación o
+        desde la activación, según corresponda), P&L en vivo (actualizado cada 5 min) para las
+        abiertas, réplica de la posición con distintos apalancamientos sugeridos, y simulador de
+        capital (por monto, %, riesgo, lotes o comparando los 3 perfiles) para cualquier usuario.
       </div>
     </div>
     """, unsafe_allow_html=True)
