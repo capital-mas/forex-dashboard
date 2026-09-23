@@ -37,7 +37,7 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements-noticias.txt
 
-      - name: Correr ingesta de noticias
+        - name: Correr ingesta de noticias
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -45,6 +45,6 @@ jobs:
           # Opcionales — si no los definís como secrets, usa los
           # valores por defecto del script:
           # WATCHLIST: "AAPL,MSFT,GOOGL,YPF,GGAL"
-          # UMBRAL_SIMILITUD: "0.38"
+          UMBRAL_SIMILITUD: "0.42"   # bajado desde el default 0.55 — estaba descartando todo
           VENTANA_MINUTOS: "90"   # 1.5 horas — un poco más que el intervalo, por si una corrida se demora o falla
         run: python ingest_noticias.py
