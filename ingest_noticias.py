@@ -5,7 +5,8 @@
 #
 #  Flujo:
 #    1. Trae noticias nuevas de Finnhub (por ticker + generales de
-#       mercado) y de Marketaux (cobertura global/macro).
+#       mercado). Marketaux queda comentado para sumarlo más
+#       adelante si hace falta más cobertura macro/global.
 #    2. Para cada noticia calcula qué TIPO_EVENTO de la taxonomía
 #       (la misma que ya usa modulo_noticias_mercado.py) es más
 #       parecido, usando similitud de embeddings — corre un modelo
@@ -47,7 +48,6 @@ from sentence_transformers import SentenceTransformer
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 FINNHUB_KEY = os.environ["FINNHUB_API_KEY"]
-MARKETAUX_KEY = os.environ["MARKETAUX_API_KEY"]
 
 AUTOR_AUTOMATICO = "auto-noticias@sistema.local"
 AUTOR_ID_SISTEMA = os.environ.get("AUTOR_ID_SISTEMA")  # dejalo vacío si autor_id acepta NULL
@@ -163,43 +163,49 @@ def traer_finnhub_por_ticker(ticker):
     return resultado
 
 
-def traer_marketaux():
-    publicado_desde = _desde_hace_minutos(VENTANA_MINUTOS).strftime("%Y-%m-%dT%H:%M")
-    try:
-        r = requests.get(
-            "https://api.marketaux.com/v1/news/all",
-            params={
-                "api_token": MARKETAUX_KEY,
-                "language": "en,es",
-                "published_after": publicado_desde,
-                "limit": 3,  # tope del plan free
-            },
-            timeout=20,
-        )
-        r.raise_for_status()
-        data = r.json().get("data", [])
-    except Exception as e:
-        print(f"⚠️ Error trayendo noticias de Marketaux: {e}")
-        return []
-
-    resultado = []
-    for it in data:
-        entidades = it.get("entities", [])
-        primera = entidades[0] if entidades else {}
-        try:
-            fecha = dt.datetime.fromisoformat(it["published_at"].replace("Z", "+00:00")).date()
-        except Exception:
-            fecha = dt.date.today()
-        resultado.append({
-            "titulo": (it.get("title") or "").strip(),
-            "resumen": it.get("description", ""),
-            "fecha": fecha,
-            "fuente_url": it.get("url", ""),
-            "empresa": primera.get("name", "") or "",
-            "ticker": primera.get("symbol", "") or "",
-            "pais": primera.get("country", "") or "",
-        })
-    return resultado
+# Marketaux queda listo para sumarlo más adelante (mejora la
+# cobertura de Macro/Gobiernos/Geopolítica, que Finnhub no cubre).
+# Para activarlo: descomentar esta función, agregar de nuevo
+# MARKETAUX_KEY arriba, sumar `+ traer_marketaux()` en main(), y
+# el secret MARKETAUX_API_KEY en el workflow.
+#
+# def traer_marketaux():
+#     publicado_desde = _desde_hace_minutos(VENTANA_MINUTOS).strftime("%Y-%m-%dT%H:%M")
+#     try:
+#         r = requests.get(
+#             "https://api.marketaux.com/v1/news/all",
+#             params={
+#                 "api_token": MARKETAUX_KEY,
+#                 "language": "en,es",
+#                 "published_after": publicado_desde,
+#                 "limit": 3,  # tope del plan free
+#             },
+#             timeout=20,
+#         )
+#         r.raise_for_status()
+#         data = r.json().get("data", [])
+#     except Exception as e:
+#         print(f"⚠️ Error trayendo noticias de Marketaux: {e}")
+#         return []
+#
+#     resultado = []
+#     for it in data:
+#         entidades = it.get("entities", [])
+#         primera = entidades[0] if entidades else {}
+#         try:
+#             fecha = dt.datetime.fromisoformat(it["published_at"].replace("Z", "+00:00")).date()
+#         except Exception:
+#             fecha = dt.date.today()
+#         resultado.append({
+#             "titulo": (it.get("title") or "").strip(),
+#             "resumen": it.get("description", ""),
+#             "fecha": fecha,
+#             "fuente_url": it.get("url", ""),
+#             "empresa": primera.get("name", "") or "",
+#             "ticker": primera.get("symbol", "") or "",
+#             "pais": primera.get("country", "") or "",
+#         })
+#     return resultado
 
 
 # ----------------------------------------------------------------
@@ -245,7 +251,7 @@ def main():
     noticias = traer_finnhub_general()
     for ticker in WATCHLIST:
         noticias += traer_finnhub_por_ticker(ticker)
-    noticias += traer_marketaux()
+    # noticias += traer_marketaux()  # descomentar cuando sumes Marketaux
 
     print(f"📥 {len(noticias)} noticias encontradas en la ventana de {VENTANA_MINUTOS} min.")
 
