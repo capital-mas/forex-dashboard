@@ -733,7 +733,7 @@ def _tab_feed(supabase, es_admin):
 
     grupo_sel = st.radio("Filtrar por grupo", GRUPOS, horizontal=True, key="me_feed_grupo")
 
-    b1, b2, b3 = st.columns(3)
+    b1, b2, b3, b4 = st.columns([1.3, 1, 1, 1.4])
     with b1:
         f_texto = st.text_input("🔎 Buscar (empresa, ticker, país, título)", key="me_feed_busq")
     with b2:
@@ -742,14 +742,41 @@ def _tab_feed(supabase, es_admin):
     with b3:
         tipos_u = ["Todos"] + sorted(df["tipo_evento"].dropna().unique().tolist())
         f_tipo = st.selectbox("Tipo de evento", tipos_u, key="me_feed_tipo")
+    with b4:
+        fechas_validas = pd.to_datetime(df["fecha_evento"], errors="coerce").dropna()
+        if not fechas_validas.empty:
+            fmin_disp, fmax_disp = fechas_validas.min().date(), fechas_validas.max().date()
+        else:
+            fmin_disp = fmax_disp = date.today()
+        f_rango_fecha = st.date_input(
+            "📅 Rango de fechas",
+            value=(fmin_disp, fmax_disp),
+            min_value=fmin_disp, max_value=fmax_disp,
+            key="me_feed_fecha",
+        )
 
     df_f = df.copy()
+    df_f["_fecha_dt"] = pd.to_datetime(df_f["fecha_evento"], errors="coerce")
+
     if grupo_sel != "Todas":
         df_f = df_f[df_f["grupo"] == grupo_sel]
     if f_impacto != "Todos":
         df_f = df_f[df_f["impacto"] == f_impacto]
     if f_tipo != "Todos":
         df_f = df_f[df_f["tipo_evento"] == f_tipo]
+
+    # date_input devuelve una sola fecha mientras el usuario todavía no
+    # eligió el segundo extremo del rango — contemplamos los dos casos.
+    if isinstance(f_rango_fecha, (tuple, list)) and len(f_rango_fecha) == 2:
+        f_desde, f_hasta = f_rango_fecha
+        df_f = df_f[
+            (df_f["_fecha_dt"].dt.date >= f_desde) & (df_f["_fecha_dt"].dt.date <= f_hasta)
+        ]
+    elif isinstance(f_rango_fecha, date):
+        df_f = df_f[df_f["_fecha_dt"].dt.date == f_rango_fecha]
+
+    df_f = df_f.drop(columns=["_fecha_dt"])
+
     if f_texto.strip():
         t = f_texto.strip().lower()
         mascara = (
