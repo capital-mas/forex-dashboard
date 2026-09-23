@@ -2,10 +2,9 @@ name: Ingesta de noticias de mercado
 
 on:
   schedule:
-    # Cada 10 minutos. Finnhub free no tiene tope diario, solo 60
-    # llamadas/minuto — con la watchlist por defecto (10 tickers +
-    # 1 general = 11 llamadas por corrida) hay margen de sobra.
-    - cron: "*/10 * * * *"
+    # Cada 5 minutos (el mínimo que permite GitHub Actions).
+    # Repo público → minutos de Actions gratis e ilimitados.
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}  # para poder dispararlo a mano desde GitHub
 
 jobs:
