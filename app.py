@@ -8225,7 +8225,8 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
-render_ticker_tape()
+if HORIZONTE not in ('pyme', 'agro'):
+    render_ticker_tape()
 
 
 st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
@@ -8273,178 +8274,25 @@ _OPCIONES_SUB_LARGO = {
     ('📑 Análisis TFF' if TIENE_ACCESO_PRO else '🔒 Análisis TFF (Pro)'): 'tff',
 }
 
-with st.container(key='nav_pills_wrap'):
-    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.2, 1.15, 1.1, 0.25, 1.1, 0.15, 1.3])
+# ── App Switcher: se calcula ANTES de armar las columnas porque lo usan ambos layouts ──
+_VERTICALES_MAP = {
+    '📈 Mercados & Inversiones': 'inicio',
+    ('🏢 PyMEs' if 'pyme' in MODULOS_CONTRATADOS else '🔒 PyMEs'): 'pyme',
+    ('🌾 Agro' if 'agro' in MODULOS_CONTRATADOS else '🔒 Agro'): 'agro',
+}
+_vert_activo = HORIZONTE in ('pyme', 'agro')
+_vert_label_actual = next((k for k, v in _VERTICALES_MAP.items() if v == HORIZONTE), None)
+_label_vert = _vert_label_actual if (_vert_activo and _vert_label_actual) else '🧭 Módulos'
 
-    _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
-             HORIZONTE=='inicio', None, 'inicio', 'inicio')
+n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
+_label_cuenta = f'👤 Mi Cuenta 🔴{n_alertas_fin}' if n_alertas_fin > 0 else '👤 Mi Cuenta'
+_label_finanzas = (
+    f'💰 Finanzas ({n_alertas_fin} alerta{"s" if n_alertas_fin != 1 else ""})'
+    if n_alertas_fin > 0 else '💰 Finanzas'
+)
 
-    # ── Corto Plazo: desplegable con sus módulos ──
-    _corto_label_actual = next(
-        (k for k, v in _OPCIONES_SUB_CORTO.items()
-         if v == MODULO or (MODULO == 'topdown' and v == 'resumen')), None
-    )
-    _label_corto = (f'⚡ {_corto_label_actual.split(" ",1)[1]}'
-                     if (HORIZONTE == 'corto' and _corto_label_actual) else '⚡ Corto Plazo')
-    with _c[1]:
-        _cont_key_cp = 'navcont_nav_corto'
-        with st.container(key=_cont_key_cp):
-            with st.popover(_label_corto, use_container_width=True):
-                st.markdown(
-                    '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
-                    'Corto Plazo</div>',
-                    unsafe_allow_html=True
-                )
-                for label, m_val in _OPCIONES_SUB_CORTO.items():
-                    if st.button(label, use_container_width=True, key=f'subcp_{m_val}'):
-                        st.session_state['nav_horizonte'] = 'corto'
-                        st.session_state['nav_modulo'] = m_val
-                        st.rerun()
-        if HORIZONTE == 'corto':
-            st.markdown(f"""
-            <style>
-            .st-key-{_cont_key_cp} button {{
-                background: #0d1117 !important;
-                color: var(--verde-monster) !important;
-                border: 1.5px solid var(--verde-monster) !important;
-                font-weight: 700 !important;
-                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
-            }}
-            </style>
-            """, unsafe_allow_html=True)
-
-    # ── Largo Plazo: desplegable con sus módulos ──
-    _largo_label_actual = next((k for k, v in _OPCIONES_SUB_LARGO.items() if v == MODULO), None)
-    _label_largo = (f'📈 {_largo_label_actual.split(" ",1)[1]}'
-                     if (HORIZONTE == 'largo' and _largo_label_actual) else '📈 Largo Plazo')
-    with _c[2]:
-        _cont_key_lp = 'navcont_nav_largo'
-        with st.container(key=_cont_key_lp):
-            with st.popover(_label_largo, use_container_width=True):
-                st.markdown(
-                    '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
-                    'Largo Plazo</div>',
-                    unsafe_allow_html=True
-                )
-                for label, m_val in _OPCIONES_SUB_LARGO.items():
-                    if st.button(label, use_container_width=True, key=f'sublp_{m_val}'):
-                        st.session_state['nav_horizonte'] = 'largo'
-                        st.session_state['nav_modulo'] = m_val
-                        st.rerun()
-        if HORIZONTE == 'largo':
-            st.markdown(f"""
-            <style>
-            .st-key-{_cont_key_lp} button {{
-                background: #0d1117 !important;
-                color: var(--verde-monster) !important;
-                border: 1.5px solid var(--verde-monster) !important;
-                font-weight: 700 !important;
-                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
-            }}
-            </style>
-            """, unsafe_allow_html=True)
-
-    _nav_btn(_c[3], '🔍 Buscador', 'nav_buscador',
-             HORIZONTE=='buscador', None, 'buscador', 'buscador')
-
-    # ── Menú desplegable "Herramientas": Comparar, Optimizar, Promediador ──
-    _HERRAMIENTAS_MAP = {
-        '⚖️ Comparar activos': ('comparador', 'comparador'),
-        ('🧮 Optimizar cartera' if TIENE_ACCESO_PRO else '🔒 Optimizar cartera (Pro)'):
-                                 ('optimizador', 'optimizador'),
-        '📐 Promediador + Stop Loss': ('promediador', 'promediador'),
-        ('📊 F-Score (Piotroski)' if TIENE_ACCESO_PRO else '🔒 F-Score (Piotroski) (Pro)'):
-                                 ('fscore', 'fscore'),
-        ('📡 Salud del Mercado' if TIENE_ACCESO_PRO else '🔒 Salud del Mercado (Pro)'):
-                                 ('breadth', 'breadth'),
-        ('📉 Renta Fija y Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija y Macro (Pro)'):
-                                 ('renta_fija_macro', 'renta_fija_macro'),
-        ('🤖 Asistente IA' if TIENE_ACCESO_PRO else '🔒 Asistente IA (Pro)'):
-                                 ('ia_asistente', 'ia_asistente'),
-    }
-    _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth', 'renta_fija_macro', 'ia_asistente'}
-    _herr_activo = HORIZONTE in _herr_horizontes
-    _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
-    _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
-
-    with _c[4]:
-        _cont_key_h = 'navcont_nav_herramientas'
-        with st.container(key=_cont_key_h):
-            with st.popover(_label_herramientas, use_container_width=True):
-                st.markdown(
-                    '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
-                    'Herramientas de análisis</div>',
-                    unsafe_allow_html=True
-                )
-                for label, (h_val, m_val) in _HERRAMIENTAS_MAP.items():
-                    if st.button(label, use_container_width=True, key=f'herr_{h_val}'):
-                        st.session_state['nav_horizonte'] = h_val
-                        st.session_state['nav_modulo'] = m_val
-                        st.rerun()
-        if _herr_activo:
-            st.markdown(f"""
-            <style>
-            .st-key-{_cont_key_h} button {{
-                background: #0d1117 !important;
-                color: var(--verde-monster) !important;
-                border: 1.5px solid var(--verde-monster) !important;
-                font-weight: 700 !important;
-                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
-            }}
-            </style>
-            """, unsafe_allow_html=True)
-
-    # ── Menú desplegable "Trading": Rotación, Señales, Opciones ──
-    _TRADING_MAP = {
-        ('🔄 Rotación y Pares' if TIENE_ACCESO_PRO else '🔒 Rotación y Pares (Pro)'):
-                                 ('pares', 'pares'),
-        ('🎯 Señales de Trading' if TIENE_ACCESO_PRO else '🔒 Señales de Trading (Pro)'):
-                                 ('senales', 'senales'),
-        '🎲 Valuación de Opciones': ('opciones', 'opciones'),
-    }
-    _trading_horizontes = {'pares', 'senales', 'opciones'}
-    _trading_activo = HORIZONTE in _trading_horizontes
-    _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
-    _label_trading = f'📈 {_trading_label_actual.split(" ",1)[1]}' if _trading_label_actual else '📈 Trading'
-
-    with _c[5]:
-        _cont_key_t = 'navcont_nav_trading'
-        with st.container(key=_cont_key_t):
-            with st.popover(_label_trading, use_container_width=True):
-                st.markdown(
-                    '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
-                    'Trading</div>',
-                    unsafe_allow_html=True
-                )
-                for label, (h_val, m_val) in _TRADING_MAP.items():
-                    if st.button(label, use_container_width=True, key=f'trad_{h_val}'):
-                        st.session_state['nav_horizonte'] = h_val
-                        st.session_state['nav_modulo'] = m_val
-                        st.rerun()
-        if _trading_activo:
-            st.markdown(f"""
-            <style>
-            .st-key-{_cont_key_t} button {{
-                background: #0d1117 !important;
-                color: var(--verde-monster) !important;
-                border: 1.5px solid var(--verde-monster) !important;
-                font-weight: 700 !important;
-                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
-            }}
-            </style>
-            """, unsafe_allow_html=True)
-
-    # ── App Switcher: Mercados / PyMEs / Agro ──
-    _VERTICALES_MAP = {
-        '📈 Mercados & Inversiones': 'inicio',
-        ('🏢 PyMEs' if 'pyme' in MODULOS_CONTRATADOS else '🔒 PyMEs'): 'pyme',
-        ('🌾 Agro' if 'agro' in MODULOS_CONTRATADOS else '🔒 Agro'): 'agro',
-    }
-    _vert_activo = HORIZONTE in ('pyme', 'agro')
-    _vert_label_actual = next((k for k, v in _VERTICALES_MAP.items() if v == HORIZONTE), None)
-    _label_vert = _vert_label_actual if (_vert_activo and _vert_label_actual) else '🧭 Módulos'
-
-    with _c[6]:
+def _render_app_switcher(col):
+    with col:
         _cont_key_v = 'navcont_nav_verticales'
         with st.container(key=_cont_key_v):
             with st.popover(_label_vert, use_container_width=True):
@@ -8471,19 +8319,14 @@ with st.container(key='nav_pills_wrap'):
             </style>
             """, unsafe_allow_html=True)
 
-    n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
-    _label_cuenta = f'👤 Mi Cuenta 🔴{n_alertas_fin}' if n_alertas_fin > 0 else '👤 Mi Cuenta'
-    _label_finanzas = (
-        f'💰 Finanzas ({n_alertas_fin} alerta{"s" if n_alertas_fin != 1 else ""})'
-        if n_alertas_fin > 0 else '💰 Finanzas'
-    )
-
-    with _c[8]:
+def _render_actualizar(col):
+    with col:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 _refrescar_cotizaciones()
 
-    with _c[10]:
+def _render_mi_cuenta(col):
+    with col:
         with st.container(key='nav_cuenta_cont'):
             with st.popover(_label_cuenta, use_container_width=True):
                 st.markdown(
@@ -8511,15 +8354,192 @@ with st.container(key='nav_pills_wrap'):
                         st.session_state['nav_modulo'] = 'admin_pagos'
                         st.rerun()
 
-                st.markdown(
-                    '<hr style="margin:6px 0;border-color:#21262d">',
-                    unsafe_allow_html=True
-                )
+                st.markdown('<hr style="margin:6px 0;border-color:#21262d">', unsafe_allow_html=True)
                 if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout'):
                     auth_client.auth.sign_out()
                     cookies.remove("sb_refresh_token")
                     del st.session_state["usuario"]
                     st.rerun()
+
+
+with st.container(key='nav_pills_wrap'):
+
+    # ══════════════════════════════════════════════════════════════
+    #  LAYOUT REDUCIDO — Workspaces de negocio (PyMEs / Agro)
+    # ══════════════════════════════════════════════════════════════
+    if HORIZONTE in ('pyme', 'agro'):
+        _c = st.columns([1.5, 0.25, 1.1, 0.15, 1.3])
+        _render_app_switcher(_c[0])
+        _render_actualizar(_c[2])
+        _render_mi_cuenta(_c[4])
+
+    # ══════════════════════════════════════════════════════════════
+    #  LAYOUT COMPLETO — Mercados & Inversiones
+    # ══════════════════════════════════════════════════════════════
+    else:
+        _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.2, 1.15, 1.1, 0.25, 1.1, 0.15, 1.3])
+
+        _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
+                 HORIZONTE=='inicio', None, 'inicio', 'inicio')
+
+        # ── Corto Plazo: desplegable con sus módulos ──
+        _corto_label_actual = next(
+            (k for k, v in _OPCIONES_SUB_CORTO.items()
+             if v == MODULO or (MODULO == 'topdown' and v == 'resumen')), None
+        )
+        _label_corto = (f'⚡ {_corto_label_actual.split(" ",1)[1]}'
+                         if (HORIZONTE == 'corto' and _corto_label_actual) else '⚡ Corto Plazo')
+        with _c[1]:
+            _cont_key_cp = 'navcont_nav_corto'
+            with st.container(key=_cont_key_cp):
+                with st.popover(_label_corto, use_container_width=True):
+                    st.markdown(
+                        '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
+                        'Corto Plazo</div>',
+                        unsafe_allow_html=True
+                    )
+                    for label, m_val in _OPCIONES_SUB_CORTO.items():
+                        if st.button(label, use_container_width=True, key=f'subcp_{m_val}'):
+                            st.session_state['nav_horizonte'] = 'corto'
+                            st.session_state['nav_modulo'] = m_val
+                            st.rerun()
+            if HORIZONTE == 'corto':
+                st.markdown(f"""
+                <style>
+                .st-key-{_cont_key_cp} button {{
+                    background: #0d1117 !important;
+                    color: var(--verde-monster) !important;
+                    border: 1.5px solid var(--verde-monster) !important;
+                    font-weight: 700 !important;
+                    box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+
+        # ── Largo Plazo: desplegable con sus módulos ──
+        _largo_label_actual = next((k for k, v in _OPCIONES_SUB_LARGO.items() if v == MODULO), None)
+        _label_largo = (f'📈 {_largo_label_actual.split(" ",1)[1]}'
+                         if (HORIZONTE == 'largo' and _largo_label_actual) else '📈 Largo Plazo')
+        with _c[2]:
+            _cont_key_lp = 'navcont_nav_largo'
+            with st.container(key=_cont_key_lp):
+                with st.popover(_label_largo, use_container_width=True):
+                    st.markdown(
+                        '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
+                        'Largo Plazo</div>',
+                        unsafe_allow_html=True
+                    )
+                    for label, m_val in _OPCIONES_SUB_LARGO.items():
+                        if st.button(label, use_container_width=True, key=f'sublp_{m_val}'):
+                            st.session_state['nav_horizonte'] = 'largo'
+                            st.session_state['nav_modulo'] = m_val
+                            st.rerun()
+            if HORIZONTE == 'largo':
+                st.markdown(f"""
+                <style>
+                .st-key-{_cont_key_lp} button {{
+                    background: #0d1117 !important;
+                    color: var(--verde-monster) !important;
+                    border: 1.5px solid var(--verde-monster) !important;
+                    font-weight: 700 !important;
+                    box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+
+        _nav_btn(_c[3], '🔍 Buscador', 'nav_buscador',
+                 HORIZONTE=='buscador', None, 'buscador', 'buscador')
+
+        # ── Menú desplegable "Herramientas": Comparar, Optimizar, Promediador ──
+        _HERRAMIENTAS_MAP = {
+            '⚖️ Comparar activos': ('comparador', 'comparador'),
+            ('🧮 Optimizar cartera' if TIENE_ACCESO_PRO else '🔒 Optimizar cartera (Pro)'):
+                                     ('optimizador', 'optimizador'),
+            '📐 Promediador + Stop Loss': ('promediador', 'promediador'),
+            ('📊 F-Score (Piotroski)' if TIENE_ACCESO_PRO else '🔒 F-Score (Piotroski) (Pro)'):
+                                     ('fscore', 'fscore'),
+            ('📡 Salud del Mercado' if TIENE_ACCESO_PRO else '🔒 Salud del Mercado (Pro)'):
+                                     ('breadth', 'breadth'),
+            ('📉 Renta Fija y Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija y Macro (Pro)'):
+                                     ('renta_fija_macro', 'renta_fija_macro'),
+            ('🤖 Asistente IA' if TIENE_ACCESO_PRO else '🔒 Asistente IA (Pro)'):
+                                     ('ia_asistente', 'ia_asistente'),
+        }
+        _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth', 'renta_fija_macro', 'ia_asistente'}
+        _herr_activo = HORIZONTE in _herr_horizontes
+        _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
+        _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
+
+        with _c[4]:
+            _cont_key_h = 'navcont_nav_herramientas'
+            with st.container(key=_cont_key_h):
+                with st.popover(_label_herramientas, use_container_width=True):
+                    st.markdown(
+                        '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
+                        'Herramientas de análisis</div>',
+                        unsafe_allow_html=True
+                    )
+                    for label, (h_val, m_val) in _HERRAMIENTAS_MAP.items():
+                        if st.button(label, use_container_width=True, key=f'herr_{h_val}'):
+                            st.session_state['nav_horizonte'] = h_val
+                            st.session_state['nav_modulo'] = m_val
+                            st.rerun()
+            if _herr_activo:
+                st.markdown(f"""
+                <style>
+                .st-key-{_cont_key_h} button {{
+                    background: #0d1117 !important;
+                    color: var(--verde-monster) !important;
+                    border: 1.5px solid var(--verde-monster) !important;
+                    font-weight: 700 !important;
+                    box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+
+        # ── Menú desplegable "Trading": Rotación, Señales, Opciones ──
+        _TRADING_MAP = {
+            ('🔄 Rotación y Pares' if TIENE_ACCESO_PRO else '🔒 Rotación y Pares (Pro)'):
+                                     ('pares', 'pares'),
+            ('🎯 Señales de Trading' if TIENE_ACCESO_PRO else '🔒 Señales de Trading (Pro)'):
+                                     ('senales', 'senales'),
+            '🎲 Valuación de Opciones': ('opciones', 'opciones'),
+        }
+        _trading_horizontes = {'pares', 'senales', 'opciones'}
+        _trading_activo = HORIZONTE in _trading_horizontes
+        _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
+        _label_trading = f'📈 {_trading_label_actual.split(" ",1)[1]}' if _trading_label_actual else '📈 Trading'
+
+        with _c[5]:
+            _cont_key_t = 'navcont_nav_trading'
+            with st.container(key=_cont_key_t):
+                with st.popover(_label_trading, use_container_width=True):
+                    st.markdown(
+                        '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
+                        'Trading</div>',
+                        unsafe_allow_html=True
+                    )
+                    for label, (h_val, m_val) in _TRADING_MAP.items():
+                        if st.button(label, use_container_width=True, key=f'trad_{h_val}'):
+                            st.session_state['nav_horizonte'] = h_val
+                            st.session_state['nav_modulo'] = m_val
+                            st.rerun()
+            if _trading_activo:
+                st.markdown(f"""
+                <style>
+                .st-key-{_cont_key_t} button {{
+                    background: #0d1117 !important;
+                    color: var(--verde-monster) !important;
+                    border: 1.5px solid var(--verde-monster) !important;
+                    font-weight: 700 !important;
+                    box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+
+        _render_app_switcher(_c[6])
+        _render_actualizar(_c[8])
+        _render_mi_cuenta(_c[10])
 
 st.markdown("""
 <style>
