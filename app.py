@@ -832,7 +832,45 @@ def _plan_cache(_client, user_id):
 PLAN_USUARIO = _plan_cache(supabase, USER_ID)
 MODULOS_SOLO_PRO = {'optimizador', 'senales', 'pares', 'ia_asistente', 'fscore', 'breadth', 'renta_fija_macro', 'cot', 'tff'}
 TIENE_ACCESO_PRO = ES_ADMIN or PLAN_USUARIO in ('trial', 'pro')
+@st.cache_data(ttl=300, show_spinner=False)
+def _modulos_contratados_cache(_client, user_id):
+    """Lee perfiles.modulos_contratados (jsonb array, ej ["mercados","pyme"]).
+    Si la columna no existe todavía en Supabase, cae a: Pro tiene todo, Básico solo mercados."""
+    try:
+        res = _client.table('perfiles').select('modulos_contratados').eq('id', user_id).maybe_single().execute()
+        mods = (res.data or {}).get('modulos_contratados')
+        if mods:
+            return set(mods)
+    except Exception:
+        pass
+    return {'mercados', 'pyme', 'agro'} if TIENE_ACCESO_PRO else {'mercados'}
 
+MODULOS_CONTRATADOS = _modulos_contratados_cache(supabase, USER_ID)
+
+def _mostrar_bloqueo_modulo(nombre_vertical, beneficios):
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#1a0d20 0%,#150a30 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #e3b341;
+         border-radius:14px; padding:40px 32px; text-align:center; margin-top:20px;">
+      <div style="font-size:40px;margin-bottom:12px">🔒</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:8px">
+        Desbloqueá el módulo {nombre_vertical}
+      </div>
+      <div style="font-size:13px;color:#8b949e;line-height:1.7;max-width:480px;margin:0 auto 20px auto">
+        {beneficios}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button('⭐ Actualizar mi plan', key=f'upgrade_{nombre_vertical}', use_container_width=True):
+            st.session_state['mostrar_upgrade'] = True
+            st.rerun()
+    with c2:
+        st.button('📩 Solicitar prueba gratuita', key=f'trial_{nombre_vertical}', use_container_width=True)
+    if st.session_state.get('mostrar_upgrade'):
+        st.markdown('---')
+        mostrar_selector_planes(supabase, USER_ID, st.session_state["usuario"].email)
 
 def _mostrar_bloqueo_pro(nombre_funcion):
     st.markdown(f"""
