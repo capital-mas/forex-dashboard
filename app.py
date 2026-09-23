@@ -8279,8 +8279,8 @@ _OPCIONES_SUB_LARGO = {
 # ── App Switcher: se calcula ANTES de armar las columnas porque lo usan ambos layouts ──
 _VERTICALES_MAP = {
     '📈 Mercados & Inversiones': 'inicio',
-    ('🏢 PyMEs' if 'pyme' in MODULOS_CONTRATADOS else '🔒 PyMEs'): 'pyme',
-    ('🌾 Agro' if 'agro' in MODULOS_CONTRATADOS else '🔒 Agro'): 'agro',
+    ('🏢 PyMEs' if ES_ADMIN else '🔒 PyMEs'): 'pyme',
+    ('🌾 Agro' if ES_ADMIN else '🔒 Agro'): 'agro',
 }
 _vert_activo = HORIZONTE in ('pyme', 'agro')
 _vert_label_actual = next((k for k, v in _VERTICALES_MAP.items() if v == HORIZONTE), None)
@@ -8370,11 +8370,9 @@ with st.container(key='nav_pills_wrap'):
     #  LAYOUT REDUCIDO — Workspaces de negocio (PyMEs / Agro)
     # ══════════════════════════════════════════════════════════════
     if HORIZONTE in ('pyme', 'agro'):
-        _c = st.columns([1.5, 0.25, 1.1])
-        _render_app_switcher(_c[2])
-
-        _c2 = st.columns([1.5, 0.25, 1.1])
-        _render_actualizar(_c2[2])
+        _c = st.columns([2.5, 1, 0.15, 1])
+        _render_app_switcher(_c[1])
+        _render_actualizar(_c[3])
 
     # ══════════════════════════════════════════════════════════════
     #  LAYOUT COMPLETO — Mercados & Inversiones
@@ -8940,16 +8938,16 @@ elif MODULO == 'admin_pagos':
         st.warning('No tenés permisos de administrador.')
 
 elif MODULO == 'pyme':
-    if 'pyme' in MODULOS_CONTRATADOS:
+    if ES_ADMIN:
         render_pyme(supabase, USER_ID)
     else:
-        _mostrar_bloqueo_modulo('PyMEs', 'Cashflow, cuentas por cobrar/pagar y cartera de cheques en un solo lugar.')
+        _mostrar_bloqueo_modulo('PyMEs', 'Cashflow, cuentas por cobrar/pagar y cartera de cheques en un solo lugar. Próximamente disponible.')
 
 elif MODULO == 'agro':
-    if 'agro' in MODULOS_CONTRATADOS:
+    if ES_ADMIN:
         render_agro(supabase, USER_ID, descargar_datos=descargar_datos, get_close_series=get_close_series)
     else:
-        _mostrar_bloqueo_modulo('Agro', 'Márgenes por hectárea, stock de granos y seguimiento de insumos.')
+        _mostrar_bloqueo_modulo('Agro', 'Márgenes por hectárea, stock de granos y seguimiento de insumos. Próximamente disponible.')
 
 elif HORIZONTE == 'corto':
 
