@@ -558,7 +558,7 @@ def pantalla_landing():
     <div class="vert-wrap">
       <div class="vert-card activa">
         <div class="vert-icon">💹</div>
-        <div class="vert-title">Mercado Financiero</div>
+        <div class="vert-title">Finanzas</div>
         <div class="vert-badge activa">✔ Disponible</div>
       </div>
       <div class="vert-card bloqueada">
