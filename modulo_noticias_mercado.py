@@ -748,12 +748,26 @@ def _tab_feed(supabase, es_admin):
             fmin_disp, fmax_disp = fechas_validas.min().date(), fechas_validas.max().date()
         else:
             fmin_disp = fmax_disp = date.today()
-        f_rango_fecha = st.date_input(
-            "📅 Rango de fechas",
-            value=(fmin_disp, fmax_disp),
-            min_value=fmin_disp, max_value=fmax_disp,
-            key="me_feed_fecha",
+
+        modo_fecha = st.radio(
+            "Filtro de fecha", ["Un día", "Rango"], key="me_feed_fecha_modo",
+            horizontal=True, label_visibility="collapsed",
         )
+        if modo_fecha == "Un día":
+            f_fecha_unica = st.date_input(
+                "📅 Fecha", value=fmax_disp,
+                min_value=fmin_disp, max_value=fmax_disp,
+                key="me_feed_fecha_unica",
+            )
+            f_rango_fecha = None
+        else:
+            f_fecha_unica = None
+            f_rango_fecha = st.date_input(
+                "📅 Rango de fechas",
+                value=(fmin_disp, fmax_disp),
+                min_value=fmin_disp, max_value=fmax_disp,
+                key="me_feed_fecha_rango",
+            )
 
     df_f = df.copy()
     df_f["_fecha_dt"] = pd.to_datetime(df_f["fecha_evento"], errors="coerce")
@@ -765,15 +779,18 @@ def _tab_feed(supabase, es_admin):
     if f_tipo != "Todos":
         df_f = df_f[df_f["tipo_evento"] == f_tipo]
 
-    # date_input devuelve una sola fecha mientras el usuario todavía no
-    # eligió el segundo extremo del rango — contemplamos los dos casos.
-    if isinstance(f_rango_fecha, (tuple, list)) and len(f_rango_fecha) == 2:
-        f_desde, f_hasta = f_rango_fecha
-        df_f = df_f[
-            (df_f["_fecha_dt"].dt.date >= f_desde) & (df_f["_fecha_dt"].dt.date <= f_hasta)
-        ]
-    elif isinstance(f_rango_fecha, date):
-        df_f = df_f[df_f["_fecha_dt"].dt.date == f_rango_fecha]
+    if modo_fecha == "Un día" and f_fecha_unica is not None:
+        df_f = df_f[df_f["_fecha_dt"].dt.date == f_fecha_unica]
+    elif modo_fecha == "Rango":
+        # date_input devuelve una sola fecha mientras el usuario todavía
+        # no eligió el segundo extremo del rango — contemplamos los dos casos.
+        if isinstance(f_rango_fecha, (tuple, list)) and len(f_rango_fecha) == 2:
+            f_desde, f_hasta = f_rango_fecha
+            df_f = df_f[
+                (df_f["_fecha_dt"].dt.date >= f_desde) & (df_f["_fecha_dt"].dt.date <= f_hasta)
+            ]
+        elif isinstance(f_rango_fecha, date):
+            df_f = df_f[df_f["_fecha_dt"].dt.date == f_rango_fecha]
 
     df_f = df_f.drop(columns=["_fecha_dt"])
 
