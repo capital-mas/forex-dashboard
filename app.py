@@ -46,6 +46,8 @@ from modulo_volatilidad_y_analisis_tecnico import (
 from modulo_pares_cointegracion import modulo_pares_cointegracion
 from modulo_cot import modulo_cot
 from modulo_tff import modulo_tff
+from modulo_pyme import render_pyme
+from modulo_agro import render_agro
 
 import re
 import html
