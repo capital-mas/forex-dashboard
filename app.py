@@ -275,12 +275,13 @@ div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button 
     transform: translateY(-1px) !important;
     box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
   }
-    /* ── Triggers de los desplegables (Herramientas, Trading, Mi Cuenta) ──
+    /* ── Triggers de los desplegables (Herramientas, Trading, Módulos, Mi Cuenta) ──
      st.popover no hereda el estilo pill del resto del nav: se lo forzamos acá. ── */
     .st-key-navcont_nav_corto button,
     .st-key-navcont_nav_largo button,
     .st-key-navcont_nav_herramientas button,
     .st-key-navcont_nav_trading button,
+    .st-key-navcont_nav_verticales button,
     .st-key-nav_cuenta_cont button {
     border-radius: 999px !important;
     border: 1px solid #21262d !important;
@@ -298,11 +299,12 @@ div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton button 
     line-height: 1.25 !important;
     letter-spacing: 0.1px !important;
   }
-  .st-key-navcont_nav_corto button:hover,
-  .st-key-navcont_nav_largo button:hover,
-  .st-key-navcont_nav_herramientas button:hover,
-  .st-key-navcont_nav_trading button:hover,
-  .st-key-nav_cuenta_cont button:hover {
+    .st-key-navcont_nav_corto button:hover,
+    .st-key-navcont_nav_largo button:hover,
+    .st-key-navcont_nav_herramientas button:hover,
+    .st-key-navcont_nav_trading button:hover,
+    .st-key-navcont_nav_verticales button:hover,
+    .st-key-nav_cuenta_cont button:hover {
     background: #161b22 !important;
     color: var(--verde-monster-hover) !important;
     border-color: var(--verde-monster) !important;
@@ -8368,10 +8370,11 @@ with st.container(key='nav_pills_wrap'):
     #  LAYOUT REDUCIDO — Workspaces de negocio (PyMEs / Agro)
     # ══════════════════════════════════════════════════════════════
     if HORIZONTE in ('pyme', 'agro'):
-        _c = st.columns([1.5, 0.25, 1.1, 0.15, 1.3])
-        _render_app_switcher(_c[0])
-        _render_actualizar(_c[2])
-        _render_mi_cuenta(_c[4])
+        _c = st.columns([1.5, 0.25, 1.1])
+        _render_app_switcher(_c[2])
+
+        _c2 = st.columns([1.5, 0.25, 1.1])
+        _render_actualizar(_c2[2])
 
     # ══════════════════════════════════════════════════════════════
     #  LAYOUT COMPLETO — Mercados & Inversiones
@@ -8537,9 +8540,11 @@ with st.container(key='nav_pills_wrap'):
                 </style>
                 """, unsafe_allow_html=True)
 
-        _render_app_switcher(_c[6])
-        _render_actualizar(_c[8])
+        _render_app_switcher(_c[8])
         _render_mi_cuenta(_c[10])
+
+        _c2 = st.columns([1.0, 1.15, 1.15, 1.05, 1.2, 1.15, 1.1, 0.25, 1.1, 0.15, 1.3])
+        _render_actualizar(_c2[10])
 
 st.markdown("""
 <style>
