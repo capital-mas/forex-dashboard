@@ -2,9 +2,8 @@ name: Ingesta de noticias de mercado
 
 on:
   schedule:
-    # Cada 5 minutos (el mínimo que permite GitHub Actions).
-    # Repo público → minutos de Actions gratis e ilimitados.
-    - cron: "*/5 * * * *"
+    # Una vez por hora, en el minuto :00.
+    - cron: "0 * * * *"
   workflow_dispatch: {}  # para poder dispararlo a mano desde GitHub
 
 jobs:
@@ -38,5 +37,5 @@ jobs:
           # valores por defecto del script:
           # WATCHLIST: "AAPL,MSFT,GOOGL,YPF,GGAL"
           # UMBRAL_SIMILITUD: "0.38"
-          VENTANA_MINUTOS: "1440"   # 24 horas — trae noticias de las últimas 24hs en cada corrida
+          VENTANA_MINUTOS: "90"   # 1.5 horas — un poco más que el intervalo, por si una corrida se demora o falla
         run: python ingest_noticias.py
