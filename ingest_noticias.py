@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modulo_noticias_mercado import TIPOS_EVENTO, TABLA_EVENTOS  # noqa: E402
 
 from sentence_transformers import SentenceTransformer
+from transformers import pipeline
 
 # ----------------------------------------------------------------
 # CONFIG — todo esto sale de env vars / GitHub Secrets
@@ -60,9 +61,10 @@ WATCHLIST = [t.strip() for t in os.environ.get("WATCHLIST", WATCHLIST_DEFAULT).s
 
 # Umbral mínimo de similitud (0 a 1) para aceptar una clasificación.
 # Si no llega, la noticia se descarta en vez de cargarse mal
-# clasificada. Empezá con 0.38 y ajustalo mirando los logs: si ves
-# clasificaciones raras, subilo; si se descarta casi todo, bajalo.
-UMBRAL_SIMILITUD = float(os.environ.get("UMBRAL_SIMILITUD", "0.38"))
+# clasificada. 0.55 es un punto de partida razonable (viendo los
+# primeros logs reales: los aciertos rondan 0.55-0.65, los errores
+# 0.38-0.48) — ajustalo mirando los logs de tus próximas corridas.
+UMBRAL_SIMILITUD = float(os.environ.get("UMBRAL_SIMILITUD", "0.55"))
 
 # Cuántos minutos hacia atrás buscar en cada corrida (un poco más
 # que el intervalo del cron, para no perder noticias si una corrida
@@ -72,6 +74,23 @@ VENTANA_MINUTOS = int(os.environ.get("VENTANA_MINUTOS", "30"))
 # Modelo multilingüe chico (funciona bien español/inglés mezclados,
 # que es justo el caso: taxonomía en español, noticias en inglés).
 MODELO_EMBEDDINGS = "paraphrase-multilingual-MiniLM-L12-v2"
+
+# Fuentes que en la práctica publican columnas de opinión / listas
+# tipo "3 acciones para comprar" en vez de noticias de un evento
+# puntual. El clasificador les termina inventando un tipo de evento
+# cualquiera porque no encajan en ninguno — mejor descartarlas antes.
+# Sumá más nombres acá si ves que se cuelan (fijate el campo "source"
+# en los logs 🔍 si querés confirmar el nombre exacto que usa Finnhub).
+FUENTES_EXCLUIDAS = {
+    "motley fool", "zacks", "zacks investment research", "zacks.com",
+    "24/7 wall st", "24/7 wall st.", "insider monkey", "simply wall st",
+    "simply wall st.", "tipranks", "investorplace", "gurufocus",
+    "seeking alpha", "smarteranalyst", "barchart",
+}
+
+
+def _es_fuente_excluida(source):
+    return (source or "").strip().lower() in FUENTES_EXCLUIDAS
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -93,6 +112,34 @@ class Clasificador:
         similitudes = self.emb_tipos @ emb_noticia
         idx_mejor = int(np.argmax(similitudes))
         return self.tipos[idx_mejor], float(similitudes[idx_mejor])
+
+
+# ----------------------------------------------------------------
+# TRADUCTOR — modelo local (Helsinki-NLP/opus-mt-en-es), sin costo
+# por noticia. Las noticias de Finnhub vienen en inglés; se
+# traducen ANTES de clasificar, lo que además mejora la precisión
+# del clasificador (compara español contra español, no inglés
+# contra español).
+# ----------------------------------------------------------------
+class Traductor:
+    def __init__(self):
+        print("Cargando modelo de traducción (inglés → español)...")
+        self.pipe = pipeline("translation", model="Helsinki-NLP/opus-mt-en-es")
+
+    def _traducir_texto(self, texto):
+        texto = (texto or "").strip()
+        if not texto:
+            return texto
+        try:
+            # Los modelos Marian truncan alrededor de 512 tokens; de
+            # sobra para un título o resumen de noticia.
+            return self.pipe(texto, max_length=400)[0]["translation_text"]
+        except Exception as e:
+            print(f"⚠️ No se pudo traducir ('{texto[:40]}...'): {e}")
+            return texto  # si falla, mejor guardar el original que perder la noticia
+
+    def traducir(self, titulo, resumen):
+        return self._traducir_texto(titulo), self._traducir_texto(resumen)
 
 
 # ----------------------------------------------------------------
@@ -126,6 +173,8 @@ def traer_finnhub_general():
     limite = _desde_hace_minutos(VENTANA_MINUTOS)
     resultado = []
     for it in items:
+        if _es_fuente_excluida(it.get("source")):
+            continue
         fecha = dt.datetime.utcfromtimestamp(it.get("datetime", 0))
         if fecha < limite:
             continue
@@ -164,6 +213,8 @@ def traer_finnhub_por_ticker(ticker):
     limite = _desde_hace_minutos(VENTANA_MINUTOS)
     resultado = []
     for it in items:
+        if _es_fuente_excluida(it.get("source")):
+            continue
         fecha = dt.datetime.utcfromtimestamp(it.get("datetime", 0))
         if fecha < limite:
             continue
@@ -251,7 +302,7 @@ def guardar(noticia, tipo_evento, score):
         "sector": "",
         "activos_afectados": ", ".join(info.get("activos", [])),
         "fuente_url": noticia["fuente_url"],
-        "notas": f"Clasificado automáticamente (similitud {score:.2f}).",
+        "notas": f"Clasificado automáticamente (similitud {score:.2f}). Traducido del inglés.",
     }
     supabase.table(TABLA_EVENTOS).insert(row).execute()
 
@@ -261,6 +312,7 @@ def guardar(noticia, tipo_evento, score):
 # ----------------------------------------------------------------
 def main():
     clasificador = Clasificador()
+    traductor = Traductor()
 
     noticias = traer_finnhub_general()
     for ticker in WATCHLIST:
@@ -269,19 +321,28 @@ def main():
 
     print(f"📥 {len(noticias)} noticias encontradas en la ventana de {VENTANA_MINUTOS} min.")
 
-    nuevas = descartadas_dup = descartadas_score = 0
+    # Filtramos duplicados ANTES de traducir/clasificar, para no
+    # gastar tiempo de cómputo en noticias que ya están guardadas.
+    candidatas, descartadas_dup = [], 0
     for noticia in noticias:
         if not noticia["titulo"] or not noticia["fuente_url"]:
             continue
         if ya_existe(noticia["fuente_url"]):
             descartadas_dup += 1
             continue
+        candidatas.append(noticia)
 
-        tipo_evento, score = clasificador.clasificar(noticia["titulo"], noticia["resumen"])
+    nuevas = descartadas_score = 0
+    for noticia in candidatas:
+        titulo_es, resumen_es = traductor.traducir(noticia["titulo"], noticia["resumen"])
+
+        tipo_evento, score = clasificador.clasificar(titulo_es, resumen_es)
         if score < UMBRAL_SIMILITUD:
             descartadas_score += 1
             continue
 
+        noticia["titulo"] = titulo_es
+        noticia["resumen"] = resumen_es
         try:
             guardar(noticia, tipo_evento, score)
             nuevas += 1
