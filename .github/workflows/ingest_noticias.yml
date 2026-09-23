@@ -39,5 +39,5 @@ jobs:
           # valores por defecto del script:
           # WATCHLIST: "AAPL,MSFT,GOOGL,YPF,GGAL"
           # UMBRAL_SIMILITUD: "0.38"
-          # VENTANA_MINUTOS: "30"
+          VENTANA_MINUTOS: "1440"   # 24 horas, solo para probar
         run: python ingest_noticias.py
