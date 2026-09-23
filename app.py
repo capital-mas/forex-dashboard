@@ -527,53 +527,6 @@ def pantalla_landing():
     </style>
     """, unsafe_allow_html=True)
 
-        # ── SELECTOR DE VERTICAL DE NEGOCIO ─────────────────────────────────
-    st.markdown("""
-    <style>
-    .vert-wrap {
-        max-width:1100px; margin:0 auto 28px auto; padding:0 20px;
-        display:grid; grid-template-columns:repeat(3,1fr); gap:14px;
-    }
-    .vert-card {
-        border-radius:12px; padding:16px 18px; text-align:center;
-        display:flex; flex-direction:column; align-items:center; gap:4px;
-        transition:border-color .2s, transform .2s;
-    }
-    .vert-card.activa {
-        background:#0d1117; border:1.5px solid #6CC24A;
-        box-shadow:0 0 0 1px rgba(108,194,74,0.2);
-    }
-    .vert-card.bloqueada {
-        background:#0a0c10; border:1px dashed #21262d; opacity:0.55;
-    }
-    .vert-icon { font-size:22px; }
-    .vert-title { font-size:13px; font-weight:700; color:#e6edf3; }
-    .vert-badge {
-        font-size:9.5px; font-weight:700; letter-spacing:.6px; text-transform:uppercase;
-        padding:2px 10px; border-radius:20px; margin-top:2px;
-    }
-    .vert-badge.activa { background:rgba(108,194,74,0.15); color:#6CC24A; border:1px solid #6CC24A; }
-    .vert-badge.bloqueada { background:rgba(139,148,158,0.12); color:#8b949e; border:1px solid #21262d; }
-    </style>
-    <div class="vert-wrap">
-      <div class="vert-card activa">
-        <div class="vert-icon">💹</div>
-        <div class="vert-title">Finanzas</div>
-        <div class="vert-badge activa">✔ Disponible</div>
-      </div>
-      <div class="vert-card bloqueada">
-        <div class="vert-icon">🏢</div>
-        <div class="vert-title">Pymes</div>
-        <div class="vert-badge bloqueada">🔒 Próximamente</div>
-      </div>
-      <div class="vert-card bloqueada">
-        <div class="vert-icon">🌾</div>
-        <div class="vert-title">Agro</div>
-        <div class="vert-badge bloqueada">🔒 Próximamente</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
     # ── HERO + LOGIN/REGISTRO lado a lado ──────────────────────────────
     st.markdown('<div class="landing-hero-wrap">', unsafe_allow_html=True)
     col_hero, col_auth = st.columns([1.15, 1], gap="large")
