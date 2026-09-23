@@ -8877,6 +8877,18 @@ elif MODULO == 'admin_pagos':
     else:
         st.warning('No tenés permisos de administrador.')
 
+elif MODULO == 'pyme':
+    if 'pyme' in MODULOS_CONTRATADOS:
+        render_pyme(supabase, USER_ID)
+    else:
+        _mostrar_bloqueo_modulo('PyMEs', 'Cashflow, cuentas por cobrar/pagar y cartera de cheques en un solo lugar.')
+
+elif MODULO == 'agro':
+    if 'agro' in MODULOS_CONTRATADOS:
+        render_agro(supabase, USER_ID, descargar_datos=descargar_datos, get_close_series=get_close_series)
+    else:
+        _mostrar_bloqueo_modulo('Agro', 'Márgenes por hectárea, stock de granos y seguimiento de insumos.')
+
 elif HORIZONTE == 'corto':
 
 
