@@ -37,7 +37,7 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements-noticias.txt
 
-        - name: Correr ingesta de noticias
+      - name: Correr ingesta de noticias
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
