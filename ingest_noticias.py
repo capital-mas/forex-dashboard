@@ -116,6 +116,13 @@ def traer_finnhub_general():
         print(f"⚠️ Error trayendo noticias generales de Finnhub: {e}")
         return []
 
+    if items:
+        fechas_todas = [dt.datetime.utcfromtimestamp(it.get("datetime", 0)) for it in items]
+        print(f"🔍 [general] la API devolvió {len(items)} noticias en total, "
+              f"la más reciente es de {max(fechas_todas)} UTC.")
+    else:
+        print("🔍 [general] la API no devolvió ninguna noticia.")
+
     limite = _desde_hace_minutos(VENTANA_MINUTOS)
     resultado = []
     for it in items:
@@ -146,6 +153,13 @@ def traer_finnhub_por_ticker(ticker):
     except Exception as e:
         print(f"⚠️ Error trayendo noticias de {ticker}: {e}")
         return []
+
+    if items:
+        fechas_todas = [dt.datetime.utcfromtimestamp(it.get("datetime", 0)) for it in items]
+        print(f"🔍 [{ticker}] la API devolvió {len(items)} noticias (últimos 2 días), "
+              f"la más reciente es de {max(fechas_todas)} UTC.")
+    else:
+        print(f"🔍 [{ticker}] la API no devolvió ninguna noticia en los últimos 2 días.")
 
     limite = _desde_hace_minutos(VENTANA_MINUTOS)
     resultado = []
