@@ -8274,7 +8274,7 @@ _OPCIONES_SUB_LARGO = {
 }
 
 with st.container(key='nav_pills_wrap'):
-    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.2, 1.15, 0.25, 1.1, 0.15, 1.3])
+    _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.2, 1.15, 1.1, 0.25, 1.1, 0.15, 1.3])
 
     _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
              HORIZONTE=='inicio', None, 'inicio', 'inicio')
@@ -8434,6 +8434,43 @@ with st.container(key='nav_pills_wrap'):
             </style>
             """, unsafe_allow_html=True)
 
+    # ── App Switcher: Mercados / PyMEs / Agro ──
+    _VERTICALES_MAP = {
+        '📈 Mercados & Inversiones': 'inicio',
+        ('🏢 PyMEs' if 'pyme' in MODULOS_CONTRATADOS else '🔒 PyMEs'): 'pyme',
+        ('🌾 Agro' if 'agro' in MODULOS_CONTRATADOS else '🔒 Agro'): 'agro',
+    }
+    _vert_activo = HORIZONTE in ('pyme', 'agro')
+    _vert_label_actual = next((k for k, v in _VERTICALES_MAP.items() if v == HORIZONTE), None)
+    _label_vert = _vert_label_actual if (_vert_activo and _vert_label_actual) else '🧭 Módulos'
+
+    with _c[6]:
+        _cont_key_v = 'navcont_nav_verticales'
+        with st.container(key=_cont_key_v):
+            with st.popover(_label_vert, use_container_width=True):
+                st.markdown(
+                    '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
+                    'Cambiar de workspace</div>',
+                    unsafe_allow_html=True
+                )
+                for label, h_val in _VERTICALES_MAP.items():
+                    if st.button(label, use_container_width=True, key=f'vert_{h_val}'):
+                        st.session_state['nav_horizonte'] = h_val
+                        st.session_state['nav_modulo'] = h_val
+                        st.rerun()
+        if _vert_activo:
+            st.markdown(f"""
+            <style>
+            .st-key-{_cont_key_v} button {{
+                background: #0d1117 !important;
+                color: var(--verde-monster) !important;
+                border: 1.5px solid var(--verde-monster) !important;
+                font-weight: 700 !important;
+                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+            }}
+            </style>
+            """, unsafe_allow_html=True)
+
     n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
     _label_cuenta = f'👤 Mi Cuenta 🔴{n_alertas_fin}' if n_alertas_fin > 0 else '👤 Mi Cuenta'
     _label_finanzas = (
@@ -8441,12 +8478,12 @@ with st.container(key='nav_pills_wrap'):
         if n_alertas_fin > 0 else '💰 Finanzas'
     )
 
-    with _c[7]:
+    with _c[8]:
         with st.container(key='nav_refresh_cont'):
             if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh'):
                 _refrescar_cotizaciones()
 
-    with _c[9]:
+    with _c[10]:
         with st.container(key='nav_cuenta_cont'):
             with st.popover(_label_cuenta, use_container_width=True):
                 st.markdown(
