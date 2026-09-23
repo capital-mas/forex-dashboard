@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modulo_noticias_mercado import TIPOS_EVENTO, TABLA_EVENTOS  # noqa: E402
 
 from sentence_transformers import SentenceTransformer
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 # ----------------------------------------------------------------
 # CONFIG — todo esto sale de env vars / GitHub Secrets
@@ -124,7 +124,9 @@ class Clasificador:
 class Traductor:
     def __init__(self):
         print("Cargando modelo de traducción (inglés → español)...")
-        self.pipe = pipeline("translation", model="Helsinki-NLP/opus-mt-en-es")
+        nombre_modelo = "Helsinki-NLP/opus-mt-en-es"
+        self.tokenizer = AutoTokenizer.from_pretrained(nombre_modelo)
+        self.modelo = AutoModelForSeq2SeqLM.from_pretrained(nombre_modelo)
 
     def _traducir_texto(self, texto):
         texto = (texto or "").strip()
@@ -133,7 +135,9 @@ class Traductor:
         try:
             # Los modelos Marian truncan alrededor de 512 tokens; de
             # sobra para un título o resumen de noticia.
-            return self.pipe(texto, max_length=400)[0]["translation_text"]
+            entradas = self.tokenizer(texto, return_tensors="pt", truncation=True, max_length=400)
+            salida = self.modelo.generate(**entradas, max_length=400)
+            return self.tokenizer.decode(salida[0], skip_special_tokens=True)
         except Exception as e:
             print(f"⚠️ No se pudo traducir ('{texto[:40]}...'): {e}")
             return texto  # si falla, mejor guardar el original que perder la noticia
