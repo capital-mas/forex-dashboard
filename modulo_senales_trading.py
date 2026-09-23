@@ -588,6 +588,24 @@ def _texto_cierre(estado, fecha_cierre, hora_cierre):
     return str(fecha_cierre)
 
 
+def _cierre_manual_fue_ganador(senal):
+    """Para una señal CERRADA MANUAL, indica si el resultado fue
+    ganador (retorno apalancado > 0 contra el precio de cierre
+    guardado) o perdedor. Devuelve None si falta el precio de cierre
+    y por lo tanto no se puede determinar. Se usa para que un cierre
+    manual cuente como acierto o desacierto en el Win Rate, en vez de
+    quedar fuera de esa estadística."""
+    precio_cierre = senal.get("precio_cierre")
+    if precio_cierre is None:
+        return None
+    try:
+        precio_cierre = float(precio_cierre)
+    except (TypeError, ValueError):
+        return None
+    _ret_precio, ret_apalancado = _calcular_retorno(senal, precio_cierre)
+    return ret_apalancado > 0
+
+
 def _render_resumen_posicion(res, es_largo, stop_loss=None):
     """Muestra la posición total y el precio de liquidación. El margen
     de apertura y el apalancamiento de apertura van primero (son los
@@ -1584,8 +1602,26 @@ def _tab_senales(supabase, es_admin):
     n_abiertas = int((df["estado"] == "ABIERTA").sum())
     n_acierto = int((df["estado"] == "ACIERTO (TP)").sum())
     n_desacierto = int((df["estado"] == "DESACIERTO (SL)").sum())
-    n_cerradas_total = n_acierto + n_desacierto
-    winrate = (n_acierto / n_cerradas_total * 100) if n_cerradas_total > 0 else 0.0
+
+    # Las señales CERRADAS MANUALMENTE no tienen un estado "ACIERTO"/
+    # "DESACIERTO" propio (el admin las cerró a mano, no por TP/SL), pero
+    # sí ganaron o perdieron plata: se clasifican según el signo del
+    # retorno contra el precio de cierre guardado, para que SÍ cuenten
+    # en el Win Rate en vez de quedar fuera de esa estadística.
+    df_manual = df[df["estado"] == "CERRADA MANUAL"]
+    n_manual_ganadora = 0
+    n_manual_perdedora = 0
+    for _, row_m in df_manual.iterrows():
+        gano = _cierre_manual_fue_ganador(row_m.to_dict())
+        if gano is True:
+            n_manual_ganadora += 1
+        elif gano is False:
+            n_manual_perdedora += 1
+
+    n_acierto_total = n_acierto + n_manual_ganadora
+    n_desacierto_total = n_desacierto + n_manual_perdedora
+    n_cerradas_total = n_acierto_total + n_desacierto_total
+    winrate = (n_acierto_total / n_cerradas_total * 100) if n_cerradas_total > 0 else 0.0
 
     # ── Resumen de P&L en vivo de las posiciones ABIERTAS ──────────────
     df_abiertas_kpi = df[df["estado"] == "ABIERTA"]
@@ -1605,8 +1641,10 @@ def _tab_senales(supabase, es_admin):
     k0, k1, k2, k3, k4, k5, k6 = st.columns(7)
     with k0: st.metric("🕓 Pendientes", n_pendientes)
     with k1: st.metric("🔵 Abiertas", n_abiertas)
-    with k2: st.metric("✅ Aciertos (TP)", n_acierto)
-    with k3: st.metric("❌ Desaciertos (SL)", n_desacierto)
+    with k2: st.metric("✅ Aciertos (TP)", n_acierto_total,
+                        f"{n_acierto} por TP + {n_manual_ganadora} manuales" if n_manual_ganadora else None)
+    with k3: st.metric("❌ Desaciertos (SL)", n_desacierto_total,
+                        f"{n_desacierto} por SL + {n_manual_perdedora} manuales" if n_manual_perdedora else None)
     with k4: st.metric("🎯 Win Rate", f"{winrate:.1f}%" if n_cerradas_total > 0 else "—")
     with k5: st.metric("🟢 Ganando ahora", n_ganando_vivo, "en vivo · cada 5 min")
     with k6: st.metric("🔴 Perdiendo ahora", n_perdiendo_vivo, "en vivo · cada 5 min")
@@ -1660,6 +1698,15 @@ def _tab_senales(supabase, es_admin):
                 f'<div style="font-size:14px;font-weight:800;color:{col}">{estado}</div></div>',
                 unsafe_allow_html=True,
             )
+
+            if estado == "CERRADA MANUAL":
+                gano_manual = _cierre_manual_fue_ganador(row.to_dict())
+                if gano_manual is True:
+                    st.caption("✅ Este cierre manual se contabiliza como **acierto** en el Win "
+                               "Rate (cerró con ganancia).")
+                elif gano_manual is False:
+                    st.caption("❌ Este cierre manual se contabiliza como **desacierto** en el "
+                               "Win Rate (cerró con pérdida).")
 
             # ── Orden PENDIENTE: mostrar qué entradas se activaron y una
             #    vista previa de la posición, y cortar acá (sin P&L,
