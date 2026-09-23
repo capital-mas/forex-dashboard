@@ -874,6 +874,23 @@ def _mostrar_bloqueo_modulo(nombre_vertical, beneficios):
         st.markdown('---')
         mostrar_selector_planes(supabase, USER_ID, st.session_state["usuario"].email)
 
+
+def _mostrar_no_disponible(nombre_vertical, descripcion):
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #6b7d9a;
+         border-radius:14px; padding:40px 32px; text-align:center; margin-top:20px;">
+      <div style="font-size:40px;margin-bottom:12px">🚧</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:8px">
+        Módulo {nombre_vertical} — No disponible por el momento
+      </div>
+      <div style="font-size:13px;color:#8b949e;line-height:1.7;max-width:480px;margin:0 auto">
+        {descripcion}<br><br>
+        Estamos trabajando en este módulo. Todavía no está listo para el público.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 def _mostrar_bloqueo_pro(nombre_funcion):
     st.markdown(f"""
     <div style="background:linear-gradient(135deg,#1a0d20 0%,#150a30 50%,#0d1117 100%);
@@ -8941,13 +8958,13 @@ elif MODULO == 'pyme':
     if ES_ADMIN:
         render_pyme(supabase, USER_ID)
     else:
-        _mostrar_bloqueo_modulo('PyMEs', 'Cashflow, cuentas por cobrar/pagar y cartera de cheques en un solo lugar. Próximamente disponible.')
+        _mostrar_no_disponible('PyMEs', 'Cashflow, cuentas por cobrar/pagar y cartera de cheques en un solo lugar.')
 
 elif MODULO == 'agro':
     if ES_ADMIN:
         render_agro(supabase, USER_ID, descargar_datos=descargar_datos, get_close_series=get_close_series)
     else:
-        _mostrar_bloqueo_modulo('Agro', 'Márgenes por hectárea, stock de granos y seguimiento de insumos. Próximamente disponible.')
+        _mostrar_no_disponible('Agro', 'Márgenes por hectárea, stock de granos y seguimiento de insumos.')
 
 elif HORIZONTE == 'corto':
 
