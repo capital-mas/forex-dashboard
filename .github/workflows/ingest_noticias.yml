@@ -1,0 +1,43 @@
+name: Ingesta de noticias de mercado
+
+on:
+  schedule:
+    # Cada 10 minutos. Finnhub free no tiene tope diario, solo 60
+    # llamadas/minuto — con la watchlist por defecto (10 tickers +
+    # 1 general = 11 llamadas por corrida) hay margen de sobra.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}  # para poder dispararlo a mano desde GitHub
+
+jobs:
+  ingestar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cachear pip y el modelo de embeddings
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/torch
+            ~/.cache/huggingface
+          key: ${{ runner.os }}-noticias-${{ hashFiles('requirements-noticias.txt') }}
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-noticias.txt
+
+      - name: Correr ingesta de noticias
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          # Opcionales — si no los definís como secrets, usa los
+          # valores por defecto del script:
+          # WATCHLIST: "AAPL,MSFT,GOOGL,YPF,GGAL"
+          # UMBRAL_SIMILITUD: "0.38"
+          # VENTANA_MINUTOS: "30"
+        run: python ingest_noticias.py
