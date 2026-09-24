@@ -835,9 +835,14 @@ ESTADO_MODULOS = {m: True for m in PRODUCTOS} if ES_ADMIN else _resumen_modulos_
 @st.cache_data(ttl=300, show_spinner=False)
 def _plan_cache(_client, user_id):
     try:
-        return obtener_plan_actual(_client, user_id)
+        info = estado_modulo(_client, user_id, 'mercados')
+        if not info.get('activo'):
+            return None
+        return info.get('nivel')  # 'admin' | 'trial' | 'basico' | 'pro'
     except Exception:
         return None
+
+PLAN_USUARIO = _plan_cache(supabase, USER_ID)
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _contar_pagos_pendientes(_client):
