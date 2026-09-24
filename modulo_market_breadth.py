@@ -264,6 +264,53 @@ INDICES_CONSTITUYENTES = {
               '000880.KS', '001450.KS', '000080.KS', '004800.KS', '001740.KS', '000240.KS', '003230.KS', '005300.KS'
           ],
 },
+
+# 5. CAC 40 (Francia) — los tickers de Euronext Paris llevan sufijo .PA
+      'CAC 40 (40)': {
+          'ticker_indice': '^FCHI',
+          'constituyentes': [
+              'AC.PA', 'AI.PA', 'AIR.PA', 'MT.AS', 'CS.PA', 'BNP.PA', 'EN.PA', 'BVI.PA',
+              'CAP.PA', 'CA.PA', 'ACA.PA', 'BN.PA', 'DSY.PA', 'EDEN.PA', 'ENGI.PA', 'EL.PA',
+              'ERF.PA', 'RMS.PA', 'KER.PA', 'OR.PA', 'LR.PA', 'MC.PA', 'ML.PA', 'ORA.PA',
+              'RI.PA', 'PUB.PA', 'RNO.PA', 'SAF.PA', 'SGO.PA', 'SAN.PA', 'SU.PA', 'GLE.PA',
+              'STLAP.PA', 'STMPA.PA', 'TEP.PA', 'HO.PA', 'TTE.PA', 'URW.PA', 'VIE.PA', 'DG.PA'
+          ],
+},
+
+# 6. FTSE 100 (Reino Unido) — los tickers de la London Stock Exchange llevan sufijo .L
+      'FTSE 100 (100)': {
+          'ticker_indice': '^FTSE',
+          'constituyentes': [
+              'III.L', 'ABDN.L', 'ADM.L', 'AAF.L', 'ALW.L', 'AAL.L', 'ANTO.L', 'ABF.L',
+              'AZN.L', 'AUTO.L', 'AV.L', 'BAB.L', 'BA.L', 'BARC.L', 'BTRW.L', 'BEZ.L',
+              'BP.L', 'BATS.L', 'BLND.L', 'BT-A.L', 'BNZL.L', 'BRBY.L', 'CNA.L', 'CCEP.L',
+              'CCH.L', 'CPG.L', 'CCC.L', 'CTEC.L', 'CRDA.L', 'DCC.L', 'DGE.L', 'DPLM.L',
+              'EDV.L', 'ENT.L', 'EXPN.L', 'FCIT.L', 'FRES.L', 'GAW.L', 'GLEN.L', 'GSK.L',
+              'HLN.L', 'HLMA.L', 'HSX.L', 'HWDN.L', 'HSBA.L', 'ICG.L', 'IGG.L', 'IHG.L',
+              'IMI.L', 'IMB.L', 'INF.L', 'IAG.L', 'ITRK.L', 'INVP.L', 'JD.L', 'BGEO.L',
+              'KGF.L', 'LAND.L', 'LGEN.L', 'LLOY.L', 'LMP.L', 'LSEG.L', 'MNG.L', 'MKS.L',
+              'MRO.L', 'MTLN.L', 'NG.L', 'NWG.L', 'NXT.L', 'PSON.L', 'PSH.L', 'PSN.L',
+              'PCT.L', 'PRU.L', 'RKT.L', 'REL.L', 'RTO.L', 'RIO.L', 'RR.L', 'SGE.L',
+              'SBRY.L', 'SDR.L', 'SMT.L', 'SGRO.L', 'SVT.L', 'SHEL.L', 'SMIN.L', 'SN.L',
+              'SPX.L', 'SSE.L', 'STAN.L', 'SDLF.L', 'STJ.L', 'TSCO.L', 'BBOX.L', 'ULVR.L',
+              'UU.L', 'VOD.L', 'WEIR.L', 'WTB.L'
+          ],
+},
+
+# 7. EURO STOXX 50 (Eurozona) — mezcla de bolsas: .PA, .DE, .AS, .MC, .MI, .BR, .HE
+      'EURO STOXX 50 (48)': {
+          'ticker_indice': '^STOXX50E',
+          'constituyentes': [
+              'ABI.BR', 'ADS.DE', 'ADYEN.AS', 'AD.AS', 'AI.PA', 'AIR.PA', 'ALV.DE',
+              'ASML.AS', 'CS.PA', 'BBVA.MC', 'SAN.MC', 'BAS.DE', 'BAYN.DE', 'BMW.DE',
+              'BNP.PA', 'BN.PA', 'DB1.DE', 'DTE.DE', 'DHL.DE', 'ENEL.MI', 'ENI.MI',
+              'EL.PA', 'RACE.MI', 'RMS.PA', 'IBE.MC', 'ITX.MC', 'IFX.DE', 'INGA.AS',
+              'ISP.MI', 'KER.PA', 'OR.PA', 'MBG.DE', 'MUV2.DE', 'NOKIA.HE', 'NDA-FI.HE',
+              'RI.PA', 'PRX.AS', 'SAF.PA', 'SGO.PA', 'SAN.PA', 'SAP.DE', 'SU.PA',
+              'SIE.DE', 'STLAM.MI', 'TTE.PA', 'UCG.MI', 'DG.PA', 'VOW3.DE'
+          ],
+},
+
     # 👉 Acá se suman más índices con la lista real de constituyentes,
     #    por ejemplo 'S&P 500 (500)', 'Nasdaq 100 (100)', 'Merval (Argentina)', etc.
 }
