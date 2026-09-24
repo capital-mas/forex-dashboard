@@ -72,12 +72,9 @@ AUTOR_ID_SISTEMA = os.environ.get("AUTOR_ID_SISTEMA")  # dejalo vacío si autor_
 # noticia — este script no elige ningún tipo específico por ella.
 TIPO_SIN_CLASIFICAR = "Sin clasificar"
 
-# Texto de ayuda que queda en notas, recordando que el glosario
-# existe como referencia manual (no como algo que el script usa).
-GLOSARIO_AYUDA = (
-    "Para interpretar esta noticia, consultá el glosario de tipos de "
-    "evento (TIPOS_EVENTO) y elegí manualmente el que más se parezca."
-)
+# Ya no se agrega ningún texto de referencia al glosario en las
+# notas — el feed no muestra ese campo.
+GLOSARIO_AYUDA = ""
 
 # Tickers que seguimos en Finnhub (noticias por empresa). Sumá o
 # sacá los que quieras separados por coma en la env var WATCHLIST;
