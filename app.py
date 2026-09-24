@@ -8572,11 +8572,17 @@ _OPCIONES_SUB_LARGO = {
     ('📑 Análisis TFF' if TIENE_ACCESO_PRO else '🔒 Análisis TFF (Pro)'): 'tff',
 }
 
-# ── App Switcher: se calcula ANTES de armar las columnas porque lo usan ambos layouts ──
+# Arriba, junto a las otras constantes de control
+MODULOS_OCULTOS = {'pyme', 'agro'}  # sacar de acá cuando estén listos para salir
+
 _VERTICALES_MAP = {
     '📈 Mercados & Inversiones': 'inicio',
-    ('🏢 PyMEs' if ESTADO_MODULOS.get('pyme') else '🔒 PyMEs'): 'pyme',
-    ('🌾 Agro' if ESTADO_MODULOS.get('agro') else '🔒 Agro'): 'agro',
+    # PyMEs y Agro no se listan mientras MODULOS_OCULTOS los incluya
+}
+if 'pyme' not in MODULOS_OCULTOS:
+    _VERTICALES_MAP['🏢 PyMEs' if ESTADO_MODULOS.get('pyme') else '🔒 PyMEs'] = 'pyme'
+if 'agro' not in MODULOS_OCULTOS:
+    _VERTICALES_MAP['🌾 Agro' if ESTADO_MODULOS.get('agro') else '🔒 Agro'] = 'agro'
 }
 _vert_activo = HORIZONTE in ('pyme', 'agro')
 _vert_label_actual = next((k for k, v in _VERTICALES_MAP.items() if v == HORIZONTE), None)
@@ -9260,13 +9266,17 @@ elif MODULO == 'admin_pagos':
         st.warning('No tenés permisos de administrador.')
 
 elif MODULO == 'pyme':
-    if pantalla_suscripcion_modulo(supabase, USER_ID, st.session_state["usuario"].email, 'pyme'):
+    if 'pyme' in MODULOS_OCULTOS:
+        _mostrar_no_disponible('PyMEs', 'Todavía estamos terminando de probar Mercados antes de habilitarlo.')
+    elif pantalla_suscripcion_modulo(supabase, USER_ID, st.session_state["usuario"].email, 'pyme'):
         render_pyme(supabase, USER_ID)
 
 elif MODULO == 'agro':
-    if pantalla_suscripcion_modulo(supabase, USER_ID, st.session_state["usuario"].email, 'agro'):
+    if 'agro' in MODULOS_OCULTOS:
+        _mostrar_no_disponible('Agro', 'Todavía estamos terminando de probar Mercados antes de habilitarlo.')
+    elif pantalla_suscripcion_modulo(supabase, USER_ID, st.session_state["usuario"].email, 'agro'):
         render_agro(supabase, USER_ID, descargar_datos=descargar_datos, get_close_series=get_close_series)
-
+        
 elif HORIZONTE == 'corto':
 
 
