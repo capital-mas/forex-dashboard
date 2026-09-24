@@ -876,10 +876,11 @@ def _tab_feed(supabase, es_admin):
     if f_texto.strip():
         t = f_texto.strip().lower()
         mascara = (
-            df_f["titulo"].fillna("").str.lower().str.contains(t)
-            | df_f["empresa"].fillna("").str.lower().str.contains(t)
-            | df_f["ticker"].fillna("").str.lower().str.contains(t)
-            | df_f["pais"].fillna("").str.lower().str.contains(t)
+            df_f["titulo"].fillna("").str.lower().str.contains(t, regex=False)
+            | df_f["contenido"].fillna("").str.lower().str.contains(t, regex=False)
+            | df_f["empresa"].fillna("").str.lower().str.contains(t, regex=False)
+            | df_f["ticker"].fillna("").str.lower().str.contains(t, regex=False)
+            | df_f["pais"].fillna("").str.lower().str.contains(t, regex=False)
         )
         df_f = df_f[mascara]
 
@@ -952,15 +953,6 @@ def _tab_feed(supabase, es_admin):
 
                     if es_admin:
                         st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
-                        etiqueta_reclasificar = (
-                            "🏷️ Reclasificar (elegir tipo de evento del glosario)"
-                            if sin_clasificar else "🏷️ Cambiar clasificación"
-                        )
-                        with st.expander(etiqueta_reclasificar, expanded=sin_clasificar):
-                            _form_reclasificar(supabase, row)
-
-                        st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
-                        _form_reaccion(supabase, row)
                         if st.button("🗑️ Eliminar evento", key=f"me_del_{row['id']}"):
                             try:
                                 _borrar_evento(supabase, row["id"])
