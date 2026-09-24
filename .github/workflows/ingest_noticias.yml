@@ -16,6 +16,15 @@ on:
           en el mensaje donde te pasaron este workflow).
         required: false
         default: ""
+      limite_por_corrida:
+        description: >
+          Opcional: tope de cuántas noticias procesar en ESTA corrida
+          (ej. 150). Útil para un backfill grande — corré el workflow
+          varias veces con un tope chico en vez de una corrida de
+          horas; no se pierde nada, cada corrida retoma lo que quedó
+          pendiente. Dejalo vacío para procesar todo de una.
+        required: false
+        default: ""
 
 jobs:
   ingestar:
@@ -68,4 +77,5 @@ jobs:
           # la corrida manual de backfill, subilo (ej. 5) para cubrir
           # hasta el 21/09/2026; en el cron normal se queda en 2.
           DIAS_TICKER: ${{ github.event.inputs.ventana_minutos && '5' || '2' }}
+          LIMITE_POR_CORRIDA: ${{ github.event.inputs.limite_por_corrida || '0' }}
         run: python ingest_noticias.py
