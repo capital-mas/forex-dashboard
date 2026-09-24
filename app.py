@@ -35,8 +35,8 @@ from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
 from modulo_ia_asistente import modulo_ia_asistente
 from modulo_pago_manual import (
-    pantalla_suscripcion, panel_admin_pagos, panel_gestion_cuentas,
-    es_admin_usuario, obtener_plan_actual, mostrar_selector_planes,
+    pantalla_suscripcion_modulo, panel_admin_pagos, panel_gestion_cuentas,
+    es_admin_usuario, estado_modulo, mostrar_selector_planes, PRODUCTOS,
 )
 from modulo_promediador import modulo_promediador
 from modulo_volatilidad_y_analisis_tecnico import (
