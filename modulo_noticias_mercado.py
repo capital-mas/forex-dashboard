@@ -894,7 +894,6 @@ def _tab_feed(supabase, es_admin):
         titulo_exp = f"{icono_origen}{row.get('fecha_evento','')} · {row.get('titulo','')}"
         with st.expander(titulo_exp):
             try:
-                st.markdown(f"**Factor:** {row.get('factor') or '—'}")
                 if row.get("activos_afectados"):
                     st.markdown(f"**Activos afectados:** {row['activos_afectados']}")
                 if row.get("monto"):
@@ -903,8 +902,6 @@ def _tab_feed(supabase, es_admin):
                     st.markdown(row["contenido"])
                 if row.get("fuente_url"):
                     st.markdown(f"[🔗 Fuente]({row['fuente_url']})")
-                if row.get("notas"):
-                    st.caption(f"📝 {row['notas']}")
 
                 if row.get("reaccion_pct") is not None:
                     emoji_r = "🟢" if row["reaccion_pct"] > 0 else ("🔴" if row["reaccion_pct"] < 0 else "⚪")
