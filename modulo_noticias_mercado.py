@@ -821,17 +821,13 @@ def _tab_feed(supabase, es_admin):
             df[columna] = df[columna].where(df[columna].notna(), valor_por_defecto)
     df["es_calendario"] = df["es_calendario"].astype(bool)
 
-    grupo_sel = st.radio("Filtrar por grupo", GRUPOS, horizontal=True, key="me_feed_grupo")
-
-    b1, b2, b3, b4 = st.columns([1.3, 1, 1, 1.4])
+    # Sin filtros por grupo/impacto/tipo de evento a propósito: las
+    # noticias entran sin clasificar y esos campos no son fiables como
+    # filtro hasta que alguien las reclasifique a mano. Solo queda
+    # buscar por texto y filtrar por fecha.
+    b1, b4 = st.columns([1.6, 1.4])
     with b1:
         f_texto = st.text_input("🔎 Buscar (empresa, ticker, país, título)", key="me_feed_busq")
-    with b2:
-        impactos_u = ["Todos"] + sorted(df["impacto"].dropna().unique().tolist())
-        f_impacto = st.selectbox("Impacto", impactos_u, key="me_feed_impacto")
-    with b3:
-        tipos_u = ["Todos"] + sorted(df["tipo_evento"].dropna().unique().tolist())
-        f_tipo = st.selectbox("Tipo de evento", tipos_u, key="me_feed_tipo")
     with b4:
         fechas_validas = pd.to_datetime(df["fecha_evento"], errors="coerce").dropna()
         if not fechas_validas.empty:
@@ -859,28 +855,8 @@ def _tab_feed(supabase, es_admin):
                 key="me_feed_fecha_rango",
             )
 
-    # Filtro rápido para encontrar de una lo que todavía nadie revisó
-    # a mano — solo tiene sentido para el admin, que es quien puede
-    # reclasificar.
-    solo_sin_clasificar = False
-    if es_admin:
-        cantidad_sin_clasificar = int((df["tipo_evento"] == TIPO_SIN_CLASIFICAR).sum())
-        solo_sin_clasificar = st.checkbox(
-            f"🟡 Mostrar solo \"Sin clasificar\" ({cantidad_sin_clasificar})",
-            key="me_feed_solo_sin_clasificar",
-        )
-
     df_f = df.copy()
     df_f["_fecha_dt"] = pd.to_datetime(df_f["fecha_evento"], errors="coerce")
-
-    if grupo_sel != "Todas":
-        df_f = df_f[df_f["grupo"] == grupo_sel]
-    if f_impacto != "Todos":
-        df_f = df_f[df_f["impacto"] == f_impacto]
-    if f_tipo != "Todos":
-        df_f = df_f[df_f["tipo_evento"] == f_tipo]
-    if solo_sin_clasificar:
-        df_f = df_f[df_f["tipo_evento"] == TIPO_SIN_CLASIFICAR]
 
     if modo_fecha == "Un día" and f_fecha_unica is not None:
         df_f = df_f[df_f["_fecha_dt"].dt.date == f_fecha_unica]
