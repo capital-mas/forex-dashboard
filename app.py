@@ -2060,17 +2060,34 @@ def _fetch_paralelo(tareas, max_workers=10, grupo=None):
         st.session_state[f'_ts_{grupo}'] = datetime.now()
     return resultados
 
-def _watchlist_evaluar_ticker(tk):
-    """Corto Plazo + Reversión (Largo Plazo) + Top-Down Cuantitativo (MP) para UN ticker.
+METRICAS_ALERTA = {
+    'Precio':               ('precio', None),
+    'RSI (Corto Plazo)':    ('corto', 'rsi'),
+    'Score Acumulación':    ('corto', 'sa'),
+    'Score Anticipación':   ('corto', 'sn'),
+    'Score Sentimiento':    ('corto', 'ss'),
+    'Retorno 5 días %':     ('corto', 'ret_5d'),
+    'Retorno 10 días %':    ('corto', 'ret_10d'),
+    'RSI (Largo Plazo)':    ('largo', 'rsi'),
+    'Z-Score':              ('largo', 'zscore'),
+    'Trend Score':          ('largo', 'trend_score'),
+    'MR Score':             ('largo', 'mr_score'),
+    'Risk Score':           ('largo', 'risk_score'),
+    'Global Score':         ('largo', 'global_score'),
+    'Volatilidad Anual %':  ('largo', 'vol_anual'),
+    'Sharpe':               ('largo', 'sharpe'),
+}
+
+
+def _watchlist_calcular_ticker(tk):
+    """Corre Corto Plazo, Reversión (Largo Plazo) y Top-Down Cuantitativo (MP) para
+    UN ticker y devuelve los datos crudos (para evaluar reglas de alerta contra ellos).
     Solo para watchlists chicas (≤15) — no usar sobre universos grandes."""
-    motivos = []
     detalle = {'ticker': tk}
 
     r_corto = _fetch_corto_ticker(tk)
     if r_corto:
         detalle['corto'] = r_corto
-        if r_corto['accion'] not in ('⏸️ ESPERAR', '🟡 VIGILAR'):
-            motivos.append(f"Corto Plazo: {r_corto['accion']} (Acum {r_corto['sa']:.0f})")
 
     df_2y = descargar_datos(tk, '2y')
     cl_2y = get_close_series(df_2y) if df_2y is not None else None
@@ -2078,44 +2095,96 @@ def _watchlist_evaluar_ticker(tk):
         r_largo = analizar_largo(tk, cl_2y)
         if r_largo:
             detalle['largo'] = r_largo
-            if r_largo['reversion_signal']:
-                motivos.append(f"Reversión: {r_largo['reversion_reasons']} (MR {int(r_largo['mr_score'])})")
-            if r_largo['sesgo'] in ('MUY ALCISTA', 'MUY BAJISTA'):
-                motivos.append(f"Sesgo Largo Plazo: {r_largo['sesgo']}")
 
     tdc_mp = _tdc_analizar_ticker(tk, HORIZONTES_TDC['MP'])
     if tdc_mp:
         detalle['tdc'] = tdc_mp
-        if tdc_mp['accion'] not in ('⏸️ ESPERAR', '🟡 VIGILAR'):
-            motivos.append(f"Top-Down (MP): {tdc_mp['accion']}")
 
-    detalle['motivos'] = motivos
     return detalle
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def calcular_alertas_watchlist(tickers_tuple):
+@st.cache_data(ttl=900, show_spinner=False)
+def calcular_datos_watchlist(tickers_tuple):
+    """tickers_tuple: tupla ordenada de tickers. Devuelve {ticker: detalle}."""
     resultados = {}
     if not tickers_tuple:
         return resultados
     with ThreadPoolExecutor(max_workers=6) as ex:
-        futuros = {ex.submit(_watchlist_evaluar_ticker, tk): tk for tk in tickers_tuple}
+        futuros = {ex.submit(_watchlist_calcular_ticker, tk): tk for tk in tickers_tuple}
         for fut in as_completed(futuros):
             tk = futuros[fut]
             try:
-                d = fut.result()
-                if d.get('motivos'):
-                    resultados[tk] = d
+                resultados[tk] = fut.result()
             except Exception:
                 pass
     return resultados
 
 
+def _extraer_valor_metrica(detalle, metrica):
+    if metrica == 'Precio':
+        return (detalle.get('corto') or {}).get('precio') or (detalle.get('largo') or {}).get('precio')
+    fuente, clave = METRICAS_ALERTA[metrica]
+    d_fuente = detalle.get(fuente)
+    if not d_fuente:
+        return None
+    return d_fuente.get(clave)
+
+
+def evaluar_alertas_personalizadas(reglas, datos_calculados):
+    """reglas: filas de Supabase (id, ticker, metrica, condicion, valor, activa).
+    Devuelve la lista de reglas que están cumplidas AHORA, con 'valor_actual' agregado."""
+    disparadas = []
+    for r in reglas:
+        if not r.get('activa', True):
+            continue
+        detalle = datos_calculados.get(r['ticker'])
+        if not detalle:
+            continue
+        valor_actual = _extraer_valor_metrica(detalle, r['metrica'])
+        if valor_actual is None:
+            continue
+        cumple = (valor_actual >= r['valor']) if r['condicion'] == 'mayor' else (valor_actual <= r['valor'])
+        if cumple:
+            disparadas.append({**r, 'valor_actual': valor_actual})
+    return disparadas
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def obtener_alertas_personalizadas(_client, user_id):
+    try:
+        res = (_client.table('alertas_personalizadas')
+               .select('*').eq('user_id', user_id).order('creado_en').execute())
+        return res.data or []
+    except Exception:
+        return []
+
+def agregar_alerta_personalizada(client, user_id, ticker, metrica, condicion, valor):
+    try:
+        client.table('alertas_personalizadas').insert({
+            'user_id': user_id, 'ticker': ticker, 'metrica': metrica,
+            'condicion': condicion, 'valor': float(valor), 'activa': True,
+        }).execute()
+        obtener_alertas_personalizadas.clear()
+        return True, 'Alerta creada.'
+    except Exception as e:
+        return False, f'Error al crear la alerta: {e}'
+
+def eliminar_alerta_personalizada(client, user_id, alerta_id):
+    try:
+        client.table('alertas_personalizadas').delete().eq('id', alerta_id).eq('user_id', user_id).execute()
+        obtener_alertas_personalizadas.clear()
+        return True
+    except Exception:
+        return False
+
+
 def _contar_alertas_watchlist(user_id):
     tickers = tuple(sorted(obtener_watchlist(supabase, user_id)))
-    if not tickers:
+    reglas = obtener_alertas_personalizadas(supabase, user_id)
+    if not tickers or not reglas:
         return 0
-    return len(calcular_alertas_watchlist(tickers))
+    datos = calcular_datos_watchlist(tickers)
+    return len(evaluar_alertas_personalizadas(reglas, datos))
 
 def badge_actualizacion(grupo, ttl_min=30):
     """Muestra hace cuánto se hizo la última descarga real de este grupo (no cuenta cache-hits)."""
@@ -4008,8 +4077,8 @@ def render_watchlist(client, user_id):
          border-radius:14px; padding:24px 28px; margin-bottom:20px;">
       <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:6px">⭐ Mi Watchlist</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Hasta 15 activos. Corremos Corto Plazo, Reversión (Largo Plazo) y Top-Down Cuantitativo (MP)
-        sobre estos tickers, y te avisamos acá si alguno tiene una señal relevante.
+        Hasta 15 activos. Para cada uno podés crear tus propias reglas de alerta
+        (precio, RSI, scores de Corto/Largo Plazo) y te avisamos cuando se cumplen.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -4040,29 +4109,74 @@ def render_watchlist(client, user_id):
                 st.rerun()
 
     st.markdown('---')
-    with st.spinner('Analizando tu watchlist...'):
-        alertas = calcular_alertas_watchlist(tuple(sorted(tickers_wl)))
-
-    if not alertas:
-        st.markdown("""
-        <div style="background:#0d1117;border:1px dashed #21262d;border-radius:10px;
-             padding:24px;text-align:center">
-          <div style="color:#6b7d9a;font-size:12px">Ningún activo tiene señales relevantes ahora mismo.</div>
-        </div>
-        """, unsafe_allow_html=True)
-        return
+    with st.spinner('Calculando datos de tu watchlist...'):
+        datos = calcular_datos_watchlist(tuple(sorted(tickers_wl)))
+    reglas_todas = obtener_alertas_personalizadas(client, user_id)
 
     for tk in tickers_wl:
-        d = alertas.get(tk)
-        if not d:
-            continue
-        st.markdown(f"""
-        <div class="interp-card">
-          <div class="interp-header">⭐ {tk}</div>
-          {'<br>'.join('• ' + m for m in d['motivos'])}
-        </div>
-        """, unsafe_allow_html=True)
-    chips_navegacion([(tk, tk) for tk in alertas.keys()], 'watchlist_alertas')
+        detalle = datos.get(tk, {})
+        reglas_tk = [r for r in reglas_todas if r['ticker'] == tk]
+        disparadas_tk = evaluar_alertas_personalizadas(reglas_tk, datos)
+        ids_disparadas = {d['id'] for d in disparadas_tk}
+
+        precio_tk = _extraer_valor_metrica(detalle, 'Precio')
+        header_extra = f' 🔴 {len(disparadas_tk)} activa(s)' if disparadas_tk else ''
+        with st.expander(f'{tk} — {fmt_precio(precio_tk) if precio_tk else "S/D"}{header_extra}',
+                          expanded=bool(disparadas_tk)):
+
+            if not detalle:
+                st.warning('No se pudieron descargar datos para este ticker todavía.')
+            else:
+                valores_ref = []
+                for m in METRICAS_ALERTA:
+                    v = _extraer_valor_metrica(detalle, m)
+                    if v is not None:
+                        valores_ref.append(f'{m}: {v:.2f}')
+                if valores_ref:
+                    st.caption(' · '.join(valores_ref))
+
+            if reglas_tk:
+                for r in reglas_tk:
+                    disparada = r['id'] in ids_disparadas
+                    valor_actual = _extraer_valor_metrica(detalle, r['metrica'])
+                    signo = '≥' if r['condicion'] == 'mayor' else '≤'
+                    color = '#f85149' if disparada else '#6b7d9a'
+                    icono = '🔴' if disparada else '⚪'
+                    val_act_txt = f'{valor_actual:.2f}' if valor_actual is not None else 'S/D'
+                    cA, cB = st.columns([5, 1])
+                    with cA:
+                        st.markdown(
+                            f'<div style="font-size:12px;color:{color};padding:4px 0">'
+                            f'{icono} {r["metrica"]} {signo} {r["valor"]} '
+                            f'<span style="color:#6b7d9a">(actual: {val_act_txt})</span></div>',
+                            unsafe_allow_html=True
+                        )
+                    with cB:
+                        if st.button('🗑️', key=f'del_alerta_{r["id"]}'):
+                            eliminar_alerta_personalizada(client, user_id, r['id'])
+                            st.rerun()
+            else:
+                st.caption('Sin reglas de alerta todavía para este activo.')
+
+            st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+            fc1, fc2, fc3, fc4 = st.columns([2, 1.3, 1.3, 1])
+            with fc1:
+                metrica_sel = st.selectbox('Métrica', list(METRICAS_ALERTA.keys()),
+                                            key=f'wl_metrica_{tk}', label_visibility='collapsed')
+            with fc2:
+                condicion_sel = st.selectbox('Condición', ['mayor', 'menor'],
+                                              format_func=lambda x: 'Mayor o igual a ▲' if x == 'mayor' else 'Menor o igual a ▼',
+                                              key=f'wl_cond_{tk}', label_visibility='collapsed')
+            with fc3:
+                valor_sel = st.number_input('Valor', key=f'wl_valor_{tk}', label_visibility='collapsed',
+                                             format='%.2f', step=1.0)
+            with fc4:
+                if st.button('➕', key=f'wl_add_alerta_{tk}', use_container_width=True):
+                    ok, msg = agregar_alerta_personalizada(client, user_id, tk, metrica_sel, condicion_sel, valor_sel)
+                    (st.success if ok else st.warning)(msg)
+                    st.rerun()
+
+    chips_navegacion([(tk, tk) for tk in tickers_wl], 'watchlist_nav')
 
 
 # ==============================================================
