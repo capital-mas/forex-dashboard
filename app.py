@@ -778,7 +778,7 @@ if "usuario" not in st.session_state:
 USER_ID = st.session_state["usuario"].id
 
 # ── GATE: si no tiene trial activo ni plan pro, mostrar pantalla de pago ──
-tiene_acceso = pantalla_suscripcion(supabase, USER_ID, st.session_state["usuario"].email)
+tiene_acceso = pantalla_suscripcion_modulo(supabase, USER_ID, st.session_state["usuario"].email, 'mercados')
 if not tiene_acceso:
     st.stop()
 
