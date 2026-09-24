@@ -8575,8 +8575,8 @@ _OPCIONES_SUB_LARGO = {
 # ── App Switcher: se calcula ANTES de armar las columnas porque lo usan ambos layouts ──
 _VERTICALES_MAP = {
     '📈 Mercados & Inversiones': 'inicio',
-    ('🏢 PyMEs' if ES_ADMIN else '🔒 PyMEs'): 'pyme',
-    ('🌾 Agro' if ES_ADMIN else '🔒 Agro'): 'agro',
+    ('🏢 PyMEs' if ESTADO_MODULOS.get('pyme') else '🔒 PyMEs'): 'pyme',
+    ('🌾 Agro' if ESTADO_MODULOS.get('agro') else '🔒 Agro'): 'agro',
 }
 _vert_activo = HORIZONTE in ('pyme', 'agro')
 _vert_label_actual = next((k for k, v in _VERTICALES_MAP.items() if v == HORIZONTE), None)
@@ -9260,16 +9260,12 @@ elif MODULO == 'admin_pagos':
         st.warning('No tenés permisos de administrador.')
 
 elif MODULO == 'pyme':
-    if ES_ADMIN:
+    if pantalla_suscripcion_modulo(supabase, USER_ID, st.session_state["usuario"].email, 'pyme'):
         render_pyme(supabase, USER_ID)
-    else:
-        _mostrar_no_disponible('PyMEs', 'Cashflow, cuentas por cobrar/pagar y cartera de cheques en un solo lugar.')
 
 elif MODULO == 'agro':
-    if ES_ADMIN:
+    if pantalla_suscripcion_modulo(supabase, USER_ID, st.session_state["usuario"].email, 'agro'):
         render_agro(supabase, USER_ID, descargar_datos=descargar_datos, get_close_series=get_close_series)
-    else:
-        _mostrar_no_disponible('Agro', 'Márgenes por hectárea, stock de granos y seguimiento de insumos.')
 
 elif HORIZONTE == 'corto':
 
