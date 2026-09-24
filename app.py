@@ -8521,6 +8521,11 @@ def _render_mi_cuenta(col):
                     'Gestioná tu cuenta</div>',
                     unsafe_allow_html=True
                 )
+                label_wl = f'⭐ Mi Watchlist ({n_alertas_watch})' if n_alertas_watch > 0 else '⭐ Mi Watchlist'
+                if st.button(label_wl, use_container_width=True, key='menu_watchlist'):
+                    st.session_state['nav_horizonte'] = 'watchlist'
+                    st.session_state['nav_modulo'] = 'watchlist'
+                    st.rerun()
                 if st.button(_label_finanzas, use_container_width=True, key='menu_finanzas'):
                     st.session_state['nav_horizonte'] = 'finanzas'
                     st.session_state['nav_modulo'] = 'finanzas'
@@ -8536,7 +8541,10 @@ def _render_mi_cuenta(col):
 
                 if ES_ADMIN:
                     st.markdown('<hr style="margin:6px 0;border-color:#21262d">', unsafe_allow_html=True)
-                    if st.button('🛠️ Panel de Pagos', use_container_width=True, key='menu_admin_pagos'):
+                    label_panel_pagos = (
+                        f'🛠️ Panel de Pagos 🔴{n_pagos_pend}' if n_pagos_pend > 0 else '🛠️ Panel de Pagos'
+                    )
+                    if st.button(label_panel_pagos, use_container_width=True, key='menu_admin_pagos'):
                         st.session_state['nav_horizonte'] = 'admin_pagos'
                         st.session_state['nav_modulo'] = 'admin_pagos'
                         st.rerun()
@@ -8810,9 +8818,10 @@ def _mobile_cambiar_modulo():
     st.session_state['nav_modulo'] = mods_disp[label_sel]
 
 with st.container(key='nav_mobile_wrap'):
+    _label_wl_mobile = f'⭐ Watchlist ({n_alertas_watch})' if n_alertas_watch > 0 else '⭐ Watchlist'
     _OPCIONES_HORIZONTE_MOBILE = {
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
-        '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
+        '🔍 Buscador': 'buscador', _label_wl_mobile: 'watchlist', '⚖️ Comparar': 'comparador',
         ('🧮 Optimizar' if TIENE_ACCESO_PRO else '🔒 Optimizar (Pro)'): 'optimizador',
         ('🔗 Pares' if TIENE_ACCESO_PRO else '🔒 Pares (Pro)'): 'pares',
         '🎲 Opciones': 'opciones',
@@ -8825,7 +8834,8 @@ with st.container(key='nav_mobile_wrap'):
         '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
     }
     if ES_ADMIN:
-        _OPCIONES_HORIZONTE_MOBILE['🛠️ Panel de Pagos'] = 'admin_pagos'
+        _label_admin_mobile = f'🛠️ Panel de Pagos 🔴{n_pagos_pend}' if n_pagos_pend > 0 else '🛠️ Panel de Pagos'
+        _OPCIONES_HORIZONTE_MOBILE[_label_admin_mobile] = 'admin_pagos'
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
                   '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
@@ -8955,6 +8965,7 @@ titulos = {
     'renta_fija_macro': ('Renta Fija, Salud del Mercado y Macro', '📉','Bonos, tasas del Tesoro, crédito corporativo y 12 ratios macro estratégicos'),
     'senales': ('Señales de Trading', '🎯', 'Publicación de señales y simulador de capital'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
+    'watchlist': ('Mi Watchlist', '⭐', 'Hasta 15 activos con alertas de Corto Plazo, Reversión y Top-Down Cuantitativo'),
     'promediador': ('Promediador + Stop Loss', '📐', 'Precio promedio, tendencia y gestión de riesgo con apalancamiento'),
     'fscore': ('F-Score (Piotroski)', '🧮', 'Calidad financiera 0-9 por sector — Piotroski Score'),
     'breadth': ('Salud del Mercado', '📡', 'Amplitud, avance/declive, máximos/mínimos y concentración'),
@@ -8978,6 +8989,7 @@ badge_map = {
     'opciones': ('#bc5cff', 'rgba(188,92,255,0.12)', 'OPCIONES'),
     'senales': ('#ff6ec7', 'rgba(255,110,199,0.12)', 'SEÑALES'),
     'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
+    'watchlist': ('#e3b341', 'rgba(227,179,65,0.12)', 'WATCHLIST'),
     'promediador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'PROMEDIADOR'),
     'fscore': ('#3fb950', 'rgba(63,185,80,0.12)', 'F-SCORE'),
     'breadth': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BREADTH'),
@@ -9074,6 +9086,9 @@ elif MODULO == 'noticias':
 
 elif MODULO == 'finanzas':
     render_finanzas_personales(supabase, USER_ID)
+
+elif MODULO == 'watchlist':
+    render_watchlist(supabase, USER_ID)
 
 elif MODULO == 'promediador':                 # ← agregar
     modulo_promediador(
