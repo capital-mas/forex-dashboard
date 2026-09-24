@@ -888,36 +888,12 @@ def _tab_feed(supabase, es_admin):
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
     for _, row in df_f.iterrows():
-        gm = GRUPO_META.get(row.get("grupo"), {"emoji": "", "color": "#8b949e"})
-        im = IMPACTO_META.get(row.get("impacto"), {"emoji": "", "color": "#8b949e"})
-
-        contexto = []
-        if row.get("empresa"):
-            contexto.append(f"🏢 {row['empresa']}")
-        if row.get("ticker"):
-            contexto.append(f"🎯 {row['ticker']}")
-        if row.get("pais"):
-            contexto.append(f"🌎 {row['pais']}")
-        if row.get("sector"):
-            contexto.append(f"🏭 {row['sector']}")
-        contexto_txt = "  ·  ".join(contexto)
-
         origen_calendario = bool(row.get("es_calendario"))
         sin_clasificar = (row.get("tipo_evento") == TIPO_SIN_CLASIFICAR)
         icono_origen = "📅 " if origen_calendario else ("🟡 " if sin_clasificar else "")
         titulo_exp = f"{icono_origen}{row.get('fecha_evento','')} · {row.get('titulo','')}"
         with st.expander(titulo_exp):
             try:
-                badges_html = _badge(f'{gm["emoji"]} {row.get("grupo","")}', gm["color"])
-                badges_html += _badge(f'{im["emoji"]} {row.get("impacto","")}', im["color"])
-                badges_html += _badge(f'🏷️ {row.get("tipo_evento","")}', "#3a7bd5")
-                if origen_calendario:
-                    badges_html += _badge("📅 Calendario Económico", "#e3b341")
-                st.markdown(badges_html, unsafe_allow_html=True)
-
-                if contexto_txt:
-                    st.caption(contexto_txt)
-
                 st.markdown(f"**Factor:** {row.get('factor') or '—'}")
                 if row.get("activos_afectados"):
                     st.markdown(f"**Activos afectados:** {row['activos_afectados']}")
@@ -944,13 +920,6 @@ def _tab_feed(supabase, es_admin):
                         "reacción de mercado o borrarlo, hacelo desde esa sección (Historial)."
                     )
                 else:
-                    st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
-                    st.markdown("###### 📊 Eventos históricos similares")
-                    _render_similares(
-                        df[~df["es_calendario"]], row.get("tipo_evento"), ticker=row.get("ticker") or None,
-                        pais=row.get("pais") or None, excluir_id=row.get("id"),
-                    )
-
                     if es_admin:
                         st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
                         if st.button("🗑️ Eliminar evento", key=f"me_del_{row['id']}"):
