@@ -62,7 +62,7 @@ jobs:
           # automática por cron, ese input no existe -> usa 90 (1.5h,
           # un poco más que el intervalo del cron, por si una corrida
           # se demora o falla).
-          VENTANA_MINUTOS: ${{ github.event.inputs.ventana_minutos || '9000' }}
+          VENTANA_MINUTOS: ${{ github.event.inputs.ventana_minutos || '90' }}
           # Cuántos días hacia atrás busca en las noticias POR TICKER
           # (Finnhub company-news, que sí soporta rango de fechas). En
           # la corrida manual de backfill, subilo (ej. 5) para cubrir
