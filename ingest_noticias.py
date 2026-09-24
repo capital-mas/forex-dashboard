@@ -95,6 +95,14 @@ VENTANA_MINUTOS = int(os.environ.get("VENTANA_MINUTOS", "30"))
 # ingest_noticias.yml, input "ventana_minutos" del workflow_dispatch).
 DIAS_TICKER = int(os.environ.get("DIAS_TICKER", "2"))
 
+# Tope opcional de cuántas noticias candidatas procesar (traducir +
+# guardar) en ESTA corrida. Pensado para un backfill grande: en vez
+# de una corrida de varias horas, se puede correr varias veces con un
+# tope chico (ej. 150) — como los duplicados se evitan por URL, cada
+# corrida sucesiva retoma donde quedó la anterior sin repetir nada.
+# 0 (default) = sin tope, procesa todo lo que haya.
+LIMITE_POR_CORRIDA = int(os.environ.get("LIMITE_POR_CORRIDA", "0"))
+
 # Fuentes que en la práctica publican columnas de opinión / listas
 # tipo "3 acciones para comprar" en vez de noticias de un evento
 # puntual. Estas se siguen excluyendo (no son "noticias de un
@@ -127,22 +135,46 @@ class Traductor:
         self.tokenizer = AutoTokenizer.from_pretrained(nombre_modelo)
         self.modelo = AutoModelForSeq2SeqLM.from_pretrained(nombre_modelo)
 
-    def _traducir_texto(self, texto):
-        texto = (texto or "").strip()
-        if not texto:
-            return texto
-        try:
-            # Los modelos Marian truncan alrededor de 512 tokens; de
-            # sobra para un título o resumen de noticia.
-            entradas = self.tokenizer(texto, return_tensors="pt", truncation=True, max_length=400)
-            salida = self.modelo.generate(**entradas, max_length=400)
-            return self.tokenizer.decode(salida[0], skip_special_tokens=True)
-        except Exception as e:
-            print(f"⚠️ No se pudo traducir ('{texto[:40]}...'): {e}")
-            return texto  # si falla, mejor guardar el original que perder la noticia
+    def _traducir_lote_textos(self, textos, tamano_lote=16):
+        """Traduce una lista de textos en lotes (batch), en vez de uno
+        por uno — mucho más rápido, incluso en CPU, porque aprovecha
+        el paralelismo interno del modelo en cada llamada a generate()
+        en vez de pagar el overhead de una llamada por texto."""
+        resultados = [""] * len(textos)
+        indices_con_texto = [i for i, t in enumerate(textos) if (t or "").strip()]
+        if not indices_con_texto:
+            return resultados
 
-    def traducir(self, titulo, resumen):
-        return self._traducir_texto(titulo), self._traducir_texto(resumen)
+        for inicio in range(0, len(indices_con_texto), tamano_lote):
+            idxs = indices_con_texto[inicio:inicio + tamano_lote]
+            lote = [textos[i].strip() for i in idxs]
+            try:
+                entradas = self.tokenizer(
+                    lote, return_tensors="pt", truncation=True, max_length=400,
+                    padding=True,
+                )
+                salidas = self.modelo.generate(**entradas, max_length=400)
+                decodificados = self.tokenizer.batch_decode(salidas, skip_special_tokens=True)
+                for i, texto_traducido in zip(idxs, decodificados):
+                    resultados[i] = texto_traducido
+            except Exception as e:
+                print(f"⚠️ No se pudo traducir un lote de {len(lote)} textos: {e}")
+                # Si falla el lote, mejor guardar el original que perder
+                # las noticias de ese lote.
+                for i in idxs:
+                    resultados[i] = textos[i]
+
+        return resultados
+
+    def traducir_lote(self, noticias):
+        """Traduce títulos y resúmenes de una lista de noticias (dicts
+        con 'titulo' y 'resumen') EN LOTES. Devuelve una lista de
+        (titulo_es, resumen_es) en el mismo orden."""
+        titulos = [n["titulo"] for n in noticias]
+        resumenes = [n["resumen"] for n in noticias]
+        titulos_es = self._traducir_lote_textos(titulos)
+        resumenes_es = self._traducir_lote_textos(resumenes)
+        return list(zip(titulos_es, resumenes_es))
 
 
 # ----------------------------------------------------------------
@@ -326,26 +358,54 @@ def main():
 
     print(f"📥 {len(noticias)} noticias encontradas en la ventana de {VENTANA_MINUTOS} min.")
 
-    nuevas = descartadas_dup = 0
+    # Filtramos duplicados y armamos la lista de candidatas ANTES de
+    # traducir, para no gastar tiempo de cómputo en noticias que ya
+    # están guardadas o que van a quedar afuera por el tope.
+    candidatas, descartadas_dup = [], 0
     for noticia in noticias:
         if not noticia["titulo"] or not noticia["fuente_url"]:
             continue
         if ya_existe(noticia["fuente_url"]):
             descartadas_dup += 1
             continue
+        candidatas.append(noticia)
 
-        titulo_es, resumen_es = traductor.traducir(noticia["titulo"], noticia["resumen"])
+    total_candidatas = len(candidatas)
+    recortadas_por_limite = 0
+    if LIMITE_POR_CORRIDA and total_candidatas > LIMITE_POR_CORRIDA:
+        recortadas_por_limite = total_candidatas - LIMITE_POR_CORRIDA
+        candidatas = candidatas[:LIMITE_POR_CORRIDA]
+        print(
+            f"✂️ Hay {total_candidatas} candidatas, se procesan {LIMITE_POR_CORRIDA} en esta "
+            f"corrida (LIMITE_POR_CORRIDA). Las {recortadas_por_limite} restantes quedan para la "
+            f"próxima corrida — no se pierden, solo no están duplicadas así que se van a volver "
+            f"a encontrar y procesar entonces."
+        )
+
+    print(f"🌐 Traduciendo {len(candidatas)} noticia(s) en lotes...")
+    traducciones = traductor.traducir_lote(candidatas)
+
+    nuevas = 0
+    for i, (noticia, (titulo_es, resumen_es)) in enumerate(zip(candidatas, traducciones), start=1):
         noticia["titulo"] = titulo_es
         noticia["resumen"] = resumen_es
-
         try:
             guardar(noticia)
             nuevas += 1
-            print(f"✅ {noticia['titulo'][:70]}")
+            print(f"✅ [{i}/{len(candidatas)}] {noticia['titulo'][:70]}")
         except Exception as e:
-            print(f"❌ Error guardando '{noticia['titulo'][:50]}': {e}")
+            print(f"❌ [{i}/{len(candidatas)}] Error guardando '{noticia['titulo'][:50]}': {e}")
 
-    print(f"—\n{nuevas} nuevas guardadas | {descartadas_dup} duplicadas")
+        # Progreso cada 25 noticias, para poder ver en el log de GitHub
+        # Actions que la corrida sigue avanzando (no está trabada).
+        if i % 25 == 0:
+            print(f"—  progreso: {i}/{len(candidatas)} procesadas hasta ahora  —")
+
+    print(
+        f"—\n{nuevas} nuevas guardadas | {descartadas_dup} duplicadas"
+        + (f" | {recortadas_por_limite} pendientes para la próxima corrida (por LIMITE_POR_CORRIDA)"
+           if recortadas_por_limite else "")
+    )
 
 
 if __name__ == "__main__":
