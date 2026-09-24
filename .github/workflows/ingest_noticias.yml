@@ -2,9 +2,20 @@ name: Ingesta de noticias de mercado
 
 on:
   schedule:
-    # Una vez por hora, en el minuto :00.
+    # Una vez por hora, en el minuto :00. Esto corre SOLO, sin que
+    # nadie lo dispare a mano — así queda para siempre.
     - cron: "0 * * * *"
-  workflow_dispatch: {}  # para poder dispararlo a mano desde GitHub
+  workflow_dispatch:
+    inputs:
+      ventana_minutos:
+        description: >
+          Minutos hacia atrás a buscar en esta corrida manual. Dejalo
+          vacío para usar el valor normal (90 min, el mismo que usa el
+          cron automático). Para traer desde el 21/09/2026, poné un
+          número grande que cubra esos días (ver nota en el README /
+          en el mensaje donde te pasaron este workflow).
+        required: false
+        default: ""
 
 jobs:
   ingestar:
@@ -25,7 +36,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Cachear pip y el modelo de embeddings
+      - name: Cachear pip y el modelo de traducción
         uses: actions/cache@v4
         with:
           path: |
@@ -45,6 +56,16 @@ jobs:
           # Opcionales — si no los definís como secrets, usa los
           # valores por defecto del script:
           # WATCHLIST: "AAPL,MSFT,GOOGL,YPF,GGAL"
-          UMBRAL_SIMILITUD: "0.42"   # bajado desde el default 0.55 — estaba descartando todo
-          VENTANA_MINUTOS: "90"   # 1.5 horas — un poco más que el intervalo, por si una corrida se demora o falla
+          #
+          # En una corrida MANUAL (workflow_dispatch) usa lo que
+          # pongas en el input "ventana_minutos". En la corrida
+          # automática por cron, ese input no existe -> usa 90 (1.5h,
+          # un poco más que el intervalo del cron, por si una corrida
+          # se demora o falla).
+          VENTANA_MINUTOS: ${{ github.event.inputs.ventana_minutos || '90' }}
+          # Cuántos días hacia atrás busca en las noticias POR TICKER
+          # (Finnhub company-news, que sí soporta rango de fechas). En
+          # la corrida manual de backfill, subilo (ej. 5) para cubrir
+          # hasta el 21/09/2026; en el cron normal se queda en 2.
+          DIAS_TICKER: ${{ github.event.inputs.ventana_minutos && '5' || '2' }}
         run: python ingest_noticias.py
