@@ -8583,7 +8583,7 @@ if 'pyme' not in MODULOS_OCULTOS:
     _VERTICALES_MAP['🏢 PyMEs' if ESTADO_MODULOS.get('pyme') else '🔒 PyMEs'] = 'pyme'
 if 'agro' not in MODULOS_OCULTOS:
     _VERTICALES_MAP['🌾 Agro' if ESTADO_MODULOS.get('agro') else '🔒 Agro'] = 'agro'
-}
+
 _vert_activo = HORIZONTE in ('pyme', 'agro')
 _vert_label_actual = next((k for k, v in _VERTICALES_MAP.items() if v == HORIZONTE), None)
 _label_vert = _vert_label_actual if (_vert_activo and _vert_label_actual) else '🧭 Módulos'
