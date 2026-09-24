@@ -90,6 +90,14 @@ WATCHLIST = [t.strip() for t in os.environ.get("WATCHLIST", WATCHLIST_DEFAULT).s
 # se retrasa o falla).
 VENTANA_MINUTOS = int(os.environ.get("VENTANA_MINUTOS", "30"))
 
+# Cuántos días hacia atrás pedirle a Finnhub en las noticias POR
+# TICKER (company-news, que sí soporta rango "from"/"to" — a
+# diferencia del endpoint general, que solo da lo más reciente sin
+# rango). Normalmente 2 días alcanza con el cron corriendo cada hora;
+# en una corrida manual de backfill se puede subir (ver
+# ingest_noticias.yml, input "ventana_minutos" del workflow_dispatch).
+DIAS_TICKER = int(os.environ.get("DIAS_TICKER", "2"))
+
 # Fuentes que en la práctica publican columnas de opinión / listas
 # tipo "3 acciones para comprar" en vez de noticias de un evento
 # puntual. Estas se siguen excluyendo (no son "noticias de un
@@ -188,7 +196,7 @@ def traer_finnhub_general():
 
 def traer_finnhub_por_ticker(ticker):
     hoy = dt.date.today()
-    desde = hoy - dt.timedelta(days=2)
+    desde = hoy - dt.timedelta(days=DIAS_TICKER)
     try:
         r = requests.get(
             "https://finnhub.io/api/v1/company-news",
