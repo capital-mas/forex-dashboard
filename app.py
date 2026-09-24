@@ -831,6 +831,18 @@ def _plan_cache(_client, user_id):
     except Exception:
         return None
 
+@st.cache_data(ttl=120, show_spinner=False)
+def _contar_pagos_pendientes(_client):
+    """Cuenta solicitudes de pago manual pendientes. Ajustá tabla/columna si difiere."""
+    try:
+        res = (_client.table('pagos_manuales')
+               .select('id', count='exact')
+               .eq('estado', 'pendiente')
+               .execute())
+        return res.count or 0
+    except Exception:
+        return 0
+
 PLAN_USUARIO = _plan_cache(supabase, USER_ID)
 MODULOS_SOLO_PRO = {'optimizador', 'senales', 'pares', 'ia_asistente', 'fscore', 'breadth', 'renta_fija_macro', 'cot', 'tff'}
 TIENE_ACCESO_PRO = ES_ADMIN or PLAN_USUARIO in ('trial', 'pro')
@@ -2048,6 +2060,62 @@ def _fetch_paralelo(tareas, max_workers=10, grupo=None):
         st.session_state[f'_ts_{grupo}'] = datetime.now()
     return resultados
 
+def _watchlist_evaluar_ticker(tk):
+    """Corto Plazo + Reversión (Largo Plazo) + Top-Down Cuantitativo (MP) para UN ticker.
+    Solo para watchlists chicas (≤15) — no usar sobre universos grandes."""
+    motivos = []
+    detalle = {'ticker': tk}
+
+    r_corto = _fetch_corto_ticker(tk)
+    if r_corto:
+        detalle['corto'] = r_corto
+        if r_corto['accion'] not in ('⏸️ ESPERAR', '🟡 VIGILAR'):
+            motivos.append(f"Corto Plazo: {r_corto['accion']} (Acum {r_corto['sa']:.0f})")
+
+    df_2y = descargar_datos(tk, '2y')
+    cl_2y = get_close_series(df_2y) if df_2y is not None else None
+    if cl_2y is not None and len(cl_2y) >= 150:
+        r_largo = analizar_largo(tk, cl_2y)
+        if r_largo:
+            detalle['largo'] = r_largo
+            if r_largo['reversion_signal']:
+                motivos.append(f"Reversión: {r_largo['reversion_reasons']} (MR {int(r_largo['mr_score'])})")
+            if r_largo['sesgo'] in ('MUY ALCISTA', 'MUY BAJISTA'):
+                motivos.append(f"Sesgo Largo Plazo: {r_largo['sesgo']}")
+
+    tdc_mp = _tdc_analizar_ticker(tk, HORIZONTES_TDC['MP'])
+    if tdc_mp:
+        detalle['tdc'] = tdc_mp
+        if tdc_mp['accion'] not in ('⏸️ ESPERAR', '🟡 VIGILAR'):
+            motivos.append(f"Top-Down (MP): {tdc_mp['accion']}")
+
+    detalle['motivos'] = motivos
+    return detalle
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def calcular_alertas_watchlist(tickers_tuple):
+    resultados = {}
+    if not tickers_tuple:
+        return resultados
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futuros = {ex.submit(_watchlist_evaluar_ticker, tk): tk for tk in tickers_tuple}
+        for fut in as_completed(futuros):
+            tk = futuros[fut]
+            try:
+                d = fut.result()
+                if d.get('motivos'):
+                    resultados[tk] = d
+            except Exception:
+                pass
+    return resultados
+
+
+def _contar_alertas_watchlist(user_id):
+    tickers = tuple(sorted(obtener_watchlist(supabase, user_id)))
+    if not tickers:
+        return 0
+    return len(calcular_alertas_watchlist(tickers))
 
 def badge_actualizacion(grupo, ttl_min=30):
     """Muestra hace cuánto se hizo la última descarga real de este grupo (no cuenta cache-hits)."""
@@ -3768,14 +3836,41 @@ def _perfil_supabase_guardar(ticker, datos):
         pass
 
 
-def _perfil_supabase_leer(ticker):
+MAX_WATCHLIST = 15
+
+@st.cache_data(ttl=60, show_spinner=False)
+def obtener_watchlist(_client, user_id):
     try:
-        res = supabase.table('perfil_cache').select('datos, actualizado_en').eq('ticker', ticker).limit(1).execute()
-        if res.data:
-            return res.data[0]['datos'], res.data[0]['actualizado_en']
+        res = (_client.table('watchlist_personal')
+               .select('ticker').eq('user_id', user_id)
+               .order('creado_en').execute())
+        return [r['ticker'] for r in (res.data or [])]
     except Exception:
-        pass
-    return None, None
+        return []
+
+def agregar_a_watchlist(client, user_id, ticker):
+    ticker = validar_ticker(ticker)
+    if not ticker:
+        return False, 'Ticker inválido.'
+    actuales = obtener_watchlist(client, user_id)
+    if ticker in actuales:
+        return False, f'{ticker} ya está en tu watchlist.'
+    if len(actuales) >= MAX_WATCHLIST:
+        return False, f'Límite de {MAX_WATCHLIST} activos alcanzado. Sacá uno para agregar otro.'
+    try:
+        client.table('watchlist_personal').insert({'user_id': user_id, 'ticker': ticker}).execute()
+        obtener_watchlist.clear()
+        return True, f'{ticker} agregado a tu watchlist.'
+    except Exception as e:
+        return False, f'Error al agregar: {e}'
+
+def quitar_de_watchlist(client, user_id, ticker):
+    try:
+        client.table('watchlist_personal').delete().eq('user_id', user_id).eq('ticker', ticker).execute()
+        obtener_watchlist.clear()
+        return True
+    except Exception:
+        return False
 
 
 def obtener_perfil_empresa(ticker):
@@ -3906,11 +4001,73 @@ def render_perfil_empresa(ticker, key_suffix=''):
     </div>
     """, unsafe_allow_html=True)
 
+def render_watchlist(client, user_id):
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#1a1608 0%,#201a05 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #e3b341;
+         border-radius:14px; padding:24px 28px; margin-bottom:20px;">
+      <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:6px">⭐ Mi Watchlist</div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+        Hasta 15 activos. Corremos Corto Plazo, Reversión (Largo Plazo) y Top-Down Cuantitativo (MP)
+        sobre estos tickers, y te avisamos acá si alguno tiene una señal relevante.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    tickers_wl = obtener_watchlist(client, user_id)
+
+    c_add, c_btn = st.columns([4, 1])
+    with c_add:
+        nuevo_wl = selector_ticker_autocomplete('watchlist_add')
+    with c_btn:
+        st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+        if st.button('➕ Agregar', use_container_width=True, key='wl_add_btn'):
+            ok, msg = agregar_a_watchlist(client, user_id, nuevo_wl)
+            (st.success if ok else st.warning)(msg)
+            st.rerun()
+
+    st.caption(f'{len(tickers_wl)}/{MAX_WATCHLIST} activos')
+
+    if not tickers_wl:
+        st.info('Todavía no agregaste ningún activo a tu watchlist.')
+        return
+
+    cols_chip = st.columns(min(len(tickers_wl), 8))
+    for i, tk in enumerate(tickers_wl):
+        with cols_chip[i % len(cols_chip)]:
+            if st.button(f'✕ {tk}', key=f'wl_rm_{tk}', use_container_width=True):
+                quitar_de_watchlist(client, user_id, tk)
+                st.rerun()
+
+    st.markdown('---')
+    with st.spinner('Analizando tu watchlist...'):
+        alertas = calcular_alertas_watchlist(tuple(sorted(tickers_wl)))
+
+    if not alertas:
+        st.markdown("""
+        <div style="background:#0d1117;border:1px dashed #21262d;border-radius:10px;
+             padding:24px;text-align:center">
+          <div style="color:#6b7d9a;font-size:12px">Ningún activo tiene señales relevantes ahora mismo.</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    for tk in tickers_wl:
+        d = alertas.get(tk)
+        if not d:
+            continue
+        st.markdown(f"""
+        <div class="interp-card">
+          <div class="interp-header">⭐ {tk}</div>
+          {'<br>'.join('• ' + m for m in d['motivos'])}
+        </div>
+        """, unsafe_allow_html=True)
+    chips_navegacion([(tk, tk) for tk in alertas.keys()], 'watchlist_alertas')
+
 
 # ==============================================================
 #  MÓDULO BUSCADOR UNIVERSAL
 # ==============================================================
-
 
 def modulo_buscador():
     prefill = st.session_state.get('ticker_from_table', '')
@@ -8304,7 +8461,18 @@ _vert_label_actual = next((k for k, v in _VERTICALES_MAP.items() if v == HORIZON
 _label_vert = _vert_label_actual if (_vert_activo and _vert_label_actual) else '🧭 Módulos'
 
 n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
-_label_cuenta = f'👤 Mi Cuenta 🔴{n_alertas_fin}' if n_alertas_fin > 0 else '👤 Mi Cuenta'
+n_pagos_pend = _contar_pagos_pendientes(supabase) if ES_ADMIN else 0
+n_alertas_watch = _contar_alertas_watchlist(USER_ID)
+
+_partes_badge = []
+if n_alertas_fin > 0:
+    _partes_badge.append(f'🔴{n_alertas_fin}')
+if n_alertas_watch > 0:
+    _partes_badge.append(f'⭐{n_alertas_watch}')
+if n_pagos_pend > 0:
+    _partes_badge.append(f'💳{n_pagos_pend}')
+
+_label_cuenta = '👤 Mi Cuenta ' + ' '.join(_partes_badge) if _partes_badge else '👤 Mi Cuenta'
 _label_finanzas = (
     f'💰 Finanzas ({n_alertas_fin} alerta{"s" if n_alertas_fin != 1 else ""})'
     if n_alertas_fin > 0 else '💰 Finanzas'
