@@ -824,6 +824,14 @@ def _es_admin_cache(_client, user_id):
         return False
 
 ES_ADMIN = _es_admin_cache(supabase, USER_ID)
+@st.cache_data(ttl=120, show_spinner=False)
+def _resumen_modulos_cache(_client, user_id):
+    try:
+        return {m: estado_modulo(_client, user_id, m)['activo'] for m in PRODUCTOS}
+    except Exception:
+        return {m: False for m in PRODUCTOS}
+
+ESTADO_MODULOS = {m: True for m in PRODUCTOS} if ES_ADMIN else _resumen_modulos_cache(supabase, USER_ID)
 @st.cache_data(ttl=300, show_spinner=False)
 def _plan_cache(_client, user_id):
     try:
