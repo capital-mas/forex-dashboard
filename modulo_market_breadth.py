@@ -52,17 +52,17 @@ la lectura de amplitud.
 CHANGELOG (mejoras agregadas sobre la versión original):
  1. Estado principal ahora deriva de un rango de score (6 niveles) en
     vez de un único label fijo.
- 2. Breadth Momentum 1W y 1M como indicador propio.
- 3. Breadth Acceleration (aceleración del momentum semanal).
- 4. A/D Ratio y A/D Net.
- 5. A/D Line con detector de divergencia precio vs A/D.
- 6. Trend Breadth ponderado (20/50/200) en vez de promedio simple.
- 7. New Highs/Lows con NH-NL, NH/NL ratio y momentum de nuevos mínimos.
- 8. Volume Breadth con % up/down y lectura de confirmación de volumen.
+ 2. Momentum de Amplitud 1S y 1M como indicador propio.
+ 3. Aceleración de Amplitud (aceleración del momentum semanal).
+ 4. Ratio A/D y Neto A/D.
+ 5. Línea A/D con detector de divergencia precio vs A/D.
+ 6. Amplitud de Tendencia ponderada (20/50/200) en vez de promedio simple.
+ 7. Nuevos Máximos/Mínimos con NM-Nm, ratio NM/Nm y momentum de nuevos mínimos.
+ 8. Amplitud de Volumen con % alcista/bajista y lectura de confirmación de volumen.
  9. Concentración Top5/Resto + contribución al movimiento del índice.
-10. Equal Weight vs Índice (divergencia de participación amplia).
-11. Market Health Score (separado del Breadth Score y su Momentum).
-12. Matriz de diagnóstico Precio vs Breadth.
+10. Ponderación Igualitaria vs Índice (divergencia de participación amplia).
+11. Score de Salud de Mercado (separado del Score de Amplitud y su Momentum).
+12. Matriz de diagnóstico Precio vs Amplitud.
 13. Detector automático de divergencias.
 14. Régimen de mercado (6 estados).
 """
@@ -409,11 +409,11 @@ def _bd_market_caps(tickers_tuple):
 # ==============================================================
 
 def _bd_snapshot(df_close, df_vol, hasta=None):
-    """Calcula Trend Breadth, Advance/Decline, New Highs/Lows y Volume Breadth
-    usando datos hasta la fila posicional 'hasta' (inclusive). Si hasta=None,
-    usa toda la data disponible. Sirve para el snapshot de hoy y para
-    reconstruir snapshots pasados (1 semana, 2 semanas, 1 mes) y así medir
-    momentum y aceleración del Breadth Score."""
+    """Calcula Amplitud de Tendencia, Avance/Declive, Nuevos Máximos/Mínimos y
+    Amplitud de Volumen usando datos hasta la fila posicional 'hasta' (inclusive).
+    Si hasta=None, usa toda la data disponible. Sirve para el snapshot de hoy y
+    para reconstruir snapshots pasados (1 semana, 2 semanas, 1 mes) y así medir
+    momentum y aceleración del Score de Amplitud."""
     dfc = df_close if hasta is None else df_close.iloc[:hasta + 1]
     dfv = df_vol if hasta is None else df_vol.iloc[:hasta + 1]
     if len(dfc) < 25:
@@ -424,7 +424,7 @@ def _bd_snapshot(df_close, df_vol, hasta=None):
     adv = int((ultimo_ret > 0).sum())
     dec = int((ultimo_ret < 0).sum())
     ad_score = adv / (adv + dec) * 100 if (adv + dec) > 0 else 50.0
-    # Mejora 4: A/D Ratio y A/D Net
+    # Mejora 4: Ratio A/D y Neto A/D
     ad_ratio = round(adv / dec, 2) if dec > 0 else (float('inf') if adv > 0 else 1.0)
     ad_net = adv - dec
 
@@ -436,7 +436,7 @@ def _bd_snapshot(df_close, df_vol, hasta=None):
     pct20 = float((last > sma20).mean() * 100)
     pct50 = float((last > sma50).mean() * 100)
     pct200 = float((last > sma200).mean() * 100)
-    # Mejora 6: Trend Breadth Score ponderado (corto/medio/largo plazo)
+    # Mejora 6: Score de Amplitud de Tendencia ponderado (corto/medio/largo plazo)
     trend_score = pct20 * 0.30 + pct50 * 0.35 + pct200 * 0.35
 
     ventana_hl = min(252, n)
@@ -445,7 +445,7 @@ def _bd_snapshot(df_close, df_vol, hasta=None):
     nh = int((last >= roll_max).sum())
     nl = int((last <= roll_min).sum())
     nhnl_score = nh / (nh + nl) * 100 if (nh + nl) > 0 else 50.0
-    # Mejora 7: NH-NL Net y NH/NL Ratio
+    # Mejora 7: Neto NM-Nm y Ratio NM/Nm
     nhnl_net = nh - nl
     nhnl_ratio = round(nh / nl, 2) if nl > 0 else (float('inf') if nh > 0 else 1.0)
 
@@ -453,7 +453,7 @@ def _bd_snapshot(df_close, df_vol, hasta=None):
     up_vol = float(vol_hoy[ultimo_ret > 0].sum())
     down_vol = float(vol_hoy[ultimo_ret < 0].sum())
     vol_score = up_vol / (up_vol + down_vol) * 100 if (up_vol + down_vol) > 0 else 50.0
-    # Mejora 8: % Up/Down volume y ratio
+    # Mejora 8: % Volumen Alcista/Bajista y ratio
     tot_vol = up_vol + down_vol
     up_vol_pct = round(up_vol / tot_vol * 100, 1) if tot_vol > 0 else 50.0
     down_vol_pct = round(100 - up_vol_pct, 1) if tot_vol > 0 else 50.0
@@ -473,8 +473,8 @@ def _bd_snapshot(df_close, df_vol, hasta=None):
 def _bd_concentracion(tickers, caps, df_close):
     """Score de concentración: combina el peso de las Top 5 empresas por
     capitalización y la divergencia entre el retorno ponderado por cap
-    vs. el retorno equal-weight del último mes. Cuanto más concentrado
-    el mercado en pocas empresas, más bajo el score."""
+    vs. el retorno de ponderación igualitaria del último mes. Cuanto más
+    concentrado el mercado en pocas empresas, más bajo el score."""
     tickers_con_cap = [t for t in tickers if t in caps and t in df_close.columns]
     if len(tickers_con_cap) < 3:
         return dict(top5_pct=None, top10_pct=None, resto_pct=None, conc_score=50.0,
@@ -523,7 +523,7 @@ def _bd_breadth_score(snap, conc_score):
 # ==============================================================
 
 def _bd_estado_por_score(score):
-    """Mapea el Breadth Score (0-100) a uno de 6 niveles de estado.
+    """Mapea el Score de Amplitud (0-100) a uno de 6 niveles de estado.
     Reemplaza el label único y fijo que tenía antes la app."""
     if score is None or (isinstance(score, float) and np.isnan(score)):
         return ('⚪', 'SIN DATOS', C_MUTED)
@@ -536,7 +536,7 @@ def _bd_estado_por_score(score):
 
 
 # ==============================================================
-#  ESTADO DE PARTICIPACIÓN DEL MERCADO (cruce precio × breadth)
+#  ESTADO DE PARTICIPACIÓN DEL MERCADO (cruce precio × amplitud)
 # ==============================================================
 
 def _bd_estado_mercado(price_ret_1m, breadth_now, breadth_prev, ad_score, nhnl_score):
@@ -576,12 +576,12 @@ def _bd_estado_mercado(price_ret_1m, breadth_now, breadth_prev, ad_score, nhnl_s
 
 
 # ==============================================================
-#  MEJORA 11 — MARKET HEALTH SCORE
+#  MEJORA 11 — SCORE DE SALUD DE MERCADO
 # ==============================================================
 
 def _bd_market_health(breadth_hoy, momentum_1m):
-    """Separa 'estado actual' (Breadth Score) de 'dirección' (Momentum) y
-    los combina en un tercer número: Market Health Score. No reemplaza a
+    """Separa 'estado actual' (Score de Amplitud) de 'dirección' (Momentum) y
+    los combina en un tercer número: Score de Salud de Mercado. No reemplaza a
     ninguno de los dos — se muestran los tres por separado en el dashboard."""
     if breadth_hoy is None:
         return None
@@ -591,7 +591,7 @@ def _bd_market_health(breadth_hoy, momentum_1m):
 
 
 # ==============================================================
-#  MEJORA 12 — MATRIZ DE DIAGNÓSTICO PRECIO × BREADTH
+#  MEJORA 12 — MATRIZ DE DIAGNÓSTICO PRECIO × AMPLITUD
 # ==============================================================
 
 def _bd_matriz_diagnostico(ret_1m, momentum_1m):
@@ -602,8 +602,8 @@ def _bd_matriz_diagnostico(ret_1m, momentum_1m):
         ('down', 'up'):   ('🟢', 'Posible acumulación'),
         ('flat', 'up'):   ('🟢', 'Acumulación'),
         ('flat', 'down'): ('🟠', 'Distribución'),
-        ('up', 'flat'):   ('🟡', 'Suba sin cambios de fondo en breadth'),
-        ('down', 'flat'): ('🟡', 'Baja sin cambios de fondo en breadth'),
+        ('up', 'flat'):   ('🟡', 'Suba sin cambios de fondo en amplitud'),
+        ('down', 'flat'): ('🟡', 'Baja sin cambios de fondo en amplitud'),
         ('flat', 'flat'): ('⚪', 'Mercado sin definición'),
     }
     dir_precio = 'up' if (ret_1m is not None and ret_1m > 0.5) else \
@@ -625,14 +625,14 @@ def _bd_detectar_divergencias(dir_precio, momentum_1m, ad_score, nh_now, nh_1m, 
     señales = []
 
     if dir_precio == 'up' and momentum_1m is not None and momentum_1m < -1:
-        señales.append(('🔴', 'Precio ↑ + Breadth ↓ → Divergencia bajista'))
+        señales.append(('🔴', 'Precio ↑ + Amplitud ↓ → Divergencia bajista'))
     elif dir_precio == 'down' and momentum_1m is not None and momentum_1m > 1:
-        señales.append(('🟢', 'Precio ↓ + Breadth ↑ → Divergencia alcista'))
+        señales.append(('🟢', 'Precio ↓ + Amplitud ↑ → Divergencia alcista'))
 
     if dir_precio == 'up' and ad_line_dir == 'down':
-        señales.append(('🔴', 'Precio ↑ + A/D Line ↓ → Distribución potencial'))
+        señales.append(('🔴', 'Precio ↑ + Línea A/D ↓ → Distribución potencial'))
     elif dir_precio == 'down' and ad_line_dir == 'up':
-        señales.append(('🟢', 'Precio ↓ + A/D Line ↑ → Acumulación potencial'))
+        señales.append(('🟢', 'Precio ↓ + Línea A/D ↑ → Acumulación potencial'))
 
     if dir_precio == 'up' and nh_now is not None and nh_1m is not None and nh_now < nh_1m:
         señales.append(('🟠', 'Precio ↑ + Nuevos Máximos ↓ → Menor participación'))
@@ -649,7 +649,7 @@ def _bd_detectar_divergencias(dir_precio, momentum_1m, ad_score, nh_now, nh_1m, 
 
 def _bd_regimen_mercado(breadth_hoy, momentum_1m, ad_score, trend_score, ret_1m):
     """Clasifica el mercado en uno de 6 regímenes combinando nivel y
-    dirección del Breadth Score junto con tendencia y avance/declive."""
+    dirección del Score de Amplitud junto con tendencia y avance/declive."""
     mom = momentum_1m if momentum_1m is not None else 0.0
     precio_sube = ret_1m is not None and ret_1m > 0.5
     precio_baja = ret_1m is not None and ret_1m < -0.5
@@ -692,9 +692,9 @@ def render_market_breadth(
         📡 Salud y Participación del Mercado
       </div>
       <div style="font-size:12px;color:{C_MUTED};line-height:1.7">
-        Amplitud de mercado (breadth): mide cuántos activos acompañan de verdad un movimiento de
+        Amplitud de mercado: mide cuántos activos acompañan de verdad un movimiento de
         precio, no solo si el índice sube o baja. Combina Tendencia, Avance/Declive, Máximos/Mínimos
-        de 52 semanas, Volumen y Concentración en un <b style="color:{C_TEXT}">Breadth Score</b> y un
+        de 52 semanas, Volumen y Concentración en un <b style="color:{C_TEXT}">Score de Amplitud</b> y un
         estado de participación (confirmación, concentración, divergencia, deterioro o acumulación).
       </div>
     </div>
@@ -818,14 +818,14 @@ def render_market_breadth(
     breadth_1w = _bd_breadth_score(snap_1w, conc['conc_score']) if snap_1w else None
     breadth_2w = _bd_breadth_score(snap_2w, conc['conc_score']) if snap_2w else None
 
-    # Mejora 2: Breadth Momentum 1W / 1M
+    # Mejora 2: Momentum de Amplitud 1S / 1M
     momentum_1m = (breadth_hoy - breadth_prev) if (breadth_hoy is not None and breadth_prev is not None) else None
     momentum_1w = (breadth_hoy - breadth_1w) if (breadth_hoy is not None and breadth_1w is not None) else None
-    # Mejora 3: Breadth Acceleration (momentum de esta semana vs. semana previa)
+    # Mejora 3: Aceleración de Amplitud (momentum de esta semana vs. semana previa)
     momentum_prev_1w = (breadth_1w - breadth_2w) if (breadth_1w is not None and breadth_2w is not None) else None
     aceleracion = (momentum_1w - momentum_prev_1w) if (momentum_1w is not None and momentum_prev_1w is not None) else None
 
-    # ── Índice proxy (ponderado por cap si hay datos, si no equal-weight) ──
+    # ── Índice proxy (ponderado por cap si hay datos, si no ponderación igualitaria) ──
     if conc['pesos'] is not None and conc['pesos'].sum() > 0:
         pesos_full = conc['pesos'].reindex(df_close.columns).fillna(0)
         if pesos_full.sum() == 0:
@@ -854,7 +854,7 @@ def render_market_breadth(
     ret_6m = _ret_de(idx_serie, 126)
     ret_1y = _ret_de(idx_serie, 252)
 
-    # Mejora 10: Equal Weight vs Índice
+    # Mejora 10: Ponderación Igualitaria vs Índice
     serie_equal_weight = (df_close / df_close.iloc[0]).mean(axis=1)
     ret_1m_eq = _ret_de(serie_equal_weight, 21)
     ew_divergence = (ret_1m - ret_1m_eq) if (ret_1m is not None and ret_1m_eq is not None) else None
@@ -868,7 +868,7 @@ def render_market_breadth(
         breadth_hoy, momentum_1m, snap_hoy['ad_score'], snap_hoy['trend_score'], ret_1m
     )
 
-    # ── Card de estado (cruce precio × breadth) ─────────────────────────
+    # ── Card de estado (cruce precio × amplitud) ─────────────────────────
     st.markdown(f"""
     <div style="background:{color_estado}15;border:1.5px solid {color_estado};border-radius:14px;
          padding:22px 26px;text-align:center;margin:10px 0 14px 0">
@@ -883,17 +883,17 @@ def render_market_breadth(
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Mejoras 1, 11, 14: badges de Estado por Score / Market Health / Régimen ──
+    # ── Mejoras 1, 11, 14: badges de Estado por Score / Salud de Mercado / Régimen ──
     c_b1, c_b2, c_b3 = st.columns(3)
     with c_b1:
-        _bd_badge('Estado por Breadth Score', emoji_score, label_score, color_score,
+        _bd_badge('Estado por Score de Amplitud', emoji_score, label_score, color_score,
                    f'Score: {breadth_hoy:.0f}/100' if breadth_hoy is not None else '')
     with c_b2:
         detalle_health = ''
         if market_health is not None:
-            detalle_health = (f'Breadth {breadth_hoy:.0f} + Momentum {momentum_1m:+.1f}'
-                               if momentum_1m is not None else f'Breadth {breadth_hoy:.0f}')
-        _bd_badge('Market Health Score', '🩺', f'{market_health:.0f}/100' if market_health is not None else 'N/D',
+            detalle_health = (f'Amplitud {breadth_hoy:.0f} + Momentum {momentum_1m:+.1f}'
+                               if momentum_1m is not None else f'Amplitud {breadth_hoy:.0f}')
+        _bd_badge('Score de Salud de Mercado', '🩺', f'{market_health:.0f}/100' if market_health is not None else 'N/D',
                    _bd_color_score(market_health), detalle_health)
     with c_b3:
         _bd_badge('Régimen de Mercado', emoji_reg, label_reg, color_reg,
@@ -903,22 +903,22 @@ def render_market_breadth(
 
     # ── KPIs principales ─────────────────────────────────────────────────
     kpi_cards_4([
-        ('Breadth Score', f'{breadth_hoy:.0f}/100',
+        ('Score de Amplitud', f'{breadth_hoy:.0f}/100',
          (f"{momentum_1m:+.1f} vs. hace 1 mes" if momentum_1m is not None else 'Score compuesto'),
          _bd_color_score(breadth_hoy)),
         ('Avance / Declive', f"{snap_hoy['adv']} / {snap_hoy['dec']}",
-         f"Ratio {snap_hoy['ad_ratio']:.2f} · Net {snap_hoy['ad_net']:+d}", _bd_color_score(snap_hoy['ad_score'])),
+         f"Ratio {snap_hoy['ad_ratio']:.2f} · Neto {snap_hoy['ad_net']:+d}", _bd_color_score(snap_hoy['ad_score'])),
         ('Máx / Mín 52 sem.', f"{snap_hoy['nh']} / {snap_hoy['nl']}",
-         f"NH-NL {snap_hoy['nhnl_net']:+d} · Ratio {snap_hoy['nhnl_ratio']:.2f}", _bd_color_score(snap_hoy['nhnl_score'])),
+         f"NM-Nm {snap_hoy['nhnl_net']:+d} · Ratio {snap_hoy['nhnl_ratio']:.2f}", _bd_color_score(snap_hoy['nhnl_score'])),
         ('Concentración Top 5', f"{conc['top5_pct']:.1f}%" if conc['top5_pct'] is not None else 'N/D',
          f"Resto: {conc['resto_pct']:.1f}%" if conc['resto_pct'] is not None else f"Score: {conc['conc_score']:.0f}/100",
          _bd_color_score(conc['conc_score'])),
     ])
 
-    # ── Mejoras 2 y 3: Breadth Momentum y Aceleración ──────────────────────
-    st.markdown('##### 📐 Breadth Momentum & Aceleración')
+    # ── Mejoras 2 y 3: Momentum y Aceleración de Amplitud ──────────────────
+    st.markdown('##### 📐 Momentum y Aceleración de Amplitud')
     kpi_cards_4([
-        ('Momentum 1W', f"{momentum_1w:+.1f}" if momentum_1w is not None else 'N/D',
+        ('Momentum 1S', f"{momentum_1w:+.1f}" if momentum_1w is not None else 'N/D',
          'vs. hace 1 semana', _bd_color_score(50 + momentum_1w) if momentum_1w is not None else C_MUTED),
         ('Momentum 1M', f"{momentum_1m:+.1f}" if momentum_1m is not None else 'N/D',
          'vs. hace 1 mes', _bd_color_score(50 + momentum_1m) if momentum_1m is not None else C_MUTED),
@@ -926,7 +926,7 @@ def render_market_breadth(
          ('⚠️ Deterioro acelerando' if (aceleracion is not None and aceleracion < -1 and momentum_1w is not None and momentum_1w < 0)
           else ('Mejora acelerando' if (aceleracion is not None and aceleracion > 1) else 'Sin cambios bruscos')),
          _bd_color_score(50 + aceleracion) if aceleracion is not None else C_MUTED),
-        ('Equal Weight vs Índice', f"{ew_divergence:+.2f}%" if ew_divergence is not None else 'N/D',
+        ('Pond. Igualitaria vs Índice', f"{ew_divergence:+.2f}%" if ew_divergence is not None else 'N/D',
          ('⚠️ Rally concentrado' if (ew_divergence is not None and ew_divergence > 1) else
           ('🟢 Participación amplia' if (ew_divergence is not None and ew_divergence < -1) else 'Sin sesgo relevante')),
          _bd_color_score(50 - (ew_divergence or 0) * 5)),
@@ -937,7 +937,7 @@ def render_market_breadth(
     st.markdown(f'##### {label_precio}')
     cols_ret = st.columns(6)
     for col, (lbl, val) in zip(cols_ret,
-        [('1D', ret_1d), ('1W', ret_1w), ('1M', ret_1m), ('3M', ret_3m), ('6M', ret_6m), ('1Y', ret_1y)]):
+        [('1D', ret_1d), ('1S', ret_1w), ('1M', ret_1m), ('3M', ret_3m), ('6M', ret_6m), ('1A', ret_1y)]):
         with col:
             st.metric(lbl, f'{val:+.2f}%' if val is not None else 'N/D')
 
@@ -945,11 +945,11 @@ def render_market_breadth(
     st.markdown('---')
     st.markdown('### 🧩 Subíndices de Amplitud')
     subitems = [
-        ('Trend Breadth', snap_hoy['trend_score'], '25%'),
-        ('Advance/Decline', snap_hoy['ad_score'], '20%'),
-        ('New Highs/Lows', snap_hoy['nhnl_score'], '15%'),
-        ('Volume Breadth', snap_hoy['vol_score'], '20%'),
-        ('Concentration', conc['conc_score'], '20%'),
+        ('Amplitud de Tendencia', snap_hoy['trend_score'], '25%'),
+        ('Avance/Declive', snap_hoy['ad_score'], '20%'),
+        ('Nuevos Máx/Mín', snap_hoy['nhnl_score'], '15%'),
+        ('Amplitud de Volumen', snap_hoy['vol_score'], '20%'),
+        ('Concentración', conc['conc_score'], '20%'),
     ]
     cols_sub = st.columns(5)
     for col, (nombre, valor, peso) in zip(cols_sub, subitems):
@@ -977,13 +977,13 @@ def render_market_breadth(
         **PLOTLY_LAYOUT_BASE_BD, height=340,
         yaxis=dict(range=[0, 115], gridcolor=C_GRID, title='% de activos'),
         xaxis=dict(gridcolor=C_GRID),
-        title=dict(text='Amplitud de Tendencia (Trend Breadth ponderado)', font=dict(color=C_TEXT, size=13)),
+        title=dict(text='Amplitud de Tendencia (ponderada)', font=dict(color=C_TEXT, size=13)),
         margin=dict(l=10, r=10, t=45, b=10),
     )
     st.plotly_chart(fig_smas, use_container_width=True, config=PLOTLY_CONFIG, key='bd_fig_smas')
 
-    # ── A/D Line histórica + divergencia (mejora 5) ────────────────────────
-    st.markdown('### 📈 A/D Line histórica')
+    # ── Línea A/D histórica + divergencia (mejora 5) ────────────────────────
+    st.markdown('### 📈 Línea A/D histórica')
     ret_matrix = df_close.pct_change()
     adv_diaria = (ret_matrix > 0).sum(axis=1)
     dec_diaria = (ret_matrix < 0).sum(axis=1)
@@ -996,25 +996,25 @@ def render_market_breadth(
                     'down' if (ret_1m is not None and ret_1m < -0.5) else 'flat'
 
     if dir_precio_1m == 'up' and ad_line_dir == 'down':
-        div_texto, div_color = '⚠️ DIVERGENCIA BAJISTA — el precio sube pero la A/D Line cae', C_RED
+        div_texto, div_color = '⚠️ DIVERGENCIA BAJISTA — el precio sube pero la Línea A/D cae', C_RED
     elif dir_precio_1m == 'down' and ad_line_dir == 'up':
-        div_texto, div_color = '🟢 DIVERGENCIA ALCISTA — el precio cae pero la A/D Line sube', C_GREEN
+        div_texto, div_color = '🟢 DIVERGENCIA ALCISTA — el precio cae pero la Línea A/D sube', C_GREEN
     elif ad_line_dir == 'up':
-        div_texto, div_color = '↗ A/D Line recuperándose, en línea con el precio', C_LGRE
+        div_texto, div_color = '↗ Línea A/D recuperándose, en línea con el precio', C_LGRE
     elif ad_line_dir == 'down':
-        div_texto, div_color = '↘ A/D Line deteriorándose, en línea con el precio', C_LRED
+        div_texto, div_color = '↘ Línea A/D deteriorándose, en línea con el precio', C_LRED
     else:
-        div_texto, div_color = '→ A/D Line lateral, sin señal clara', C_MUTED
+        div_texto, div_color = '→ Línea A/D lateral, sin señal clara', C_MUTED
 
     fig_ad = go.Figure()
     fig_ad.add_trace(go.Scatter(
         x=ad_line.index, y=ad_line.values, line=dict(color=C_MONSTER, width=2),
-        fill='tozeroy', fillcolor='rgba(108,194,74,0.10)', name='A/D Line',
+        fill='tozeroy', fillcolor='rgba(108,194,74,0.10)', name='Línea A/D',
     ))
     fig_ad.update_layout(
         **PLOTLY_LAYOUT_BASE_BD, height=340,
         xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='A/D acumulado'),
-        title=dict(text='Advance/Decline Line', font=dict(color=C_TEXT, size=13)),
+        title=dict(text='Línea de Avance/Declive', font=dict(color=C_TEXT, size=13)),
         margin=dict(l=10, r=10, t=45, b=10),
     )
     st.plotly_chart(fig_ad, use_container_width=True, config=PLOTLY_CONFIG, key='bd_fig_ad')
@@ -1036,47 +1036,47 @@ def render_market_breadth(
         <div style="background:{C_BG1};border:1px solid {C_GRID};border-left:3px solid {C_ACENT};
              border-radius:8px;padding:12px 16px;margin:10px 0;font-size:13px;line-height:1.7;color:#f5f7fa">
           <div style="color:{C_ACENT};font-weight:700;font-size:12px;margin-bottom:4px">📐 LECTURA</div>
-          El Breadth Score pasó de {breadth_prev:.0f} a {breadth_hoy:.0f} en el último mes — la
+          El Score de Amplitud pasó de {breadth_prev:.0f} a {breadth_hoy:.0f} en el último mes — la
           participación interna del mercado está <b>{interp_tendencia}</b>. Combinado con el estado
           "{estado}", esto {"confirma" if interp_tendencia != "estable" else "no cambia"} la lectura de arriba.
         </div>
         """, unsafe_allow_html=True)
 
-    # ── Mejora 7: New Highs/Lows extendido ─────────────────────────────────
+    # ── Mejora 7: Nuevos Máximos/Mínimos extendido ─────────────────────────
     st.markdown('### 🏔️ Nuevos Máximos / Mínimos (52 sem.)')
     nl_1m = snap_prev['nl'] if snap_prev else None
     delta_nl = (snap_hoy['nl'] - nl_1m) if nl_1m is not None else None
     kpi_cards_4([
-        ('New Highs', str(snap_hoy['nh']), 'Últimas 52 semanas', C_GREEN),
-        ('New Lows', str(snap_hoy['nl']), 'Últimas 52 semanas', C_RED),
-        ('NH - NL', f"{snap_hoy['nhnl_net']:+d}", f"Ratio: {snap_hoy['nhnl_ratio']:.2f}", _bd_color_score(snap_hoy['nhnl_score'])),
-        ('Momentum New Lows', f"{delta_nl:+d}" if delta_nl is not None else 'N/D',
+        ('Nuevos Máximos', str(snap_hoy['nh']), 'Últimas 52 semanas', C_GREEN),
+        ('Nuevos Mínimos', str(snap_hoy['nl']), 'Últimas 52 semanas', C_RED),
+        ('NM - Nm', f"{snap_hoy['nhnl_net']:+d}", f"Ratio: {snap_hoy['nhnl_ratio']:.2f}", _bd_color_score(snap_hoy['nhnl_score'])),
+        ('Momentum Nuevos Mínimos', f"{delta_nl:+d}" if delta_nl is not None else 'N/D',
          ('🟢 Los nuevos mínimos disminuyen' if (delta_nl is not None and delta_nl < 0) else
           ('🔴 Los nuevos mínimos aumentan' if (delta_nl is not None and delta_nl > 0) else 'Sin cambios vs. 1M')),
          C_GREEN if (delta_nl is not None and delta_nl < 0) else (C_RED if (delta_nl is not None and delta_nl > 0) else C_MUTED)),
     ])
 
-    # ── Mejora 8: Volume Breadth extendido + confirmación ──────────────────
-    st.markdown('### 💧 Volume Breadth y Confirmación')
+    # ── Mejora 8: Amplitud de Volumen extendida + confirmación ──────────────────
+    st.markdown('### 💧 Amplitud de Volumen y Confirmación')
     down_vol_1m = snap_prev['down_vol_pct'] if snap_prev else None
     if ret_1d is not None and ret_1d < 0:
         if down_vol_1m is not None and snap_hoy['down_vol_pct'] > down_vol_1m:
-            texto_conf, color_conf = '🔴 Presión vendedora confirmada (down volume en aumento)', C_RED
+            texto_conf, color_conf = '🔴 Presión vendedora confirmada (volumen bajista en aumento)', C_RED
         else:
             texto_conf, color_conf = '🟡 Caída con menor participación — posible agotamiento vendedor', C_YELL
     elif ret_1d is not None and ret_1d > 0:
         up_vol_1m = (100 - down_vol_1m) if down_vol_1m is not None else None
         if up_vol_1m is not None and snap_hoy['up_vol_pct'] > up_vol_1m:
-            texto_conf, color_conf = '🟢 Suba confirmada por volumen (up volume en aumento)', C_GREEN
+            texto_conf, color_conf = '🟢 Suba confirmada por volumen (volumen alcista en aumento)', C_GREEN
         else:
             texto_conf, color_conf = '🟡 Suba con menor convicción de volumen', C_YELL
     else:
         texto_conf, color_conf = '⚪ Sin variación relevante de precio para leer el volumen', C_MUTED
 
     kpi_cards_4([
-        ('Up Volume', f"{snap_hoy['up_vol_pct']:.0f}%", 'Del volumen total', C_GREEN),
-        ('Down Volume', f"{snap_hoy['down_vol_pct']:.0f}%", 'Del volumen total', C_RED),
-        ('Up/Down Volume', f"{snap_hoy['up_down_vol_ratio']:.2f}", 'Ratio', _bd_color_score(snap_hoy['vol_score'])),
+        ('Volumen Alcista', f"{snap_hoy['up_vol_pct']:.0f}%", 'Del volumen total', C_GREEN),
+        ('Volumen Bajista', f"{snap_hoy['down_vol_pct']:.0f}%", 'Del volumen total', C_RED),
+        ('Volumen Alcista/Bajista', f"{snap_hoy['up_down_vol_ratio']:.2f}", 'Ratio', _bd_color_score(snap_hoy['vol_score'])),
         ('Confirmación', '', texto_conf, color_conf),
     ])
 
@@ -1107,7 +1107,7 @@ def render_market_breadth(
     ])
 
     # ── Mejora 12: Matriz de diagnóstico ────────────────────────────────────
-    st.markdown('### 🧭 Matriz de Diagnóstico (Precio × Breadth)')
+    st.markdown('### 🧭 Matriz de Diagnóstico (Precio × Amplitud)')
     emoji_diag, label_diag, dir_p, dir_b = _bd_matriz_diagnostico(ret_1m, momentum_1m)
     flecha_precio = '↑' if dir_p == 'up' else ('↓' if dir_p == 'down' else '→')
     flecha_breadth = '↑' if dir_b == 'up' else ('↓' if dir_b == 'down' else '→')
@@ -1118,7 +1118,7 @@ def render_market_breadth(
         Precio (1M): <b style="color:{C_TEXT};font-size:16px">{flecha_precio}</b>
       </div>
       <div style="font-size:13px;color:{C_MUTED}">
-        Breadth Momentum: <b style="color:{C_TEXT};font-size:16px">{flecha_breadth}</b>
+        Momentum de Amplitud: <b style="color:{C_TEXT};font-size:16px">{flecha_breadth}</b>
       </div>
       <div style="font-size:15px;font-weight:700;color:{C_TEXT}">→ {emoji_diag} {label_diag}</div>
     </div>
@@ -1158,7 +1158,7 @@ def render_market_breadth(
         filas.append({
             'Ticker': tk,
             'Precio': fmt_precio(precio_tk),
-            'Ret 1D %': round(float(r1d) * 100, 2) if pd.notna(r1d) else None,
+            'Rend 1D %': round(float(r1d) * 100, 2) if pd.notna(r1d) else None,
             '>SMA20': '✅' if pd.notna(precio_tk) and precio_tk > sma20_all.get(tk, np.inf) else '❌',
             '>SMA50': '✅' if pd.notna(precio_tk) and precio_tk > sma50_all.get(tk, np.inf) else '❌',
             '>SMA200': '✅' if pd.notna(precio_tk) and precio_tk > sma200_all.get(tk, np.inf) else '❌',
@@ -1167,7 +1167,7 @@ def render_market_breadth(
             'Peso %': round(peso_tk, 2) if peso_tk else None,
         })
 
-    df_detalle = pd.DataFrame(filas).sort_values('Ret 1D %', ascending=False, na_position='last')
+    df_detalle = pd.DataFrame(filas).sort_values('Rend 1D %', ascending=False, na_position='last')
 
     def _color_ret1d(val):
         try:
@@ -1178,7 +1178,7 @@ def render_market_breadth(
 
     _map_bd = 'map' if hasattr(df_detalle.style, 'map') else 'applymap'
     styled_detalle = (df_detalle.style
-        .pipe(lambda s: getattr(s, _map_bd)(_color_ret1d, subset=['Ret 1D %']))
+        .pipe(lambda s: getattr(s, _map_bd)(_color_ret1d, subset=['Rend 1D %']))
         .set_properties(**{'background-color': C_BG1, 'color': C_TEXT, 'border': f'1px solid {C_GRID}'})
         .set_table_styles([
             {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', C_TEXT),
