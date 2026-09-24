@@ -14,6 +14,15 @@
 #  Centrales / Geopolítica / Commodities / Mercados) y, con el
 #  tiempo, comparar eventos del mismo tipo entre sí.
 #
+#  CLASIFICACIÓN — la ingesta automática (ingest_noticias.py) YA NO
+#  intenta adivinar el tipo de evento de cada noticia: trae TODAS
+#  las que encuentra y las guarda como "Sin clasificar". El
+#  glosario (TIPOS_EVENTO) queda como referencia para que el propio
+#  usuario, si tiene dudas sobre cómo interpretar una noticia, la
+#  reclasifique a mano desde el feed (ver _tab_feed / "🏷️
+#  Reclasificar" más abajo) — igual que cuando se carga un evento
+#  manualmente.
+#
 #  "Reacción histórica": el sistema NO inventa estadísticas de
 #  mercado. Lo que hace es dejar un campo (reaccion_pct) para que,
 #  días después del evento, el admin cargue qué hizo el activo
@@ -35,6 +44,10 @@ from datetime import date, datetime
 ADMIN_EMAIL = "brainferreyra@gmail.com"
 
 TABLA_EVENTOS = "mercado_eventos"
+
+# Tipo de evento comodín para lo que llega sin clasificar (ver
+# ingest_noticias.py) o lo que el admin todavía no reclasificó.
+TIPO_SIN_CLASIFICAR = "Sin clasificar"
 
 GRUPOS = ["Todas", "Macro", "Empresas", "Gobiernos", "Bancos Centrales",
           "Geopolítica", "Commodities", "Mercados"]
@@ -63,6 +76,18 @@ IMPACTO_META = {
 #  guiada. Se puede seguir ampliando con el tiempo.
 # ==============================================================
 TIPOS_EVENTO = {
+    # ---------------- SIN CLASIFICAR ----------------
+    # Tipo comodín: lo usa la ingesta automática para TODA noticia
+    # que trae (ya no intenta adivinar el tipo — ver nota arriba),
+    # y también sirve si un admin quiere cargar algo a mano sin
+    # decidir todavía en qué categoría entra. La idea es que el
+    # usuario, mirando el resto del glosario de abajo, elija a mano
+    # el tipo correcto cuando tenga tiempo de revisarla.
+    "Sin clasificar": {
+        "grupo": "Mercados",
+        "factor": "Noticia sin clasificar — consultar el glosario para interpretarla y reclasificarla manualmente",
+        "impacto": "Depende del caso", "activos": []},
+
     # ---------------- EMPRESAS ----------------
     "Recompra de acciones (buyback)": {
         "grupo": "Empresas", "factor": "Demanda de acciones / mejora de EPS",
@@ -297,7 +322,13 @@ TIPOS_EVENTO = {
         "impacto": "Negativo", "activos": ["Bancos"]},
 }
 
-TIPOS_EVENTO_ORDENADOS = sorted(TIPOS_EVENTO.keys(), key=lambda e: (TIPOS_EVENTO[e]["grupo"], e))
+# "Sin clasificar" se ordena aparte, primero, para que sea fácil de
+# encontrar en el selectbox de carga/reclasificación manual — el
+# resto sigue ordenado por grupo y nombre como antes.
+TIPOS_EVENTO_ORDENADOS = [TIPO_SIN_CLASIFICAR] + sorted(
+    (e for e in TIPOS_EVENTO.keys() if e != TIPO_SIN_CLASIFICAR),
+    key=lambda e: (TIPOS_EVENTO[e]["grupo"], e),
+)
 
 
 # ==============================================================
@@ -449,6 +480,22 @@ def _actualizar_reaccion(supabase, evento_id, reaccion_pct, reaccion_activo, rea
     }).eq("id", evento_id).execute()
 
 
+def _reclasificar_evento(supabase, evento_id, nuevo_tipo, impacto_override=None):
+    """Aplica un tipo de evento del glosario a una noticia ya cargada
+    (típicamente una que llegó como 'Sin clasificar' desde la ingesta
+    automática). Recalcula grupo/factor/activos igual que en el alta
+    manual; el impacto se puede pisar puntualmente si el caso concreto
+    lo amerita, igual que en _tab_registrar."""
+    info = TIPOS_EVENTO.get(nuevo_tipo, {})
+    supabase.table(TABLA_EVENTOS).update({
+        "tipo_evento": nuevo_tipo,
+        "grupo": info.get("grupo", "Mercados"),
+        "factor": info.get("factor", ""),
+        "impacto": impacto_override or info.get("impacto", "Depende del caso"),
+        "activos_afectados": ", ".join(info.get("activos", [])),
+    }).eq("id", evento_id).execute()
+
+
 def _borrar_evento(supabase, evento_id):
     supabase.table(TABLA_EVENTOS).delete().eq("id", evento_id).execute()
 
@@ -520,7 +567,8 @@ def _render_similares(df_todos, tipo_evento, ticker=None, pais=None, excluir_id=
 def _tab_registrar(supabase, user_id, user_email):
     st.caption(
         "Elegí el tipo de evento: el sistema autocompleta grupo, factor de impacto y activos "
-        "típicos. Podés ajustar el impacto puntual si el caso concreto lo amerita."
+        "típicos. Podés ajustar el impacto puntual si el caso concreto lo amerita. Si no estás "
+        "seguro todavía, podés dejarlo como \"Sin clasificar\" y reclasificarlo después desde el feed."
     )
 
     c1, c2 = st.columns([1, 2])
@@ -657,7 +705,7 @@ def _tab_registrar(supabase, user_id, user_email):
 
 
 # ==============================================================
-#  FEED (todos ven; admin puede editar reacción / borrar)
+#  FEED (todos ven; admin puede editar reacción / reclasificar / borrar)
 # ==============================================================
 
 def _form_reaccion(supabase, row):
@@ -685,10 +733,52 @@ def _form_reaccion(supabase, row):
                 st.error(f"❌ {e}")
 
 
+def _form_reclasificar(supabase, row):
+    """Panel para que el admin, consultando el glosario, le asigne a
+    mano el tipo de evento correcto a una noticia — típicamente una
+    que llegó 'Sin clasificar' desde la ingesta automática, pero sirve
+    para cualquier evento cargado en este módulo."""
+    eid = row["id"]
+    tipo_actual = row.get("tipo_evento") or TIPO_SIN_CLASIFICAR
+    idx_actual = (TIPOS_EVENTO_ORDENADOS.index(tipo_actual)
+                  if tipo_actual in TIPOS_EVENTO_ORDENADOS else 0)
+
+    nuevo_tipo = st.selectbox(
+        "🏷️ Tipo de evento (glosario)", TIPOS_EVENTO_ORDENADOS,
+        index=idx_actual, key=f"me_rc_tipo_{eid}",
+        help="Elegí el tipo que mejor describe esta noticia — grupo, factor e "
+             "impacto típico se completan solos según el glosario.",
+    )
+    info_nuevo = TIPOS_EVENTO.get(nuevo_tipo, {})
+    st.markdown(_badges_evento(info_nuevo), unsafe_allow_html=True)
+    st.caption(f"**Factor:** {info_nuevo.get('factor','') or '—'}")
+    st.caption(
+        f"**Activos afectados (automático):** {', '.join(info_nuevo.get('activos', [])) or '—'}"
+    )
+
+    impactos = list(IMPACTO_META.keys())
+    idx_impacto = impactos.index(row.get("impacto")) if row.get("impacto") in impactos else impactos.index(
+        info_nuevo.get("impacto", "Depende del caso")
+    )
+    impacto_override = st.selectbox(
+        "⚡ Impacto para este caso puntual", impactos, index=idx_impacto, key=f"me_rc_impacto_{eid}",
+        help="Precargado según el tipo elegido; ajustalo si este caso concreto es distinto al típico.",
+    )
+
+    if st.button("💾 Guardar clasificación", key=f"me_rc_btn_{eid}", type="primary"):
+        try:
+            _reclasificar_evento(supabase, eid, nuevo_tipo, impacto_override)
+            _limpiar_cache_eventos()
+            st.success("✅ Reclasificado.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ {e}")
+
+
 def _tab_feed(supabase, es_admin):
     top1, top2, top3 = st.columns([2.4, 1, 1])
     with top1:
-        st.caption("Feed de noticias y eventos de mercado, ya clasificados")
+        st.caption("Feed de noticias y eventos de mercado")
     with top2:
         incluir_calendario = st.toggle(
             "📅 Incluir Calendario", value=True, key="me_feed_incluir_calendario",
@@ -769,6 +859,17 @@ def _tab_feed(supabase, es_admin):
                 key="me_feed_fecha_rango",
             )
 
+    # Filtro rápido para encontrar de una lo que todavía nadie revisó
+    # a mano — solo tiene sentido para el admin, que es quien puede
+    # reclasificar.
+    solo_sin_clasificar = False
+    if es_admin:
+        cantidad_sin_clasificar = int((df["tipo_evento"] == TIPO_SIN_CLASIFICAR).sum())
+        solo_sin_clasificar = st.checkbox(
+            f"🟡 Mostrar solo \"Sin clasificar\" ({cantidad_sin_clasificar})",
+            key="me_feed_solo_sin_clasificar",
+        )
+
     df_f = df.copy()
     df_f["_fecha_dt"] = pd.to_datetime(df_f["fecha_evento"], errors="coerce")
 
@@ -778,6 +879,8 @@ def _tab_feed(supabase, es_admin):
         df_f = df_f[df_f["impacto"] == f_impacto]
     if f_tipo != "Todos":
         df_f = df_f[df_f["tipo_evento"] == f_tipo]
+    if solo_sin_clasificar:
+        df_f = df_f[df_f["tipo_evento"] == TIPO_SIN_CLASIFICAR]
 
     if modo_fecha == "Un día" and f_fecha_unica is not None:
         df_f = df_f[df_f["_fecha_dt"].dt.date == f_fecha_unica]
@@ -823,7 +926,8 @@ def _tab_feed(supabase, es_admin):
         contexto_txt = "  ·  ".join(contexto)
 
         origen_calendario = bool(row.get("es_calendario"))
-        icono_origen = "📅 " if origen_calendario else ""
+        sin_clasificar = (row.get("tipo_evento") == TIPO_SIN_CLASIFICAR)
+        icono_origen = "📅 " if origen_calendario else ("🟡 " if sin_clasificar else "")
         titulo_exp = f"{icono_origen}{row.get('fecha_evento','')} · {row.get('titulo','')}"
         with st.expander(titulo_exp):
             try:
@@ -872,6 +976,14 @@ def _tab_feed(supabase, es_admin):
 
                     if es_admin:
                         st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
+                        etiqueta_reclasificar = (
+                            "🏷️ Reclasificar (elegir tipo de evento del glosario)"
+                            if sin_clasificar else "🏷️ Cambiar clasificación"
+                        )
+                        with st.expander(etiqueta_reclasificar, expanded=sin_clasificar):
+                            _form_reclasificar(supabase, row)
+
+                        st.markdown("<hr style='margin:8px 0;border-color:#21262d'>", unsafe_allow_html=True)
                         _form_reaccion(supabase, row)
                         if st.button("🗑️ Eliminar evento", key=f"me_del_{row['id']}"):
                             try:
@@ -904,6 +1016,13 @@ def render_noticias_mercado(supabase, user_id, user_email):
     Calendario" del feed prende/apaga esa mezcla. Lo que sí se carga
     manualmente en este módulo es lo que el Calendario no cubre: eventos
     puntuales de empresas, gobiernos, geopolítica y commodities.
+
+    Clasificación: la ingesta automática (ingest_noticias.py) trae TODAS
+    las noticias que encuentra, sin intentar adivinar de qué se tratan —
+    quedan cargadas como "Sin clasificar". El glosario (TIPOS_EVENTO) es
+    la referencia para que el admin, cuando lea una noticia y quiera
+    entender o etiquetar de qué tipo de evento se trata, la reclasifique
+    a mano desde el feed (panel "🏷️ Reclasificar" dentro de cada evento).
     """
     es_admin = _es_admin(user_email)
 
@@ -915,11 +1034,12 @@ def render_noticias_mercado(supabase, user_id, user_email):
         🧠 Noticias + Eventos de Mercado
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
-        Cada evento se clasifica automáticamente: Evento → Grupo → Factor →
-        Activos afectados → Impacto. Filtrá por Macro, Empresas, Gobiernos,
-        Bancos Centrales, Geopolítica, Commodities o Mercados, y consultá
-        la reacción histórica real de eventos similares (a medida que se
-        va cargando).
+        Trae todas las noticias de mercado disponibles. El glosario (Evento → Grupo →
+        Factor → Activos afectados → Impacto) queda como referencia para interpretarlas:
+        las que llegan automáticamente entran como "Sin clasificar" y podés reclasificarlas
+        a mano cuando quieras, consultando ese glosario. Filtrá por Macro, Empresas,
+        Gobiernos, Bancos Centrales, Geopolítica, Commodities o Mercados, y consultá la
+        reacción histórica real de eventos similares (a medida que se va cargando).
       </div>
     </div>
     """, unsafe_allow_html=True)
