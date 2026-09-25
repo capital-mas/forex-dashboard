@@ -28,17 +28,35 @@ PRODUCTOS = {
         "Básico": dict(
             descripcion="Acceso a los módulos esenciales de mercados.",
             duraciones={
-                "Mensual":    dict(dias=30,  precio_usd=10),
-                "Trimestral": dict(dias=90,  precio_usd=27),
-                "Anual":      dict(dias=365, precio_usd=90),
+                "Mensual": dict(
+                    dias=30, precio_usd=9, precio_ars=14000,
+                    link_mp="https://mpago.la/2PJHTtJ",
+                ),
+                "Trimestral": dict(
+                    dias=90, precio_usd=24, precio_ars=37000,
+                    link_mp="https://mpago.la/1vKQM87",
+                ),
+                "Anual": dict(
+                    dias=365, precio_usd=80, precio_ars=125000,
+                    link_mp="https://mpago.la/2HNUb4x",
+                ),
             },
         ),
         "Pro": dict(
             descripcion="Acceso completo: Optimizador, Opciones, Señales, Asistente IA y más.",
             duraciones={
-                "Mensual":    dict(dias=30,  precio_usd=18),
-                "Trimestral": dict(dias=90,  precio_usd=48),
-                "Anual":      dict(dias=365, precio_usd=160),
+                "Mensual": dict(
+                    dias=30, precio_usd=13, precio_ars=20000,
+                    link_mp="https://mpago.la/2s6N6LS",
+                ),
+                "Trimestral": dict(
+                    dias=90, precio_usd=48, precio_ars=56000,
+                    link_mp="https://mpago.la/xxxxx-pro-trimestral",
+                ),
+                "Anual": dict(
+                    dias=365, precio_usd=160, precio_ars=187000,
+                    link_mp="https://mpago.la/xxxxx-pro-anual",
+                ),
             },
         ),
     }),
@@ -200,33 +218,75 @@ def _bloque_nivel(data_client, user_id, email, modulo, nombre_nivel, datos_nivel
     )
     datos_duracion = datos_nivel["duraciones"][nombre_duracion]
     st.markdown(f"**{nombre_nivel} · {nombre_duracion}** — {datos_duracion['dias']} días de acceso")
-    st.markdown(f"""
-    <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #e3b341;
-         border-radius:12px;padding:20px 24px;margin:12px 0">
-      <div style="font-size:14px;color:#8b949e;margin-bottom:10px">Transferí en cripto a:</div>
-      <div style="font-size:13px;color:#e6edf3;line-height:2">
-        <b>Red:</b> {red}<br>
-        <b>Wallet:</b> <code style="font-size:11px">{wallet}</code><br>
-        <b>Monto:</b> USD ${datos_duracion['precio_usd']}
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-    nota_cripto = st.text_input(
-        "Hash de la transacción o comentario (opcional)",
-        key=f"pago_{modulo}_nota_{nombre_nivel}", placeholder="Ej: hash 0xabc123...",
-    )
-    if st.button(f"✅ Ya transferí — {nombre_nivel} {nombre_duracion}", type="primary",
-                 use_container_width=True, key=f"btn_notif_{modulo}_{nombre_nivel}"):
-        data_client.table("solicitudes_pago").insert({
-            "user_id": user_id, "email": email, "modulo": modulo,
-            "monto": datos_duracion["precio_usd"], "moneda": "USD",
-            "nota": nota_cripto, "estado": "pendiente",
-            "plan_nombre": f"{nombre_nivel} - {nombre_duracion}",
-            "dias": datos_duracion["dias"], "metodo": "cripto",
-        }).execute()
-        st.success("¡Recibido! Tu pago va a ser revisado y tu acceso se activa a la brevedad.")
-        st.rerun()
 
+    metodo = st.radio(
+        "Método de pago",
+        ["💳 Mercado Pago (ARS)", "🪙 Cripto (USDT)"],
+        horizontal=True, key=f"pago_{modulo}_metodo_{nombre_nivel}_{nombre_duracion}",
+    )
+
+    if metodo.startswith("💳"):
+        precio_ars = datos_duracion.get("precio_ars")
+        link_mp = datos_duracion.get("link_mp")
+        st.markdown(f"""
+        <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #3a7bd5;
+             border-radius:12px;padding:20px 24px;margin:12px 0">
+          <div style="font-size:14px;color:#8b949e;margin-bottom:10px">Pagá con tarjeta, débito o dinero en cuenta:</div>
+          <div style="font-size:13px;color:#e6edf3;line-height:2">
+            <b>Monto:</b> ARS ${precio_ars:,.0f}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if link_mp:
+            st.link_button("💳 Pagar con Mercado Pago", link_mp, use_container_width=True, type="primary")
+        else:
+            st.warning("Este plan todavía no tiene link de Mercado Pago configurado.")
+
+        nota_mp = st.text_input(
+            "Email o número de operación de Mercado Pago (opcional)",
+            key=f"pago_{modulo}_nota_mp_{nombre_nivel}_{nombre_duracion}",
+            placeholder="Ej: operación #123456789",
+        )
+        if st.button(f"✅ Ya pagué — {nombre_nivel} {nombre_duracion}", type="primary",
+                     use_container_width=True, key=f"btn_notif_mp_{modulo}_{nombre_nivel}_{nombre_duracion}"):
+            data_client.table("solicitudes_pago").insert({
+                "user_id": user_id, "email": email, "modulo": modulo,
+                "monto": precio_ars, "moneda": "ARS",
+                "nota": nota_mp, "estado": "pendiente",
+                "plan_nombre": f"{nombre_nivel} - {nombre_duracion}",
+                "dias": datos_duracion["dias"], "metodo": "mercadopago",
+            }).execute()
+            st.success("¡Recibido! Tu pago va a ser revisado y tu acceso se activa a la brevedad.")
+            st.rerun()
+
+    else:
+        st.markdown(f"""
+        <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #e3b341;
+             border-radius:12px;padding:20px 24px;margin:12px 0">
+          <div style="font-size:14px;color:#8b949e;margin-bottom:10px">Transferí en cripto a:</div>
+          <div style="font-size:13px;color:#e6edf3;line-height:2">
+            <b>Red:</b> {red}<br>
+            <b>Wallet:</b> <code style="font-size:11px">{wallet}</code><br>
+            <b>Monto:</b> USD ${datos_duracion['precio_usd']}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        nota_cripto = st.text_input(
+            "Hash de la transacción o comentario (opcional)",
+            key=f"pago_{modulo}_nota_{nombre_nivel}_{nombre_duracion}", placeholder="Ej: hash 0xabc123...",
+        )
+        if st.button(f"✅ Ya transferí — {nombre_nivel} {nombre_duracion}", type="primary",
+                     use_container_width=True, key=f"btn_notif_{modulo}_{nombre_nivel}_{nombre_duracion}"):
+            data_client.table("solicitudes_pago").insert({
+                "user_id": user_id, "email": email, "modulo": modulo,
+                "monto": datos_duracion["precio_usd"], "moneda": "USD",
+                "nota": nota_cripto, "estado": "pendiente",
+                "plan_nombre": f"{nombre_nivel} - {nombre_duracion}",
+                "dias": datos_duracion["dias"], "metodo": "cripto",
+            }).execute()
+            st.success("¡Recibido! Tu pago va a ser revisado y tu acceso se activa a la brevedad.")
+            st.rerun()
 
 def mostrar_selector_planes(data_client, user_id: str, email: str, modulo: str, mensaje_previo: str = None):
     """Pantalla para elegir NIVEL y DURACIÓN de UN módulo puntual, pagar en
