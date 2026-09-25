@@ -23,6 +23,8 @@ PLOTLY_LAYOUT_OPC = dict(plot_bgcolor=C_BG1, paper_bgcolor=C_BG2,
 N_PASOS_BINOMIAL = 150
 TOLERANCIA_VOL = 0.10
 NOMBRES_GRIEGAS = ["Delta", "Gamma", "Theta", "Vega", "Rho"]
+N_SIMULACIONES_OPC = 3000          # trayectorias del Monte Carlo real-world
+VENTANA_VOL_CORTA_OPC = 40         # ruedas usadas para estimar el drift reciente
 
 
 def fmt_precio_opc(p):
@@ -81,6 +83,23 @@ def _opc_datos_activo(ticker):
                     sma20=sma20, rsi=rsi, q_sugerido=q_sug, ultimo_cierre=float(precios.iloc[-1]))
     except Exception:
         return None
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _opc_serie_precios_completa(ticker, periodo='2y'):
+    """Serie completa de cierres — insumo del Monte Carlo y del rango empírico histórico.
+    Se cachea aparte de _opc_datos_activo porque esta devuelve la serie entera, no solo
+    los estadísticos agregados."""
+    try:
+        import yfinance as yf
+        df = yf.download(ticker, period=periodo, interval='1d', auto_adjust=True, progress=False)
+        if df is None or df.empty: return None
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        precios = df['Close'].dropna()
+        if len(precios) < 30: return None
+        return precios
+    except Exception:
+        return None
+
 
 # ==============================================================
 #  CADENA DE OPCIONES REAL (Yahoo Finance)
@@ -316,6 +335,104 @@ def evaluar_liquidez(bid, ask):
     elif spread_pct > 0.07: senal = "🟠 Liquidez media (7-15%) — orden límite"
     else: senal = "🟢 Líquida (<7%)"
     return mid, spread_abs, spread_pct, senal
+
+
+# ==============================================================
+#  ANÁLISIS PROBABILÍSTICO — Monte Carlo, rango empírico y señal
+#  (adaptado del script standalone de Colab a Streamlit nativo)
+# ==============================================================
+
+def simular_monte_carlo_opc(S0, sigma, drift, dias, n_sims=N_SIMULACIONES_OPC, seed=42):
+    """GBM vectorizado. 'drift' es el retorno esperado anualizado real-world (no risk-neutral),
+    a diferencia del pricing Black-Scholes/Binomial que usa la tasa libre de riesgo."""
+    dt_ = 1 / 365
+    pasos = max(int(dias), 1)
+    rng = np.random.default_rng(seed)
+    ruido = rng.standard_normal((pasos, n_sims))
+    log_ret = (drift - 0.5 * sigma ** 2) * dt_ + sigma * np.sqrt(dt_) * ruido
+    log_path = np.cumsum(log_ret, axis=0)
+    sims = S0 * np.exp(log_path)
+    return np.vstack([np.full(n_sims, S0), sims])
+
+
+def rango_empirico_opc(precios, S0, dias, p_bajo=40, p_alto=60):
+    """Rango percentil 40-60 de los retornos log históricos observados a 'dias' de distancia."""
+    retornos_T = np.log(precios.shift(-dias) / precios).dropna()
+    if len(retornos_T) < 20:
+        return None, None, len(retornos_T)
+    r_bajo = np.percentile(retornos_T, p_bajo)
+    r_alto = np.percentile(retornos_T, p_alto)
+    return float(S0 * np.exp(r_bajo)), float(S0 * np.exp(r_alto)), len(retornos_T)
+
+
+def sigma_desde_rango_opc(precio_bajo, precio_alto, t_frac, p_bajo=40, p_alto=60):
+    z = norm.ppf(p_alto / 100) - norm.ppf(p_bajo / 100)
+    return float(np.log(precio_alto / precio_bajo) / (z * np.sqrt(t_frac)))
+
+
+def evaluar_señal_pata(tipo, accion, S, vol_hist, vol_empirica, vol_implicita,
+                        precio_teorico, precio_mercado, delta, rsi, sma20,
+                        prob_mc_favorable, tolerancia=TOLERANCIA_VOL):
+    """6 chequeos independientes, adaptados según si la pata se COMPRA o se VENDE.
+    'Favorable' siempre significa: a favor del resultado de ESTA pata en particular,
+    no de la estrategia completa (eso ya lo cubren el payoff y los breakevens)."""
+    es_alcista_favorable = (tipo == 'C' and accion == 'comprar') or (tipo == 'P' and accion == 'vender')
+    vol_referencia = np.nanmean([vol_hist, vol_empirica]) if not np.isnan(vol_empirica) else vol_hist
+
+    if accion == 'comprar':
+        check_iv = (vol_implicita < vol_referencia + tolerancia) if not np.isnan(vol_implicita) else False
+        check_precio = precio_mercado < precio_teorico
+        etiqueta_iv = 'IV relativamente barata (favorable para comprar)'
+        etiqueta_precio = 'Precio de mercado < precio justo (no pagás de más)'
+    else:
+        check_iv = (vol_implicita > vol_referencia - tolerancia) if not np.isnan(vol_implicita) else False
+        check_precio = precio_mercado > precio_teorico
+        etiqueta_iv = 'IV relativamente cara (favorable para vender)'
+        etiqueta_precio = 'Precio de mercado > precio justo (cobrás de más)'
+
+    if es_alcista_favorable:
+        check_tendencia, check_momentum = S > sma20, rsi > 50
+    else:
+        check_tendencia, check_momentum = S < sma20, rsi < 50
+
+    checks = {
+        etiqueta_iv: bool(check_iv),
+        'Tendencia (precio vs SMA20) a favor': bool(check_tendencia),
+        'Momentum (RSI) a favor': bool(check_momentum),
+        'Delta en zona 0.4-0.6 (ATM, buen apalancamiento/gamma)': 0.4 <= abs(delta) <= 0.6,
+        etiqueta_precio: bool(check_precio),
+        'Monte Carlo favorece esta pata (prob. > 45%)': prob_mc_favorable > 45,
+    }
+    puntaje = sum(checks.values())
+    if puntaje >= 5:
+        veredicto = '🟢 FAVORABLE'
+    elif puntaje >= 3:
+        veredicto = '🟡 DUDOSO — revisar antes de entrar'
+    else:
+        veredicto = '🔴 DESFAVORABLE'
+    return {'veredicto': veredicto, 'puntaje': puntaje, 'checks': checks,
+            'prob_mc_favorable': prob_mc_favorable}
+
+
+def fig_monte_carlo_distribucion(precios_finales, S, strikes, p40_mc, p60_mc, p40_emp=None, p60_emp=None):
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(x=precios_finales, nbinsx=60, marker_color=C_ACENT,
+                                opacity=0.75, name='Precios simulados al vencimiento'))
+    fig.add_vline(x=S, line_color=C_YELL, line_dash='dot', opacity=0.8,
+                  annotation_text=f'Spot {S:.2f}', annotation_font_color=C_YELL)
+    fig.add_vline(x=p40_mc, line_color=C_MUTED, line_dash='dash', opacity=0.6, annotation_text='MC 40%')
+    fig.add_vline(x=p60_mc, line_color=C_MUTED, line_dash='dash', opacity=0.6, annotation_text='MC 60%')
+    if p40_emp is not None:
+        fig.add_vline(x=p40_emp, line_color=C_GREEN, line_dash='dashdot', opacity=0.6, annotation_text='Emp. 40%')
+        fig.add_vline(x=p60_emp, line_color=C_GREEN, line_dash='dashdot', opacity=0.6, annotation_text='Emp. 60%')
+    for k in sorted(set(strikes)):
+        fig.add_vline(x=k, line_color=C_RED, line_dash='dot', opacity=0.35)
+    fig.update_layout(**PLOTLY_LAYOUT_OPC, height=380, showlegend=False,
+                       title=dict(text='Distribución Monte Carlo real-world al vencimiento', font=dict(color=C_TEXT, size=13)),
+                       xaxis=dict(title='Precio del subyacente', gridcolor=C_GRID),
+                       yaxis=dict(title='Frecuencia', gridcolor=C_GRID),
+                       margin=dict(l=10, r=10, t=45, b=10))
+    return fig
 
 
 # ==============================================================
@@ -892,6 +1009,71 @@ def modulo_opciones():
     st.markdown('### 📊 Griegas de cada opción')
     st.dataframe(df_filas[['Opción', 'Delta', 'Gamma', 'Theta', 'Vega', 'Rho', 'Efecto Palanca']],
                  use_container_width=True, hide_index=True)
+
+    # ── análisis probabilístico: Monte Carlo, rango empírico y señal por pata ──
+    st.markdown('---')
+    st.markdown('### 🎲 Análisis probabilístico (Monte Carlo + señal por pata)')
+
+    precios_serie = _opc_serie_precios_completa(st.session_state['opc_ticker'].strip().upper())
+    if precios_serie is None:
+        st.warning('No se pudo descargar la serie histórica completa para el análisis probabilístico.')
+    else:
+        retornos_activo = np.log(precios_serie / precios_serie.shift(1)).dropna()
+        drift_real = float(retornos_activo[-VENTANA_VOL_CORTA_OPC:].mean() * 252) \
+            if len(retornos_activo) >= VENTANA_VOL_CORTA_OPC else float(retornos_activo.mean() * 252)
+
+        sims_mc = simular_monte_carlo_opc(S, vol_hist, drift_real, dias_vto, N_SIMULACIONES_OPC, seed=42)
+        precios_finales_mc = sims_mc[-1]
+        p40_mc = float(np.percentile(precios_finales_mc, 40))
+        p60_mc = float(np.percentile(precios_finales_mc, 60))
+        prob_perdida = float(np.mean(precios_finales_mc < S) * 100)
+
+        p40_emp, p60_emp, n_ventanas_emp = rango_empirico_opc(precios_serie, S, dias_vto)
+        vol_empirica = sigma_desde_rango_opc(p40_emp, p60_emp, T) if p40_emp is not None else float('nan')
+
+        banda_inf_1s = S * np.exp((drift_real - 0.5 * vol_hist ** 2) * T - vol_hist * np.sqrt(T))
+        banda_sup_1s = S * np.exp((drift_real - 0.5 * vol_hist ** 2) * T + vol_hist * np.sqrt(T))
+
+        cmc1, cmc2, cmc3 = st.columns(3)
+        with cmc1: st.metric('Precio medio simulado', fmt_precio_opc(float(np.mean(precios_finales_mc))))
+        with cmc2: st.metric('Rango MC (perc. 40-60%)', f'{p40_mc:,.2f} – {p60_mc:,.2f}')
+        with cmc3: st.metric('Prob. de pérdida vs spot', f'{prob_perdida:.1f}%')
+
+        st.markdown(f"**Comparación de 3 fuentes de rango probable a {dias_vto} días:**")
+        st.markdown(f"- 🎲 Monte Carlo (real-world, drift {drift_real:+.1%} anual): {p40_mc:,.2f} – {p60_mc:,.2f}")
+        st.markdown(f"- 📐 Analítico ±1σ (vol. histórica): {banda_inf_1s:,.2f} – {banda_sup_1s:,.2f}")
+        if p40_emp is not None:
+            st.markdown(f"- 📊 Empírico histórico (n={n_ventanas_emp} ventanas, IV implícita en el rango "
+                        f"{vol_empirica:.2%}): {p40_emp:,.2f} – {p60_emp:,.2f}")
+        else:
+            st.caption('⚠️ Historial insuficiente para calcular el rango empírico.')
+
+        strikes_patas = [p['strike'] for p in patas]
+        st.plotly_chart(fig_monte_carlo_distribucion(precios_finales_mc, S, strikes_patas, p40_mc, p60_mc,
+                                                       p40_emp, p60_emp),
+                         use_container_width=True, key='opc_fig_montecarlo')
+
+        st.markdown('#### Veredicto por pata (6 chequeos independientes)')
+        rsi_actual, sma20_actual = datos_activo['rsi'], datos_activo['sma20']
+        for i, (pata, fila) in enumerate(zip(patas, filas), start=1):
+            tipo_desc = 'Call' if pata['tipo'] == 'C' else 'Put'
+            accion_desc = 'comprada' if pata['accion'] == 'comprar' else 'vendida'
+            if pata['tipo'] == 'C':
+                prob_fav = float(np.mean(precios_finales_mc > pata['strike']) * 100) if pata['accion'] == 'comprar' \
+                    else float(np.mean(precios_finales_mc <= pata['strike']) * 100)
+            else:
+                prob_fav = float(np.mean(precios_finales_mc < pata['strike']) * 100) if pata['accion'] == 'comprar' \
+                    else float(np.mean(precios_finales_mc >= pata['strike']) * 100)
+
+            resultado = evaluar_señal_pata(pata['tipo'], pata['accion'], S, vol_hist, vol_empirica, fila['_iv'],
+                                            fila['Precio Teórico'], pata['precio_mercado'], fila['Delta'],
+                                            rsi_actual, sma20_actual, prob_fav)
+
+            with st.expander(f"Opción {i}: {tipo_desc} {accion_desc} K={pata['strike']:.2f} — "
+                              f"{resultado['veredicto']} ({resultado['puntaje']}/6)", expanded=False):
+                for desc, ok in resultado['checks'].items():
+                    st.markdown(f"{'✅' if ok else '❌'} {desc}")
+                st.caption(f"Prob. Monte Carlo favorable a esta pata: {prob_fav:.1f}%")
 
     ok_par, msg_par = verificar_paridad_put_call(filas)
     st.markdown(f"**⚖️ Paridad Put-Call:** {msg_par}" if ok_par else f"**⚖️ Paridad Put-Call:**\n\n{msg_par}")
