@@ -3688,6 +3688,145 @@ def analizar_fundamental(ticker, industria):
 
     return None
 
+# ==============================================================
+# 4) EVOLUCIÓN HISTÓRICA — agregar estas dos funciones nuevas
+# ==============================================================
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _fund_historico_anual(ticker):
+    """Serie histórica anual (hasta ~4-5 años, según lo que entregue
+    Yahoo Finance) de los principales ratios fundamentales.
+
+    IMPORTANTE — esto es una aproximación: los ratios que dependen del
+    precio (PER, P/B, EV/EBITDA, EV/Sales, P/FCF, Div. Yield) usan el
+    precio de cierre más cercano a la fecha de cierre de cada ejercicio
+    fiscal, combinado con los datos contables de ese mismo período.
+    Beta y PEG no tienen serie histórica razonable de calcular así y se
+    muestran solo como valor actual (no aparecen en el gráfico)."""
+    if _es_activo_sin_fundamentals(ticker):
+        return None
+    try:
+        import yfinance as yf
+        stock = yf.Ticker(ticker)
+        income = stock.financials
+        balance = stock.balance_sheet
+        cashflow = stock.cashflow
+        if income is None or income.empty or balance is None or balance.empty:
+            return None
+
+        fechas = list(income.columns)  # más reciente primero
+        if len(fechas) < 2:
+            return None
+
+        try:
+            inicio = (min(fechas) - pd.Timedelta(days=10)).strftime('%Y-%m-%d')
+            precio_hist = yf.download(ticker, start=inicio, progress=False, auto_adjust=True)['Close']
+        except Exception:
+            precio_hist = None
+
+        def _precio_en(fecha):
+            if precio_hist is None or precio_hist.empty:
+                return None
+            try:
+                ventana = precio_hist.loc[:fecha]
+                return float(ventana.iloc[-1]) if len(ventana) else float(precio_hist.iloc[0])
+            except Exception:
+                return None
+
+        def _valor(df, nombres, col):
+            if df is None or df.empty or col not in df.columns:
+                return None
+            for n in nombres:
+                if n in df.index:
+                    v = df.loc[n, col]
+                    return float(v) if pd.notna(v) else None
+            return None
+
+        filas = []
+        for i, fecha in enumerate(fechas):
+            rev    = _valor(income, ['Total Revenue', 'Revenue'], fecha)
+            ni     = _valor(income, ['Net Income'], fecha)
+            ebit   = _valor(income, ['EBIT', 'Operating Income'], fecha)
+            ebitda = _valor(income, ['EBITDA'], fecha) or ebit
+            gp     = _valor(income, ['Gross Profit'], fecha)
+            eps    = _valor(income, ['Basic EPS', 'Diluted EPS'], fecha)
+            shares = _valor(income, ['Basic Average Shares', 'Diluted Average Shares'], fecha)
+            div_pag = _valor(cashflow, ['Cash Dividends Paid', 'Common Stock Dividend Paid'], fecha)
+
+            fcf_i = None
+            ocf = _valor(cashflow, ['Operating Cash Flow', 'Total Cash From Operating Activities'], fecha)
+            capex = _valor(cashflow, ['Capital Expenditure'], fecha)
+            if ocf is not None:
+                fcf_i = ocf + (capex if capex is not None else 0)  # capex ya viene negativo
+
+            equity = _valor(balance, ['Stockholders Equity', 'Total Stockholders Equity', 'Common Stock Equity'], fecha)
+            debt   = _valor(balance, ['Total Debt'], fecha)
+            cash_i = _valor(balance, ['Cash And Cash Equivalents',
+                                       'Cash Cash Equivalents And Short Term Investments'], fecha)
+            curr_a = _valor(balance, ['Current Assets', 'Total Current Assets'], fecha)
+            curr_l = _valor(balance, ['Current Liabilities', 'Total Current Liabilities'], fecha)
+            interest_exp = _valor(income, ['Interest Expense', 'Interest Expense Non Operating'], fecha)
+
+            precio = _precio_en(fecha)
+            market_cap_i = (precio * shares) if (precio and shares) else None
+            ev_i = (market_cap_i + (debt or 0) - (cash_i or 0)) if market_cap_i is not None else None
+
+            shares_prev = _valor(income, ['Basic Average Shares', 'Diluted Average Shares'], fechas[i+1]) if i+1 < len(fechas) else None
+            rev_prev    = _valor(income, ['Total Revenue', 'Revenue'], fechas[i+1]) if i+1 < len(fechas) else None
+            eps_prev    = _valor(income, ['Basic EPS', 'Diluted EPS'], fechas[i+1]) if i+1 < len(fechas) else None
+
+            filas.append({
+                'Año': fecha.year,
+                'PER': (market_cap_i / ni) if (market_cap_i and ni and ni != 0) else None,
+                'P/B': (market_cap_i / equity) if (market_cap_i and equity and equity != 0) else None,
+                'EV/EBITDA': (ev_i / ebitda) if (ev_i is not None and ebitda) else None,
+                'EV/Sales': (ev_i / rev) if (ev_i is not None and rev) else None,
+                'P/FCF': (market_cap_i / fcf_i) if (market_cap_i and fcf_i) else None,
+                'ROE %': (ni / equity * 100) if (ni is not None and equity) else None,
+                'Mg. Bruto %': (gp / rev * 100) if (gp is not None and rev) else None,
+                'Mg. Operativo %': (ebit / rev * 100) if (ebit is not None and rev) else None,
+                'Mg. Neto %': (ni / rev * 100) if (ni is not None and rev) else None,
+                'Rev. Growth %': ((rev / rev_prev - 1) * 100) if (rev and rev_prev) else None,
+                'EPS Growth %': ((eps / eps_prev - 1) * 100) if (eps and eps_prev and eps_prev != 0) else None,
+                'D/E': (debt / equity) if (debt is not None and equity) else None,
+                'Net Debt/EBITDA': ((debt - (cash_i or 0)) / ebitda) if (debt is not None and ebitda) else None,
+                'Current Ratio': (curr_a / curr_l) if (curr_a and curr_l) else None,
+                'Interest Coverage': (abs(ebit / interest_exp)) if (ebit is not None and interest_exp) else None,
+                'Div. Yield %': (abs(div_pag) / market_cap_i * 100) if (div_pag and market_cap_i) else None,
+                'Payout Ratio %': (abs(div_pag) / ni * 100) if (div_pag and ni and ni > 0) else None,
+                'Shares Change YoY %': ((shares / shares_prev - 1) * 100) if (shares and shares_prev) else None,
+                'FCF Conversion %': (fcf_i / ebitda * 100) if (fcf_i is not None and ebitda) else None,
+            })
+
+        df_hist = pd.DataFrame(filas).sort_values('Año').reset_index(drop=True)
+        return df_hist if not df_hist.empty else None
+    except Exception:
+        return None
+
+
+def fig_evolucion_metrica(df_hist, metrica, color='#6CC24A'):
+    """Mini gráfico de línea con la evolución anual de una métrica.
+    Usa las mismas constantes de estilo (PLOTLY_LAYOUT_BASE) que el
+    resto de la app, así que no hace falta redefinir nada de paleta."""
+    serie = df_hist[['Año', metrica]].dropna()
+    fig = go.Figure()
+    if serie.empty:
+        fig.add_annotation(text='Sin datos suficientes', showarrow=False,
+                            font=dict(color='#6b7d9a', size=11))
+    else:
+        fig.add_trace(go.Scatter(
+            x=serie['Año'], y=serie[metrica], mode='lines+markers',
+            line=dict(color=color, width=2.2), marker=dict(size=7),
+            fill='tozeroy', fillcolor='rgba(108,194,74,0.08)',
+        ))
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE,
+        title=dict(text=metrica, font=dict(color='#e6edf3', size=12)),
+        xaxis=dict(gridcolor='#21262d', dtick=1),
+        yaxis=dict(gridcolor='#21262d'),
+        height=230, margin=dict(l=10, r=10, t=35, b=10), showlegend=False,
+    )
+    return fig
 
 def _senal_color(s):
     if 'COMPRA' in s: return '#3fb950', 'rgba(63,185,80,0.12)'
