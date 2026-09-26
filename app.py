@@ -1722,7 +1722,21 @@ def selector_ticker_autocomplete(key, prefill='', label='Buscar activo'):
 # ==============================================================
 
 
-PRECIOS_TTL_SEGUNDOS = 20 * 60  # 20 min — el precio cambia intra-día, TTL corto a propósito
+# TTL diferenciado por horizonte del período: los históricos largos (2y/10y) no
+# necesitan refrescarse tan seguido porque el precio de hoy es un dato marginal
+# sobre cientos de sesiones; los cortos sí, porque de ahí salen los scores de corto plazo.
+PRECIOS_TTL_POR_PERIODO = {
+    '5d':  10 * 60,        # 10 min
+    '1mo': 20 * 60,        # 20 min
+    '3mo': 30 * 60,        # 30 min
+    '6mo': 60 * 60,        # 1 hora
+    '2y':  4 * 3600,       # 4 horas
+    '10y': 12 * 3600,      # 12 horas
+}
+PRECIOS_TTL_DEFAULT = 20 * 60  # fallback si aparece un período no listado
+
+def _ttl_para_periodo(period):
+    return PRECIOS_TTL_POR_PERIODO.get(period, PRECIOS_TTL_DEFAULT)
 
 def _serializar_precios(df):
     """Convierte un DataFrame OHLC (índice de fechas) a un dict JSON-serializable."""
@@ -1790,7 +1804,7 @@ def descargar_datos(ticker, period='3mo'):
     """Caché compartido primero (Supabase, TTL corto porque el precio cambia
     intra-día), Yahoo solo si está vencido o no existe."""
     datos_db, ts_db = _precios_supabase_leer(ticker, period)
-    if datos_db is not None and _es_dato_fresco(ts_db, PRECIOS_TTL_SEGUNDOS):
+    if datos_db is not None and _es_dato_fresco(ts_db, _ttl_para_periodo(period)):
         df_cache = _deserializar_precios(datos_db)
         if df_cache is not None:
             return df_cache
@@ -1836,7 +1850,7 @@ def descargar_bulk(tickers, period='2y'):
 
     for tk in tickers:
         datos_db, ts_db = _precios_supabase_leer(tk, period)
-        if datos_db is not None and _es_dato_fresco(ts_db, PRECIOS_TTL_SEGUNDOS):
+        if datos_db is not None and _es_dato_fresco(ts_db, _ttl_para_periodo(period)):
             df_cache = _deserializar_precios(datos_db)
             if df_cache is not None:
                 dfs_por_ticker[tk] = df_cache
