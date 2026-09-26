@@ -1726,6 +1726,7 @@ def selector_ticker_autocomplete(key, prefill='', label='Buscar activo'):
 # necesitan refrescarse tan seguido porque el precio de hoy es un dato marginal
 # sobre cientos de sesiones; los cortos sí, porque de ahí salen los scores de corto plazo.
 PRECIOS_TTL_POR_PERIODO = {
+    'inicio': 5 * 60,       # 5 min — cotizaciones de la pantalla Inicio, se comparte entre usuarios
     '5d':  10 * 60,        # 10 min
     '1mo': 20 * 60,        # 20 min
     '3mo': 30 * 60,        # 30 min
@@ -2496,72 +2497,63 @@ def cargar_resultados_largo(industrias_sel):
 #  DATOS INICIO — precios del día en bulk
 # ==============================================================
 
-
-@st.cache_data(ttl=300, show_spinner=False)
 def cargar_precios_inicio_base():
-    try:
-        import yfinance as yf
-        tks_paises   = [tk for tk, _ in PAISES.values()]
-        tks_etfs     = [tk for tk, _cat, _c in ETFS.values()]   # ← AGREGAR ESTA LÍNEA
-        tks_sectores = [tk for tk, _ in SECTORES.values()]
-        tks_mercados = [tk for tk, _, _ in MERCADOS_REALES.values()]
-        tks_forex    = [tk for tk, _ in FOREX.values()]
-        todos = sorted(set(tks_paises + tks_etfs + tks_sectores + tks_mercados + tks_forex))  # ← agregar tks_etfs acá también
-        df = yf.download(todos, period='5d', interval='1d',
-                         auto_adjust=True, progress=False, group_by='ticker')
-        if df is None or df.empty:
-            return {}
-        resultados = {}
-        for tk in todos:
-            try:
-                close = get_close_from_bulk(df, tk)
-                if close is None or len(close) < 2:
-                    continue
-                precio = float(close.iloc[-1])
-                previo = float(close.iloc[-2])
-                resultados[tk] = {
-                    'precio': precio,
-                    'cambio_pct': (precio / previo - 1) * 100,
-                    'cambio_abs': precio - previo,
-                }
-            except:
-                continue
-        return resultados
-    except:
+    tks_paises   = [tk for tk, _ in PAISES.values()]
+    tks_etfs     = [tk for tk, _cat, _c in ETFS.values()]
+    tks_sectores = [tk for tk, _ in SECTORES.values()]
+    tks_mercados = [tk for tk, _, _ in MERCADOS_REALES.values()]
+    tks_forex    = [tk for tk, _ in FOREX.values()]
+    todos = sorted(set(tks_paises + tks_etfs + tks_sectores + tks_mercados + tks_forex))
+
+    df = descargar_bulk(todos, period='inicio')
+    if df is None or df.empty:
         return {}
 
+    resultados = {}
+    for tk in todos:
+        try:
+            close = get_close_from_bulk(df, tk)
+            if close is None or len(close) < 2:
+                continue
+            precio = float(close.iloc[-1])
+            previo = float(close.iloc[-2])
+            resultados[tk] = {
+                'precio': precio,
+                'cambio_pct': (precio / previo - 1) * 100,
+                'cambio_abs': precio - previo,
+            }
+        except Exception:
+            continue
+    return resultados
 
-@st.cache_data(ttl=300, show_spinner=False)
+
 def cargar_precios_acciones_inicio(industrias_tuple):
     """Descarga precios del día para acciones de las industrias seleccionadas."""
-    try:
-        import yfinance as yf
-        tickers = sorted(set(t for ind in industrias_tuple
-                             for t in ACCIONES_POR_INDUSTRIA.get(ind, [])))
-        if not tickers:
-            return {}
-        df = yf.download(tickers, period='5d', interval='1d',
-                         auto_adjust=True, progress=False, group_by='ticker')
-        if df is None or df.empty:
-            return {}
-        resultados = {}
-        for tk in tickers:
-            try:
-                close = get_close_from_bulk(df, tk)
-                if close is None or len(close) < 2:
-                    continue
-                precio = float(close.iloc[-1])
-                previo = float(close.iloc[-2])
-                resultados[tk] = {
-                    'precio': precio,
-                    'cambio_pct': (precio / previo - 1) * 100,
-                    'cambio_abs': precio - previo,
-                }
-            except:
-                continue
-        return resultados
-    except:
+    tickers = sorted(set(t for ind in industrias_tuple
+                         for t in ACCIONES_POR_INDUSTRIA.get(ind, [])))
+    if not tickers:
         return {}
+
+    df = descargar_bulk(tickers, period='inicio')
+    if df is None or df.empty:
+        return {}
+
+    resultados = {}
+    for tk in tickers:
+        try:
+            close = get_close_from_bulk(df, tk)
+            if close is None or len(close) < 2:
+                continue
+            precio = float(close.iloc[-1])
+            previo = float(close.iloc[-2])
+            resultados[tk] = {
+                'precio': precio,
+                'cambio_pct': (precio / previo - 1) * 100,
+                'cambio_abs': precio - previo,
+            }
+        except Exception:
+            continue
+    return resultados
 
 
 # ==============================================================
