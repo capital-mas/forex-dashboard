@@ -824,7 +824,6 @@ def _es_admin_cache(_client, user_id):
         return False
 
 ES_ADMIN = _es_admin_cache(supabase, USER_ID)
-_disparar_limpieza_diaria()  # limpieza de precios_cache, se ejecuta como máx. 1 vez/día por proceso
 @st.cache_data(ttl=120, show_spinner=False)
 def _resumen_modulos_cache(_client, user_id):
     try:
@@ -1801,6 +1800,8 @@ def _disparar_limpieza_diaria():
     día por proceso, en vez de en cada rerun de cada usuario."""
     limpiar_precios_cache_viejos(dias_antiguedad=3)
     return True
+
+_disparar_limpieza_diaria()  # se ejecuta acá, una vez que la función ya existe
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def _descargar_datos_yahoo(ticker, period='3mo'):
