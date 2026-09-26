@@ -1880,7 +1880,8 @@ def descargar_bulk(tickers, period='2y'):
     if faltantes:
         try:
             import yfinance as yf
-            df_nuevo = yf.download(faltantes, period=period, interval='1d',
+            period_yahoo = '5d' if period == 'inicio' else period
+            df_nuevo = yf.download(faltantes, period=period_yahoo, interval='1d',
                                     auto_adjust=True, progress=False, group_by='ticker')
         except Exception:
             df_nuevo = None
