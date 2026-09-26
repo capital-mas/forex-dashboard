@@ -2475,6 +2475,27 @@ def chips_navegacion(items, key_prefix, max_chips=18):
                     st.rerun()
 
 # ==============================================================
+# 5) FILTROS EN MINI-CAJAS — helper nuevo
+# ==============================================================
+
+def _minmax_filtro(label, key, lo_def, hi_def, step, help_text=None):
+    """Reemplaza los st.slider de rango por dos cajitas numéricas
+    (Mín / Máx) lado a lado, como pediste."""
+    st.markdown(
+        f'<div style="font-size:11px;color:#f5f7fa;margin-bottom:2px">{label}'
+        + (' <span style="color:#6b7d9a">ⓘ</span>' if help_text else '') + '</div>',
+        unsafe_allow_html=True,
+    )
+    cmin, cmax = st.columns(2)
+    with cmin:
+        lo = st.number_input('Mín', value=float(lo_def), step=float(step),
+                              key=f'{key}_lo', label_visibility='collapsed',
+                              format='%.2f', help=help_text)
+    with cmax:
+        hi = st.number_input('Máx', value=float(hi_def), step=float(step),
+                              key=f'{key}_hi', label_visibility='collapsed', format='%.2f')
+    return lo, hi
+# ==============================================================
 #  TICKER TAPE — barra deslizante de cotizaciones (estilo Bloomberg)
 # ==============================================================
 
@@ -9943,9 +9964,13 @@ elif HORIZONTE == 'largo':
 
 
 
+# ==============================================================
+# 6) modulo_fundamental() — REEMPLAZA la función original completa
+# ==============================================================
+
 def modulo_fundamental():
     ind_disp_f = list(ACCIONES_POR_INDUSTRIA.keys())
-    ind_sel_f  = st.multiselect(
+    ind_sel_f = st.multiselect(
         'Industrias a analizar (Fundamental)', ind_disp_f,
         default=st.session_state.get('fund_ind_sel', ind_disp_f[:1]),
         key='fund_ind_sel_widget'
@@ -9969,8 +9994,8 @@ def modulo_fundamental():
                  padding:40px;text-align:center;margin-top:16px'>
               <div style='font-size:40px;margin-bottom:12px'>📊</div>
               <div style='color:#e6edf3;font-size:14px;font-weight:600;margin-bottom:6px'>Análisis Fundamental</div>
-              <div style='color:#6b7d9a;font-size:12px'>Ratios financieros + benchmarks por sector.<br>
-              La descarga se hace en paralelo para que sea más rápida.</div>
+              <div style='color:#6b7d9a;font-size:12px'>Valuación, rentabilidad, solvencia, retorno al accionista '
+              y flujos. La descarga se hace en paralelo para que sea más rápida.</div>
             </div>
             """, unsafe_allow_html=True)
             return
@@ -10008,20 +10033,20 @@ def modulo_fundamental():
         aviso_fallidos('fundamental', etiqueta='empresas (sin datos fundamentales en Yahoo Finance)')
 
         todas_emp = [e for lst in todos_resultados.values() for e in lst]
-        n_compra   = sum(1 for e in todas_emp if 'COMPRA' in e['senal_final'])
+        n_compra = sum(1 for e in todas_emp if 'COMPRA' in e['senal_final'])
         n_mantener = sum(1 for e in todas_emp if 'MANTENER' in e['senal_final'])
-        n_riesgo   = sum(1 for e in todas_emp if 'RIESGO' in e['senal_final'])
+        n_riesgo = sum(1 for e in todas_emp if 'RIESGO' in e['senal_final'])
         kpi_cards_4([
             ('Total analizadas', str(total_emp), f'{len(ind_sel_f)} industrias', '#3a7bd5'),
-            ('✅ Compra Fuerte', str(n_compra),   'score_ok ≥ 8 señales positivas', '#3fb950'),
-            ('🟡 Mantener',      str(n_mantener), 'score_ok 5-7', '#e3b341'),
-            ('🔴 Riesgo/Vender', str(n_riesgo),   'score_ok < 5', '#f85149'),
+            ('✅ Compra Fuerte', str(n_compra), 'score_ok ≥ 8 señales positivas', '#3fb950'),
+            ('🟡 Mantener', str(n_mantener), 'score_ok 5-7', '#e3b341'),
+            ('🔴 Riesgo/Vender', str(n_riesgo), 'score_ok < 5', '#f85149'),
         ])
 
+        fn = _fmt_num
+        fp = _fmt_pct
         filas_res = []
         for e in sorted(todas_emp, key=lambda x: x['n_ok'], reverse=True):
-            fp = _fmt_pct
-            fn = _fmt_num
             filas_res.append({
                 'Ticker': e['ticker'],
                 'Nombre': (e['nombre'] or e['ticker'])[:28],
@@ -10033,15 +10058,26 @@ def modulo_fundamental():
                 'PER': fn(e.get('per')),
                 'P/B': fn(e.get('pb')),
                 'EV/EBITDA': fn(e.get('ev_ebitda')),
+                'P/FCF': fn(e.get('p_fcf')),
+                'EV/Sales': fn(e.get('ev_sales')),
+                'PEG': fn(e.get('peg')),
                 'ROE %': fp(e.get('roe')),
+                'ROIC %': fp(e.get('roic')),
                 'Mg.Bruto %': fp(e.get('gross_margin')),
                 'Mg.Op. %': fp(e.get('op_margin')),
+                'Mg.Neto %': fp(e.get('profit_margin')),
                 'Rev.Growth %': fp(e.get('revenue_growth')),
+                'EPS Growth %': fp(e.get('eps_growth')),
                 'D/E': fn(e.get('debt_equity')),
+                'NetDebt/EBITDA': fn(e.get('net_debt_ebitda')),
+                'Curr.Ratio': fn(e.get('curr_ratio')),
+                'Int.Coverage': fn(e.get('interest_coverage')),
                 'Beta': fn(e.get('beta')),
                 'Div.Yield %': fp(e.get('div_yield')),
-                'FCF': _fmt_big(e.get('fcf')),
+                'Payout %': fp(e.get('payout_ratio')),
+                'Shares YoY %': f"{e['shares_change_yoy']:+.2f}%" if e.get('shares_change_yoy') is not None else 'N/D',
                 'YTD %': f"{e['alza_ytd']:.1f}%" if e.get('alza_ytd') is not None else 'N/D',
+                'FCF Conv. %': fp(e.get('fcf_conversion')),
                 'OK': e['n_ok'],
                 'ALT': e['n_alt'],
             })
@@ -10052,19 +10088,25 @@ def modulo_fundamental():
             '🎛️ Modo avanzado (todos los filtros y columnas)',
             value=st.session_state.get('fund_modo_avanzado', False),
             key='fund_modo_avanzado',
-            help='Desactivado: vista simple con lo esencial. Activado: todos los filtros, columnas y fichas por empresa.',
+            help='Desactivado: vista simple con lo esencial. Activado: filtros mín/máx '
+                 'por métrica, todas las columnas y evolución histórica por empresa.',
         )
 
+        rangos_activos = {}
+        f_ok_lo, f_ok_hi = 0.0, 20.0
+        f_fcf_pos = False
+        f_senal_f, f_ind_f, f_sect_f, f_sort = 'Todas', 'Todas', 'Todos', 'OK ↓ (más señales positivas)'
+
         if modo_avanzado:
-            with st.expander('🎛️ Filtros avanzados', expanded=True):
+            with st.expander('🎛️ Filtros avanzados (mín / máx por métrica)', expanded=True):
                 frow1 = st.columns(4)
                 with frow1[0]:
-                    f_senal_f = st.selectbox('Señal', ['Todas','COMPRA FUERTE','MANTENER','RIESGO / VENDER'], key='fund_f_senal')
+                    f_senal_f = st.selectbox('Señal', ['Todas', 'COMPRA FUERTE', 'MANTENER', 'RIESGO / VENDER'], key='fund_f_senal')
                 with frow1[1]:
                     inds_u_f = ['Todas'] + sorted(df_fund['Industria'].unique().tolist())
-                    f_ind_f  = st.selectbox('Industria', inds_u_f, key='fund_f_ind')
+                    f_ind_f = st.selectbox('Industria', inds_u_f, key='fund_f_ind')
                 with frow1[2]:
-                    sects_u  = ['Todos'] + sorted(df_fund['Sector'].unique().tolist())
+                    sects_u = ['Todos'] + sorted(df_fund['Sector'].unique().tolist())
                     f_sect_f = st.selectbox('Sector', sects_u, key='fund_f_sect')
                 with frow1[3]:
                     f_sort = st.selectbox('Ordenar por', [
@@ -10072,54 +10114,36 @@ def modulo_fundamental():
                         'YTD % ↓', 'PER ↑ (más barato)', 'ROE % ↓'
                     ], key='fund_f_sort')
 
-                st.markdown('<div style="margin-top:10px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">📐 VALUACIÓN</div>', unsafe_allow_html=True)
-                vrow = st.columns(3)
-                with vrow[0]:
-                    f_per_rng = st.slider('PER', min_value=0.0, max_value=200.0, value=(0.0, 200.0), step=1.0, key='fund_f_per_rng', help=G('PER'))
-                with vrow[1]:
-                    f_pb_rng = st.slider('P/B', min_value=0.0, max_value=30.0, value=(0.0, 30.0), step=0.5, key='fund_f_pb_rng', help=G('P/B'))
-                with vrow[2]:
-                    f_eveb_rng = st.slider('EV/EBITDA', min_value=0.0, max_value=60.0, value=(0.0, 60.0), step=1.0, key='fund_f_eveb_rng', help=G('EV/EBITDA'))
+                for categoria, metricas_cat in CATEGORIAS_FUNDAMENTAL:
+                    st.markdown(
+                        f'<div style="margin-top:14px;margin-bottom:6px;font-size:11px;'
+                        f'color:#6CC24A;font-weight:700;letter-spacing:.5px">{categoria.upper()}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    n_cols_f = min(4, len(metricas_cat)) or 1
+                    cols_metricas = st.columns(n_cols_f)
+                    for i, (label, extractor, direccion, glos_key) in enumerate(metricas_cat):
+                        lo_def, hi_def, step = RANGOS_DEFAULT_FUND.get(label, (0.0, 100.0, 1.0))
+                        with cols_metricas[i % n_cols_f]:
+                            lo, hi = _minmax_filtro(
+                                label, f'fund_mm_{label}', lo_def, hi_def, step,
+                                help_text=GLOSARIO.get(glos_key) if glos_key else None,
+                            )
+                        rangos_activos[label] = (lo, hi, lo_def, hi_def, extractor)
 
-                st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">📈 RENTABILIDAD Y MÁRGENES</div>', unsafe_allow_html=True)
-                rrow = st.columns(4)
-                with rrow[0]:
-                    f_roe_rng = st.slider('ROE %', min_value=-50.0, max_value=100.0, value=(-50.0, 100.0), step=1.0, key='fund_f_roe_rng', help=G('ROE'))
-                with rrow[1]:
-                    f_gm_rng = st.slider('Mg. Bruto %', min_value=-20.0, max_value=100.0, value=(-20.0, 100.0), step=1.0, key='fund_f_gm_rng')
-                with rrow[2]:
-                    f_om_rng = st.slider('Mg. Operativo %', min_value=-50.0, max_value=60.0, value=(-50.0, 60.0), step=1.0, key='fund_f_om_rng')
-                with rrow[3]:
-                    f_rg_rng = st.slider('Rev. Growth %', min_value=-50.0, max_value=100.0, value=(-50.0, 100.0), step=1.0, key='fund_f_rg_rng')
-
-                st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">🔒 SOLVENCIA, RIESGO Y FLUJO</div>', unsafe_allow_html=True)
-                srow = st.columns(4)
-                with srow[0]:
-                    f_de_rng = st.slider('D/E', min_value=0.0, max_value=10.0, value=(0.0, 10.0), step=0.1, key='fund_f_de_rng')
-                with srow[1]:
-                    f_beta_rng = st.slider('Beta', min_value=0.0, max_value=4.0, value=(0.0, 4.0), step=0.1, key='fund_f_beta_rng', help=G('Beta'))
-                with srow[2]:
-                    f_div_rng = st.slider('Div. Yield %', min_value=0.0, max_value=20.0, value=(0.0, 20.0), step=0.5, key='fund_f_div_rng', help=G('Dividend Yield'))
-                with srow[3]:
-                    f_ytd_rng = st.slider('YTD %', min_value=-80.0, max_value=300.0, value=(-80.0, 300.0), step=5.0, key='fund_f_ytd_rng')
-
-                st.markdown('<div style="margin-top:8px;margin-bottom:4px;font-size:11px;color:#6b7d9a;font-weight:700;letter-spacing:.5px">✅ SEÑALES Y FCF</div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="margin-top:14px;margin-bottom:6px;font-size:11px;'
+                    'color:#6CC24A;font-weight:700;letter-spacing:.5px">✅ SEÑALES</div>',
+                    unsafe_allow_html=True,
+                )
                 qrow = st.columns(3)
                 with qrow[0]:
-                    f_ok_rng = st.slider('Señales OK', min_value=0, max_value=20, value=(0, 20), step=1, key='fund_f_ok_rng')
+                    f_ok_lo, f_ok_hi = _minmax_filtro('Señales OK', 'fund_mm_ok', 0, 20, 1)
                 with qrow[1]:
                     f_fcf_pos = st.checkbox('Solo FCF positivo', key='fund_f_fcf', value=False)
-                with qrow[2]:
-                    st.markdown('<div style="font-size:10px;color:#6b7d9a;padding-top:28px">N/D: la empresa se excluye si el rango es distinto al default.</div>', unsafe_allow_html=True)
         else:
-            st.caption('💡 Vista simple activa — mostrando lo esencial. Activá "Modo avanzado" arriba para filtros detallados, todas las columnas y fichas por empresa.')
-            f_senal_f, f_ind_f, f_sect_f = 'Todas', 'Todas', 'Todos'
-            f_sort = 'OK ↓ (más señales positivas)'
-            f_per_rng, f_pb_rng, f_eveb_rng = (0.0, 200.0), (0.0, 30.0), (0.0, 60.0)
-            f_roe_rng, f_gm_rng, f_om_rng, f_rg_rng = (-50.0, 100.0), (-20.0, 100.0), (-50.0, 60.0), (-50.0, 100.0)
-            f_de_rng, f_beta_rng, f_div_rng, f_ytd_rng = (0.0, 10.0), (0.0, 4.0), (0.0, 20.0), (-80.0, 300.0)
-            f_ok_rng = (0, 20)
-            f_fcf_pos = False
+            st.caption('💡 Vista simple activa — mostrando lo esencial. Activá "Modo avanzado" arriba '
+                       'para filtros mín/máx por métrica, todas las columnas y evolución histórica.')
 
         df_f2 = df_fund.copy()
         if f_senal_f != 'Todas':
@@ -10132,72 +10156,45 @@ def modulo_fundamental():
         emp_filtradas = [e for lst in todos_resultados.values() for e in lst]
         tickers_validos = set(df_f2['Ticker'].tolist())
 
-        def _en_rango(val, lo, hi, escala=1.0):
-            if val is None: return False
-            return lo <= val * escala <= hi
+        hay_filtro_metrica = any((lo, hi) != (lo_def, hi_def) for lo, hi, lo_def, hi_def, _ in rangos_activos.values())
+        hay_filtro_ok = (f_ok_lo, f_ok_hi) != (0.0, 20.0)
 
-        _DEFAULTS = {
-            'per':  (0.0, 200.0), 'pb':  (0.0, 30.0),  'eveb': (0.0, 60.0),
-            'roe':  (-50.0, 100.0), 'gm': (-20.0, 100.0), 'om': (-50.0, 60.0),
-            'rg':   (-50.0, 100.0), 'de': (0.0, 10.0),  'beta': (0.0, 4.0),
-            'div':  (0.0, 20.0),   'ytd': (-80.0, 300.0), 'ok': (0, 20),
-        }
-        _RNGS = {
-            'per': f_per_rng, 'pb': f_pb_rng, 'eveb': f_eveb_rng,
-            'roe': f_roe_rng, 'gm': f_gm_rng, 'om': f_om_rng,
-            'rg':  f_rg_rng,  'de': f_de_rng, 'beta': f_beta_rng,
-            'div': f_div_rng, 'ytd': f_ytd_rng, 'ok': f_ok_rng,
-        }
-        _activo = {k: (_RNGS[k] != _DEFAULTS[k]) for k in _DEFAULTS}
-
-        nuevos = set()
-        for e in emp_filtradas:
-            if e['ticker'] not in tickers_validos: continue
-            lo, hi = f_per_rng
-            if _activo['per']  and not _en_rango(e.get('per'),            lo, hi):         continue
-            lo, hi = f_pb_rng
-            if _activo['pb']   and not _en_rango(e.get('pb'),             lo, hi):         continue
-            lo, hi = f_eveb_rng
-            if _activo['eveb'] and not _en_rango(e.get('ev_ebitda'),      lo, hi):         continue
-            lo, hi = f_roe_rng
-            if _activo['roe']  and not _en_rango(e.get('roe'),            lo, hi, 100.0):  continue
-            lo, hi = f_gm_rng
-            if _activo['gm']   and not _en_rango(e.get('gross_margin'),   lo, hi, 100.0):  continue
-            lo, hi = f_om_rng
-            if _activo['om']   and not _en_rango(e.get('op_margin'),      lo, hi, 100.0):  continue
-            lo, hi = f_rg_rng
-            if _activo['rg']   and not _en_rango(e.get('revenue_growth'), lo, hi, 100.0):  continue
-            lo, hi = f_de_rng
-            if _activo['de']   and not _en_rango(e.get('debt_equity'),    lo, hi):         continue
-            lo, hi = f_beta_rng
-            if _activo['beta'] and not _en_rango(e.get('beta'),           lo, hi):         continue
-            lo, hi = f_div_rng
-            if _activo['div']  and not _en_rango(e.get('div_yield'),      lo, hi, 100.0):  continue
-            lo, hi = f_ytd_rng
-            if _activo['ytd']  and not _en_rango(e.get('alza_ytd'),       lo, hi):         continue
-            lo, hi = f_ok_rng
-            if _activo['ok']   and not (lo <= e['n_ok'] <= hi):                            continue
-            if f_fcf_pos and (e.get('fcf') is None or e['fcf'] <= 0):                      continue
-            nuevos.add(e['ticker'])
-
-        if any(_activo.values()) or f_fcf_pos:
+        if hay_filtro_metrica or hay_filtro_ok or f_fcf_pos:
+            nuevos = set()
+            for e in emp_filtradas:
+                if e['ticker'] not in tickers_validos:
+                    continue
+                ok_todas = True
+                for label, (lo, hi, lo_def, hi_def, extractor) in rangos_activos.items():
+                    if (lo, hi) == (lo_def, hi_def):
+                        continue
+                    val = extractor(e)
+                    if val is None or not (lo <= val <= hi):
+                        ok_todas = False
+                        break
+                if not ok_todas:
+                    continue
+                if hay_filtro_ok and not (f_ok_lo <= e['n_ok'] <= f_ok_hi):
+                    continue
+                if f_fcf_pos and (e.get('fcf') is None or e['fcf'] <= 0):
+                    continue
+                nuevos.add(e['ticker'])
             tickers_validos = nuevos
 
         df_f2 = df_f2[df_f2['Ticker'].isin(tickers_validos)]
-
 
         if 'OK ↓' in f_sort:
             df_f2 = df_f2.sort_values('OK', ascending=False)
         elif 'ALT ↑' in f_sort:
             df_f2 = df_f2.sort_values('ALT', ascending=False)
         elif 'YTD' in f_sort:
-            ytd_num = df_f2['YTD %'].str.replace('%','').apply(pd.to_numeric, errors='coerce')
+            ytd_num = df_f2['YTD %'].str.replace('%', '').apply(pd.to_numeric, errors='coerce')
             df_f2 = df_f2.assign(_ytd=ytd_num).sort_values('_ytd', ascending=False).drop(columns=['_ytd'])
         elif 'PER' in f_sort:
             per_num = df_f2['PER'].apply(pd.to_numeric, errors='coerce')
             df_f2 = df_f2.assign(_per=per_num).sort_values('_per', ascending=True).drop(columns=['_per'])
         elif 'ROE' in f_sort:
-            roe_num = df_f2['ROE %'].str.replace('%','').apply(pd.to_numeric, errors='coerce')
+            roe_num = df_f2['ROE %'].str.replace('%', '').apply(pd.to_numeric, errors='coerce')
             df_f2 = df_f2.assign(_roe=roe_num).sort_values('_roe', ascending=False).drop(columns=['_roe'])
 
         def style_senal_fund(val):
@@ -10210,7 +10207,8 @@ def modulo_fundamental():
                 if v >= 8: return 'color:#3fb950;font-weight:700'
                 if v >= 5: return 'color:#e3b341;font-weight:700'
                 return 'color:#f85149;font-weight:700'
-            except: return ''
+            except Exception:
+                return ''
 
         def style_alt(val):
             try:
@@ -10218,58 +10216,53 @@ def modulo_fundamental():
                 if v >= 5: return 'color:#f85149;font-weight:700'
                 if v >= 2: return 'color:#f0883e;font-weight:700'
                 return 'color:#3fb950;font-weight:700'
-            except: return ''
+            except Exception:
+                return ''
 
         if modo_avanzado:
             df_f2_show = df_f2
         else:
-            cols_simple = ['Ticker', 'Nombre', 'Industria', 'Señal', 'Precio', 'PER', 'ROE %', 'Rev.Growth %', 'YTD %', 'OK']
+            cols_simple = ['Ticker', 'Nombre', 'Industria', 'Señal', 'Precio', 'PER', 'ROE %',
+                            'Rev.Growth %', 'YTD %', 'OK']
             df_f2_show = df_f2[[c for c in cols_simple if c in df_f2.columns]]
 
         _map_f = 'map' if hasattr(df_f2_show.style, 'map') else 'applymap'
-        styled_fund = df_f2_show.style.set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
+        styled_fund = df_f2_show.style.set_properties(
+            **{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
         if 'Señal' in df_f2_show.columns:
-            styled_fund = styled_fund.pipe(lambda s: getattr(s,_map_f)(style_senal_fund, subset=['Señal']))
+            styled_fund = styled_fund.pipe(lambda s: getattr(s, _map_f)(style_senal_fund, subset=['Señal']))
         if 'OK' in df_f2_show.columns:
-            styled_fund = styled_fund.pipe(lambda s: getattr(s,_map_f)(style_ok, subset=['OK']))
+            styled_fund = styled_fund.pipe(lambda s: getattr(s, _map_f)(style_ok, subset=['OK']))
         if 'ALT' in df_f2_show.columns:
-            styled_fund = styled_fund.pipe(lambda s: getattr(s,_map_f)(style_alt, subset=['ALT']))
+            styled_fund = styled_fund.pipe(lambda s: getattr(s, _map_f)(style_alt, subset=['ALT']))
         styled_fund = styled_fund.set_table_styles([
-            {'selector':'th','props':[('background-color','#161b22'),('color','#e6edf3'),
-                ('font-weight','700'),('text-align','center'),
-                ('border-bottom','2px solid #3a7bd5'),('font-size','11px')]},
-            {'selector':'td','props':[('text-align','center'),('font-size','11px')]},
+            {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                ('font-weight', '700'), ('text-align', 'center'),
+                ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+            {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
         ])
         if modo_avanzado:
             st.caption('↔️ Desliza horizontalmente para ver todas las columnas.')
-        st.dataframe(styled_fund, use_container_width=True, height=min(700, max(200, len(df_f2_show)*32+45)))
+        st.dataframe(styled_fund, use_container_width=True, height=min(700, max(200, len(df_f2_show) * 32 + 45)))
         st.caption(f'{len(df_f2_show)} empresas de {len(df_fund)} totales')
         chips_navegacion(df_f2_show['Ticker'].tolist(), 'fund_tabla')
 
+        # ── Fichas por industria (sin banner de benchmark sectorial) ──────
         for industria in ind_sel_f:
             if not modo_avanzado:
                 break
             emps = todos_resultados.get(industria, [])
-            if not emps: continue
-            sector_ind = SECTOR_MAP_FUND.get(industria, 'Sin Clasificar')
-            bench_ind  = INDUSTRY_BENCHMARKS_FUND.get(sector_ind, DEFAULT_BENCHMARK_FUND)
-            best_emp   = max(emps, key=lambda e: e['n_ok'])
+            if not emps:
+                continue
+            best_emp = max(emps, key=lambda e: e['n_ok'])
 
-            with st.expander(f'📂 {industria}  ·  Sector: {sector_ind}  ·  {len(emps)} empresas  ·  Mejor: {best_emp["ticker"]} ({best_emp["senal_final"]})', expanded=False):
-                st.markdown(f"""
-                <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
-                     border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:11px;color:#b0bcd0;line-height:1.7'>
-                  <b style='color:#3a7bd5'>BENCHMARK {sector_ind.upper()}</b><br>
-                  {bench_ind['descripcion']}<br>
-                  <b>Métricas clave:</b> {' · '.join(bench_ind.get('metricas_clave',[]))}
-                </div>
-                """, unsafe_allow_html=True)
-
+            with st.expander(
+                f'📂 {industria}  ·  {len(emps)} empresas  ·  Mejor: {best_emp["ticker"]} ({best_emp["senal_final"]})',
+                expanded=False
+            ):
                 for e in sorted(emps, key=lambda x: x['n_ok'], reverse=True):
                     sc_col, sc_bg = _senal_color(e['senal_final'])
-                    fp = _fmt_pct
-                    fn = _fmt_num
-                    fb = _fmt_big
+                    fnn, fpp, fbb = _fmt_num, _fmt_pct, _fmt_big
 
                     st.markdown(f"""
                     <div style='background:#0d1117;border:1px solid #21262d;border-left:3px solid {sc_col};
@@ -10282,49 +10275,53 @@ def modulo_fundamental():
                         <span style='color:#6b7d9a;font-size:10px'>Analistas: {e.get('recommendation') or 'N/D'}</span>
                         <span style='color:#6b7d9a;font-size:10px'>✅ {e['n_ok']} OK  ·  ⚠️ {e['n_alt']} Alertas</span>
                       </div>
-                      <div style='display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-size:11px;margin-bottom:8px'>
+                      <div style='display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-size:11px'>
                         <div><span style='color:#6b7d9a'>Precio</span><br><b style='color:#e6edf3'>{fmt_precio(e.get('precio'))}</b></div>
-                        <div><span style='color:#6b7d9a'>PER</span><br><b style='color:#e6edf3'>{fn(e.get('per'))}x</b></div>
-                        <div><span style='color:#6b7d9a'>P/B</span><br><b style='color:#e6edf3'>{fn(e.get('pb'))}x</b></div>
-                        <div><span style='color:#6b7d9a'>EV/EBITDA</span><br><b style='color:#e6edf3'>{fn(e.get('ev_ebitda'))}x</b></div>
-                        <div><span style='color:#6b7d9a'>YTD</span><br><b style='color:{"#3fb950" if (e.get("alza_ytd") or 0)>=0 else "#f85149"}'>{f"{e['alza_ytd']:.1f}%" if e.get("alza_ytd") is not None else "N/D"}</b></div>
-                        <div><span style='color:#6b7d9a'>ROE</span><br><b style='color:#e6edf3'>{fp(e.get('roe'))}</b></div>
-                        <div><span style='color:#6b7d9a'>Mg.Bruto</span><br><b style='color:#e6edf3'>{fp(e.get('gross_margin'))}</b></div>
-                        <div><span style='color:#6b7d9a'>Mg.Op.</span><br><b style='color:#e6edf3'>{fp(e.get('op_margin'))}</b></div>
-                        <div><span style='color:#6b7d9a'>Rev.Growth</span><br><b style='color:#e6edf3'>{fp(e.get('revenue_growth'))}</b></div>
-                        <div><span style='color:#6b7d9a'>D/E</span><br><b style='color:#e6edf3'>{fn(e.get('debt_equity'))}x</b></div>
-                        <div><span style='color:#6b7d9a'>Beta</span><br><b style='color:#e6edf3'>{fn(e.get('beta'))}</b></div>
-                        <div><span style='color:#6b7d9a'>Div.Yield</span><br><b style='color:#e6edf3'>{fp(e.get('div_yield'))}</b></div>
-                        <div><span style='color:#6b7d9a'>FCF</span><br><b style='color:#e6edf3'>{fb(e.get('fcf'))}</b></div>
-                        <div><span style='color:#6b7d9a'>Curr.Ratio</span><br><b style='color:#e6edf3'>{fn(e.get('curr_ratio'))}</b></div>
-                        <div><span style='color:#6b7d9a'>Precio Obj.</span><br><b style='color:#e6edf3'>{fmt_precio(e.get('target_price'))}</b></div>
+                        <div><span style='color:#6b7d9a'>PER</span><br><b style='color:#e6edf3'>{fnn(e.get('per'))}x</b></div>
+                        <div><span style='color:#6b7d9a'>P/FCF</span><br><b style='color:#e6edf3'>{fnn(e.get('p_fcf'))}x</b></div>
+                        <div><span style='color:#6b7d9a'>ROIC</span><br><b style='color:#e6edf3'>{fpp(e.get('roic'))}</b></div>
+                        <div><span style='color:#6b7d9a'>Net Debt/EBITDA</span><br><b style='color:#e6edf3'>{fnn(e.get('net_debt_ebitda'))}x</b></div>
                       </div>
                     </div>
                     """, unsafe_allow_html=True)
 
                     if e['senales']:
                         sig_cols = st.columns(2)
-                        ok_sigs  = [(t,m) for t,m in e['senales'] if t=='OK']
-                        alt_sigs = [(t,m) for t,m in e['senales'] if t=='ALT']
+                        ok_sigs = [(t, m) for t, m in e['senales'] if t == 'OK']
+                        alt_sigs = [(t, m) for t, m in e['senales'] if t == 'ALT']
                         with sig_cols[0]:
-                            for _,msg in ok_sigs:
+                            for _, msg in ok_sigs:
                                 st.markdown(f'<div style="font-size:11px;color:#3fb950;padding:2px 0">✅ {msg}</div>', unsafe_allow_html=True)
                         with sig_cols[1]:
-                            for _,msg in alt_sigs:
+                            for _, msg in alt_sigs:
                                 st.markdown(f'<div style="font-size:11px;color:#f85149;padding:2px 0">⚠️ {msg}</div>', unsafe_allow_html=True)
 
-                    if e['sector_senales']:
-                        st.markdown('<div style="margin-top:6px;font-size:11px;color:#6b7d9a;font-weight:700">VS SECTOR:</div>', unsafe_allow_html=True)
-                        for tipo, msg in e['sector_senales']:
-                            col_vs = '#3fb950' if tipo=='POS' else '#f85149'
-                            ico_vs = '✔' if tipo=='POS' else '✘'
-                            st.markdown(f'<div style="font-size:11px;color:{col_vs};padding:1px 0">{ico_vs} {msg}</div>', unsafe_allow_html=True)
+                    with st.expander(f'📈 Evolución histórica — {e["ticker"]}'):
+                        if st.button(f'Cargar evolución de {e["ticker"]}', key=f'ev_btn_{industria}_{e["ticker"]}'):
+                            with st.spinner('Descargando histórico financiero...'):
+                                df_hist = _fund_historico_anual(e['ticker'])
+                            if df_hist is None or df_hist.empty:
+                                st.info('No hay suficiente historial disponible.')
+                            else:
+                                for categoria, metricas_cat in CATEGORIAS_FUNDAMENTAL:
+                                    labels_disp = [m[0] for m in metricas_cat if m[0] in df_hist.columns]
+                                    if not labels_disp:
+                                        continue
+                                    st.markdown(f'<div style="font-size:11px;color:#6CC24A;font-weight:700;margin:8px 0 4px 0">{categoria}</div>', unsafe_allow_html=True)
+                                    cols_g = st.columns(min(3, len(labels_disp)))
+                                    for i, label in enumerate(labels_disp):
+                                        with cols_g[i % len(cols_g)]:
+                                            st.plotly_chart(
+                                                fig_evolucion_metrica(df_hist, label),
+                                                use_container_width=True, config=PLOTLY_CONFIG,
+                                                key=f'ev_{industria}_{e["ticker"]}_{label}',
+                                            )
 
                     st.markdown('<hr style="border-color:#21262d;margin:10px 0">', unsafe_allow_html=True)
 
     # ── TAB 2: Ticker individual ──────────────────────────────────────────
     with tab_ticker_f:
-        col_tk1, col_tk2 = st.columns([4,1])
+        col_tk1, col_tk2 = st.columns([4, 1])
         with col_tk1:
             tk_fund = selector_ticker_autocomplete('fund_ticker', label='Ticker')
         with col_tk2:
@@ -10341,33 +10338,25 @@ def modulo_fundamental():
             else:
                 render_perfil_empresa(tk_fund, key_suffix='fund_ticker')
                 render_analisis_profundo(tk_fund, key_suffix='fund_ticker_ef')
+
                 sc_col_f, sc_bg_f = _senal_color(res_f['senal_final'])
-                fp_f = _fmt_pct
-                fn_f = _fmt_num
-                fb_f = _fmt_big
+                fp_f, fn_f, fb_f = _fmt_pct, _fmt_num, _fmt_big
 
                 kpi_cards_4([
                     ('Señal Final', res_f['senal_final'], f"{res_f['n_ok']} OK · {res_f['n_alt']} Alertas", sc_col_f),
                     ('Precio', fmt_precio(res_f.get('precio')), f"Obj: {fmt_precio(res_f.get('target_price'))}", '#3a7bd5'),
-                    ('PER / P/B', f"{fn_f(res_f.get('per'))}x / {fn_f(res_f.get('pb'))}x", f"EV/EBITDA: {fn_f(res_f.get('ev_ebitda'))}x", '#e3b341', f"{G('PER')} | {G('P/B')}"),
-                    ('ROE / Mg.Bruto', f"{fp_f(res_f.get('roe'))} / {fp_f(res_f.get('gross_margin'))}", f"Rev.Growth: {fp_f(res_f.get('revenue_growth'))}", '#3fb950', G('ROE')),
+                    ('PER / P/FCF', f"{fn_f(res_f.get('per'))}x / {fn_f(res_f.get('p_fcf'))}x",
+                     f"EV/EBITDA: {fn_f(res_f.get('ev_ebitda'))}x", '#e3b341'),
+                    ('ROE / ROIC', f"{fp_f(res_f.get('roe'))} / {fp_f(res_f.get('roic'))}",
+                     f"Rev.Growth: {fp_f(res_f.get('revenue_growth'))}", '#3fb950'),
                 ])
 
                 c1f, c2f, c3f, c4f, c5f = st.columns(5)
                 with c1f: st.metric('Sector', res_f['sector'][:18])
                 with c2f: st.metric('Beta', fn_f(res_f.get('beta')), help=G('Beta'))
-                with c3f: st.metric('D/E', fn_f(res_f.get('debt_equity')))
-                with c4f: st.metric('FCF', fb_f(res_f.get('fcf')), help=G('FCF'))
+                with c3f: st.metric('Net Debt/EBITDA', fn_f(res_f.get('net_debt_ebitda')))
+                with c4f: st.metric('Interest Coverage', fn_f(res_f.get('interest_coverage')))
                 with c5f: st.metric('YTD', f"{res_f['alza_ytd']:.1f}%" if res_f.get('alza_ytd') is not None else 'N/D')
-
-                bench_f = res_f['bench']
-                st.markdown(f"""
-                <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
-                     border-radius:8px;padding:10px 14px;margin:12px 0;font-size:11px;color:#b0bcd0;line-height:1.7'>
-                  <b style='color:#3a7bd5'>BENCHMARK {res_f['sector'].upper()}</b><br>
-                  {bench_f['descripcion']}
-                </div>
-                """, unsafe_allow_html=True)
 
                 col_ok_f, col_alt_f = st.columns(2)
                 with col_ok_f:
@@ -10381,13 +10370,29 @@ def modulo_fundamental():
                         if t == 'ALT':
                             st.markdown(f'<div style="font-size:11px;color:#f85149;padding:2px 0">• {msg}</div>', unsafe_allow_html=True)
 
-                if res_f['sector_senales']:
-                    st.markdown('<div class="sec-title">VS BENCHMARK SECTORIAL</div>', unsafe_allow_html=True)
-                    for tipo, msg in res_f['sector_senales']:
-                        col_vs_f = '#3fb950' if tipo=='POS' else '#f85149'
-                        ico_vs_f = '✔' if tipo=='POS' else '✘'
-                        st.markdown(f'<div style="font-size:12px;color:{col_vs_f};padding:3px 0;border-bottom:1px solid #21262d">{ico_vs_f} {msg}</div>', unsafe_allow_html=True)
+                st.markdown('---')
+                st.markdown('### 📈 Evolución histórica')
+                with st.spinner('Descargando historial financiero...'):
+                    df_hist_tk = _fund_historico_anual(tk_fund)
 
+                if df_hist_tk is None or df_hist_tk.empty:
+                    st.info('No hay suficiente historial disponible para graficar la evolución de este activo.')
+                else:
+                    tabs_ev = st.tabs([c for c, _ in CATEGORIAS_FUNDAMENTAL])
+                    for tab_obj, (categoria, metricas_cat) in zip(tabs_ev, CATEGORIAS_FUNDAMENTAL):
+                        with tab_obj:
+                            labels_disp = [m[0] for m in metricas_cat if m[0] in df_hist_tk.columns]
+                            if not labels_disp:
+                                st.caption('Sin métricas graficables en esta categoría (dependen de datos no disponibles para este activo).')
+                                continue
+                            cols_g = st.columns(min(3, len(labels_disp)))
+                            for i, label in enumerate(labels_disp):
+                                with cols_g[i % len(cols_g)]:
+                                    st.plotly_chart(
+                                        fig_evolucion_metrica(df_hist_tk, label),
+                                        use_container_width=True, config=PLOTLY_CONFIG,
+                                        key=f'evtk_{tk_fund}_{label}',
+                                    )
 
 # ==============================================================
 #  MÓDULO FUNDAMENTAL — RENDERIZADO
