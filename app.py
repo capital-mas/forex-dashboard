@@ -3616,9 +3616,6 @@ def _analizar_fundamental_cached(ticker, industria):
             if fcf > 0: sector_senales.append(('POS', 'FCF positivo — genera caja real'))
             else:       sector_senales.append(('ALT', 'FCF negativo — revisar si es ciclo inversor o problema estructural'))
 
-        extra_metricas = _calcular_metricas_extra(
-            stock, info, market_cap, enterprise_value, fcf, ebitda, total_debt, cash
-        )
         return {
             'ticker': ticker, 'nombre': nombre, 'sector': sector, 'industria': industria,
             'precio': precio_actual, 'market_cap': market_cap, 'ev': enterprise_value,
