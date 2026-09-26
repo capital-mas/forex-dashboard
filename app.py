@@ -3486,6 +3486,19 @@ def _analizar_fundamental_cached(ticker, industria):
         if n_datos_disponibles < 5:
             return None
 
+        # ← MOVER acá el cálculo de las métricas extra
+        extra_metricas = _calcular_metricas_extra(
+            stock, info, market_cap, enterprise_value, fcf, ebitda, total_debt, cash
+        )
+        p_fcf             = extra_metricas.get('p_fcf')
+        ev_sales          = extra_metricas.get('ev_sales')
+        roic              = extra_metricas.get('roic')
+        net_debt_ebitda   = extra_metricas.get('net_debt_ebitda')
+        interest_coverage = extra_metricas.get('interest_coverage')
+        payout_ratio      = extra_metricas.get('payout_ratio')
+        shares_change_yoy = extra_metricas.get('shares_change_yoy')
+        fcf_conversion    = extra_metricas.get('fcf_conversion')
+
         senales = []
         if revenue_growth:
             if revenue_growth > 0.20:   senales.append(('OK','Crecimiento de ingresos explosivo'))
@@ -3546,6 +3559,29 @@ def _analizar_fundamental_cached(ticker, industria):
         if div_yield:
             if div_yield > 0.05:        senales.append(('OK','Dividendo muy atractivo'))
             elif div_yield > 0.02:      senales.append(('OK','Dividendo saludable'))
+        if p_fcf:
+            if p_fcf < 15:               senales.append(('OK', 'P/FCF atractivo — genera mucha caja respecto a su precio'))
+            elif p_fcf > 40:             senales.append(('ALT', 'P/FCF elevado — precio caro respecto al flujo de caja generado'))
+        if ev_sales:
+            if ev_sales < 2:             senales.append(('OK', 'EV/Sales bajo — barato respecto a sus ventas'))
+            elif ev_sales > 8:           senales.append(('ALT', 'EV/Sales elevado — caro respecto a sus ventas'))
+        if roic:
+            if roic > 0.15:              senales.append(('OK', 'ROIC sólido — buen retorno sobre el capital invertido'))
+            elif roic < 0.05:            senales.append(('ALT', 'ROIC débil — bajo retorno sobre el capital invertido'))
+        if net_debt_ebitda is not None:
+            if net_debt_ebitda < 1:      senales.append(('OK', 'Net Debt/EBITDA bajo — deuda neta controlada'))
+            elif net_debt_ebitda > 3:    senales.append(('ALT', 'Net Debt/EBITDA elevado — alto apalancamiento neto'))
+        if interest_coverage:
+            if interest_coverage > 8:    senales.append(('OK', 'Interest Coverage alto — cubre sus intereses con holgura'))
+            elif interest_coverage < 2:  senales.append(('ALT', 'Interest Coverage bajo — dificultad para cubrir intereses'))
+        if payout_ratio is not None:
+            if payout_ratio > 0.9:       senales.append(('ALT', 'Payout Ratio muy alto — dividendo podría no ser sostenible'))
+        if shares_change_yoy is not None:
+            if shares_change_yoy < -1:   senales.append(('OK', 'Recompra de acciones — reduce acciones en circulación'))
+            elif shares_change_yoy > 5:  senales.append(('ALT', 'Dilución de acciones — emite nuevas acciones'))
+        if fcf_conversion is not None:
+            if fcf_conversion > 80:      senales.append(('OK', 'FCF Conversion alta — buena calidad de las ganancias'))
+            elif fcf_conversion < 30:    senales.append(('ALT', 'FCF Conversion baja — pobre conversión de EBITDA a caja'))
 
         n_ok  = sum(1 for t,_ in senales if t=='OK')
         n_alt = sum(1 for t,_ in senales if t=='ALT')
