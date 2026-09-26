@@ -8069,7 +8069,7 @@ def _pares_armar_parejas(sectores_sel, incluir_cruces=False):
     return parejas, tickers_codigos
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)  # 300 = 5 minutos, antes 3600
 def _pares_descargar_precios(tickers_items, inicio):
     """tickers_items: tupla ordenada de (codigo, symbol_yahoo) — clave de caché estable."""
     try:
