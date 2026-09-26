@@ -1037,7 +1037,29 @@ GLOSARIO = {
     'YTD': 'Year to Date: variación del precio desde el 1° de enero del año en curso hasta hoy.',
     'Precio Objetivo': 'Precio promedio que estiman los analistas que cubren la acción, a 12 meses.',
 }
-
+GLOSARIO_EXTRA = {
+    'P/FCF': 'Precio / Flujo de Caja Libre por acción. Como el PER pero con caja '
+             'real generada por el negocio en vez de la ganancia contable.',
+    'EV/Sales': 'Enterprise Value / Ventas. Útil para valuar empresas con ganancias '
+                'bajas, negativas o muy volátiles, ya que las ventas son más estables.',
+    'ROIC': 'Return on Invested Capital: EBIT después de impuestos / (deuda + '
+            'patrimonio - caja). Mide qué tan bien la empresa convierte el capital '
+            'invertido (propio y de terceros) en ganancias operativas.',
+    'Net Debt/EBITDA': '(Deuda total - Caja) / EBITDA. Cuántos años de EBITDA se '
+                       'necesitarían para pagar la deuda neta. Negativo = más caja '
+                       'que deuda.',
+    'Interest Coverage': 'EBIT / Gastos por intereses. Cuántas veces la empresa '
+                         'puede pagar sus intereses con la ganancia operativa. '
+                         'Por debajo de 2-3x es señal de alerta.',
+    'Payout Ratio': 'Porcentaje de la ganancia neta que se reparte como dividendos. '
+                    'Muy alto (>80-90%) puede no ser sostenible; 0% = reinvierte todo.',
+    'Shares Change YoY': 'Variación interanual de acciones en circulación. Negativo = '
+                         'recompra de acciones (bueno para el accionista); positivo = '
+                         'dilución (emite acciones nuevas).',
+    'FCF Conversion': 'Flujo de Caja Libre / EBITDA. Qué porcentaje del EBITDA '
+                      'contable se convierte realmente en caja disponible. Alto y '
+                      'estable = buena calidad de las ganancias.',
+}
 
 def G(term):
     return GLOSARIO.get(term)
