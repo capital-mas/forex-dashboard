@@ -3580,25 +3580,179 @@ def _analizar_fundamental_cached(ticker, industria):
             if fcf > 0: sector_senales.append(('POS', 'FCF positivo — genera caja real'))
             else:       sector_senales.append(('ALT', 'FCF negativo — revisar si es ciclo inversor o problema estructural'))
 
-        extra_metricas = _calcular_metricas_extra(
-            stock, info, market_cap, enterprise_value, fcf, ebitda, total_debt, cash
-        )
-        return {
-            'ticker': ticker, 'nombre': nombre, 'sector': sector, 'industria': industria,
-            'precio': precio_actual, 'market_cap': market_cap, 'ev': enterprise_value,
-            'per': per, 'pb': pb, 'ps': ps, 'peg': peg, 'ev_ebitda': ev_ebitda,
-            'roe': roe, 'roa': roa, 'gross_margin': gross_margin, 'op_margin': op_margin,
-            'profit_margin': profit_margin, 'debt_equity': debt_equity, 'curr_ratio': curr_ratio,
-            'beta': beta, 'div_yield': div_yield, 'revenue_growth': revenue_growth,
-            'eps_growth': eps_growth, 'earnings_growth': earnings_growth,
-            'fcf': fcf, 'op_cf': op_cf, 'target_price': target_price, 'cash': cash,
-            'alza_ytd': alza_ytd, 'recommendation': recommendation,
-            'senales': senales, 'senal_final': senal_final, 'sector_senales': sector_senales,
-            'bench': bench, 'n_ok': n_ok, 'n_alt': n_alt,
-            **extra_metricas,
-        }
-    except Exception as e:
-        return None
+def _calcular_metricas_extra(stock, info, market_cap, enterprise_value,
+                              fcf, ebitda, total_debt, cash):
+    """P/FCF, EV/Sales, ROIC, Net Debt/EBITDA, Interest Coverage,
+    Payout Ratio, Shares Change YoY, FCF Conversion.
+    Versión con más fallbacks para reducir N/D."""
+    extra = dict(p_fcf=None, ev_sales=None, roic=None, net_debt_ebitda=None,
+                 interest_coverage=None, payout_ratio=None,
+                 shares_change_yoy=None, fcf_conversion=None)
+
+    try:
+        income = stock.financials
+        balance = stock.balance_sheet
+        cashflow = stock.cashflow
+    except Exception:
+        income, balance, cashflow = None, None, None
+
+    # ── FCF: si no vino de info, lo calculamos del cashflow statement ──
+    if fcf is None and cashflow is not None and not cashflow.empty:
+        try:
+            ocf = None
+            for n in ['Operating Cash Flow', 'Total Cash From Operating Activities',
+                      'Cash Flow From Continuing Operating Activities']:
+                if n in cashflow.index:
+                    ocf = cashflow.loc[n].iloc[0]; break
+            capex = None
+            for n in ['Capital Expenditure', 'Capital Expenditures',
+                      'Purchase Of PPE', 'Net PPE Purchase And Sale']:
+                if n in cashflow.index:
+                    capex = cashflow.loc[n].iloc[0]; break
+            if ocf is not None:
+                fcf = ocf + (capex if capex is not None else 0)  # capex ya viene negativo
+        except Exception:
+            pass
+
+    # ── EBITDA: si no vino de info/financials, lo calculamos EBIT + D&A ──
+    if ebitda is None and income is not None and not income.empty:
+        try:
+            ebit_tmp = None
+            for n in ['EBIT', 'Operating Income']:
+                if n in income.index:
+                    ebit_tmp = income.loc[n].iloc[0]; break
+            dep_amort = None
+            for n in ['Reconciled Depreciation', 'Depreciation And Amortization',
+                      'Depreciation Amortization Depletion']:
+                if n in income.index:
+                    dep_amort = income.loc[n].iloc[0]; break
+            if dep_amort is None and cashflow is not None and not cashflow.empty:
+                for n in ['Depreciation And Amortization', 'Depreciation', 'Depreciation Amortization Depletion']:
+                    if n in cashflow.index:
+                        dep_amort = cashflow.loc[n].iloc[0]; break
+            if ebit_tmp is not None:
+                ebitda = ebit_tmp + (dep_amort if dep_amort is not None else 0)
+        except Exception:
+            pass
+    if ebitda is None:
+        ebitda = info.get('ebitda')
+
+    # ── P/FCF ──
+    try:
+        if market_cap and fcf and fcf != 0:
+            extra['p_fcf'] = market_cap / fcf
+    except Exception:
+        pass
+
+    # ── EV/Sales ──
+    try:
+        ev_sales = info.get('enterpriseToRevenue')
+        if ev_sales is None:
+            total_revenue = info.get('totalRevenue')
+            if total_revenue is None and income is not None and not income.empty:
+                for n in ['Total Revenue', 'Revenue', 'Operating Revenue']:
+                    if n in income.index:
+                        total_revenue = income.loc[n].iloc[0]; break
+            if enterprise_value and total_revenue:
+                ev_sales = enterprise_value / total_revenue
+        extra['ev_sales'] = ev_sales
+    except Exception:
+        pass
+
+    # ── Payout Ratio: si info no lo trae, lo calculamos con dividendos pagados ──
+    try:
+        payout = info.get('payoutRatio')
+        if payout is None and cashflow is not None and not cashflow.empty:
+            div_pag = None
+            for n in ['Cash Dividends Paid', 'Common Stock Dividend Paid', 'Payment Of Dividends']:
+                if n in cashflow.index:
+                    div_pag = cashflow.loc[n].iloc[0]; break
+            net_income = None
+            if income is not None and not income.empty:
+                for n in ['Net Income', 'Net Income Common Stockholders']:
+                    if n in income.index:
+                        net_income = income.loc[n].iloc[0]; break
+            if div_pag and net_income and net_income > 0:
+                payout = abs(div_pag) / net_income
+        extra['payout_ratio'] = payout
+    except Exception:
+        pass
+
+    # ── FCF Conversion ──
+    try:
+        if fcf is not None and ebitda:
+            extra['fcf_conversion'] = fcf / ebitda
+    except Exception:
+        pass
+
+    try:
+        ebit = None
+        if income is not None and not income.empty:
+            for n in ['EBIT', 'Operating Income']:
+                if n in income.index:
+                    ebit = income.loc[n].iloc[0]
+                    break
+
+        tax_rate = info.get('effectiveTaxRate')
+        if tax_rate is None and income is not None and not income.empty:
+            try:
+                pretax = income.loc['Pretax Income'].iloc[0] if 'Pretax Income' in income.index else None
+                tax = income.loc['Tax Provision'].iloc[0] if 'Tax Provision' in income.index else None
+                if pretax and tax is not None and pretax != 0:
+                    tax_rate = tax / pretax
+            except Exception:
+                pass
+        tax_rate = tax_rate if (tax_rate is not None and 0 <= tax_rate <= 1) else 0.21
+
+        equity = None
+        if balance is not None and not balance.empty:
+            for n in ['Stockholders Equity', 'Total Stockholders Equity', 'Common Stock Equity',
+                      'Total Equity Gross Minority Interest']:
+                if n in balance.index:
+                    equity = balance.loc[n].iloc[0]
+                    break
+
+        # total_debt: fallback si vino None desde afuera
+        if total_debt is None and balance is not None and not balance.empty:
+            for n in ['Total Debt', 'TotalDebt', 'Long Term Debt']:
+                if n in balance.index:
+                    total_debt = balance.loc[n].iloc[0]; break
+
+        if ebit is not None and equity is not None and total_debt is not None:
+            invested_capital = total_debt + equity - (cash or 0)
+            if invested_capital and invested_capital != 0:
+                extra['roic'] = (ebit * (1 - tax_rate)) / invested_capital
+
+        if total_debt is not None and ebitda:
+            extra['net_debt_ebitda'] = (total_debt - (cash or 0)) / ebitda
+
+        if ebit is not None and income is not None and not income.empty:
+            interest_exp = None
+            for n in ['Interest Expense', 'Interest Expense Non Operating',
+                      'Net Interest Income', 'Interest Expense Net']:
+                if n in income.index:
+                    interest_exp = income.loc[n].iloc[0]
+                    break
+            if interest_exp:
+                extra['interest_coverage'] = abs(ebit / interest_exp)
+    except Exception:
+        pass
+
+    try:
+        if income is not None and income.shape[1] >= 2:
+            shares_row = None
+            for n in ['Basic Average Shares', 'Diluted Average Shares']:
+                if n in income.index:
+                    shares_row = income.loc[n]
+                    break
+            if shares_row is not None:
+                s_actual, s_previo = shares_row.iloc[0], shares_row.iloc[1]
+                if s_previo and s_previo != 0:
+                    extra['shares_change_yoy'] = (s_actual / s_previo - 1) * 100
+    except Exception:
+        pass
+
+    return extra
 
 
 def _sanitizar_json(obj):
