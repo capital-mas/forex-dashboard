@@ -3353,6 +3353,49 @@ def _es_activo_sin_fundamentals(ticker):
     t = ticker.upper()
     return t.endswith('=X') or t.endswith('-USD') or t.endswith('=F')
 
+            extra['net_debt_ebitda'] = (total_debt - (cash or 0)) / ebitda
+
+        if ebit is not None and income is not None and not income.empty:
+            interest_exp = None
+            for n in ['Interest Expense', 'Interest Expense Non Operating']:
+                if n in income.index:
+                    interest_exp = income.loc[n].iloc[0]
+                    break
+            if interest_exp:
+                extra['interest_coverage'] = abs(ebit / interest_exp)
+    except Exception:
+        pass
+
+    try:
+        if income is not None and income.shape[1] >= 2:
+            shares_row = None
+            for n in ['Basic Average Shares', 'Diluted Average Shares']:
+                if n in income.index:
+                    shares_row = income.loc[n]
+                    break
+            if shares_row is not None:
+                s_actual, s_previo = shares_row.iloc[0], shares_row.iloc[1]
+                if s_previo and s_previo != 0:
+                    extra['shares_change_yoy'] = (s_actual / s_previo - 1) * 100
+    except Exception:
+        pass
+
+    return extra
+
+# INSTRUCCIÓN: dentro de _analizar_fundamental_cached(), justo ANTES
+# del "return { ... }" final, agregar:
+#
+#     extra_metricas = _calcular_metricas_extra(
+#         stock, info, market_cap, enterprise_value, fcf, ebitda, total_debt, cash
+#     )
+#
+# Y en el diccionario que arma el return, agregar al final (antes del
+# cierre de llave):
+#
+#     **extra_metricas,
+#
+# (si tu return no es literal-dict sino que armás una variable y la
+# devolvés, hacé: resultado.update(extra_metricas) antes del return)
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _analizar_fundamental_cached(ticker, industria):
@@ -3557,6 +3600,9 @@ def _analizar_fundamental_cached(ticker, industria):
             if fcf > 0: sector_senales.append(('POS', 'FCF positivo — genera caja real'))
             else:       sector_senales.append(('ALT', 'FCF negativo — revisar si es ciclo inversor o problema estructural'))
 
+        extra_metricas = _calcular_metricas_extra(
+            stock, info, market_cap, enterprise_value, fcf, ebitda, total_debt, cash
+        )
         return {
             'ticker': ticker, 'nombre': nombre, 'sector': sector, 'industria': industria,
             'precio': precio_actual, 'market_cap': market_cap, 'ev': enterprise_value,
@@ -3569,6 +3615,7 @@ def _analizar_fundamental_cached(ticker, industria):
             'alza_ytd': alza_ytd, 'recommendation': recommendation,
             'senales': senales, 'senal_final': senal_final, 'sector_senales': sector_senales,
             'bench': bench, 'n_ok': n_ok, 'n_alt': n_alt,
+            **extra_metricas,
         }
     except Exception as e:
         return None
