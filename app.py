@@ -3847,13 +3847,36 @@ def _fund_supabase_leer(ticker):
     return None, None
 
 
+# ============== PEGAR ESTO ACÁ (bloque nuevo) ==============
+FUND_TTL_SEGUNDOS = 6 * 3600  # fundamentales no cambian intra-día; 6h es seguro
+
+def _es_dato_fresco(ts_iso, ttl_segundos):
+    """True si el timestamp guardado todavía está dentro del TTL."""
+    if not ts_iso:
+        return False
+    try:
+        ts = datetime.fromisoformat(ts_iso.replace('Z', '+00:00'))
+        edad = (ahora_ar() - ts.astimezone(ZONA_AR)).total_seconds()
+        return edad < ttl_segundos
+    except Exception:
+        return False
+# ============== FIN DEL BLOQUE NUEVO ==============
+
+
 def analizar_fundamental(ticker, industria):
-    """Envoltorio persistente en 3 capas: 1) descarga en vivo (Yahoo), 2) si falla,
-    lo último bueno de esta sesión, 3) si tampoco hay, lo último bueno guardado en
-    Supabase (compartido entre todos los usuarios). Solo se pisa Supabase cuando
-    la descarga en vivo sale bien."""
+    """Envoltorio con caché compartido primero:
+    1) Supabase, si está fresco (< FUND_TTL_SEGUNDOS) — NO toca Yahoo, lo comparten todos los usuarios.
+    2) Yahoo en vivo, si Supabase está vencido o no existe — y actualiza Supabase.
+    3) Supabase vencido, como último respaldo si Yahoo falla.
+    4) Última copia buena de esta sesión, si ni Supabase tiene nada."""
     if '_fund_cache_ok' not in st.session_state:
         st.session_state['_fund_cache_ok'] = {}
+
+    datos_db, ts_db = _fund_supabase_leer(ticker)
+    if datos_db is not None and _es_dato_fresco(ts_db, FUND_TTL_SEGUNDOS):
+        datos_db = dict(datos_db)
+        st.session_state['_fund_cache_ok'][ticker] = datos_db
+        return datos_db
 
     resultado = _analizar_fundamental_cached(ticker, industria)
     if resultado is not None:
@@ -3861,11 +3884,6 @@ def analizar_fundamental(ticker, industria):
         _fund_supabase_guardar(ticker, industria, resultado)
         return resultado
 
-    en_sesion = st.session_state['_fund_cache_ok'].get(ticker)
-    if en_sesion is not None:
-        return en_sesion
-
-    datos_db, ts_db = _fund_supabase_leer(ticker)
     if datos_db is not None:
         datos_db = dict(datos_db)
         datos_db['_desde_respaldo'] = True
@@ -3873,7 +3891,7 @@ def analizar_fundamental(ticker, industria):
         st.session_state['_fund_cache_ok'][ticker] = datos_db
         return datos_db
 
-    return None
+    return st.session_state['_fund_cache_ok'].get(ticker)
 
 # ==============================================================
 # 4) EVOLUCIÓN HISTÓRICA — agregar estas dos funciones nuevas
@@ -4363,11 +4381,19 @@ def quitar_de_watchlist(client, user_id, ticker):
         return False
 
 
+PERFIL_TTL_SEGUNDOS = 24 * 3600  # el perfil de una empresa cambia mucho menos que sus ratios
+
 def obtener_perfil_empresa(ticker):
-    """Envoltorio persistente en 3 capas: descarga en vivo → último bueno de esta
-    sesión → último bueno guardado en Supabase (compartido entre usuarios)."""
+    """Envoltorio con caché compartido primero: Supabase fresco → Yahoo en vivo
+    (actualiza Supabase) → Supabase vencido como respaldo → última copia de sesión."""
     if '_perfil_cache_ok' not in st.session_state:
         st.session_state['_perfil_cache_ok'] = {}
+
+    datos_db, ts_db = _perfil_supabase_leer(ticker)
+    if datos_db is not None and _es_dato_fresco(ts_db, PERFIL_TTL_SEGUNDOS):
+        datos_db = dict(datos_db)
+        st.session_state['_perfil_cache_ok'][ticker] = datos_db
+        return datos_db
 
     resultado = _obtener_perfil_empresa_cached(ticker)
     if resultado is not None:
@@ -4375,11 +4401,6 @@ def obtener_perfil_empresa(ticker):
         _perfil_supabase_guardar(ticker, resultado)
         return resultado
 
-    en_sesion = st.session_state['_perfil_cache_ok'].get(ticker)
-    if en_sesion is not None:
-        return en_sesion
-
-    datos_db, ts_db = _perfil_supabase_leer(ticker)
     if datos_db is not None:
         datos_db = dict(datos_db)
         datos_db['_desde_respaldo'] = True
@@ -4387,7 +4408,7 @@ def obtener_perfil_empresa(ticker):
         st.session_state['_perfil_cache_ok'][ticker] = datos_db
         return datos_db
 
-    return None
+    return st.session_state['_perfil_cache_ok'].get(ticker)
 
 
 def logo_html(logo_url, size=28, dominio_fallback=None):
