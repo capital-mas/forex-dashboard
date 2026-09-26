@@ -3576,7 +3576,7 @@ def _analizar_fundamental_cached(ticker, industria):
             if debt_equity < de_max*0.5: sector_senales.append(('POS', f'Deuda/Equity ({debt_equity:.2f}x) muy conservadora vs sector'))
             elif debt_equity < de_max:   sector_senales.append(('POS', f'Deuda/Equity ({debt_equity:.2f}x) dentro del rango ({de_max}x max)'))
             else:                        sector_senales.append(('ALT', f'Deuda/Equity ({debt_equity:.2f}x) supera límite sectorial ({de_max}x)'))
-            if fcf is not None:
+        if fcf is not None:
             if fcf > 0: sector_senales.append(('POS', 'FCF positivo — genera caja real'))
             else:       sector_senales.append(('ALT', 'FCF negativo — revisar si es ciclo inversor o problema estructural'))
 
