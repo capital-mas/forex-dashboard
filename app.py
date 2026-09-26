@@ -2854,43 +2854,56 @@ def _pct100(v):
 # dirección: 'menor' = el valor más bajo es mejor · 'mayor' = el valor más alto es mejor · None = informativo
 CATEGORIAS_FUNDAMENTAL = [
     ('📐 Valuación', [
-        ('PER', lambda e: e.get('per'), 'menor', 'PER'),
-        ('P/B', lambda e: e.get('pb'), 'menor', 'P/B'),
-        ('P/S', lambda e: e.get('ps'), 'menor', 'P/S'),
-        ('PEG', lambda e: e.get('peg'), 'menor', 'PEG'),
-        ('EV/EBITDA', lambda e: e.get('ev_ebitda'), 'menor', 'EV/EBITDA'),
+        ('PER',       lambda e: e.get('per'),        'menor', 'PER'),
+        ('P/B',       lambda e: e.get('pb'),         'menor', 'P/B'),
+        ('EV/EBITDA', lambda e: e.get('ev_ebitda'),  'menor', 'EV/EBITDA'),
+        ('P/FCF',     lambda e: e.get('p_fcf'),      'menor', 'P/FCF'),
+        ('EV/Sales',  lambda e: e.get('ev_sales'),   'menor', 'EV/Sales'),
+        ('PEG',       lambda e: e.get('peg'),        'menor', 'PEG'),
     ]),
-    ('📈 Rentabilidad', [
-        ('ROE %', lambda e: _pct100(e.get('roe')), 'mayor', 'ROE'),
-        ('ROA %', lambda e: _pct100(e.get('roa')), 'mayor', 'ROA'),
-        ('Mg. Bruto %', lambda e: _pct100(e.get('gross_margin')), 'mayor', 'Margen Bruto'),
-        ('Mg. Operativo %', lambda e: _pct100(e.get('op_margin')), 'mayor', 'Margen Operativo'),
-        ('Mg. Neto %', lambda e: _pct100(e.get('profit_margin')), 'mayor', 'Margen Neto'),
+    ('📈 Rentabilidad / Márgenes', [
+        ('ROE %',           lambda e: _pct100(e.get('roe')),            'mayor', 'ROE'),
+        ('ROIC %',          lambda e: _pct100(e.get('roic')),           'mayor', 'ROIC'),
+        ('Mg. Bruto %',     lambda e: _pct100(e.get('gross_margin')),   'mayor', 'Margen Bruto'),
+        ('Mg. Operativo %', lambda e: _pct100(e.get('op_margin')),      'mayor', 'Margen Operativo'),
+        ('Mg. Neto %',      lambda e: _pct100(e.get('profit_margin')),  'mayor', 'Margen Neto'),
+        ('Rev. Growth %',   lambda e: _pct100(e.get('revenue_growth')), 'mayor', 'Revenue Growth'),
+        ('EPS Growth %',    lambda e: _pct100(e.get('eps_growth')),     'mayor', 'EPS Growth'),
     ]),
-    ('🚀 Crecimiento', [
-        ('Rev. Growth %', lambda e: _pct100(e.get('revenue_growth')), 'mayor', 'Revenue Growth'),
-        ('EPS Growth %', lambda e: _pct100(e.get('eps_growth')), 'mayor', 'EPS Growth'),
-        ('Earnings Growth %', lambda e: _pct100(e.get('earnings_growth')), 'mayor', 'Earnings Growth'),
-        ('Alza YTD %', lambda e: e.get('alza_ytd'), 'mayor', 'YTD'),
+    ('🔒 Solvencia y Riesgo', [
+        ('D/E',               lambda e: e.get('debt_equity'),       'menor', 'D/E'),
+        ('Net Debt/EBITDA',   lambda e: e.get('net_debt_ebitda'),   'menor', 'Net Debt/EBITDA'),
+        ('Current Ratio',     lambda e: e.get('curr_ratio'),        'mayor', 'Current Ratio'),
+        ('Interest Coverage', lambda e: e.get('interest_coverage'), 'mayor', 'Interest Coverage'),
+        ('Beta',              lambda e: e.get('beta'),              'menor', 'Beta'),
     ]),
-    ('🔒 Riesgo y Solvencia', [
-        ('Beta', lambda e: e.get('beta'), 'menor', 'Beta'),
-        ('D/E', lambda e: e.get('debt_equity'), 'menor', 'D/E'),
-        ('Current Ratio', lambda e: e.get('curr_ratio'), 'mayor', 'Current Ratio'),
+    ('💰 Retorno al Accionista', [
+        ('Div. Yield %',        lambda e: _pct100(e.get('div_yield')),    'mayor', 'Dividend Yield'),
+        ('Payout Ratio %',      lambda e: _pct100(e.get('payout_ratio')), None,    'Payout Ratio'),
+        ('Shares Change YoY %', lambda e: e.get('shares_change_yoy'),     'menor', 'Shares Change YoY'),
     ]),
-    ('💰 Dividendos y Flujo', [
-        ('Div. Yield %', lambda e: _pct100(e.get('div_yield')), 'mayor', 'Dividend Yield'),
-        ('FCF', lambda e: e.get('fcf'), 'mayor', 'FCF'),
-        ('Operating CF', lambda e: e.get('op_cf'), 'mayor', 'Operating Cash Flow'),
-        ('Cash', lambda e: e.get('cash'), 'mayor', 'Cash'),
-    ]),
-    ('🏢 Tamaño y Precio', [
-        ('Market Cap', lambda e: e.get('market_cap'), None, 'Market Cap'),
-        ('Enterprise Value', lambda e: e.get('ev'), None, 'Enterprise Value'),
-        ('Precio', lambda e: e.get('precio'), None, None),
-        ('Precio Objetivo', lambda e: e.get('target_price'), None, 'Precio Objetivo'),
+    ('🚀 Rendimiento / Flujos', [
+        ('Alza YTD %',       lambda e: e.get('alza_ytd'),                 'mayor', 'YTD'),
+        ('FCF Conversion %', lambda e: _pct100(e.get('fcf_conversion')),  'mayor', 'FCF Conversion'),
     ]),
 ]
+
+# Rangos por defecto para los filtros mín/máx (parte 5). Si un valor
+# no se toca respecto a este default, esa métrica NO filtra nada.
+RANGOS_DEFAULT_FUND = {
+    'PER': (0.0, 200.0, 1.0), 'P/B': (0.0, 30.0, 0.5), 'EV/EBITDA': (0.0, 60.0, 1.0),
+    'P/FCF': (0.0, 100.0, 1.0), 'EV/Sales': (0.0, 30.0, 0.5), 'PEG': (0.0, 10.0, 0.1),
+    'ROE %': (-50.0, 100.0, 1.0), 'ROIC %': (-30.0, 60.0, 1.0),
+    'Mg. Bruto %': (-20.0, 100.0, 1.0), 'Mg. Operativo %': (-50.0, 60.0, 1.0),
+    'Mg. Neto %': (-50.0, 60.0, 1.0), 'Rev. Growth %': (-50.0, 100.0, 1.0),
+    'EPS Growth %': (-100.0, 200.0, 1.0),
+    'D/E': (0.0, 10.0, 0.1), 'Net Debt/EBITDA': (-5.0, 15.0, 0.5),
+    'Current Ratio': (0.0, 10.0, 0.1), 'Interest Coverage': (-5.0, 50.0, 0.5),
+    'Beta': (0.0, 4.0, 0.1),
+    'Div. Yield %': (0.0, 20.0, 0.5), 'Payout Ratio %': (0.0, 200.0, 5.0),
+    'Shares Change YoY %': (-30.0, 30.0, 1.0),
+    'Alza YTD %': (-80.0, 300.0, 5.0), 'FCF Conversion %': (-50.0, 200.0, 5.0),
+}
 
 
 def fig_categoria_fundamental(datos_fund, metricas, titulo):
