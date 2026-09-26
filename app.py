@@ -4495,6 +4495,14 @@ def _perfil_supabase_guardar(ticker, datos):
     except Exception:
         pass
 
+def _perfil_supabase_leer(ticker):
+    try:
+        res = supabase.table('perfil_cache').select('datos, actualizado_en').eq('ticker', ticker).limit(1).execute()
+        if res.data:
+            return res.data[0]['datos'], res.data[0]['actualizado_en']
+    except Exception:
+        pass
+    return None, None
 
 MAX_WATCHLIST = 15
 
