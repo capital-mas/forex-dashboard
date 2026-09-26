@@ -1806,14 +1806,71 @@ def descargar_datos(ticker, period='3mo'):
     return None
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+def _construir_df_bulk_multiindex(tickers, dfs_por_ticker):
+    """Arma un DataFrame con MultiIndex de columnas (ticker, OHLC), igual al que
+    devuelve yf.download(..., group_by='ticker'), a partir de un dict
+    {ticker: DataFrame} ya resuelto (desde caché o Yahoo)."""
+    piezas = []
+    for tk in tickers:
+        df_tk = dfs_por_ticker.get(tk)
+        if df_tk is None or df_tk.empty:
+            continue
+        df_tk2 = df_tk.copy()
+        df_tk2.columns = pd.MultiIndex.from_product([[tk], df_tk2.columns])
+        piezas.append(df_tk2)
+    if not piezas:
+        return None
+    return pd.concat(piezas, axis=1)
+
+
 def descargar_bulk(tickers, period='2y'):
-    try:
-        import yfinance as yf
-        df_all = yf.download(tickers, period=period, interval='1d',
-                             auto_adjust=True, progress=False, group_by='ticker')
-        return df_all
-    except Exception: return None
+    """Caché compartido por ticker (reutiliza precios_cache): lee de Supabase
+    los que ya están frescos, y sólo le pide a Yahoo, en un único bulk call,
+    los tickers que faltan o están vencidos."""
+    tickers = sorted(set(tickers))
+    if not tickers:
+        return None
+
+    dfs_por_ticker = {}
+    faltantes = []
+
+    for tk in tickers:
+        datos_db, ts_db = _precios_supabase_leer(tk, period)
+        if datos_db is not None and _es_dato_fresco(ts_db, PRECIOS_TTL_SEGUNDOS):
+            df_cache = _deserializar_precios(datos_db)
+            if df_cache is not None:
+                dfs_por_ticker[tk] = df_cache
+                continue
+        faltantes.append(tk)
+
+    if faltantes:
+        try:
+            import yfinance as yf
+            df_nuevo = yf.download(faltantes, period=period, interval='1d',
+                                    auto_adjust=True, progress=False, group_by='ticker')
+        except Exception:
+            df_nuevo = None
+
+        if df_nuevo is not None and not df_nuevo.empty:
+            # Con un solo ticker faltante, yfinance no devuelve MultiIndex
+            if len(faltantes) == 1 and not isinstance(df_nuevo.columns, pd.MultiIndex):
+                df_nuevo.columns = pd.MultiIndex.from_product([[faltantes[0]], df_nuevo.columns])
+            for tk in faltantes:
+                try:
+                    df_tk = df_nuevo[tk].dropna(how='all')
+                except Exception:
+                    df_tk = None
+                if df_tk is not None and not df_tk.empty and 'Close' in df_tk.columns:
+                    dfs_por_ticker[tk] = df_tk
+                    _precios_supabase_guardar(tk, period, df_tk)
+                else:
+                    # Yahoo no trajo nada para este ticker -> usar respaldo vencido si existe
+                    datos_db_r, _ = _precios_supabase_leer(tk, period)
+                    df_resp = _deserializar_precios(datos_db_r) if datos_db_r is not None else None
+                    if df_resp is not None:
+                        dfs_por_ticker[tk] = df_resp
+
+    return _construir_df_bulk_multiindex(tickers, dfs_por_ticker)
 
 
 def get_close_series(df):
