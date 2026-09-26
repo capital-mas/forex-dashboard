@@ -3576,9 +3576,29 @@ def _analizar_fundamental_cached(ticker, industria):
             if debt_equity < de_max*0.5: sector_senales.append(('POS', f'Deuda/Equity ({debt_equity:.2f}x) muy conservadora vs sector'))
             elif debt_equity < de_max:   sector_senales.append(('POS', f'Deuda/Equity ({debt_equity:.2f}x) dentro del rango ({de_max}x max)'))
             else:                        sector_senales.append(('ALT', f'Deuda/Equity ({debt_equity:.2f}x) supera límite sectorial ({de_max}x)'))
-        if fcf is not None:
+            if fcf is not None:
             if fcf > 0: sector_senales.append(('POS', 'FCF positivo — genera caja real'))
             else:       sector_senales.append(('ALT', 'FCF negativo — revisar si es ciclo inversor o problema estructural'))
+
+        extra_metricas = _calcular_metricas_extra(
+            stock, info, market_cap, enterprise_value, fcf, ebitda, total_debt, cash
+        )
+        return {
+            'ticker': ticker, 'nombre': nombre, 'sector': sector, 'industria': industria,
+            'precio': precio_actual, 'market_cap': market_cap, 'ev': enterprise_value,
+            'per': per, 'pb': pb, 'ps': ps, 'peg': peg, 'ev_ebitda': ev_ebitda,
+            'roe': roe, 'roa': roa, 'gross_margin': gross_margin, 'op_margin': op_margin,
+            'profit_margin': profit_margin, 'debt_equity': debt_equity, 'curr_ratio': curr_ratio,
+            'beta': beta, 'div_yield': div_yield, 'revenue_growth': revenue_growth,
+            'eps_growth': eps_growth, 'earnings_growth': earnings_growth,
+            'fcf': fcf, 'op_cf': op_cf, 'target_price': target_price, 'cash': cash,
+            'alza_ytd': alza_ytd, 'recommendation': recommendation,
+            'senales': senales, 'senal_final': senal_final, 'sector_senales': sector_senales,
+            'bench': bench, 'n_ok': n_ok, 'n_alt': n_alt,
+            **extra_metricas,
+        }
+    except Exception as e:
+        return None
 
 def _calcular_metricas_extra(stock, info, market_cap, enterprise_value,
                               fcf, ebitda, total_debt, cash):
