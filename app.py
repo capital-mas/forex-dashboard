@@ -824,6 +824,7 @@ def _es_admin_cache(_client, user_id):
         return False
 
 ES_ADMIN = _es_admin_cache(supabase, USER_ID)
+_disparar_limpieza_diaria()  # limpieza de precios_cache, se ejecuta como máx. 1 vez/día por proceso
 @st.cache_data(ttl=120, show_spinner=False)
 def _resumen_modulos_cache(_client, user_id):
     try:
@@ -1783,6 +1784,23 @@ def _precios_supabase_guardar(ticker, period, df):
     except Exception:
         pass
 
+def limpiar_precios_cache_viejos(dias_antiguedad=3):
+    """Borra de precios_cache filas más viejas que N días, para no llenar
+    el límite de almacenamiento del plan (0,5 GB en Free)."""
+    try:
+        corte = (ahora_ar() - pd.Timedelta(days=dias_antiguedad)).isoformat()
+        supabase.table('precios_cache').delete().lt('actualizado_en', corte).execute()
+    except Exception:
+        pass
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _disparar_limpieza_diaria():
+    """Envoltorio cacheado 24h: usa el caché de Streamlit como 'candado' para que
+    la limpieza real (el DELETE en Supabase) se ejecute como máximo una vez por
+    día por proceso, en vez de en cada rerun de cada usuario."""
+    limpiar_precios_cache_viejos(dias_antiguedad=3)
+    return True
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def _descargar_datos_yahoo(ticker, period='3mo'):
