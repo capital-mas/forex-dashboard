@@ -1376,7 +1376,9 @@ ACCIONES_POR_INDUSTRIA = {
     'Agro/Fertilizantes': ['MOS','NTR','CF','ADM','BG','FMC','CTVA'],
     'Cripto (ETF/Coin)':  ['BTC-USD','ETH-USD','SOL-USD','BNB-USD','XRP-USD','ADA-USD','DOGE-USD','AVAX-USD','DOT-USD','MATIC-USD', 'LINK-USD','LTC-USD','ATOM-USD','ETC-USD','XLM-USD','FIL-USD','ICP-USD','HBAR-USD','NEAR-USD','ARB-USD', 'COIN','MARA','RIOT','CLSK','HUT','BITF','BTDR','IREN','CAN','WULF'],
 }
-
+ACCIONES_POR_INDUSTRIA = {
+    ind: list(dict.fromkeys(tks)) for ind, tks in ACCIONES_POR_INDUSTRIA.items()
+}
 
 
 TICKER_INDUSTRY = {}
@@ -9958,7 +9960,10 @@ def modulo_fundamental():
             return
 
         todos_resultados = {ind: [] for ind in ind_sel_f}
-        tickers_industria = [(tk, ind) for ind in ind_sel_f for tk in ACCIONES_POR_INDUSTRIA.get(ind, [])]
+        tickers_industria = [
+            (tk, ind) for ind in ind_sel_f
+            for tk in dict.fromkeys(ACCIONES_POR_INDUSTRIA.get(ind, []))  # dedupe preserving order
+        ]
         total_t = len(tickers_industria)
         prog_f = st.progress(0, text='Descargando datos fundamentales en paralelo...')
         procesados = 0
@@ -10217,7 +10222,8 @@ def modulo_fundamental():
                 f'📂 {industria}  ·  {len(emps)} empresas  ·  Mejor: {best_emp["ticker"]} ({best_emp["senal_final"]})',
                 expanded=False
             ):
-                for e in sorted(emps, key=lambda x: x['n_ok'], reverse=True):
+                emps_unicas = list({e['ticker']: e for e in emps}.values())
+                for e in sorted(emps_unicas, key=lambda x: x['n_ok'], reverse=True):
                     sc_col, sc_bg = _senal_color(e['senal_final'])
                     fnn, fpp, fbb = _fmt_num, _fmt_pct, _fmt_big
 
