@@ -1722,8 +1722,57 @@ def selector_ticker_autocomplete(key, prefill='', label='Buscar activo'):
 # ==============================================================
 
 
+PRECIOS_TTL_SEGUNDOS = 20 * 60  # 20 min — el precio cambia intra-día, TTL corto a propósito
+
+def _serializar_precios(df):
+    """Convierte un DataFrame OHLC (índice de fechas) a un dict JSON-serializable."""
+    if df is None or df.empty:
+        return None
+    df2 = df.copy()
+    df2.index = df2.index.strftime('%Y-%m-%d')
+    payload = {'index': df2.index.tolist()}
+    for col in df2.columns:
+        payload[col] = df2[col].astype(float).tolist()
+    return payload
+
+def _deserializar_precios(payload):
+    if not payload:
+        return None
+    try:
+        idx = pd.to_datetime(payload['index'])
+        data = {k: v for k, v in payload.items() if k != 'index'}
+        return pd.DataFrame(data, index=idx)
+    except Exception:
+        return None
+
+def _precios_supabase_leer(ticker, period):
+    try:
+        res = (supabase.table('precios_cache')
+               .select('datos, actualizado_en')
+               .eq('ticker', ticker).eq('period', period)
+               .limit(1).execute())
+        if res.data:
+            return res.data[0]['datos'], res.data[0]['actualizado_en']
+    except Exception:
+        pass
+    return None, None
+
+def _precios_supabase_guardar(ticker, period, df):
+    try:
+        payload = _serializar_precios(df)
+        if payload is None:
+            return
+        supabase.table('precios_cache').upsert({
+            'ticker': ticker, 'period': period, 'datos': payload,
+            'actualizado_en': ahora_ar().isoformat(),
+        }).execute()
+    except Exception:
+        pass
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
-def descargar_datos(ticker, period='3mo'):
+def _descargar_datos_yahoo(ticker, period='3mo'):
+    """Descarga cruda desde Yahoo. NO llamar directo — usar descargar_datos()."""
     try:
         import yfinance as yf
         d = yf.download(ticker, period=period, interval='1d', progress=False, auto_adjust=True)
@@ -1735,6 +1784,26 @@ def descargar_datos(ticker, period='3mo'):
             else: return None
         return d.dropna(subset=['Close'])
     except Exception: return None
+
+
+def descargar_datos(ticker, period='3mo'):
+    """Caché compartido primero (Supabase, TTL corto porque el precio cambia
+    intra-día), Yahoo solo si está vencido o no existe."""
+    datos_db, ts_db = _precios_supabase_leer(ticker, period)
+    if datos_db is not None and _es_dato_fresco(ts_db, PRECIOS_TTL_SEGUNDOS):
+        df_cache = _deserializar_precios(datos_db)
+        if df_cache is not None:
+            return df_cache
+
+    resultado = _descargar_datos_yahoo(ticker, period)
+    if resultado is not None:
+        _precios_supabase_guardar(ticker, period, resultado)
+        return resultado
+
+    if datos_db is not None:
+        return _deserializar_precios(datos_db)
+
+    return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
