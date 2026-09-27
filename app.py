@@ -9824,7 +9824,7 @@ elif MODULO == 'promediador':                 # ← agregar
 
 elif MODULO == 'fscore':
     if TIENE_ACCESO_PRO:
-        modulo_fscore()
+        modulo_fscore(supabase)
     else:
         _mostrar_bloqueo_pro('F-Score (Piotroski)')
 
