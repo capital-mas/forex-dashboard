@@ -46,7 +46,7 @@ from modulo_volatilidad_y_analisis_tecnico import (
 from modulo_pares_cointegracion import modulo_pares_cointegracion
 from modulo_cot import modulo_cot
 from modulo_tff import modulo_tff
-from modulo_pyme import render_pyme
+from modulo_pyme import render_pyme, render_nav_pyme
 from modulo_agro import render_agro
 
 import re
@@ -9283,7 +9283,12 @@ with st.container(key='nav_pills_wrap'):
     # ══════════════════════════════════════════════════════════════
     #  LAYOUT REDUCIDO — Workspaces de negocio (PyMEs / Agro)
     # ══════════════════════════════════════════════════════════════
-    if HORIZONTE in ('pyme', 'agro'):
+    if HORIZONTE == 'pyme':
+        _c = st.columns([0.7, 1, 1, 1, 1, 0.15, 1])
+        _render_app_switcher(_c[1])
+        render_nav_pyme([_c[2], _c[3], _c[4]])
+        _render_actualizar(_c[6])
+    elif HORIZONTE == 'agro':
         _c = st.columns([2.5, 1, 0.15, 1])
         _render_app_switcher(_c[1])
         _render_actualizar(_c[3])
