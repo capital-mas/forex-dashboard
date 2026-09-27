@@ -930,11 +930,16 @@ RENDER_SECCION = {
 }
 
 
-def _render_nav_pyme():
+def render_nav_pyme(columnas=None):
+    """Pills de navegación del módulo PyMEs (Registros / Gestión / Análisis).
+    Si no se le pasan columnas, se crea las suyas propias; si se le pasan
+    3 columnas ya creadas desde afuera (ej: desde la barra superior de
+    app.py), las usa a esas — para que quede al lado del selector de
+    módulo ("PyMEs ▾") en vez de más abajo, dentro del contenido."""
     seccion_activa = st.session_state.get('pyme_seccion_activa', 'ventas')
     grupo_activo = _SECCION_A_GRUPO.get(seccion_activa)
 
-    cols = st.columns(len(GRUPOS_NAV))
+    cols = columnas if columnas is not None else st.columns(len(GRUPOS_NAV))
     for col, (nombre_grupo, items) in zip(cols, GRUPOS_NAV.items()):
         with col:
             cont_key = f'navcont_pyme_{nombre_grupo}'
@@ -1002,7 +1007,6 @@ def render_pyme(supabase, user_id, **kwargs):
     </div>
     """, unsafe_allow_html=True)
 
-    _render_nav_pyme()
 
     seccion_activa = st.session_state.get('pyme_seccion_activa', 'ventas')
     label_activo = _SECCION_A_LABEL.get(seccion_activa, '')
