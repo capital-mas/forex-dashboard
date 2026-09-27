@@ -284,6 +284,54 @@ def _fsc_calculate(ticker, ticker_a_sectores):
     except Exception:
         return None
 
+FSC_TTL_SEGUNDOS = 6 * 3600  # F-Score no cambia intra-día; 6h alcanza de sobra
+
+def _fsc_supabase_leer(client, ticker):
+    if client is None:
+        return None, None
+    try:
+        res = (client.table('fscore_cache')
+               .select('datos, actualizado_en')
+               .eq('ticker', ticker).limit(1).execute())
+        if res.data:
+            return res.data[0]['datos'], res.data[0]['actualizado_en']
+    except Exception:
+        pass
+    return None, None
+
+
+def _fsc_supabase_guardar(client, ticker, datos):
+    if client is None:
+        return
+    try:
+        payload = {}
+        for k, v in datos.items():
+            if isinstance(v, float) and pd.isna(v):
+                payload[k] = None
+            elif isinstance(v, (np.floating,)):
+                payload[k] = None if np.isnan(v) else float(v)
+            elif isinstance(v, (np.integer,)):
+                payload[k] = int(v)
+            else:
+                payload[k] = v
+        client.table('fscore_cache').upsert({
+            'ticker': ticker,
+            'datos': payload,
+            'actualizado_en': dt.datetime.now().isoformat(),
+        }).execute()
+    except Exception:
+        pass
+
+
+def _fsc_es_dato_fresco(ts_iso, ttl_segundos):
+    if not ts_iso:
+        return False
+    try:
+        ts = dt.datetime.fromisoformat(ts_iso.replace('Z', '+00:00'))
+        ahora = dt.datetime.now(ts.tzinfo) if ts.tzinfo else dt.datetime.now()
+        return (ahora - ts).total_seconds() < ttl_segundos
+    except Exception:
+        return False
 
 def _fsc_validate_price_history(ticker, fecha_inicio, fecha_fin, umbral_ruedas):
     try:
@@ -296,25 +344,44 @@ def _fsc_validate_price_history(ticker, fecha_inicio, fecha_fin, umbral_ruedas):
         return False
 
 
-def _fsc_procesar_ticker(ticker, ticker_a_sectores, fecha_inicio, fecha_fin, umbral_ruedas):
-    """Valida historial + calcula F-Score para un ticker. Pensado para
-    correr dentro de un ThreadPoolExecutor (igual que el resto de los
-    módulos de la app)."""
+def _fsc_procesar_ticker(client, ticker, ticker_a_sectores, fecha_inicio, fecha_fin, umbral_ruedas):
+    """Caché compartido primero (Supabase, TTL 6h) -> cálculo en vivo si está
+    vencido/no existe -> Supabase vencido como último respaldo si Yahoo falla."""
+    datos_db, ts_db = _fsc_supabase_leer(client, ticker)
+
+    if datos_db is not None and _fsc_es_dato_fresco(ts_db, FSC_TTL_SEGUNDOS):
+        datos_db = dict(datos_db)
+        datos_db['Sectores'] = ', '.join(ticker_a_sectores.get(ticker, [])) or datos_db.get('Sectores', '')
+        return datos_db
+
     if not _fsc_validate_price_history(ticker, fecha_inicio, fecha_fin, umbral_ruedas):
+        if datos_db is not None:
+            datos_db = dict(datos_db)
+            datos_db['Sectores'] = ', '.join(ticker_a_sectores.get(ticker, [])) or datos_db.get('Sectores', '')
+            return datos_db
         return None
-    return _fsc_calculate(ticker, ticker_a_sectores)
+
+    resultado = _fsc_calculate(ticker, ticker_a_sectores)
+    if resultado is not None:
+        _fsc_supabase_guardar(client, ticker, resultado)
+        return resultado
+
+    if datos_db is not None:
+        datos_db = dict(datos_db)
+        datos_db['Sectores'] = ', '.join(ticker_a_sectores.get(ticker, [])) or datos_db.get('Sectores', '')
+        return datos_db
+
+    return None
 
 
 # ---------------------------------------------------------------------------
 # EJECUCIÓN CACHEADA
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _fsc_ejecutar_analisis_cached(sectores_elegidos_tuple, max_workers=8):
-    """sectores_elegidos_tuple: tupla ordenada de nombres de sector (para
-    que la clave de caché sea estable). Devuelve (lista_de_dicts, n_total,
-    n_sin_historial, n_sin_fscore)."""
-    sectores_elegidos = list(sectores_elegidos_tuple)
+def _fsc_ejecutar_analisis(client, sectores_elegidos, max_workers=8):
+    """Ya NO está cacheado con @st.cache_data — el caché real ahora vive en
+    Supabase por ticker (compartido entre usuarios y entre combinaciones de
+    sectores). Devuelve (lista_de_dicts, n_total, n_ok)."""
     ticker_list, ticker_a_sectores = _fsc_construir_universo(sectores_elegidos)
 
     fecha_fin = dt.date.today()
@@ -322,20 +389,17 @@ def _fsc_ejecutar_analisis_cached(sectores_elegidos_tuple, max_workers=8):
     umbral_ruedas = int(252 * FSC_UMBRAL_HISTORIAL_ANIOS)
 
     resultados = []
-    n_ok = 0
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futuros = {
-            ex.submit(_fsc_procesar_ticker, tk, ticker_a_sectores, fecha_inicio, fecha_fin, umbral_ruedas): tk
+            ex.submit(_fsc_procesar_ticker, client, tk, ticker_a_sectores, fecha_inicio, fecha_fin, umbral_ruedas): tk
             for tk in ticker_list
         }
         for fut in as_completed(futuros):
             r = fut.result()
             if r:
                 resultados.append(r)
-                n_ok += 1
 
-    n_total = len(ticker_list)
-    return resultados, n_total, n_ok
+    return resultados, len(ticker_list), len(resultados)
 
 
 # ---------------------------------------------------------------------------
@@ -396,10 +460,12 @@ def _fsc_kpi_cards_4(items):
 # RENDER — módulo Streamlit
 # ---------------------------------------------------------------------------
 
-def modulo_fscore():
+def modulo_fscore(supabase=None):
     """Punto de entrada del módulo. Llamar desde app.py:
         from modulo_fscore import modulo_fscore
-        modulo_fscore()
+        modulo_fscore(supabase)
+    Si no se pasa `supabase`, funciona igual pero sin caché compartido
+    (solo memoria dentro del mismo cálculo, como antes).
     """
     st.markdown("""
     <div style="background:linear-gradient(135deg,#151d0d 0%,#0f2410 50%,#0d1117 100%);
@@ -463,7 +529,7 @@ def modulo_fscore():
     sectores_tuple = tuple(sorted(set(sectores_a_usar)))
 
     with st.spinner(f'Validando historial y calculando F-Score para ~{n_tickers_estimado} tickers...'):
-        resultados, n_total, n_ok = _fsc_ejecutar_analisis_cached(sectores_tuple, max_workers=max_workers)
+        resultados, n_total, n_ok = _fsc_ejecutar_analisis(supabase, sectores_a_usar, max_workers=max_workers)
 
     if not resultados:
         st.error(
@@ -543,7 +609,7 @@ def modulo_fscore():
 # 5) Renderizado, junto a los otros `elif MODULO == '...':`:
 #       elif MODULO == 'fscore':
 #           if TIENE_ACCESO_PRO:
-#               modulo_fscore()
+#               modulo_fscore(supabase)
 #           else:
 #               _mostrar_bloqueo_pro('F-Score (Piotroski)')
 # ==============================================================
