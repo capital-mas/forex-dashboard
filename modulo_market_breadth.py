@@ -726,10 +726,13 @@ def render_market_breadth(
     kpi_cards_4=None,
     fmt_precio=None,
     chips_navegacion=None,
+    descargar_bulk=None,       # ← nuevo: función compartida de app.py (caché Supabase)
+    get_close_from_bulk=None,  # ← nuevo: función compartida de app.py
 ):
     PLOTLY_CONFIG = PLOTLY_CONFIG or PLOTLY_CONFIG_BD
     kpi_cards_4 = kpi_cards_4 or _kpi_cards_4_bd
     fmt_precio = fmt_precio or _fmt_precio_bd
+    usar_bulk = descargar_bulk is not None and get_close_from_bulk is not None
 
     st.markdown(f"""
     <div style="background:linear-gradient(135deg,#0d1c20 0%,#0a2530 50%,#0d1117 100%);
@@ -811,24 +814,40 @@ def render_market_breadth(
         tickers_descarga.append(ticker_indice_real)
 
     with st.spinner(f'Descargando {len(tickers_descarga)} activos ({periodo})...'):
-        data = _bd_descargar_universo(tuple(tickers_descarga), periodo)
+        if usar_bulk:
+            # descargar_bulk usa TTL diferenciado por período y caché compartido en
+            # Supabase (precios_cache) — mapeamos el período local al más cercano
+            # que reconoce esa tabla de TTL.
+            periodo_bulk = {'6mo': '6mo', '1y': '2y', '2y': '2y'}.get(periodo, '2y')
+            data = descargar_bulk(tickers_descarga, period=periodo_bulk)
+        else:
+            data = _bd_descargar_universo(tuple(tickers_descarga), periodo)
+
     if data is None:
         st.error('No se pudieron descargar los datos. Probá con otro universo o volvé a intentar.')
         return
 
+    def _bd_extraer(tk, campo):
+        """Cuando usamos descargar_bulk, el Close viene de get_close_from_bulk
+        (que ya sabe leer el MultiIndex de app.py); Volume sigue usando el
+        helper local, que también lee ese mismo MultiIndex sin problema."""
+        if usar_bulk and campo == 'Close':
+            return get_close_from_bulk(data, tk)
+        return _bd_extraer_serie(data, tk, campo)
+
     serie_indice_real = None
     if ticker_indice_real:
-        serie_indice_real = _bd_extraer_serie(data, ticker_indice_real, 'Close')
-        if len(serie_indice_real) < 25:
+        serie_indice_real = _bd_extraer(ticker_indice_real, 'Close')
+        if serie_indice_real is None or len(serie_indice_real) < 25:
             serie_indice_real = None
 
     closes, vols = {}, {}
     for tk in tickers_universo:
-        c = _bd_extraer_serie(data, tk, 'Close')
-        v = _bd_extraer_serie(data, tk, 'Volume')
-        if len(c) > 25:
+        c = _bd_extraer(tk, 'Close')
+        v = _bd_extraer(tk, 'Volume')
+        if c is not None and len(c) > 25:
             closes[tk] = c
-            vols[tk] = v
+            vols[tk] = v if v is not None else pd.Series(0, index=c.index)
 
     faltantes = [t for t in tickers_universo if t not in closes]
     if faltantes:
