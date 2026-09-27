@@ -526,8 +526,6 @@ def modulo_fscore(supabase=None):
     if correr:
         st.session_state['fsc_run_flag'] = True
 
-    sectores_tuple = tuple(sorted(set(sectores_a_usar)))
-
     with st.spinner(f'Validando historial y calculando F-Score para ~{n_tickers_estimado} tickers...'):
         resultados, n_total, n_ok = _fsc_ejecutar_analisis(supabase, sectores_a_usar, max_workers=max_workers)
 
