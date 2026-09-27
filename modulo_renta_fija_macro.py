@@ -1207,13 +1207,21 @@ def _inyectar_estilos():
 #  10. FUNCIÓN PRINCIPAL — punto de entrada del módulo
 # ==============================================================
 
-def modulo_renta_fija_macro(PLOTLY_CONFIG=None):
+def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_from_bulk=None):
     """Punto de entrada del módulo. Llamar desde app.py, por ejemplo:
 
         from modulo_renta_fija_macro import modulo_renta_fija_macro
         ...
         elif MODULO == 'renta_fija_macro':
-            modulo_renta_fija_macro(PLOTLY_CONFIG=PLOTLY_CONFIG)
+            modulo_renta_fija_macro(
+                PLOTLY_CONFIG=PLOTLY_CONFIG,
+                descargar_bulk=descargar_bulk,
+                get_close_from_bulk=get_close_from_bulk,
+            )
+
+    Si se pasan descargar_bulk/get_close_from_bulk (las funciones de app.py),
+    el módulo reutiliza el caché compartido de Supabase (precios_cache) en vez
+    de pegarle a Yahoo por su cuenta con su propio @st.cache_data de 5 minutos.
     """
     global _DEFAULT_PLOTLY_CONFIG
     if PLOTLY_CONFIG:
@@ -1237,8 +1245,27 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None):
     </div>
     """, unsafe_allow_html=True)
 
+    usar_bulk = descargar_bulk is not None and get_close_from_bulk is not None
+
     with st.spinner('Descargando precios de bonos, tasas y factores macro...'):
-        precios, meta = cargar_precios_renta_fija_macro()
+        if usar_bulk:
+            tks_etfs = [v[0] for v in ETFS.values()]
+            tks_fact = [v[0] for v in FACTORES_AVANZADOS.values()]
+            todos = sorted(set(tks_etfs + tks_fact))
+            # descargar_bulk usa TTL diferenciado y caché compartido en Supabase
+            # (precios_cache); pedimos '2y' para caer en el bucket de TTL largo
+            # (4hs) — igual nos sirve de sobra para calcular los ratios anuales.
+            df_bulk = descargar_bulk(todos, period='2y')
+            if df_bulk is None:
+                precios, meta = None, {}
+            else:
+                precios = pd.DataFrame({tk: get_close_from_bulk(df_bulk, tk) for tk in todos})
+                precios = precios.sort_index().ffill()
+                fallidos = [tk for tk in todos if precios[tk].dropna().empty]
+                precios = precios.drop(columns=fallidos, errors='ignore')
+                meta = {'fallidos': fallidos, 'ts': datetime.now()}
+        else:
+            precios, meta = cargar_precios_renta_fija_macro()
 
     if precios is None or precios.empty:
         st.error('No se pudieron descargar los datos. Revisá la conexión a Yahoo Finance '
