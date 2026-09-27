@@ -35,7 +35,7 @@
 
 import streamlit as st
 import pandas as pd
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 # ⚠️ Mismo criterio que en modulo_calendario.py: solo esta cuenta ve
 # el formulario de carga. La protección real está en las políticas
@@ -499,6 +499,23 @@ def _reclasificar_evento(supabase, evento_id, nuevo_tipo, impacto_override=None)
 def _borrar_evento(supabase, evento_id):
     supabase.table(TABLA_EVENTOS).delete().eq("id", evento_id).execute()
 
+def _eliminar_noticias_antiguas(supabase, dias=7):
+    """Elimina de mercado_eventos las noticias cuya fecha_evento tiene
+    más de `dias` días respecto de hoy. No afecta a calendario_registro
+    (esos eventos se manejan y se borran desde el Calendario Económico)."""
+    fecha_limite = date.today() - timedelta(days=dias)
+    try:
+        supabase.table(TABLA_EVENTOS).delete().lt("fecha_evento", str(fecha_limite)).execute()
+    except Exception as e:
+        print(f"[modulo_noticias_mercado] Error al limpiar noticias antiguas: {e}")
+
+
+def _limpieza_automatica(supabase):
+    hoy = date.today().isoformat()
+    if st.session_state.get("me_limpieza_hecha") != hoy:
+        _eliminar_noticias_antiguas(supabase, dias=7)
+        _limpiar_cache_eventos()
+        st.session_state["me_limpieza_hecha"] = hoy
 
 def _eventos_similares(df_todos, tipo_evento, ticker=None, pais=None, excluir_id=None):
     """Busca eventos pasados del MISMO tipo (y, si hay ticker/país
@@ -959,6 +976,7 @@ def render_noticias_mercado(supabase, user_id, user_email):
     a mano desde el feed (panel "🏷️ Reclasificar" dentro de cada evento).
     """
     es_admin = _es_admin(user_email)
+    _limpieza_automatica(supabase)   # ← nuevo: borra noticias con +7 días
 
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
