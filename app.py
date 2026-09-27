@@ -9836,6 +9836,8 @@ elif MODULO == 'breadth':
             kpi_cards_4=kpi_cards_4,
             fmt_precio=fmt_precio,
             chips_navegacion=chips_navegacion,
+            descargar_bulk=descargar_bulk,
+            get_close_from_bulk=get_close_from_bulk,
         )
     else:
         _mostrar_bloqueo_pro('Salud del Mercado')
