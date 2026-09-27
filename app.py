@@ -9844,7 +9844,11 @@ elif MODULO == 'breadth':
 
 elif MODULO == 'renta_fija_macro':
     if TIENE_ACCESO_PRO:
-        modulo_renta_fija_macro(PLOTLY_CONFIG=PLOTLY_CONFIG)
+        modulo_renta_fija_macro(
+            PLOTLY_CONFIG=PLOTLY_CONFIG,
+            descargar_bulk=descargar_bulk,
+            get_close_from_bulk=get_close_from_bulk,
+        )
     else:
         _mostrar_bloqueo_pro('Renta Fija y Macro')
 
