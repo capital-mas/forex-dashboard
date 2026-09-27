@@ -29,16 +29,13 @@ PRODUCTOS = {
             descripcion="Acceso a los módulos esenciales de mercados.",
             duraciones={
                 "Mensual": dict(
-                    dias=30, precio_usd=9, precio_ars=14000,
-                    link_mp="https://mpago.la/2PJHTtJ",
+                    dias=30, precio_usd=10,
                 ),
                 "Trimestral": dict(
-                    dias=90, precio_usd=24, precio_ars=37000,
-                    link_mp="https://mpago.la/1vKQM87",
+                    dias=90, precio_usd=25,
                 ),
                 "Anual": dict(
-                    dias=365, precio_usd=80, precio_ars=125000,
-                    link_mp="https://mpago.la/2HNUb4x",
+                    dias=365, precio_usd=80,
                 ),
             },
         ),
@@ -46,16 +43,13 @@ PRODUCTOS = {
             descripcion="Acceso completo: Optimizador, Opciones, Señales, Asistente IA y más.",
             duraciones={
                 "Mensual": dict(
-                    dias=30, precio_usd=13, precio_ars=20000,
-                    link_mp="https://mpago.la/2s6N6LS",
+                    dias=30, precio_usd=15,
                 ),
                 "Trimestral": dict(
-                    dias=90, precio_usd=48, precio_ars=56000,
-                    link_mp="https://mpago.la/xxxxx-pro-trimestral",
+                    dias=90, precio_usd=40,
                 ),
                 "Anual": dict(
-                    dias=365, precio_usd=160, precio_ars=187000,
-                    link_mp="https://mpago.la/xxxxx-pro-anual",
+                    dias=365, precio_usd=130,
                 ),
             },
         ),
