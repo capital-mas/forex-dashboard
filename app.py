@@ -713,7 +713,7 @@ def pantalla_landing():
       <div class="pricing-card">
         <div class="pricing-name">Básico</div>
         <div class="pricing-price">U$S10<br><small>/ mes</small></div>
-        <div class="pricing-permes">Trimestral U$S27 · Anual U$S90</div>
+        <div class="pricing-permes">Trimestral U$S25 · Anual U$S80</div>
         <div class="pricing-sub">Acceso a los módulos esenciales</div>
         <div class="pricing-trial">🎁 7 días gratis</div>
         <div class="pricing-cancel">Pago en cripto</div>
@@ -721,8 +721,8 @@ def pantalla_landing():
       <div class="pricing-card featured">
         <div class="pricing-badge">Recomendado</div>
         <div class="pricing-name">Pro</div>
-        <div class="pricing-price">U$S18<br><small>/ mes</small></div>
-        <div class="pricing-permes">Trimestral U$S48 · Anual U$S160</div>
+        <div class="pricing-price">U$S15<br><small>/ mes</small></div>
+        <div class="pricing-permes">Trimestral U$S40 · Anual U$S130</div>
         <div class="pricing-sub">Acceso completo: Optimizador, Opciones, Señales y más</div>
         <div class="pricing-trial">🎁 7 días gratis</div>
         <div class="pricing-cancel">Pago en cripto</div>
