@@ -9167,13 +9167,12 @@ _OPCIONES_SUB_LARGO = {
 }
 
 # Arriba, junto a las otras constantes de control
-MODULOS_OCULTOS = {'pyme', 'agro'}  # sacar de acá cuando estén listos para salir
+MODULOS_OCULTOS = {'agro'}  # PyMEs ya no está oculto: se muestra solo al admin (ver abajo)
 
 _VERTICALES_MAP = {
     '📈 Mercados & Inversiones': 'inicio',
-    # PyMEs y Agro no se listan mientras MODULOS_OCULTOS los incluya
 }
-if 'pyme' not in MODULOS_OCULTOS:
+if ES_ADMIN:
     _VERTICALES_MAP['🏢 PyMEs' if ESTADO_MODULOS.get('pyme') else '🔒 PyMEs'] = 'pyme'
 if 'agro' not in MODULOS_OCULTOS:
     _VERTICALES_MAP['🌾 Agro' if ESTADO_MODULOS.get('agro') else '🔒 Agro'] = 'agro'
