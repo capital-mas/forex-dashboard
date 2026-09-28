@@ -676,16 +676,11 @@ def fig_gex(piv, zonas, S):
 def render_gex(ticker, S, r, q, mult=100):
     if not ticker:
         return
-    c1, c2, c3 = st.columns([1, 1, 1])
+    c1, _ = st.columns([1, 2])
     with c1:
         n_vtos = st.slider('Vencimientos a incluir', 1, 12, 6, key='opc_gex_nvtos',
                            help='Más vencimientos = más panorama, pero los cercanos pesan mucho más (gamma alta).')
-    with c2:
-        # Pisa la tasa general solo dentro de este bloque (el resto del módulo sigue con su r)
-        r = st.number_input('Tasa para GEX (decimal)', min_value=0.0, max_value=3.0,
-                            value=0.045, step=0.005, format='%.4f', key='opc_gex_r',
-                            help='Para opciones de EEUU usá la tasa en dólares (~4-5%). '
-                                 'Pisa la tasa general solo dentro de este bloque.')
+    st.caption(f'Tasa usada: {r:.2%} (la que cargaste en el paso 1).')
     df = _opc_gex_base(ticker, n_vtos)
     if df is None:
         st.warning('No hay cadena de opciones utilizable (OI / IV) para este ticker. '
