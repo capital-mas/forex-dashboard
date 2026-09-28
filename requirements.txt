@@ -11,3 +11,4 @@ statsmodels
 deep-translator
 hurst
 hmmlearn
+xlsxwriter
