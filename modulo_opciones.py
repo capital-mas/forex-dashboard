@@ -181,7 +181,7 @@ def render_tabla_cadena_opciones(cadena, S, tipo=None):
         for tab, (_, df_lado) in zip(tabs, tabs_lado):
             with tab:
                 st.dataframe(_fmt_df(df_lado), use_container_width=True, hide_index=True, height=320)
-              
+
 # ==============================================================
 #  MODELO EUROPEO — Black-Scholes-Merton
 # ==============================================================
@@ -587,13 +587,13 @@ def _opc_gex_base(ticker, max_vtos=6):
 
 def calcular_gex_por_strike(df, S, r, q, mult=100, rango=0.20):
     """GEX neto por strike, separado en calls (+) y puts (−). Solo strikes dentro de ±rango del spot."""
-    g = _gamma_bs_vec(S, df['strike'].values, df['T'].values, df['impliedVolatility'].values and
-                      df['impliedVolatility'].values, r, q) if False else \
-        _gamma_bs_vec(S, df['strike'].values, df['T'].values, r, df['impliedVolatility'].values, q)
+    g = _gamma_bs_vec(S, df['strike'].values, df['T'].values, r, df['impliedVolatility'].values, q)
     signo = np.where(df['tipo'] == 'C', 1.0, -1.0)
     d = df.copy()
     d['gex'] = signo * g * d['openInterest'] * mult * S ** 2 * 0.01
     d = d[(d['strike'] >= S * (1 - rango)) & (d['strike'] <= S * (1 + rango))]
+    if d.empty:
+        return pd.DataFrame(columns=['strike', 'gex_calls', 'gex_puts', 'neto'])
     piv = d.pivot_table(index='strike', columns='tipo', values='gex', aggfunc='sum').fillna(0.0)
     for c in ('C', 'P'):
         if c not in piv.columns:
@@ -676,10 +676,16 @@ def fig_gex(piv, zonas, S):
 def render_gex(ticker, S, r, q, mult=100):
     if not ticker:
         return
-    c1, c2 = st.columns([1, 2])
+    c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
         n_vtos = st.slider('Vencimientos a incluir', 1, 12, 6, key='opc_gex_nvtos',
                            help='Más vencimientos = más panorama, pero los cercanos pesan mucho más (gamma alta).')
+    with c2:
+        # Pisa la tasa general solo dentro de este bloque (el resto del módulo sigue con su r)
+        r = st.number_input('Tasa para GEX (decimal)', min_value=0.0, max_value=3.0,
+                            value=0.045, step=0.005, format='%.4f', key='opc_gex_r',
+                            help='Para opciones de EEUU usá la tasa en dólares (~4-5%). '
+                                 'Pisa la tasa general solo dentro de este bloque.')
     df = _opc_gex_base(ticker, n_vtos)
     if df is None:
         st.warning('No hay cadena de opciones utilizable (OI / IV) para este ticker. '
@@ -687,6 +693,9 @@ def render_gex(ticker, S, r, q, mult=100):
         return
 
     piv = calcular_gex_por_strike(df, S, r, q, mult)
+    if piv.empty:
+        st.warning('No hay strikes con OI/IV utilizable cerca del spot para estos vencimientos.')
+        return
     grid, total = gex_total_vs_spot(df, S, r, q, mult)
     z = calcular_zonas_gex(piv, grid, total, S)
 
@@ -1148,8 +1157,11 @@ def modulo_opciones():
     dias_vto = max((st.session_state['opc_vto'] - date.today()).days, 1)
     T = dias_vto / 365
     r, q, estilo, mult = st.session_state['opc_r'], st.session_state['opc_q'], st.session_state['opc_estilo'], st.session_state['opc_mult']
+
+    # GEX: solo se calcula si activás el toggle (evita descargar cadenas en cada rerun)
     with st.expander('🧲 GEX — Gamma Exposure y zonas', expanded=False):
-      render_gex(st.session_state['opc_ticker'].strip().upper(), S, r, q, mult)
+        if st.toggle('Calcular GEX', value=False, key='opc_gex_toggle'):
+            render_gex(st.session_state['opc_ticker'].strip().upper(), S, r, q, mult)
 
     # ── PASO 2: elegir estrategia ────────────────────────────────────────
     st.markdown('---')
