@@ -554,6 +554,174 @@ def fig_monte_carlo_distribucion(precios_finales, S, strikes, p40_mc, p60_mc, p4
 
 
 # ==============================================================
+#  GEX — Gamma Exposure, Gamma Flip y zonas
+# ==============================================================
+
+def _gamma_bs_vec(S, K, T, r, sigma, q=0.0):
+    """Gamma Black-Scholes vectorizado (acepta arrays / broadcasting)."""
+    d1 = (np.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+    return np.exp(-q * T) * norm.pdf(d1) / (S * sigma * np.sqrt(T))
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _opc_gex_base(ticker, max_vtos=6):
+    """Cadena de los próximos vencimientos en un solo DataFrame largo (strike, tipo, OI, IV, T)."""
+    vtos = _opc_vencimientos_disponibles(ticker)[:max_vtos]
+    partes = []
+    for v in vtos:
+        cad = _opc_cadena_opciones(ticker, v)
+        if not cad:
+            continue
+        dias = max((datetime.strptime(v, '%Y-%m-%d').date() - date.today()).days, 0)
+        T = max(dias, 0.5) / 365          # piso para que 0DTE no rompa la división
+        for tipo, key in (('C', 'calls'), ('P', 'puts')):
+            d = cad[key][['strike', 'openInterest', 'impliedVolatility']].copy()
+            d['tipo'], d['T'], d['vto'] = tipo, T, v
+            partes.append(d)
+    if not partes:
+        return None
+    df = pd.concat(partes, ignore_index=True).dropna(subset=['openInterest', 'impliedVolatility'])
+    df = df[(df['openInterest'] > 0) & (df['impliedVolatility'] > 0.01)]   # filtra IV basura de Yahoo
+    return df.reset_index(drop=True) if not df.empty else None
+
+
+def calcular_gex_por_strike(df, S, r, q, mult=100, rango=0.20):
+    """GEX neto por strike, separado en calls (+) y puts (−). Solo strikes dentro de ±rango del spot."""
+    g = _gamma_bs_vec(S, df['strike'].values, df['T'].values, df['impliedVolatility'].values and
+                      df['impliedVolatility'].values, r, q) if False else \
+        _gamma_bs_vec(S, df['strike'].values, df['T'].values, r, df['impliedVolatility'].values, q)
+    signo = np.where(df['tipo'] == 'C', 1.0, -1.0)
+    d = df.copy()
+    d['gex'] = signo * g * d['openInterest'] * mult * S ** 2 * 0.01
+    d = d[(d['strike'] >= S * (1 - rango)) & (d['strike'] <= S * (1 + rango))]
+    piv = d.pivot_table(index='strike', columns='tipo', values='gex', aggfunc='sum').fillna(0.0)
+    for c in ('C', 'P'):
+        if c not in piv.columns:
+            piv[c] = 0.0
+    piv['neto'] = piv['C'] + piv['P']
+    return piv.reset_index().rename(columns={'C': 'gex_calls', 'P': 'gex_puts'})
+
+
+def gex_total_vs_spot(df, S, r, q, mult=100, rango=0.15, n=121):
+    """GEX total recalculado sobre una grilla de spots → sirve para ubicar el Gamma Flip."""
+    grid = np.linspace(S * (1 - rango), S * (1 + rango), n)
+    K, T, iv = (df[c].values[None, :] for c in ('strike', 'T', 'impliedVolatility'))
+    oi = df['openInterest'].values[None, :]
+    signo = np.where(df['tipo'].values == 'C', 1.0, -1.0)[None, :]
+    g = _gamma_bs_vec(grid[:, None], K, T, r, iv, q)
+    total = (g * signo * oi * mult * grid[:, None] ** 2 * 0.01).sum(axis=1)
+    return grid, total
+
+
+def encontrar_gamma_flip(grid, total, S):
+    """Cruce por cero (interpolado) más cercano al spot. None si no hay cruce en el rango."""
+    cruces = np.where(np.sign(total[:-1]) * np.sign(total[1:]) < 0)[0]
+    if len(cruces) == 0:
+        return None
+    i = cruces[np.argmin(np.abs(grid[cruces] - S))]
+    return float(grid[i] - total[i] * (grid[i + 1] - grid[i]) / (total[i + 1] - total[i]))
+
+
+def calcular_zonas_gex(piv, grid, total, S):
+    flip = encontrar_gamma_flip(grid, total, S)
+    call_wall = float(piv.loc[piv['gex_calls'].idxmax(), 'strike']) if (piv['gex_calls'] > 0).any() else None
+    put_wall = float(piv.loc[piv['gex_puts'].idxmin(), 'strike']) if (piv['gex_puts'] < 0).any() else None
+    gex_total_spot = float(np.interp(S, grid, total))
+    if flip is None:
+        regimen = 'positivo' if gex_total_spot > 0 else 'negativo'
+    else:
+        regimen = 'positivo' if S > flip else 'negativo'
+    return dict(flip=flip, call_wall=call_wall, put_wall=put_wall,
+                gex_total=gex_total_spot, regimen=regimen)
+
+
+def fig_gex(piv, zonas, S):
+    y_max = float(max(piv['gex_calls'].max(), abs(piv['gex_puts'].min()), 1.0)) * 1.1
+    x_min, x_max = float(piv['strike'].min()), float(piv['strike'].max())
+    fig = go.Figure()
+
+    # zonas de fondo: gamma negativa (rojo) / positiva (verde) según el flip
+    flip = zonas['flip']
+    if flip is not None:
+        fig.add_vrect(x0=x_min, x1=min(max(flip, x_min), x_max), fillcolor='rgba(248,81,73,0.08)', line_width=0)
+        fig.add_vrect(x0=min(max(flip, x_min), x_max), x1=x_max, fillcolor='rgba(63,185,80,0.08)', line_width=0)
+    else:
+        col = 'rgba(63,185,80,0.08)' if zonas['regimen'] == 'positivo' else 'rgba(248,81,73,0.08)'
+        fig.add_vrect(x0=x_min, x1=x_max, fillcolor=col, line_width=0)
+
+    fig.add_trace(go.Bar(x=piv['strike'], y=piv['gex_calls'], marker_color=C_GREEN, name='GEX Calls', opacity=0.85))
+    fig.add_trace(go.Bar(x=piv['strike'], y=piv['gex_puts'], marker_color=C_RED, name='GEX Puts', opacity=0.85))
+
+    def _linea(x, color, dash, nombre):
+        if x is None:
+            return
+        fig.add_trace(go.Scatter(x=[x, x], y=[-y_max, y_max], mode='lines',
+                                 line=dict(color=color, dash=dash, width=1.8),
+                                 name=f'{nombre} ({x:,.2f})', hoverinfo='skip'))
+    _linea(S, C_YELL, 'dot', 'Spot')
+    _linea(flip, '#bc8cff', 'dash', 'Gamma Flip')
+    _linea(zonas['call_wall'], C_GREEN, 'dashdot', 'Call Wall')
+    _linea(zonas['put_wall'], C_RED, 'dashdot', 'Put Wall')
+
+    fig.update_layout(**PLOTLY_LAYOUT_OPC, height=460, barmode='relative',
+                      title=dict(text='GEX por strike (USD por cada 1% de movimiento)', font=dict(color=C_TEXT, size=13), y=0.98),
+                      legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0,
+                                  font=dict(size=10.5, color=C_TEXT)),
+                      xaxis=dict(title='Strike', gridcolor=C_GRID),
+                      yaxis=dict(title='GEX ($ / 1%)', gridcolor=C_GRID),
+                      margin=dict(l=10, r=10, t=90, b=10))
+    return fig
+
+
+def render_gex(ticker, S, r, q, mult=100):
+    if not ticker:
+        return
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        n_vtos = st.slider('Vencimientos a incluir', 1, 12, 6, key='opc_gex_nvtos',
+                           help='Más vencimientos = más panorama, pero los cercanos pesan mucho más (gamma alta).')
+    df = _opc_gex_base(ticker, n_vtos)
+    if df is None:
+        st.warning('No hay cadena de opciones utilizable (OI / IV) para este ticker. '
+                   'GEX necesita cadena real; no funciona con carga manual.')
+        return
+
+    piv = calcular_gex_por_strike(df, S, r, q, mult)
+    grid, total = gex_total_vs_spot(df, S, r, q, mult)
+    z = calcular_zonas_gex(piv, grid, total, S)
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1: st.metric('GEX total (al spot)', f"{z['gex_total']/1e6:,.1f} M$")
+    with m2: st.metric('Gamma Flip', fmt_precio_opc(z['flip']) if z['flip'] else 'N/D')
+    with m3: st.metric('Call Wall', fmt_precio_opc(z['call_wall']) if z['call_wall'] else 'N/D')
+    with m4: st.metric('Put Wall', fmt_precio_opc(z['put_wall']) if z['put_wall'] else 'N/D')
+
+    if z['regimen'] == 'positivo':
+        st.success('🟢 **Zona gamma POSITIVA** — los dealers amortiguan el movimiento: más reversión a la media, '
+                   'menor volatilidad realizada. Call/Put Wall tienden a funcionar como imanes/límites.')
+    else:
+        st.error('🔴 **Zona gamma NEGATIVA** — los dealers amplifican el movimiento: más tendencia y volatilidad. '
+                 'Perder el Put Wall puede acelerar la caída.')
+
+    st.plotly_chart(fig_gex(piv, z, S), use_container_width=True, key='opc_fig_gex')
+
+    fig_flip = go.Figure(go.Scatter(x=grid, y=total / 1e6, line=dict(color=C_ACENT, width=2.2)))
+    fig_flip.add_hline(y=0, line_color=C_MUTED, opacity=0.6)
+    fig_flip.add_vline(x=S, line_dash='dot', line_color=C_YELL, opacity=0.7)
+    if z['flip']:
+        fig_flip.add_vline(x=z['flip'], line_dash='dash', line_color='#bc8cff', opacity=0.8)
+    fig_flip.update_layout(**PLOTLY_LAYOUT_OPC, height=300,
+                           title=dict(text='GEX total vs precio del subyacente (el cruce por 0 es el Gamma Flip)',
+                                      font=dict(color=C_TEXT, size=13)),
+                           xaxis=dict(title='Precio', gridcolor=C_GRID),
+                           yaxis=dict(title='GEX total (M$ / 1%)', gridcolor=C_GRID),
+                           margin=dict(l=10, r=10, t=45, b=10))
+    st.plotly_chart(fig_flip, use_container_width=True, key='opc_fig_gex_flip')
+
+    st.caption('⚠️ Asume dealers largos calls / cortos puts. Usa OI del día anterior e IV de Yahoo (ruidosa en strikes '
+               'ilíquidos). Es una referencia de régimen, no una señal por sí sola.')
+
+# ==============================================================
 #  CATÁLOGO DE ESTRATEGIAS
 # ==============================================================
 
@@ -980,6 +1148,8 @@ def modulo_opciones():
     dias_vto = max((st.session_state['opc_vto'] - date.today()).days, 1)
     T = dias_vto / 365
     r, q, estilo, mult = st.session_state['opc_r'], st.session_state['opc_q'], st.session_state['opc_estilo'], st.session_state['opc_mult']
+    with st.expander('🧲 GEX — Gamma Exposure y zonas', expanded=False):
+    render_gex(st.session_state['opc_ticker'].strip().upper(), S, r, q, mult)
 
     # ── PASO 2: elegir estrategia ────────────────────────────────────────
     st.markdown('---')
