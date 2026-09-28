@@ -1149,7 +1149,7 @@ def modulo_opciones():
     T = dias_vto / 365
     r, q, estilo, mult = st.session_state['opc_r'], st.session_state['opc_q'], st.session_state['opc_estilo'], st.session_state['opc_mult']
     with st.expander('🧲 GEX — Gamma Exposure y zonas', expanded=False):
-    render_gex(st.session_state['opc_ticker'].strip().upper(), S, r, q, mult)
+      render_gex(st.session_state['opc_ticker'].strip().upper(), S, r, q, mult)
 
     # ── PASO 2: elegir estrategia ────────────────────────────────────────
     st.markdown('---')
