@@ -27,6 +27,47 @@ N_SIMULACIONES_OPC = 3000          # trayectorias del Monte Carlo real-world
 VENTANA_VOL_CORTA_OPC = 40         # ruedas usadas para estimar el drift reciente
 
 
+# True = las explicaciones debajo de cada gráfico aparecen abiertas; False = plegadas
+EXPLICACIONES_ABIERTAS = True
+
+
+def render_explicacion(titulo, contenido_md):
+    """Bloque explicativo debajo de un gráfico: qué muestra, cómo leerlo y cómo usarlo."""
+    with st.expander(f'📘 {titulo}', expanded=EXPLICACIONES_ABIERTAS):
+        st.markdown(contenido_md)
+
+
+def lectura_personalizada_gex(z, S):
+    """Traduce los números actuales de GEX a frases en criollo."""
+    L = []
+    flip, cw, pw = z['flip'], z['call_wall'], z['put_wall']
+    if flip:
+        d = (S / flip - 1) * 100
+        if d > 0:
+            L.append(f"El precio actual ({S:,.2f}) está **{d:.1f}% por encima** del Gamma Flip ({flip:,.2f}). "
+                     f"Ese es tu colchón: mientras el precio se mantenga arriba, el régimen es de amortiguación. "
+                     f"Si cae por debajo de {flip:,.2f}, el mercado pasa a amplificar los movimientos.")
+        else:
+            L.append(f"El precio actual ({S:,.2f}) está **{abs(d):.1f}% por debajo** del Gamma Flip ({flip:,.2f}). "
+                     f"Ya estamos en régimen de amplificación: los movimientos tienden a ser más bruscos. "
+                     f"Recuperar {flip:,.2f} devolvería el efecto amortiguador.")
+    else:
+        L.append("No hay Gamma Flip dentro del rango analizado (±15% del precio): el régimen es "
+                 f"**{z['regimen']}** en todo ese rango, así que no hay un nivel cercano donde cambie.")
+    if cw:
+        dc = (cw / S - 1) * 100
+        pos = "por encima" if dc > 0 else "por debajo"
+        L.append(f"El **Call Wall ({cw:,.2f})** está {abs(dc):.1f}% {pos} del precio. "
+                 f"Es el nivel donde más gamma de calls se concentra: suele comportarse como imán o resistencia.")
+    if pw:
+        dp = (pw / S - 1) * 100
+        pos = "por encima" if dp > 0 else "por debajo"
+        L.append(f"El **Put Wall ({pw:,.2f})** está {abs(dp):.1f}% {pos} del precio. "
+                 f"Es el nivel donde más gamma de puts se concentra: suele comportarse como soporte, "
+                 f"y si se pierde, la caída puede acelerarse.")
+    return L
+
+
 def fmt_precio_opc(p):
     if p is None or (isinstance(p, float) and np.isnan(p)): return 'N/D'
     if p >= 1000: return f'${p:,.0f}'
@@ -707,7 +748,40 @@ def render_gex(ticker, S, r, q, mult=100):
         st.error('🔴 **Zona gamma NEGATIVA** — los dealers amplifican el movimiento: más tendencia y volatilidad. '
                  'Perder el Put Wall puede acelerar la caída.')
 
+    render_explicacion('Cómo leer estos 4 indicadores', """
+**Qué es cada uno**
+- **GEX total (al spot):** suma de la gamma de todas las opciones, en dólares que los *dealers* (market makers) deberían comprar o vender por cada 1% que se mueva el precio. Lo que importa es el **signo**: positivo = frenan el movimiento, negativo = lo aceleran. El tamaño no se compara entre distintos activos.
+- **Gamma Flip:** el precio donde el GEX total pasa de negativo a positivo. Es la **frontera entre los dos regímenes**.
+- **Call Wall:** el strike con más gamma de calls. Suele actuar como **techo o imán**.
+- **Put Wall:** el strike con más gamma de puts. Suele actuar como **piso o soporte**.
+
+**Cómo usarlo**
+- Régimen **positivo** (verde): esperá mercado más tranquilo y de rango. Sirve para estrategias que ganan con el precio quieto (vender prima, Iron Condor, Short Strangle con cobertura).
+- Régimen **negativo** (rojo): esperá movimientos más grandes y bruscos. Sirve para estrategias que ganan con movimiento (Straddle, Strangle) y hay que ser más cuidadoso con las que venden prima.
+- Mirá la **distancia entre el precio y el Gamma Flip**: cuanto más cerca, más probable un cambio de comportamiento.
+""")
+
     st.plotly_chart(fig_gex(piv, z, S), use_container_width=True, key='opc_fig_gex')
+
+    render_explicacion('Cómo leer el gráfico "GEX por strike" y cómo usarlo', """
+**Qué muestra**
+Cada barra es un strike. **Verde hacia arriba** = gamma de las calls. **Rojo hacia abajo** = gamma de las puts. Cuanto más alta la barra, más peso tiene ese strike en las coberturas de los dealers. El fondo verde/rojo marca dónde rige cada régimen según el Gamma Flip, y las líneas verticales marcan el precio actual (Spot), el Gamma Flip y las paredes.
+
+**Cómo leerlo**
+- Una **barra muy alta** es un nivel "pegajoso": el precio tiende a orbitar o detenerse cerca.
+- Si el **Spot está pegado a una barra grande**, el precio está en una zona de mucha influencia.
+- Si las barras están **casi todas del lado de las calls**, el neto da positivo; si dominan las puts, da negativo.
+- Zonas **sin barras** = casi sin influencia de opciones: el precio se mueve más libre ahí.
+
+**Cómo sacarle provecho**
+- Usá los strikes con barras grandes como **referencias** para elegir strikes vendidos (por ejemplo, vender una Call por encima del Call Wall o una Put por debajo del Put Wall).
+- Si el precio se acerca al Put Wall desde arriba, prestá atención: perderlo puede acelerar la caída.
+- Combinalo siempre con el resto del análisis (tendencia, volatilidad, payoff). **No es una señal de compra o venta por sí solo.**
+""")
+
+    st.markdown('**Lectura con los datos de hoy:**')
+    for _linea in lectura_personalizada_gex(z, S):
+        st.markdown(f'- {_linea}')
 
     fig_flip = go.Figure(go.Scatter(x=grid, y=total / 1e6, line=dict(color=C_ACENT, width=2.2)))
     fig_flip.add_hline(y=0, line_color=C_MUTED, opacity=0.6)
@@ -721,6 +795,23 @@ def render_gex(ticker, S, r, q, mult=100):
                            yaxis=dict(title='GEX total (M$ / 1%)', gridcolor=C_GRID),
                            margin=dict(l=10, r=10, t=45, b=10))
     st.plotly_chart(fig_flip, use_container_width=True, key='opc_fig_gex_flip')
+
+    render_explicacion('Cómo leer el gráfico "GEX total vs precio" y cómo usarlo', """
+**Qué muestra**
+Responde a esta pregunta: *"si el activo estuviera en otro precio, ¿cuál sería el GEX total?"*. El eje horizontal es el precio hipotético y el vertical es el GEX total. La línea punteada amarilla es el precio actual y la violeta es el Gamma Flip.
+
+**Cómo leerlo**
+- Donde la curva está **por encima de 0** = régimen positivo (los dealers amortiguan).
+- Donde está **por debajo de 0** = régimen negativo (los dealers amplifican).
+- El punto donde **cruza el cero** es el Gamma Flip.
+- Una curva que **cae rápido hacia el cero** al bajar el precio indica que el régimen es frágil: no hace falta una caída grande para cambiar de escenario.
+- Los picos y pequeñas muescas suelen venir de muchos strikes juntos o de datos ruidosos de Yahoo; no los tomes como niveles exactos.
+
+**Cómo sacarle provecho**
+- Es el gráfico ideal para responder *"¿cuánto tiene que moverse el precio para que cambie el comportamiento del mercado?"*.
+- Si el precio está **lejos del flip y del lado positivo**, hay más margen para estrategias de rango.
+- Si está **cerca del flip**, conviene achicar el tamaño o elegir estrategias con riesgo definido.
+""")
 
     st.caption('⚠️ Asume dealers largos calls / cortos puts. Usa OI del día anterior e IV de Yahoo (ruidosa en strikes '
                'ilíquidos). Es una referencia de régimen, no una señal por sí sola.')
@@ -1348,6 +1439,23 @@ def modulo_opciones():
                                                        p40_emp, p60_emp),
                          use_container_width=True, key='opc_fig_montecarlo')
 
+        render_explicacion('Cómo leer la distribución Monte Carlo y cómo usarla', f"""
+**Qué muestra**
+Se simularon miles de caminos posibles del precio hasta el vencimiento ({dias_vto} días), usando la volatilidad histórica y la tendencia reciente. El histograma muestra **dónde terminó el precio en cada simulación**: las barras más altas son los resultados más probables. Las líneas verticales marcan el precio actual, los rangos del 40% al 60% (Monte Carlo y empírico histórico) y los strikes de tu estrategia.
+
+**Datos de hoy**
+- La mitad central de los resultados simulados cae entre **{p40_mc:,.2f} y {p60_mc:,.2f}**.
+- La probabilidad de que el precio termine por debajo del actual es **{prob_perdida:.1f}%**.
+
+**Cómo leerlo**
+- Si un **strike vendido** queda en una zona con pocas barras (lejos del centro), es menos probable que el precio llegue ahí.
+- Si un **strike comprado** queda en una zona con muchas barras, es más probable que termine con valor.
+- Cuando el Monte Carlo y el rango empírico **coinciden**, la estimación es más confiable; si difieren mucho, hay que tomarla con más cautela.
+
+**Cómo sacarle provecho**
+Usalo para comparar tus strikes contra el rango probable. Es una **estimación estadística basada en el pasado**, no una predicción: un evento inesperado puede dejar el precio fuera de todo el gráfico.
+""")
+
         st.markdown('#### Veredicto por opción (6 chequeos independientes)')
         rsi_actual, sma20_actual = datos_activo['rsi'], datos_activo['sma20']
         for i, (opcion, fila) in enumerate(zip(opciones, filas), start=1):
@@ -1405,6 +1513,26 @@ def modulo_opciones():
 
     st.plotly_chart(fig_payoff(opciones, S, analisis), use_container_width=True, key='opc_fig_payoff')
 
+    render_explicacion('Cómo leer el gráfico de payoff y cómo usarlo', f"""
+**Qué muestra**
+La ganancia o pérdida **por acción** de toda la estrategia **al vencimiento**, según el precio final del activo. Por encima de la línea de cero hay ganancia; por debajo, pérdida.
+
+**Datos de hoy**
+- Break-even(s): **{be_txt}**
+- Ganancia máxima: **{gan_txt}**
+- Pérdida máxima: **{per_txt}**
+
+**Cómo leerlo**
+- Los **break-even** (líneas verdes) son los precios donde la estrategia pasa de perder a ganar.
+- La parte **plana** de la curva indica ganancia o pérdida acotada; una parte que **sigue subiendo o bajando** indica que no hay tope en ese lado.
+- La línea amarilla es el precio actual: fijate de qué lado de los break-even quedás hoy.
+
+**Cómo sacarle provecho**
+- Preguntate: *"¿el precio necesita moverse mucho para llegar al break-even?"* y compará con el rango probable del Monte Carlo.
+- Revisá la **pérdida máxima** antes de operar y asegurate de que entra en tu regla de riesgo (más abajo está el tamaño de posición sugerido).
+- Este gráfico es **al vencimiento**. Antes del vencimiento, el resultado depende también del tiempo y la volatilidad (mirá el gráfico de repricing).
+""")
+
     # ── gestión de riesgo / tamaño de posición ──────────────────────────
     st.markdown('### 🛡️ Gestión de riesgo y tamaño de posición')
     cr1, cr2 = st.columns(2)
@@ -1426,6 +1554,20 @@ def modulo_opciones():
     st.markdown('### 💲 Repricing si el subyacente se mueve HOY (sin pasar tiempo)')
     st.plotly_chart(fig_repricing(opciones, S, T, r, sigmas_por_opcion, q, estilo, costo_teorico),
                      use_container_width=True, key='opc_fig_repricing')
+
+    render_explicacion('Cómo leer el gráfico de repricing y cómo usarlo', """
+**Qué muestra**
+Cuánto ganarías o perderías **hoy** (no al vencimiento) si el activo se moviera de golpe, sin que pase el tiempo. Se vuelve a calcular el precio de cada opción para cada nuevo valor del activo.
+
+**Cómo leerlo**
+- Es una curva **más suave** que el payoff, porque las opciones todavía tienen valor por el tiempo que les queda.
+- Cuanto más **inclinada** es la curva, más sensible es tu posición a los movimientos del activo (delta alto).
+- Cuanto más **curva** es, más importa la gamma.
+
+**Cómo sacarle provecho**
+- Sirve para saber cuánto podrías ganar o perder si el activo se mueve en los próximos días y **querés salir antes del vencimiento**.
+- Compará este gráfico con el de payoff: la diferencia entre ambos es el valor temporal que todavía tienen las opciones.
+""")
 
     variaciones_tabla = [i / 100 for i in range(-10, 11, 2)]
     filas_esc = []
@@ -1449,6 +1591,23 @@ def modulo_opciones():
     st.markdown('### 🧮 Sensibilidad de las griegas')
     st.plotly_chart(fig_griegas_sensibilidad(opciones, S, T, r, sigmas_por_opcion, q, estilo),
                      use_container_width=True, key='opc_fig_griegas')
+
+    render_explicacion('Cómo leer la sensibilidad de las griegas y cómo usarla', """
+**Qué muestra**
+Cómo cambian las griegas **netas** de toda tu estrategia cuando el activo sube o baja hasta un 20%. Cada panel es una griega y la línea punteada es el precio actual.
+
+**Qué significa cada panel**
+- **Delta:** cuánto gana o pierde la estrategia por cada $1 que se mueve el activo. Positivo = te favorece que suba; negativo = que baje.
+- **Gamma:** qué tan rápido cambia el delta. Positiva = la posición se vuelve más favorable cuanto más se mueve el precio; negativa = al revés.
+- **Theta:** lo que gana o pierde por día por el simple paso del tiempo. Negativo = el tiempo juega en contra (típico al comprar opciones); positivo = a favor (típico al vender).
+- **Vega:** cuánto cambia el valor si la volatilidad implícita sube o baja 1 punto. Positiva = te conviene que suba la volatilidad; negativa = que baje.
+- **Rho:** sensibilidad a la tasa de interés (suele ser la menos relevante).
+
+**Cómo sacarle provecho**
+- Fijate cómo **cambia** la delta al moverse el precio: si se dispara, tu posición se vuelve más direccional de lo que pensabas.
+- Si el theta es muy negativo, necesitás que el movimiento llegue **rápido**.
+- Si el vega es muy positivo o negativo, la estrategia depende mucho de lo que pase con la volatilidad, además del precio.
+""")
 
     # ── simulador interactivo ────────────────────────────────────────────
     st.markdown('---')
