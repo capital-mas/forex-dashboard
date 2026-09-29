@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
 from modulo_opciones import modulo_opciones
+from modulo_gex import modulo_gex
 from modulo_estados_financieros import render_analisis_profundo, render_comparativo_estados
 from modulo_calendario import render_calendario_economico, render_noticias
 from modulo_noticias_mercado import render_noticias_mercado
@@ -9089,8 +9090,8 @@ for key, default in [
 
 
 _now_str = ahora_ar().strftime('%H:%M')
-_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'renta_fija_macro': '#00838f', 'ia_asistente': '#bc8cff', 'senales': '#ff6ec7', 'finanzas': '#6CC24A'}
-_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'renta_fija_macro': 'Renta Fija', 'ia_asistente': 'Asistente IA', 'senales': 'Señales', 'finanzas': 'Finanzas'}
+_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'gex': '#bc8cff', 'renta_fija_macro': '#00838f', 'ia_asistente': '#bc8cff', 'senales': '#ff6ec7', 'finanzas': '#6CC24A'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'gex': 'GEX', 'renta_fija_macro': 'Renta Fija', 'ia_asistente': 'Asistente IA', 'senales': 'Señales', 'finanzas': 'Finanzas'}
 
 HORIZONTE = st.session_state['nav_horizonte']
 MODULO    = st.session_state['nav_modulo']
@@ -9424,7 +9425,9 @@ with st.container(key='nav_pills_wrap'):
             ('🎯 Señales de Trading' if TIENE_ACCESO_PRO else '🔒 Señales de Trading (Pro)'):
                                      ('senales', 'senales'),
             '🎲 Valuación de Opciones': ('opciones', 'opciones'),
+            '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),          # ← nuevo
         }
+        _trading_horizontes = {'pares', 'senales', 'opciones', 'gex'}   # ← agregar 'gex'
         _trading_horizontes = {'pares', 'senales', 'opciones'}
         _trading_activo = HORIZONTE in _trading_horizontes
         _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
@@ -9551,6 +9554,7 @@ with st.container(key='nav_mobile_wrap'):
         ('🧮 Optimizar' if TIENE_ACCESO_PRO else '🔒 Optimizar (Pro)'): 'optimizador',
         ('🔗 Pares' if TIENE_ACCESO_PRO else '🔒 Pares (Pro)'): 'pares',
         '🎲 Opciones': 'opciones',
+        ('🧲 GEX' if TIENE_ACCESO_PRO else '🔒 Pares (Pro)'): 'gex',
         '📐 Promediador': 'promediador',
         ('🎯 Señales' if TIENE_ACCESO_PRO else '🔒 Señales (Pro)'): 'senales',
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
@@ -9688,6 +9692,7 @@ titulos = {
     'cot': ('Análisis COT — Commitment of Traders', '📑', 'Posicionamiento de Managed Money — 100% datos manuales, sin precio'),
     'tff': ('Análisis TFF — Traders in Financial Futures', '📑', 'Posicionamiento Asset Manager vs. Leveraged Funds — índices, forex y cripto'),
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
+    'gex': ('GEX — Gamma Exposure', '🧲', 'Exposición gamma, punto de cambio de gamma y paredes de Calls/Puts · datos CBOE'),
     'renta_fija_macro': ('Renta Fija, Salud del Mercado y Macro', '📉','Bonos, tasas del Tesoro, crédito corporativo y 12 ratios macro estratégicos'),
     'senales': ('Señales de Trading', '🎯', 'Publicación de señales y simulador de capital'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
@@ -9713,6 +9718,7 @@ badge_map = {
     'optimizador':('#bc8cff', 'rgba(188,140,255,0.12)','OPTIMIZADOR'),
     'pares': ('#79c0ff', 'rgba(121,192,255,0.12)', 'ROTACIÓN'),
     'opciones': ('#bc5cff', 'rgba(188,92,255,0.12)', 'OPCIONES'),
+    'gex': ('#bc8cff', 'rgba(188,140,255,0.12)', 'GEX'),
     'senales': ('#ff6ec7', 'rgba(255,110,199,0.12)', 'SEÑALES'),
     'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
     'watchlist': ('#e3b341', 'rgba(227,179,65,0.12)', 'WATCHLIST'),
@@ -9797,6 +9803,12 @@ elif MODULO == 'pares':
         _mostrar_bloqueo_pro('Rotación y Pares')
 elif MODULO == 'opciones':
     modulo_opciones()
+
+  elif MODULO == 'gex':
+      if TIENE_ACCESO_PRO:
+          modulo_gex()
+      else:
+          _mostrar_bloqueo_pro('GEX')
 
 elif MODULO == 'senales':
     if TIENE_ACCESO_PRO:
