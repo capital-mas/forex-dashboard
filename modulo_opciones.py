@@ -26,6 +26,11 @@ NOMBRES_GRIEGAS = ["Delta", "Gamma", "Theta", "Vega", "Rho"]
 N_SIMULACIONES_OPC = 3000          # trayectorias de la simulación Monte Carlo
 VENTANA_VOL_CORTA_OPC = 40         # ruedas usadas para estimar la tendencia reciente
 
+# Símbolos de Buenos Aires (.BA) → ADR de EEUU que sí tiene cadena de opciones en Yahoo
+MAPA_ADR = {'GGAL.BA': 'GGAL', 'YPFD.BA': 'YPF', 'PAMP.BA': 'PAM', 'BMA.BA': 'BMA',
+            'BBAR.BA': 'BBAR', 'SUPV.BA': 'SUPV', 'CEPU.BA': 'CEPU', 'EDN.BA': 'EDN',
+            'LOMA.BA': 'LOMA', 'TGSU2.BA': 'TGS', 'TEO.BA': 'TEO', 'CRES.BA': 'CRESY'}
+
 
 # True = las explicaciones debajo de cada gráfico aparecen abiertas; False = plegadas
 EXPLICACIONES_ABIERTAS = True
@@ -160,25 +165,32 @@ def _opc_vencimientos_disponibles(ticker):
 @st.cache_data(ttl=900, show_spinner=False)
 def _opc_cadena_opciones(ticker, vencimiento):
     """Descarga la cadena de opciones (calls y puts) de Yahoo Finance para un símbolo
-    y una fecha de vencimiento puntual (formato 'YYYY-MM-DD', tal cual la devuelve
-    yfinance en .options). Devuelve dict {'calls': df, 'puts': df} o None si falla."""
+    y una fecha de vencimiento puntual (formato 'YYYY-MM-DD').
+    IMPORTANTE: ante cualquier falla LANZA una excepción (st.cache_data no cachea excepciones),
+    así un error transitorio de Yahoo no queda guardado 15 minutos.
+    Usar _opc_cadena_segura() para obtener dict o None."""
+    import yfinance as yf
+    cadena = yf.Ticker(ticker).option_chain(vencimiento)
+    calls, puts = cadena.calls.copy(), cadena.puts.copy()
+
+    cols_utiles = ['contractSymbol', 'strike', 'lastPrice', 'bid', 'ask', 'volume',
+                   'openInterest', 'impliedVolatility', 'inTheMoney']
+    for df in (calls, puts):
+        for c in cols_utiles:
+            if c not in df.columns:
+                df[c] = np.nan
+
+    calls = calls[cols_utiles].sort_values('strike').reset_index(drop=True)
+    puts = puts[cols_utiles].sort_values('strike').reset_index(drop=True)
+    if calls.empty and puts.empty:
+        raise ValueError('cadena vacía')
+    return {'calls': calls, 'puts': puts}
+
+
+def _opc_cadena_segura(ticker, vencimiento):
+    """Wrapper: mantiene el contrato (dict o None) sin cachear el None."""
     try:
-        import yfinance as yf
-        cadena = yf.Ticker(ticker).option_chain(vencimiento)
-        calls, puts = cadena.calls.copy(), cadena.puts.copy()
-
-        cols_utiles = ['contractSymbol', 'strike', 'lastPrice', 'bid', 'ask', 'volume',
-                       'openInterest', 'impliedVolatility', 'inTheMoney']
-        for df in (calls, puts):
-            for c in cols_utiles:
-                if c not in df.columns:
-                    df[c] = np.nan
-
-        calls = calls[cols_utiles].sort_values('strike').reset_index(drop=True)
-        puts = puts[cols_utiles].sort_values('strike').reset_index(drop=True)
-        if calls.empty and puts.empty:
-            return None
-        return {'calls': calls, 'puts': puts}
+        return _opc_cadena_opciones(ticker, vencimiento)
     except Exception:
         return None
 
@@ -452,7 +464,6 @@ def sugerir_alternativas_opcion(checks, accion, tipo, precio_mercado, precio_teo
         sugerencias.append("Según el Monte Carlo, la probabilidad de que el precio favorezca a esta opción es "
                             "menor al 45% → la estadística del activo no acompaña esta opción en particular. "
                             "Considerá un precio de ejercicio más cercano al precio actual, o esperá a que el escenario se corra a favor.")
-
     return sugerencias
 
 
@@ -604,26 +615,73 @@ def _gamma_bs_vec(S, K, T, r, sigma, q=0.0):
     return np.exp(-q * T) * norm.pdf(d1) / (S * sigma * np.sqrt(T))
 
 
+def resolver_ticker_gex(ticker):
+    """Devuelve (ticker_con_opciones, aviso). Si el símbolo no tiene cadena en Yahoo, prueba con el ADR.
+    Devuelve (None, None) si no hay forma de conseguir una cadena."""
+    if _opc_vencimientos_disponibles(ticker):
+        return ticker, None
+    adr = MAPA_ADR.get(ticker)
+    if adr and _opc_vencimientos_disponibles(adr):
+        return adr, f'{ticker} no tiene opciones en Yahoo; se usa el ADR **{adr}** (precio en USD del ADR).'
+    return None, None
+
+
 @st.cache_data(ttl=900, show_spinner=False)
-def _opc_gex_base(ticker, max_vtos=6):
-    """Cadena de los próximos vencimientos en un solo DataFrame largo (precio de ejercicio, tipo, interés abierto, vol. implícita, T)."""
-    vtos = _opc_vencimientos_disponibles(ticker)[:max_vtos]
+def _opc_gex_base(ticker, max_vtos=6, iv_respaldo=0.40):
+    """Cadena de los próximos vencimientos en un solo DataFrame largo
+    (precio de ejercicio, tipo, interés abierto, vol. implícita, T).
+    Devuelve (df, diag). Si df es None, diag['motivo'] explica qué pasó."""
+    diag = {'vtos': 0, 'filas': 0, 'oi_desde_volumen': False, 'iv_rellenadas': 0, 'motivo': None}
+    vtos = _opc_vencimientos_disponibles(ticker)
+    if not vtos:
+        diag['motivo'] = 'Yahoo no publica vencimientos para este símbolo.'
+        return None, diag
+
     partes = []
-    for v in vtos:
-        cad = _opc_cadena_opciones(ticker, v)
+    for v in vtos[:max_vtos]:
+        cad = _opc_cadena_segura(ticker, v)
         if not cad:
             continue
+        diag['vtos'] += 1
         dias = max((datetime.strptime(v, '%Y-%m-%d').date() - date.today()).days, 0)
         T = max(dias, 0.5) / 365          # piso para que 0DTE no rompa la división
         for tipo, key in (('C', 'calls'), ('P', 'puts')):
-            d = cad[key][['strike', 'openInterest', 'impliedVolatility']].copy()
+            d = cad[key][['strike', 'openInterest', 'volume', 'impliedVolatility']].copy()
             d['tipo'], d['T'], d['vto'] = tipo, T, v
             partes.append(d)
     if not partes:
-        return None
-    df = pd.concat(partes, ignore_index=True).dropna(subset=['openInterest', 'impliedVolatility'])
-    df = df[(df['openInterest'] > 0) & (df['impliedVolatility'] > 0.01)]   # filtra IV basura de Yahoo
-    return df.reset_index(drop=True) if not df.empty else None
+        diag['motivo'] = 'No se pudo descargar ninguna cadena (¿límite de Yahoo? probá de nuevo en unos minutos).'
+        return None, diag
+
+    df = pd.concat(partes, ignore_index=True)
+    df['openInterest'] = pd.to_numeric(df['openInterest'], errors='coerce').fillna(0)
+    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
+    df['impliedVolatility'] = pd.to_numeric(df['impliedVolatility'], errors='coerce')
+
+    # 1) Interés abierto: si Yahoo lo trae todo en 0/NaN, uso el volumen como aproximación
+    if df['openInterest'].sum() == 0:
+        if df['volume'].sum() > 0:
+            df['openInterest'] = df['volume']
+            diag['oi_desde_volumen'] = True
+        else:
+            diag['motivo'] = 'Todos los contratos vienen sin interés abierto ni volumen (mercado cerrado / sin datos).'
+            return None, diag
+    df = df[df['openInterest'] > 0].copy()
+
+    # 2) IV basura (<1% o NaN): la reemplazo por la mediana de las IV válidas del mismo vencimiento
+    malo = ~(df['impliedVolatility'] > 0.01)
+    if malo.any():
+        med = df.loc[~malo].groupby('vto')['impliedVolatility'].median()
+        relleno = df['vto'].map(med).fillna(iv_respaldo)
+        df.loc[malo, 'impliedVolatility'] = relleno[malo]
+        diag['iv_rellenadas'] = int(malo.sum())
+
+    df = df.drop(columns='volume').reset_index(drop=True)
+    diag['filas'] = len(df)
+    if df.empty:
+        diag['motivo'] = 'Después de filtrar no quedó ningún contrato.'
+        return None, diag
+    return df, diag
 
 
 def calcular_gex_por_strike(df, S, r, q, mult=100, rango=0.20):
@@ -714,19 +772,43 @@ def fig_gex(piv, zonas, S):
     return fig
 
 
-def render_gex(ticker, S, r, q, mult=100):
+def render_gex(ticker, S, r, q, mult=100, vol_hist=0.40):
     if not ticker:
         return
+
+    # 1) Resolver el símbolo que realmente tiene opciones (ADR si es un .BA)
+    ticker_gex, aviso = resolver_ticker_gex(ticker)
+    if ticker_gex is None:
+        st.warning(f'Yahoo Finance no tiene opciones para **{ticker}** ni un ADR equivalente conocido. '
+                   'Probá con el símbolo de EEUU (ej. GGAL en vez de GGAL.BA).')
+        if st.button('🔄 Reintentar (limpiar caché)', key='opc_gex_retry0'):
+            st.cache_data.clear(); st.rerun()
+        return
+    if aviso:
+        st.info(aviso)
+        d_adr = _opc_datos_activo(ticker_gex)
+        if d_adr is None:
+            st.warning(f'No se pudo obtener el precio de {ticker_gex}.')
+            return
+        S = d_adr['S']          # GEX debe calcularse con el spot del subyacente que tiene las opciones
+
     c1, _ = st.columns([1, 2])
     with c1:
         n_vtos = st.slider('Vencimientos a incluir', 1, 12, 6, key='opc_gex_nvtos',
                            help='Más vencimientos = más panorama, pero los cercanos pesan mucho más (gamma alta).')
     st.caption(f'Tasa usada: {r:.2%} (la que cargaste en el paso 1).')
-    df = _opc_gex_base(ticker, n_vtos)
+
+    # 2) Cadena tolerante con diagnóstico
+    df, diag = _opc_gex_base(ticker_gex, n_vtos, vol_hist)
     if df is None:
-        st.warning('No hay cadena de opciones utilizable (interés abierto / vol. implícita) para este símbolo. '
-                   'GEX necesita cadena real; no funciona con carga manual.')
+        st.warning(f"No hay cadena utilizable para GEX: {diag['motivo']}")
+        if st.button('🔄 Reintentar (limpiar caché)', key='opc_gex_retry'):
+            st.cache_data.clear(); st.rerun()
         return
+    if diag['oi_desde_volumen']:
+        st.caption('ℹ️ Yahoo no informó interés abierto; se usó el **volumen** como aproximación (menos confiable).')
+    if diag['iv_rellenadas']:
+        st.caption(f"ℹ️ {diag['iv_rellenadas']} contratos tenían vol. implícita inválida; se reemplazó por la mediana del vencimiento.")
 
     piv = calcular_gex_por_strike(df, S, r, q, mult)
     if piv.empty:
@@ -1179,7 +1261,7 @@ def modulo_opciones():
                                      min_value=date.today(), key='opc_vto_input')
                 if ticker:
                     st.caption('⚠️ Yahoo Finance no tiene cadena de opciones publicada para este símbolo '
-                               '(común en algunos ADRs/CEDEARs). Carga manual de precios.')
+                               '(común en algunos ADRs/CEDEARs y en los tickers .BA). Carga manual de precios.')
         with c4:
             r = st.number_input('Tasa de interés anual (decimal)', min_value=0.0, max_value=3.0,
                                  value=float(st.session_state['opc_r']), step=0.01, format='%.4f', key='opc_r_input')
@@ -1232,7 +1314,7 @@ def modulo_opciones():
     # GEX: solo se calcula si activás el toggle (evita descargar cadenas en cada rerun)
     with st.expander('🧲 GEX — Exposición Gamma y zonas', expanded=False):
         if st.toggle('Calcular GEX', value=False, key='opc_gex_toggle'):
-            render_gex(st.session_state['opc_ticker'].strip().upper(), S, r, q, mult)
+            render_gex(st.session_state['opc_ticker'].strip().upper(), S, r, q, mult, vol_hist)
 
     # ── PASO 2: elegir estrategia ────────────────────────────────────────
     st.markdown('---')
@@ -1275,7 +1357,7 @@ def modulo_opciones():
 
     vencimiento_str = st.session_state['opc_vto'].strftime('%Y-%m-%d')
     cadena_disponible = vencimiento_str in vtos_reales if vtos_reales else False
-    cadena = _opc_cadena_opciones(st.session_state['opc_ticker'].strip().upper(), vencimiento_str) \
+    cadena = _opc_cadena_segura(st.session_state['opc_ticker'].strip().upper(), vencimiento_str) \
         if cadena_disponible else None
 
     if cadena_disponible and cadena:
