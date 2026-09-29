@@ -7,16 +7,20 @@
 #
 #  Incluye: GEX + Put/Call, Max Pain, movimiento esperado, GEX por vencimiento,
 #  vol. implícita (estructura y skew), flujo inusual, DEX (exposición delta con
-#  la delta publicada por CBOE), Vanna y Charm, y un puente hacia
+#  la delta publicada por CBOE), Vanna y Charm, un puente hacia
 #  "Valuación de Opciones" (punto de cambio de gamma, paredes y strikes
-#  vendidos sugeridos).
+#  vendidos sugeridos) y el Squeeze Metrics Score (índice propio 0-100:
+#  gamma negativa + DEX sesgado + PCR extremo + gamma concentrada en el
+#  primer vencimiento, con alerta de "Zona de Squeeze Inminente").
 #
 #  Uso:   from modulo_gex import modulo_gex
 #         modulo_gex()
 #  Puente (desde la calculadora):
 #         from modulo_gex import leer_puente_gex
 #         p = leer_puente_gex('SPY')      # dict o None
-#  Requiere: streamlit, pandas, numpy, scipy, plotly, requests
+#         p['squeeze']                    # score, nivel, direccion, inminente
+#  Requiere: streamlit (>= 1.37, por st.fragment), pandas, numpy, scipy,
+#            plotly, requests
 # ==============================================================
 
 import re
@@ -363,6 +367,7 @@ def fig_gex_total(grid, total, S, flip):
 #  1) Put/Call  2) Max Pain  3) Movimiento esperado
 #  4) GEX por vencimiento  5) Vol. implícita (estructura + skew)  6) Flujo inusual
 #  7) DEX  8) Vanna y Charm  9) Puente a Valuación de Opciones
+#  10) Squeeze Metrics Score (más abajo, antes de la UI principal)
 # ==============================================================
 
 def _subset_vtos(df_completo, n_vtos):
@@ -782,10 +787,13 @@ def fig_barras_signo(x, y, S, titulo, ytitulo):
 
 def publicar_puente_gex(simbolo, S, z, extra=None):
     """Guarda en session_state el punto de cambio de gamma, las paredes y (si hay) los strikes sugeridos.
-    La calculadora lo lee con leer_puente_gex()."""
+    Conserva el último Squeeze Score del mismo símbolo. La calculadora lo lee con leer_puente_gex()."""
+    prev = st.session_state.get(CLAVE_PUENTE) or {}
     p = {'simbolo': simbolo, 'spot': float(S), 'flip': z['flip'], 'call_wall': z['call_wall'],
          'put_wall': z['put_wall'], 'regimen': z['regimen'], 'gex_total': z['gex_total'],
          'hora': datetime.now().strftime('%H:%M:%S'), 'ts': time.time()}
+    if prev.get('simbolo') == simbolo and prev.get('squeeze'):
+        p['squeeze'] = prev['squeeze']
     if extra:
         p.update(extra)
     st.session_state[CLAVE_PUENTE] = p
@@ -1417,7 +1425,7 @@ CBOE publica la vol. implícita y el interés abierto de cada contrato, pero no 
                         st.caption(f"ℹ️ El put sugerido ({s['strike']:,.2f}) queda **por encima** del punto de cambio de gamma "
                                    f"({z['flip']:,.2f}): si el precio lo alcanza, ya estaría en régimen de amplificación.")
 
-            # publica todo en la sesión para que la calculadora lo lea
+            # publica todo en la sesión para que la calculadora lo lea (conserva el squeeze publicado)
             publicar_puente_gex(simbolo, S, z, extra={
                 'vto': vto_p, 'sugerencias': sug,
                 'techo_esperado': float(fila_em['alto']) if fila_em is not None else None,
@@ -1433,11 +1441,12 @@ if p:
     p['flip'], p['call_wall'], p['put_wall'], p['regimen'], p['spot']
     for s in p.get('sugerencias', []):
         s['lado'], s['strike'], s['prima_mid'], s['delta']   # 'Call vendido' / 'Put vendido'
+    sq = p.get('squeeze')            # {'score', 'nivel', 'direccion', 'inminente', 'hora'} o None
 """, language='python')
 
             render_explicacion('Cómo funciona el puente con Valuación de Opciones y cómo usarlo', f"""
 **Qué hace**
-Toma lo que ya calculó el GEX (**punto de cambio de gamma** y **paredes de Calls y Puts**) y lo deja disponible para la calculadora de opciones. A partir de eso sugiere **qué strikes vender** en el vencimiento que elijas. Todos los datos (strikes, primas, vol. implícita, delta) vienen de la misma cadena de CBOE.
+Toma lo que ya calculó el GEX (**punto de cambio de gamma** y **paredes de Calls y Puts**) y lo deja disponible para la calculadora de opciones. A partir de eso sugiere **qué strikes vender** en el vencimiento que elijas. Todos los datos (strikes, primas, vol. implícita, delta) vienen de la misma cadena de CBOE. También deja publicado el **Squeeze Metrics Score** para que la calculadora pueda advertir si el activo está en zona de riesgo.
 
 **Cómo elige los strikes**
 - **Call vendido:** el primer strike listado **en o por encima de la pared de Calls**, siempre que esa pared esté sobre el precio. La lógica: la pared suele actuar como techo, así que vender por encima tiene un "escudo" extra.
@@ -1460,6 +1469,304 @@ Toma lo que ya calculó el GEX (**punto de cambio de gamma** y **paredes de Call
 - Vender opciones descubiertas puede generar pérdidas grandes. Verificá el riesgo en la calculadora antes de operar.
 - Los datos tienen ~15 minutos de retraso y el interés abierto es del día anterior.
 """)
+
+
+# ==============================================================
+#  10) SQUEEZE METRICS SCORE (0-100)
+# ==============================================================
+#  Índice propio 0-100 con cuatro componentes (cada uno también 0-100):
+#   · GAMMA (35%): régimen negativo, cercanía al punto de cambio de gamma y
+#                  relación GEX neto / GEX bruto.
+#   · DEX   (25%): qué tan sesgada está la exposición delta (±SQ_DEX_SATURACION% = 100).
+#   · PCR   (25%): qué tan lejos de 1.0 está el Put/Call (mezcla OI 40% + volumen 60%).
+#   · VENC  (15%): concentración del gamma en el vencimiento más cercano × urgencia
+#                  (días que faltan). Amplificador tipo 0DTE: no tiene dirección propia.
+#  Ajuste por coherencia: si el sesgo del DEX y el del PCR apuntan al mismo lado, ×1.10;
+#  si se contradicen, ×0.90.
+#  "Zona de Squeeze Inminente" = score >= SQ_UMBRAL Y (gamma negativa o precio a ≤2% del flip).
+# ==============================================================
+
+SQ_PESOS = {'gamma': 0.35, 'dex': 0.25, 'pcr': 0.25, 'venc': 0.15}
+SQ_VENC_SHARE_MIN = 30.0        # % del gamma bruto en el 1.er vencimiento que da 0 puntos
+SQ_VENC_SHARE_MAX = 80.0        # % que da 100 puntos (antes de aplicar la urgencia)
+SQ_DEX_SATURACION = 60.0        # sesgo DEX (%) que da 100 puntos
+SQ_PCR_SATURACION = 2.0         # P/C = 2.0 (o 0.5) da 100 puntos
+SQ_UMBRAL = 70                  # desde acá es "Squeeze Inminente" (si además hay gamma negativa/cerca del flip)
+SQ_HIST_MAX = 200
+CLAVE_SQ_HIST = 'gex_sq_hist'
+C_NARANJA = '#f0883e'
+
+
+def _clip(x, lo=0.0, hi=100.0):
+    return float(min(max(x, lo), hi))
+
+
+def _sq_gamma(piv, z, S):
+    """Puntaje de gamma: posición respecto del flip (60%) + relación neto/bruto (40%)."""
+    bruto = float(piv['gex_calls'].abs().sum() + piv['gex_puts'].abs().sum())
+    neto = float(piv['neto'].sum())
+    ratio = neto / bruto if bruto > 0 else 0.0                 # -1 (todo puts) .. +1 (todo calls)
+    s_ratio = (1 - ratio) / 2 * 100                            # -1 → 100 · 0 → 50 · +1 → 0
+    flip = z['flip']
+    if flip is None:
+        dist = None
+        s_pos = 80.0 if z['regimen'] == 'negativo' else 0.0
+    else:
+        dist = (S / flip - 1) * 100                            # <0: por debajo del flip (gamma negativa)
+        if dist <= 0:
+            s_pos = 55 + min(45.0, abs(dist) * 9)              # 5% por debajo del flip = 100
+        else:
+            s_pos = max(0.0, 40 - dist * 8)                    # pegado al flip por arriba = 40 · a 5% = 0
+    return {'score': _clip(0.6 * s_pos + 0.4 * s_ratio), 'dist': dist, 'ratio': ratio, 'regimen': z['regimen'],
+            'dir': 0}
+
+
+def _sq_dex(piv_d):
+    """Puntaje de DEX: cuánto se aleja de 0 el sesgo direccional (neto / bruto)."""
+    dc, dp = float(piv_d['dex_calls'].sum()), float(piv_d['dex_puts'].sum())
+    bruto = abs(dc) + abs(dp)
+    sesgo = (dc + dp) / bruto * 100 if bruto > 0 else 0.0
+    direccion = 0 if abs(sesgo) < 10 else (1 if sesgo > 0 else -1)
+    return {'score': _clip(abs(sesgo) / SQ_DEX_SATURACION * 100), 'sesgo': sesgo, 'neto': dc + dp, 'dir': direccion}
+
+
+def _sq_pcr(tot):
+    """Puntaje de Put/Call extremo (simétrico en escala log). Combina OI (40%) y volumen (60%)."""
+    def _s(p):
+        if p is None or pd.isna(p) or p <= 0:
+            return None
+        return _clip(abs(np.log(p)) / np.log(SQ_PCR_SATURACION) * 100)
+
+    s_oi, s_vol = _s(tot.get('P/C OI')), _s(tot.get('P/C Vol.'))
+    if s_oi is None and s_vol is None:
+        return {'score': None, 'pc_oi': np.nan, 'pc_vol': np.nan, 'dir': 0}
+    if s_vol is None:
+        score = s_oi
+    elif s_oi is None:
+        score = s_vol
+    else:
+        score = 0.4 * s_oi + 0.6 * s_vol
+    ref = tot['P/C Vol.'] if s_vol is not None else tot['P/C OI']
+    direccion = 1 if ref < 0.9 else (-1 if ref > 1.1 else 0)   # +1 = predominan calls · -1 = predominan puts
+    return {'score': score, 'pc_oi': tot.get('P/C OI', np.nan), 'pc_vol': tot.get('P/C Vol.', np.nan), 'dir': direccion}
+
+
+def _sq_venc(res_v):
+    """Puntaje de concentración: qué parte del gamma bruto está en el vencimiento más cercano y qué tan cerca está.
+    res_v viene de calcular_gex_por_vto(). Es un amplificador de intensidad, sin dirección propia."""
+    vacio = {'score': None, 'share': np.nan, 'dias': np.nan, 'vto': '', 'urgencia': np.nan, 'dir': 0}
+    if res_v is None or res_v.empty or len(res_v) < 2:      # con un solo vencimiento la concentración es trivial
+        return vacio
+    tot = float(res_v['abs'].sum())
+    if tot <= 0:
+        return vacio
+    share = float(res_v['abs'].iloc[0]) / tot * 100          # el índice viene ordenado por fecha
+    dias = float(res_v['dias'].iloc[0])
+    s_share = _clip((share - SQ_VENC_SHARE_MIN) / (SQ_VENC_SHARE_MAX - SQ_VENC_SHARE_MIN) * 100)
+    urg = 1.0 if dias <= 1 else 0.9 if dias <= 2 else 0.7 if dias <= 5 else 0.5 if dias <= 10 else 0.3
+    return {'score': _clip(s_share * urg), 'share': share, 'dias': dias, 'vto': str(res_v.index[0]),
+            'urgencia': urg, 'dir': 0}
+
+
+def calcular_squeeze_score(piv, piv_d, tot_pc, z, S, res_v=None):
+    """Devuelve dict con score (0-100), nivel, color, inminente, direccion y detalle por componente."""
+    g, dx, pc, vc = _sq_gamma(piv, z, S), _sq_dex(piv_d), _sq_pcr(tot_pc), _sq_venc(res_v)
+    comp = {'gamma': g, 'dex': dx, 'pcr': pc, 'venc': vc}
+    activos = {k: v for k, v in comp.items() if v['score'] is not None}
+    ptot = sum(SQ_PESOS[k] for k in activos)
+    pesos_ef = {k: SQ_PESOS[k] / ptot for k in activos}
+    base = sum(pesos_ef[k] * activos[k]['score'] for k in activos)
+
+    dd, dp = dx['dir'], (pc['dir'] if pc['score'] is not None else 0)
+    alin = 0
+    if dd != 0 and dp != 0:
+        alin = 1 if dd == dp else -1
+    score = _clip(base * (1 + 0.10 * alin))
+    direccion = dd if dd != 0 else dp
+
+    dist = g['dist']
+    cerca_flip = dist is not None and abs(dist) <= 2
+    gamma_ok = (z['regimen'] == 'negativo') or cerca_flip
+    inminente = score >= SQ_UMBRAL and gamma_ok
+
+    if inminente:
+        nivel, color = 'Zona de Squeeze Inminente', C_RED
+    elif score >= 50:
+        nivel, color = 'Elevado', C_NARANJA
+    elif score >= 25:
+        nivel, color = 'Moderado', C_YELL
+    else:
+        nivel, color = 'Bajo', C_GREEN
+    return {'score': score, 'base': base, 'alineacion': alin, 'nivel': nivel, 'color': color,
+            'inminente': inminente, 'direccion': direccion, 'comp': comp, 'pesos': pesos_ef,
+            'freno_gamma': score >= SQ_UMBRAL and not gamma_ok}
+
+
+def _txt_direccion(d):
+    if d > 0:
+        return 'Alcista (squeeze hacia arriba)'
+    if d < 0:
+        return 'Bajista (cascada hacia abajo)'
+    return 'Sin dirección clara'
+
+
+def fig_squeeze_gauge(score, color):
+    fig = go.Figure(go.Indicator(
+        mode='gauge+number', value=score,
+        number=dict(font=dict(color=C_TEXT, size=44), valueformat='.0f'),
+        gauge=dict(axis=dict(range=[0, 100], tickcolor=C_MUTED, tickfont=dict(color=C_MUTED)),
+                   bar=dict(color=color, thickness=0.3), bgcolor=C_BG1, borderwidth=0,
+                   steps=[dict(range=[0, 25], color='rgba(63,185,80,0.18)'),
+                          dict(range=[25, 50], color='rgba(227,179,65,0.18)'),
+                          dict(range=[50, 70], color='rgba(240,136,62,0.20)'),
+                          dict(range=[70, 100], color='rgba(248,81,73,0.25)')],
+                   threshold=dict(line=dict(color=C_TEXT, width=3), thickness=0.8, value=SQ_UMBRAL))))
+    fig.update_layout(**PLOTLY_LAYOUT_GEX, height=250, margin=dict(l=20, r=20, t=30, b=10))
+    return fig
+
+
+def fig_squeeze_hist(hist):
+    fig = go.Figure(go.Scatter(x=[h['hora'] for h in hist], y=[h['score'] for h in hist], mode='lines+markers',
+                               line=dict(color='#bc8cff', width=2.2), marker=dict(size=6)))
+    fig.add_hline(y=SQ_UMBRAL, line_dash='dash', line_color=C_RED, opacity=0.8,
+                  annotation_text='Umbral de squeeze inminente', annotation_font_color=C_RED)
+    fig.update_layout(**PLOTLY_LAYOUT_GEX, height=260,
+                      title=dict(text='Evolución del score en esta sesión', font=dict(color=C_TEXT, size=13)),
+                      xaxis=dict(type='category', gridcolor=C_GRID),
+                      yaxis=dict(title='Score', range=[0, 100], gridcolor=C_GRID),
+                      margin=dict(l=10, r=10, t=45, b=10))
+    return fig
+
+
+def _actualizar_hist_squeeze(simbolo, sq):
+    """Guarda el score en la sesión y dispara un aviso (toast) cuando cruza el umbral hacia arriba."""
+    hist = st.session_state.setdefault(CLAVE_SQ_HIST, {}).setdefault(simbolo, [])
+    ahora = time.time()
+    previo = hist[-1] if hist else None
+    if previo is None or ahora - previo['ts'] >= 30 or previo['nivel'] != sq['nivel']:
+        hist.append({'ts': ahora, 'hora': datetime.now().strftime('%H:%M:%S'),
+                     'score': round(sq['score'], 1), 'nivel': sq['nivel']})
+        del hist[:-SQ_HIST_MAX]
+    if previo is not None and not previo['nivel'].startswith('Zona') and sq['inminente']:
+        st.toast(f"🚨 {simbolo}: entró en Zona de Squeeze Inminente (score {sq['score']:.0f})", icon='🚨')
+    return hist
+
+
+def _panel_squeeze(simbolo_cboe, simbolo, n_vtos, rango_pct, r, q, mult):
+    """Panel completo. Recalcula desde la caché de CBOE (TTL 5 min), por eso puede correr solo como fragmento."""
+    try:
+        datos = _gex_descargar(simbolo_cboe)
+    except Exception as e:
+        st.warning(f'Squeeze Score: no se pudieron obtener datos ({type(e).__name__}: {e})')
+        return
+    S = datos['spot']
+    df, _ = preparar_cadena(datos['df'], n_vtos)
+    if df is None:
+        st.info('Squeeze Score: no hay cadena utilizable para estos vencimientos.')
+        return
+    df, _ = reparar_delta(df, S, r, q)
+    rango = rango_pct / 100
+    piv = calcular_gex_por_strike(df, S, r, q, mult, rango)
+    piv_d = calcular_dex_por_strike(df, S, mult, rango)
+    if piv.empty or piv_d.empty:
+        st.info('Squeeze Score: no hay contratos con interés abierto cerca del precio.')
+        return
+    grid, total = gex_total_vs_spot(df, S, r, q, mult)
+    z = calcular_zonas_gex(piv, grid, total, S)
+    _, tot_pc = calcular_put_call(_subset_vtos(datos['df'], n_vtos))
+    res_v, _ = calcular_gex_por_vto(df, S, r, q, mult, rango)
+
+    sq = calcular_squeeze_score(piv, piv_d, tot_pc, z, S, res_v)
+    hist = _actualizar_hist_squeeze(simbolo, sq)
+
+    # deja el score disponible para la calculadora de opciones (puente)
+    p = st.session_state.get(CLAVE_PUENTE)
+    if p and p.get('simbolo') == simbolo:
+        p['squeeze'] = {'score': sq['score'], 'nivel': sq['nivel'], 'direccion': sq['direccion'],
+                        'inminente': sq['inminente'], 'hora': datetime.now().strftime('%H:%M:%S')}
+
+    if sq['inminente']:
+        st.error(f"🚨 **ZONA DE SQUEEZE INMINENTE en {simbolo}** — score **{sq['score']:.0f}/100** · "
+                 f"{_txt_direccion(sq['direccion'])}. Gamma negativa (o pegada al punto de cambio) + posicionamiento sesgado.")
+    elif sq['freno_gamma']:
+        st.warning(f"⚠️ Score alto ({sq['score']:.0f}) pero el régimen de gamma es **positivo y lejos del punto de cambio**: "
+                   "los creadores de mercado amortiguan, por eso no se marca como inminente.")
+
+    cg, cm = st.columns([1, 1])
+    with cg:
+        st.plotly_chart(fig_squeeze_gauge(sq['score'], sq['color']), use_container_width=True, key='gex_fig_sq_gauge')
+    with cm:
+        st.metric('Nivel', sq['nivel'])
+        st.metric('Dirección probable', _txt_direccion(sq['direccion']))
+        st.metric('Coherencia DEX / PCR',
+                  {1: 'Alineados (×1.10)', -1: 'Contradictorios (×0.90)', 0: 'Neutral (×1.00)'}[sq['alineacion']])
+
+    g, dx, pc, vc = sq['comp']['gamma'], sq['comp']['dex'], sq['comp']['pcr'], sq['comp']['venc']
+    dist_txt = f"{g['dist']:+.1f}% vs punto de cambio" if g['dist'] is not None else 'sin punto de cambio'
+    filas = [{'Componente': 'Gamma negativa', 'Dato': f"Régimen {g['regimen']} · {dist_txt} · neto/bruto {g['ratio']:+.0%}",
+              'Puntaje': g['score'], 'Peso %': sq['pesos']['gamma'] * 100},
+             {'Componente': 'DEX sesgado', 'Dato': f"Sesgo direccional {dx['sesgo']:+.0f}% · neto {_fmt_musd(dx['neto'])}",
+              'Puntaje': dx['score'], 'Peso %': sq['pesos']['dex'] * 100}]
+    if pc['score'] is not None:
+        pv = f"{pc['pc_vol']:.2f}" if not pd.isna(pc['pc_vol']) else 'N/D'
+        po = f"{pc['pc_oi']:.2f}" if not pd.isna(pc['pc_oi']) else 'N/D'
+        filas.append({'Componente': 'PCR extremo', 'Dato': f'P/C volumen {pv} · P/C interés abierto {po}',
+                      'Puntaje': pc['score'], 'Peso %': sq['pesos']['pcr'] * 100})
+    else:
+        filas.append({'Componente': 'PCR extremo', 'Dato': 'Sin datos de Put/Call (se redistribuyó el peso)',
+                      'Puntaje': np.nan, 'Peso %': 0.0})
+    if vc['score'] is not None:
+        filas.append({'Componente': 'Gamma concentrada en el 1.er vencimiento',
+                      'Dato': f"{vc['share']:.0f}% del gamma en {vc['vto']} ({vc['dias']:.0f}d) · urgencia ×{vc['urgencia']:.1f}",
+                      'Puntaje': vc['score'], 'Peso %': sq['pesos']['venc'] * 100})
+    else:
+        filas.append({'Componente': 'Gamma concentrada en el 1.er vencimiento',
+                      'Dato': 'Hace falta más de un vencimiento (se redistribuyó el peso)',
+                      'Puntaje': np.nan, 'Peso %': 0.0})
+    st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True,
+                 column_config={'Puntaje': st.column_config.NumberColumn(format='%.0f'),
+                                'Peso %': st.column_config.NumberColumn(format='%.0f')})
+
+    if len(hist) >= 2:
+        st.plotly_chart(fig_squeeze_hist(hist), use_container_width=True, key='gex_fig_sq_hist')
+
+    render_explicacion('Cómo leer el Squeeze Metrics Score y cómo usarlo', f"""
+**Qué es**
+Un índice propio de **0 a 100** que resume cuánto "combustible" hay para un movimiento explosivo (*squeeze*), mezclando cuatro ingredientes:
+- **Gamma negativa (35%):** si el régimen es negativo, los creadores de mercado **amplifican** el movimiento. Puntúa más cuanto más por debajo del punto de cambio de gamma está el precio y cuanto más domina la gamma de puts. Estar **pegado** al punto de cambio (aun por arriba) también suma, porque un pequeño empujón cambia el régimen.
+- **DEX sesgado (25%):** si la exposición delta está muy inclinada a un lado, hay mucha cobertura que se desarma en la misma dirección.
+- **PCR extremo (25%):** un Put/Call muy lejos de 1 (en cualquier sentido) indica posicionamiento **apretado** de un solo lado. Pesa 40% el interés abierto y 60% el volumen del día.
+- **Gamma concentrada en el 1.er vencimiento (15%):** qué parte del gamma total vence en la fecha más cercana, multiplicada por una **urgencia** según los días que faltan (1 día = ×1.0, hasta 2 = ×0.9, hasta 5 = ×0.7, hasta 10 = ×0.5, más = ×0.3). Cerca del vencimiento la gamma se dispara, así que los movimientos se **amplifican** (efecto tipo 0DTE) y, al expirar, esas coberturas desaparecen de golpe. Este componente **no tiene dirección propia**: solo sube la intensidad.
+
+**Datos de hoy**
+- Score: **{sq['score']:.0f}/100** ({sq['nivel']}), dirección probable: **{_txt_direccion(sq['direccion'])}**.
+- Antes del ajuste de coherencia, el promedio ponderado era **{sq['base']:.0f}**.
+
+**Cómo leerlo**
+- **0-25 Bajo · 25-50 Moderado · 50-70 Elevado.**
+- **70 o más + gamma negativa (o precio a ≤2% del punto de cambio) = Zona de Squeeze Inminente.** Si el score supera 70 pero la gamma es positiva y lejana, se degrada a "Elevado" porque el amortiguador sigue activo.
+- **La dirección** sale del signo del DEX (y del PCR si el DEX es neutro): DEX positivo = squeeze al alza; negativo = cascada a la baja.
+- **Coherencia:** si DEX y PCR empujan al mismo lado, el score sube 10%; si se contradicen, baja 10%.
+- Si activás el **auto-refresco**, aparece un aviso (toast) cuando el score cruza el umbral hacia arriba, y el gráfico de evolución muestra cómo viene la sesión.
+
+**Cómo sacarle provecho**
+- Es un **filtro de atención**: subí el score como alerta para mirar el activo en detalle (paredes, flujo inusual, vencimientos).
+- Con score alto: **no vendas prima descubierta** del lado de la dirección probable; considerá riesgo definido o estrategias que ganen con movimiento.
+- Cruzalo con **Flujo inusual** (posiciones nuevas del mismo lado) y con **GEX por vencimiento** (si la gamma vence pronto, la alerta caduca).
+
+**Límites (importante)**
+- Es un **índice heurístico**: los pesos, umbrales y saturaciones (constantes `SQ_*` arriba del bloque) son un punto de partida razonable, **no están calibrados con backtest**. Conviene ajustarlos mirando cómo se comporta en tus activos.
+- La **concentración en el 1.er vencimiento** es estructuralmente alta en activos con vencimientos diarios (SPX, SPY, QQQ), donde casi siempre hay un 0DTE dominante: ahí el componente sube casi siempre y aporta poca información. En acciones individuales (vencimientos semanales/mensuales) es mucho más discriminante.
+- El PCR es **relativo al activo**: los índices y ETFs tienen P/C naturalmente altos por coberturas, así que un valor "extremo" puede ser lo normal en SPX/SPY.
+- Datos de CBOE con ~15 min de retraso e interés abierto del día anterior: es "casi tiempo real", no tick a tick.
+- No es una señal de compra o venta por sí sola.
+""")
+
+
+def render_squeeze(simbolo_cboe, simbolo, n_vtos, rango_pct, r, q, mult, auto=False):
+    """Dibuja el panel. Con auto=True se vuelve a calcular solo cada 5 min (mismo TTL de la caché de CBOE)."""
+    panel = st.fragment(run_every=300 if auto else None)(_panel_squeeze)
+    panel(simbolo_cboe, simbolo, n_vtos, rango_pct, r, q, mult)
 
 
 # ==============================================================
@@ -1560,6 +1867,15 @@ def modulo_gex():
     else:
         st.error('🔴 **Zona gamma NEGATIVA** — los creadores de mercado amplifican el movimiento: más tendencia y volatilidad. '
                  'Perder la pared de Puts puede acelerar la caída.')
+
+    # ── Squeeze Metrics Score (gamma negativa + DEX sesgado + PCR extremo + gamma concentrada en el 1.er vencimiento) ──
+    st.markdown('---')
+    st.markdown('### 🚨 Squeeze Metrics Score')
+    st.caption('Índice propio 0-100: gamma negativa + DEX sesgado + PCR extremo + gamma concentrada en el primer vencimiento.')
+    sq_auto = st.checkbox('🔔 Auto-actualizar cada 5 min y avisar al entrar en Zona de Squeeze Inminente',
+                          value=False, key='gex_sq_auto')
+    render_squeeze(simbolo_cboe, simbolo, n_vtos, rango_pct, r, q, mult, auto=sq_auto)
+    st.markdown('---')
 
     render_explicacion('Cómo leer estos 4 indicadores', """
 **Qué es cada uno**
