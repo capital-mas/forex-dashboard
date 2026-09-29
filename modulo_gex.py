@@ -1,13 +1,21 @@
 # ==============================================================
 #  MÓDULO GEX — Gamma Exposure, punto de cambio de gamma y paredes
 #  100% independiente del módulo de opciones (no comparte funciones,
-#  caché ni claves de sesión). Fuente de datos: cadena pública y gratuita
-#  de CBOE (retrasada ~15 min). No usa Yahoo Finance ni yfinance.
+#  caché ni claves de sesión, salvo el "puente" explícito de abajo).
+#  Fuente de datos: cadena pública y gratuita de CBOE (retrasada ~15 min).
+#  No usa Yahoo Finance ni yfinance.
 #
 #  Incluye: GEX + Put/Call, Max Pain, movimiento esperado, GEX por vencimiento,
-#  vol. implícita (estructura y skew) y flujo inusual.
+#  vol. implícita (estructura y skew), flujo inusual, DEX (exposición delta con
+#  la delta publicada por CBOE), Vanna y Charm, y un puente hacia
+#  "Valuación de Opciones" (punto de cambio de gamma, paredes y strikes
+#  vendidos sugeridos).
+#
 #  Uso:   from modulo_gex import modulo_gex
 #         modulo_gex()
+#  Puente (desde la calculadora):
+#         from modulo_gex import leer_puente_gex
+#         p = leer_puente_gex('SPY')      # dict o None
 #  Requiere: streamlit, pandas, numpy, scipy, plotly, requests
 # ==============================================================
 
@@ -41,6 +49,9 @@ MAPA_ADR = {'GGAL.BA': 'GGAL', 'YPFD.BA': 'YPF', 'PAMP.BA': 'PAM', 'BMA.BA': 'BM
 _OCC = re.compile(r'^(.+?)(\d{6})([CP])(\d{8})$')            # ej. NVDA260116C00150000
 
 EXPLICACIONES_ABIERTAS = True
+
+# Clave de sesión del puente hacia "Valuación de Opciones" (único punto de contacto entre módulos)
+CLAVE_PUENTE = 'gex_puente'
 
 
 # ==============================================================
@@ -131,16 +142,18 @@ def _gex_descargar(simbolo_cboe):
                 filas.append((int(m.group(4)) / 1000.0, m.group(3), vto.isoformat(),
                               max(dias, 0.5) / 365.0, o.get('open_interest'), o.get('iv'),
                               o.get('volume'),
-                              _mid_contrato(o.get('bid'), o.get('ask'), o.get('last_trade_price'))))
+                              _mid_contrato(o.get('bid'), o.get('ask'), o.get('last_trade_price')),
+                              o.get('delta')))
             if not filas:
                 raise LookupError('No se pudo interpretar ningún contrato vigente de la cadena.')
 
             df = pd.DataFrame(filas, columns=['strike', 'tipo', 'vto', 'T', 'openInterest', 'impliedVolatility',
-                                                 'volume', 'mid'])
+                                                 'volume', 'mid', 'delta'])
             df['openInterest'] = pd.to_numeric(df['openInterest'], errors='coerce').fillna(0.0)
             df['impliedVolatility'] = pd.to_numeric(df['impliedVolatility'], errors='coerce')
             df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0.0)
             df['mid'] = pd.to_numeric(df['mid'], errors='coerce')
+            df['delta'] = pd.to_numeric(df['delta'], errors='coerce')
             return {'spot': float(spot), 'df': df,
                     'hora': str(data.get('last_trade_time') or ''),
                     'descargado': datetime.now().strftime('%H:%M:%S')}
@@ -175,6 +188,29 @@ def preparar_cadena(df_completo, n_vtos, iv_respaldo=0.40):
     df = df.reset_index(drop=True)
     diag['filas'] = len(df)
     return df, diag
+
+
+def _delta_bs_vec(S, K, T, r, sigma, q, tipo):
+    """Delta Black-Scholes (solo se usa para completar contratos donde CBOE no publicó delta)."""
+    d1 = (np.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+    return np.where(tipo == 'C', np.exp(-q * T) * norm.cdf(d1), -np.exp(-q * T) * norm.cdf(-d1))
+
+
+def reparar_delta(df, S, r, q):
+    """Deja la columna 'delta' lista: usa la de CBOE y solo completa (con Black-Scholes) los contratos
+    donde falta o es inválida (call fuera de 0..1, put fuera de -1..0). Devuelve (df, cantidad_completada)."""
+    df = df.copy()
+    if 'delta' not in df.columns:
+        df['delta'] = np.nan
+    d = pd.to_numeric(df['delta'], errors='coerce')
+    es_c = df['tipo'] == 'C'
+    ok = d.notna() & ((es_c & (d >= 0) & (d <= 1)) | (~es_c & (d <= 0) & (d >= -1)))
+    if (~ok).any():
+        bs = _delta_bs_vec(S, df['strike'].values, df['T'].values, r, df['impliedVolatility'].values, q,
+                           df['tipo'].values)
+        d = d.where(ok, pd.Series(bs, index=df.index))
+    df['delta'] = d
+    return df, int((~ok).sum())
 
 
 # ==============================================================
@@ -326,6 +362,7 @@ def fig_gex_total(grid, total, S, flip):
 #  ANÁLISIS COMPLEMENTARIOS — misma descarga de CBOE, sin pedidos extra
 #  1) Put/Call  2) Max Pain  3) Movimiento esperado
 #  4) GEX por vencimiento  5) Vol. implícita (estructura + skew)  6) Flujo inusual
+#  7) DEX  8) Vanna y Charm  9) Puente a Valuación de Opciones
 # ==============================================================
 
 def _subset_vtos(df_completo, n_vtos):
@@ -351,6 +388,22 @@ def _iv_valida(serie):
 
 def _fmt_ent(x):
     return f'{x:,.0f}'
+
+
+def _fmt_musd(x):
+    """Dólares en formato corto: millones o miles de millones."""
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return 'N/D'
+    if abs(x) >= 1e9:
+        return f'{x / 1e9:,.2f} mil millones US$'
+    return f'{x / 1e6:,.1f} M US$'
+
+
+def _txt_flujo(x):
+    """Convierte un flujo firmado en texto: positivo = compra, negativo = venta."""
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return 'N/D'
+    return f"{'Compra' if x > 0 else 'Venta'} de {_fmt_musd(abs(x))}"
 
 
 # ── 1) Put / Call ─────────────────────────────────────────────────────────
@@ -632,9 +685,173 @@ def fig_volumen_por_strike(x, S, rango):
     return fig
 
 
-# ── Render de las 6 pestañas ──────────────────────────────────────────────
+# ── 7) DEX — exposición delta (delta publicada por CBOE) ──────────────────
 
-def _render_analisis_extra(d, df, S, r, q, mult, rango_pct, clave):
+def calcular_dex_por_strike(df, S, mult=100, rango=0.20):
+    """DEX en dólares por precio de ejercicio = delta (CBOE) × interés abierto × multiplicador × precio.
+    Calls con delta positiva, puts con delta negativa (tal cual la publica CBOE)."""
+    x = df.copy()
+    x['dex'] = x['delta'] * x['openInterest'] * mult * S
+    x = x[(x['strike'] >= S * (1 - rango)) & (x['strike'] <= S * (1 + rango))]
+    if x.empty:
+        return pd.DataFrame(columns=['strike', 'dex_calls', 'dex_puts', 'neto'])
+    piv = x.pivot_table(index='strike', columns='tipo', values='dex', aggfunc='sum') \
+           .reindex(columns=['C', 'P']).fillna(0.0)
+    piv['neto'] = piv['C'] + piv['P']
+    return piv.reset_index().rename(columns={'C': 'dex_calls', 'P': 'dex_puts'})
+
+
+def calcular_dex_por_vto(df, S, mult=100, rango=0.20):
+    x = df.copy()
+    x['dex'] = x['delta'] * x['openInterest'] * mult * S
+    x = x[(x['strike'] >= S * (1 - rango)) & (x['strike'] <= S * (1 + rango))]
+    if x.empty:
+        return pd.DataFrame()
+    pt = x.pivot_table(index='vto', columns='tipo', values='dex', aggfunc='sum') \
+          .reindex(columns=['C', 'P']).fillna(0.0)
+    res = pd.DataFrame({'dias': x.groupby('vto')['T'].first() * 365,
+                        'calls': pt['C'], 'puts': pt['P'], 'neto': pt['C'] + pt['P']})
+    return res
+
+
+def fig_dex(piv, S):
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=piv['strike'], y=piv['dex_calls'] / 1e6, marker_color=C_GREEN, name='DEX Calls', opacity=0.85))
+    fig.add_trace(go.Bar(x=piv['strike'], y=piv['dex_puts'] / 1e6, marker_color=C_RED, name='DEX Puts', opacity=0.85))
+    fig.add_trace(go.Scatter(x=piv['strike'], y=piv['neto'] / 1e6, mode='lines', name='Neto por strike',
+                             line=dict(color=C_TEXT, width=1.6)))
+    fig.add_vline(x=S, line_dash='dot', line_color=C_YELL, opacity=0.8)
+    fig.update_layout(**PLOTLY_LAYOUT_GEX, height=420, barmode='relative',
+                      title=dict(text='DEX por precio de ejercicio (millones de US$ de exposición delta)',
+                                 font=dict(color=C_TEXT, size=13), y=0.98),
+                      legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0, font=dict(size=10.5, color=C_TEXT)),
+                      xaxis=dict(title='Precio de ejercicio', gridcolor=C_GRID),
+                      yaxis=dict(title='DEX (M US$)', gridcolor=C_GRID),
+                      margin=dict(l=10, r=10, t=80, b=10))
+    return fig
+
+
+# ── 8) Vanna y Charm (Black-Scholes con la vol. implícita de CBOE) ────────
+
+def calcular_vanna_charm(df, S, r, q, mult=100, rango=0.20):
+    """Exposición Vanna (Δ de la delta por +1 punto de vol.) y Charm (Δ de la delta por día), en dólares.
+    Convención igual al GEX: los creadores de mercado están largos calls y cortos puts.
+    Devuelve (por_strike, por_vto) o (None, None) si no hay datos."""
+    K = df['strike'].values
+    T = df['T'].values
+    sig = df['impliedVolatility'].values
+    sq = np.sqrt(T)
+    d1 = (np.log(S / K) + (r - q + 0.5 * sig ** 2) * T) / (sig * sq)
+    d2 = d1 - sig * sq
+    pdf, eq = norm.pdf(d1), np.exp(-q * T)
+
+    vanna = -eq * pdf * d2 / sig                                              # ∂Δ/∂σ
+    termino = eq * pdf * (2 * (r - q) * T - d2 * sig * sq) / (2 * T * sig * sq)
+    es_c = (df['tipo'].values == 'C')
+    charm = np.where(es_c, q * eq * norm.cdf(d1) - termino,                   # ∂Δ/∂t (por año)
+                     -q * eq * norm.cdf(-d1) - termino)
+
+    signo = np.where(es_c, 1.0, -1.0)
+    base = signo * df['openInterest'].values * mult * S
+    x = df[['strike', 'vto', 'T']].copy()
+    x['vex'] = base * vanna * 0.01            # US$ de delta por cada +1 punto de vol.
+    x['cex'] = base * charm / 365.0           # US$ de delta por cada día que pasa
+    x = x[(x['strike'] >= S * (1 - rango)) & (x['strike'] <= S * (1 + rango))]
+    x = x.replace([np.inf, -np.inf], np.nan).dropna(subset=['vex', 'cex'])
+    if x.empty:
+        return None, None
+    por_strike = x.groupby('strike')[['vex', 'cex']].sum().reset_index()
+    por_vto = x.groupby('vto').agg(dias=('T', lambda s: float(s.iloc[0]) * 365), vex=('vex', 'sum'), cex=('cex', 'sum'))
+    return por_strike, por_vto
+
+
+def fig_barras_signo(x, y, S, titulo, ytitulo):
+    """Barras verdes si el valor es positivo y rojas si es negativo."""
+    colores = np.where(np.asarray(y) >= 0, C_GREEN, C_RED)
+    fig = go.Figure(go.Bar(x=x, y=np.asarray(y) / 1e6, marker_color=colores, opacity=0.85))
+    fig.add_vline(x=S, line_dash='dot', line_color=C_YELL, opacity=0.8)
+    fig.update_layout(**PLOTLY_LAYOUT_GEX, height=340,
+                      title=dict(text=titulo, font=dict(color=C_TEXT, size=13)),
+                      xaxis=dict(title='Precio de ejercicio', gridcolor=C_GRID),
+                      yaxis=dict(title=ytitulo, gridcolor=C_GRID),
+                      margin=dict(l=10, r=10, t=50, b=10), showlegend=False)
+    return fig
+
+
+# ── 9) Puente hacia "Valuación de Opciones" ───────────────────────────────
+
+def publicar_puente_gex(simbolo, S, z, extra=None):
+    """Guarda en session_state el punto de cambio de gamma, las paredes y (si hay) los strikes sugeridos.
+    La calculadora lo lee con leer_puente_gex()."""
+    p = {'simbolo': simbolo, 'spot': float(S), 'flip': z['flip'], 'call_wall': z['call_wall'],
+         'put_wall': z['put_wall'], 'regimen': z['regimen'], 'gex_total': z['gex_total'],
+         'hora': datetime.now().strftime('%H:%M:%S'), 'ts': time.time()}
+    if extra:
+        p.update(extra)
+    st.session_state[CLAVE_PUENTE] = p
+
+
+def leer_puente_gex(simbolo=None, max_min=30):
+    """Lee el puente. Devuelve el dict o None si no hay, si es de otro símbolo o si tiene más de max_min minutos."""
+    p = st.session_state.get(CLAVE_PUENTE)
+    if not p:
+        return None
+    if simbolo and p.get('simbolo') != resolver_simbolo(simbolo)[1]:
+        return None
+    if (time.time() - p.get('ts', 0)) / 60.0 > max_min:
+        return None
+    return p
+
+
+def sugerir_strikes_vendidos(df, S, z, vto, fila_em=None):
+    """Sugiere un call y un put a vender en el vencimiento elegido.
+    Call: primer strike listado en/por encima de la pared de Calls (si está sobre el precio).
+    Put: primer strike listado en/por debajo de la pared de Puts (si está bajo el precio).
+    Si la pared no sirve, usa el techo/piso del movimiento esperado y, en última instancia, ±5%."""
+    g = df[df['vto'] == vto]
+    strikes = np.sort(g['strike'].unique())
+    if len(strikes) == 0:
+        return []
+    cw, pw = z['call_wall'], z['put_wall']
+
+    if cw and cw > S:
+        obj_c, base_c = cw, 'pared de Calls'
+    elif fila_em is not None and not pd.isna(fila_em['alto']):
+        obj_c, base_c = float(fila_em['alto']), 'techo del movimiento esperado'
+    else:
+        obj_c, base_c = S * 1.05, '+5% del precio'
+    if pw and pw < S:
+        obj_p, base_p = pw, 'pared de Puts'
+    elif fila_em is not None and not pd.isna(fila_em['bajo']):
+        obj_p, base_p = float(fila_em['bajo']), 'piso del movimiento esperado'
+    else:
+        obj_p, base_p = S * 0.95, '−5% del precio'
+
+    arriba = strikes[strikes >= obj_c]
+    abajo = strikes[strikes <= obj_p]
+    out = []
+    for lado, tipo, k, base, obj in (('Call vendido', 'C', float(arriba[0]) if len(arriba) else None, base_c, obj_c),
+                                      ('Put vendido', 'P', float(abajo[-1]) if len(abajo) else None, base_p, obj_p)):
+        if k is None:
+            continue
+        fila = g[(g['strike'] == k) & (g['tipo'] == tipo)]
+        if fila.empty:
+            continue
+        f = fila.iloc[0]
+        delta = float(f['delta']) if not pd.isna(f['delta']) else np.nan
+        out.append({'lado': lado, 'tipo': tipo, 'strike': k, 'base': base, 'objetivo': float(obj),
+                    'dist_pct': (k / S - 1) * 100,
+                    'prima_mid': float(f['mid']) if not pd.isna(f['mid']) else np.nan,
+                    'iv': float(f['impliedVolatility']) * 100,
+                    'delta': delta,
+                    'prob_itm': abs(delta) * 100 if not np.isnan(delta) else np.nan,
+                    'oi': float(f['openInterest'])})
+    return out
+
+
+# ── Render de las pestañas ────────────────────────────────────────────────
+
+def _render_analisis_extra(d, df, S, r, q, mult, rango_pct, clave, z, simbolo):
     st.markdown('---')
     st.markdown('### 🔬 Análisis complementarios (mismos datos de CBOE)')
     st.caption('Se calculan con la misma descarga de arriba (sin pedidos extra) y sobre los vencimientos que elegiste.')
@@ -644,7 +861,8 @@ def _render_analisis_extra(d, df, S, r, q, mult, rango_pct, clave):
     rango = rango_pct / 100
 
     tabs = st.tabs(['⚖️ Put/Call', '📌 Max Pain', '📏 Mov. esperado', '🗓️ GEX por vencimiento',
-                    '🌊 Vol. implícita', '🔥 Flujo inusual'])
+                    '🌊 Vol. implícita', '🔥 Flujo inusual', '🎯 DEX (delta)', '🌀 Vanna y Charm',
+                    '🌉 Puente a Valuación'])
 
     # ───────────── 1) PUT / CALL ─────────────
     with tabs[0]:
@@ -1000,6 +1218,249 @@ Los contratos donde **hoy se operó mucho más de lo habitual** respecto de lo q
 - Con el mercado cerrado, muestra el volumen final del último día operado.
 """)
 
+    # ───────────── 7) DEX (exposición delta) ─────────────
+    with tabs[6]:
+        piv_d = calcular_dex_por_strike(df, S, mult, rango)
+        if piv_d.empty:
+            st.info('No hay contratos con interés abierto cerca del precio para calcular el DEX.')
+        else:
+            dex_c, dex_p = float(piv_d['dex_calls'].sum()), float(piv_d['dex_puts'].sum())
+            dex_n = dex_c + dex_p
+            bruto = abs(dex_c) + abs(dex_p)
+            sesgo = dex_n / bruto * 100 if bruto > 0 else np.nan
+            equiv = dex_n / S
+
+            x1, x2, x3, x4 = st.columns(4)
+            with x1: st.metric('DEX neto', _fmt_musd(dex_n))
+            with x2: st.metric('DEX de Calls', _fmt_musd(dex_c))
+            with x3: st.metric('DEX de Puts', _fmt_musd(dex_p))
+            with x4: st.metric('Sesgo direccional', f'{sesgo:+.0f}%' if not np.isnan(sesgo) else 'N/D')
+
+            st.plotly_chart(fig_dex(piv_d, S), use_container_width=True, key='gex_fig_dex')
+
+            res_dv = calcular_dex_por_vto(df, S, mult, rango)
+            if not res_dv.empty:
+                t_dv = res_dv.copy()
+                t_dv.insert(0, 'Vencimiento', [etiq.get(v, v) for v in t_dv.index])
+                t_dv = t_dv.reset_index(drop=True).drop(columns=['dias'])
+                for c in ('calls', 'puts', 'neto'):
+                    t_dv[c] = t_dv[c] / 1e6
+                st.dataframe(t_dv.rename(columns={'calls': 'DEX Calls (M US$)', 'puts': 'DEX Puts (M US$)',
+                                                  'neto': 'DEX neto (M US$)'}),
+                             use_container_width=True, hide_index=True,
+                             column_config={c: st.column_config.NumberColumn(format='%.1f')
+                                            for c in ['DEX Calls (M US$)', 'DEX Puts (M US$)', 'DEX neto (M US$)']})
+
+            if sesgo >= 25:
+                sesgo_txt = 'la exposición está **claramente inclinada al alza**: pesan más las opciones que ganan si el precio sube'
+            elif sesgo <= -25:
+                sesgo_txt = 'la exposición está **claramente inclinada a la baja**: pesan más las opciones que ganan si el precio cae'
+            else:
+                sesgo_txt = 'la exposición está **bastante equilibrada** entre alza y baja'
+            signo_txt = 'largo' if dex_n > 0 else 'corto'
+            render_explicacion('Cómo leer el DEX (exposición delta) y cómo usarlo', f"""
+**Qué es**
+La **delta** de una opción dice cuánto cambia su valor si el activo se mueve 1 dólar: un call tiene delta positiva (entre 0 y 1) y un put, negativa (entre −1 y 0). El **DEX** suma la delta de **todas las opciones abiertas**, multiplicada por el interés abierto, el multiplicador del contrato y el precio. El resultado es una cifra en dólares que responde: *"¿cuánta exposición direccional al subyacente hay metida en las opciones?"*. La delta es **la que publica CBOE** en cada contrato; solo se completa con Black-Scholes en los pocos casos donde CBOE no la trae.
+
+**Datos de hoy**
+- DEX neto: **{_fmt_musd(dex_n)}**, equivalente a estar **{signo_txt}** en unas **{abs(equiv):,.0f} unidades** del subyacente.
+- Calls: **{_fmt_musd(dex_c)}** · Puts: **{_fmt_musd(dex_p)}**.
+- Sesgo direccional: **{sesgo:+.0f}%** (neto dividido por el total en valor absoluto) — {sesgo_txt}.
+
+**Cómo leerlo**
+- **Barras verdes (calls):** exposición alcista. **Barras rojas (puts):** exposición bajista. La línea blanca es el neto de cada strike.
+- **DEX neto positivo:** el conjunto de opciones abiertas se comporta como una posición **larga** del activo. **Negativo:** como una posición **corta**.
+- **El sesgo** te dice qué tan desparejo está: cerca de 0% = fuerzas compensadas; cerca de ±100% = casi todo del mismo lado.
+- Si hay **barras grandes en un strike puntual**, ahí hay mucha exposición direccional concentrada.
+
+**Cómo sacarle provecho**
+- **Complementa al GEX:** el GEX te dice *qué tan fuerte* reaccionan los creadores de mercado ante un movimiento (gamma); el DEX te dice *hacia qué lado* está inclinada la exposición (delta). Un régimen de gamma negativa con DEX muy inclinado hacia un lado marca un mercado más propenso a movimientos bruscos en la dirección en que las coberturas se desarman.
+- Si los creadores de mercado están del otro lado de estas posiciones (es lo habitual), **su cobertura tiene el signo contrario**: cuando el precio se mueve y las deltas cambian, ellos compran o venden el subyacente para reajustarse. Ese es el origen del efecto de amortiguación o amplificación que ves en el GEX.
+- Mirá la tabla por vencimiento: si el DEX está concentrado en el primer vencimiento, esa exposición **desaparece al expirar**.
+
+**Límites**
+- El interés abierto no dice quién compró y quién vendió: el DEX muestra la **exposición del conjunto**, no la posición real de los creadores de mercado. Por eso acá los puts figuran con su delta negativa tal cual la publica CBOE, y no con la convención "creadores largos calls / cortos puts" del GEX.
+- Usa el interés abierto del día anterior y datos con ~15 min de retraso.
+- No es una señal de compra o venta por sí solo.
+""")
+
+    # ───────────── 8) VANNA Y CHARM ─────────────
+    with tabs[7]:
+        por_strike, por_vto_vc = calcular_vanna_charm(df, S, r, q, mult, rango)
+        if por_strike is None:
+            st.info('No hay contratos con interés abierto cerca del precio para calcular Vanna y Charm.')
+        else:
+            vex_n, cex_n = float(por_strike['vex'].sum()), float(por_strike['cex'].sum())
+            flujo_vol = vex_n            # si la vol. BAJA 1 punto, los creadores compran +vex (venden si es negativo)
+            flujo_tiempo = -cex_n        # por el paso de 1 día, la cobertura se ajusta con signo contrario a la delta
+
+            n1, n2, n3, n4 = st.columns(4)
+            with n1: st.metric('Vanna neta (por +1 pt de vol.)', _fmt_musd(vex_n))
+            with n2: st.metric('Charm neto (por día)', _fmt_musd(cex_n))
+            with n3: st.metric('Si la vol. baja 1 pt', _txt_flujo(flujo_vol))
+            with n4: st.metric('Por el paso de 1 día', _txt_flujo(flujo_tiempo))
+
+            st.plotly_chart(fig_barras_signo(por_strike['strike'], por_strike['vex'], S,
+                                             'Vanna por precio de ejercicio (M US$ de delta por +1 punto de vol.)',
+                                             'Vanna (M US$)'),
+                            use_container_width=True, key='gex_fig_vanna')
+            st.plotly_chart(fig_barras_signo(por_strike['strike'], por_strike['cex'], S,
+                                             'Charm por precio de ejercicio (M US$ de delta por día)',
+                                             'Charm (M US$ / día)'),
+                            use_container_width=True, key='gex_fig_charm')
+
+            t_vc = por_vto_vc.copy()
+            t_vc.insert(0, 'Vencimiento', [etiq.get(v, v) for v in t_vc.index])
+            t_vc = t_vc.reset_index(drop=True).drop(columns=['dias'])
+            t_vc['vex'] = t_vc['vex'] / 1e6
+            t_vc['cex'] = t_vc['cex'] / 1e6
+            st.dataframe(t_vc.rename(columns={'vex': 'Vanna (M US$ por +1 pt vol.)', 'cex': 'Charm (M US$ por día)'}),
+                         use_container_width=True, hide_index=True,
+                         column_config={c: st.column_config.NumberColumn(format='%.2f')
+                                        for c in ['Vanna (M US$ por +1 pt vol.)', 'Charm (M US$ por día)']})
+
+            if vex_n > 0:
+                vanna_txt = ('si la volatilidad **baja**, los creadores de mercado tienden a **comprar** el subyacente '
+                             '(viento a favor para el precio); si **sube**, tienden a **venderlo**')
+            else:
+                vanna_txt = ('si la volatilidad **baja**, los creadores de mercado tienden a **vender** el subyacente; '
+                             'si **sube**, tienden a **comprarlo** (efecto poco habitual)')
+            if flujo_tiempo > 0:
+                charm_txt = ('con el simple paso del tiempo, sin que cambie nada más, tienden a **comprar** el subyacente '
+                             '(soporte que se acumula hacia los vencimientos)')
+            else:
+                charm_txt = ('con el simple paso del tiempo, sin que cambie nada más, tienden a **vender** el subyacente '
+                             '(presión que se acumula hacia los vencimientos)')
+
+            render_explicacion('Cómo leer Vanna y Charm y cómo usarlos', f"""
+**Qué son**
+Son dos "griegas de segundo orden": miden **cómo cambia la delta** (y por lo tanto, cuánto tienen que cubrirse los creadores de mercado) cuando cambia otra cosa.
+- **Vanna:** cuánto cambia la delta cuando cambia la **volatilidad implícita**. Acá se muestra en dólares de delta por cada **+1 punto** de volatilidad.
+- **Charm:** cuánto cambia la delta cuando **pasa el tiempo**. Acá se muestra en dólares de delta por **cada día**. Se lo llama también "decaimiento de la delta": una opción fuera del dinero pierde delta a medida que se acerca el vencimiento.
+
+Cuando la delta de sus posiciones cambia, los creadores de mercado **compran o venden el subyacente** para volver a quedar cubiertos. Eso genera flujos de compra o venta que **no dependen de ninguna noticia**.
+
+**Cómo se calculan**
+CBOE publica la vol. implícita y el interés abierto de cada contrato, pero no publica Vanna ni Charm. Se calculan con las fórmulas de **Black-Scholes** usando esa vol. implícita, y se suman con la misma convención del GEX (creadores largos calls / cortos puts).
+
+**Datos de hoy**
+- Vanna neta: **{_fmt_musd(vex_n)}** por cada +1 punto de vol. → {vanna_txt}.
+- Charm neto: **{_fmt_musd(cex_n)}** por día → {charm_txt}.
+
+**Cómo leerlo**
+- **Vanna positiva:** una **baja** de volatilidad empuja a comprar (suele acompañar los rallies tranquilos); una **suba** de volatilidad empuja a vender (acelera las caídas).
+- **Charm:** el flujo es gradual y constante. Se vuelve **más fuerte cerca de los vencimientos**, sobre todo en las últimas jornadas antes de expirar.
+- **Barras grandes en un strike** = nivel donde estos flujos se concentran. Verde = suma un componente positivo, rojo = uno negativo.
+- La tabla por vencimiento te muestra **cuál fecha domina**: normalmente los vencimientos más cercanos pesan mucho más.
+
+**Cómo sacarle provecho**
+- Antes de un evento con **volatilidad alta que se espera que baje** (por ejemplo, resultados), una Vanna positiva puede ayudar a que el precio se sostenga *después* del evento.
+- En los **días previos a un vencimiento grande**, mirá el Charm: si tiene el mismo signo que el DEX y que el régimen de gamma, el efecto se refuerza.
+- Usalos como **contexto** para saber de qué lado pueden venir los flujos, no como señal de entrada.
+
+**Límites (importante)**
+- Son **difíciles de interpretar**: dependen de asumir quién está largo y quién corto, y esa hipótesis puede fallar.
+- Se calculan con Black-Scholes y la vol. implícita publicada por CBOE (con retraso y ruido en strikes ilíquidos). En contratos que vencen en 0 o 1 día, el Charm es muy grande y muy sensible: tomalo con pinzas.
+- Un cambio brusco de la vol. o del precio puede dar vuelta la lectura en minutos.
+""")
+
+    # ───────────── 9) PUENTE A VALUACIÓN DE OPCIONES ─────────────
+    with tabs[8]:
+        opts = sorted(df['vto'].unique())
+        if not opts:
+            st.info('No hay vencimientos con interés abierto para sugerir strikes.')
+        else:
+            dias_df = (df.groupby('vto')['T'].first() * 365).to_dict()
+            idx = next((i for i, v in enumerate(opts) if dias_df.get(v, 0) >= 7), len(opts) - 1)
+            vto_p = st.selectbox('Vencimiento objetivo para vender prima', opts, index=idx,
+                                 format_func=lambda v: etiq.get(v, _etiqueta_vto(v, dias_df.get(v, 0))),
+                                 key=f'gex_puente_vto_{clave}')
+
+            t_em_p = calcular_movimiento_esperado(d, S)
+            fila_em = None
+            if not t_em_p.empty:
+                m_em = t_em_p[t_em_p['vto'] == vto_p]
+                if not m_em.empty:
+                    fila_em = m_em.iloc[0]
+
+            sug = sugerir_strikes_vendidos(df, S, z, vto_p, fila_em)
+
+            b1, b2, b3, b4 = st.columns(4)
+            with b1: st.metric('Régimen de gamma', z['regimen'].capitalize())
+            with b2: st.metric('Punto de cambio de gamma', fmt_precio(z['flip']) if z['flip'] else 'N/D')
+            with b3: st.metric('Pared de Calls', fmt_precio(z['call_wall']) if z['call_wall'] else 'N/D')
+            with b4: st.metric('Pared de Puts', fmt_precio(z['put_wall']) if z['put_wall'] else 'N/D')
+
+            if not sug:
+                st.info('No se pudieron sugerir strikes con los datos de este vencimiento.')
+            else:
+                tabla_s = pd.DataFrame([{
+                    'Operación': s['lado'], 'Strike': s['strike'], 'Distancia al precio %': s['dist_pct'],
+                    'Criterio': s['base'], 'Prima media (US$)': s['prima_mid'],
+                    'Vol. implícita %': s['iv'], 'Delta (CBOE)': s['delta'],
+                    'Prob. aprox. de terminar dentro del dinero %': s['prob_itm'],
+                    'Interés abierto': s['oi']} for s in sug])
+                st.dataframe(tabla_s, use_container_width=True, hide_index=True,
+                             column_config={'Strike': st.column_config.NumberColumn(format='%.2f'),
+                                            'Distancia al precio %': st.column_config.NumberColumn(format='%+.1f'),
+                                            'Prima media (US$)': st.column_config.NumberColumn(format='%.2f'),
+                                            'Vol. implícita %': st.column_config.NumberColumn(format='%.1f'),
+                                            'Delta (CBOE)': st.column_config.NumberColumn(format='%+.2f'),
+                                            'Prob. aprox. de terminar dentro del dinero %': st.column_config.NumberColumn(format='%.0f'),
+                                            'Interés abierto': st.column_config.NumberColumn(format='%.0f')})
+
+                if z['regimen'] == 'negativo':
+                    st.warning('🔴 Régimen de gamma **negativa**: vender prima es más riesgoso porque los movimientos se amplifican. '
+                               'Considerá alejar los strikes, achicar el tamaño o usar estrategias de riesgo definido.')
+                for s in sug:
+                    if s['tipo'] == 'P' and z['flip'] and s['strike'] > z['flip']:
+                        st.caption(f"ℹ️ El put sugerido ({s['strike']:,.2f}) queda **por encima** del punto de cambio de gamma "
+                                   f"({z['flip']:,.2f}): si el precio lo alcanza, ya estaría en régimen de amplificación.")
+
+            # publica todo en la sesión para que la calculadora lo lea
+            publicar_puente_gex(simbolo, S, z, extra={
+                'vto': vto_p, 'sugerencias': sug,
+                'techo_esperado': float(fila_em['alto']) if fila_em is not None else None,
+                'piso_esperado': float(fila_em['bajo']) if fila_em is not None else None})
+            st.success(f"✅ Datos publicados para **Valuación de Opciones** ({simbolo}, {etiq.get(vto_p, vto_p)}). "
+                       "La calculadora puede leerlos con `leer_puente_gex()`.")
+
+            with st.expander('🧩 Cómo leerlo desde la calculadora (código)', expanded=False):
+                st.code("""from modulo_gex import leer_puente_gex
+
+p = leer_puente_gex('SPY')          # None si no hay datos, son de otro símbolo o tienen +30 min
+if p:
+    p['flip'], p['call_wall'], p['put_wall'], p['regimen'], p['spot']
+    for s in p.get('sugerencias', []):
+        s['lado'], s['strike'], s['prima_mid'], s['delta']   # 'Call vendido' / 'Put vendido'
+""", language='python')
+
+            render_explicacion('Cómo funciona el puente con Valuación de Opciones y cómo usarlo', f"""
+**Qué hace**
+Toma lo que ya calculó el GEX (**punto de cambio de gamma** y **paredes de Calls y Puts**) y lo deja disponible para la calculadora de opciones. A partir de eso sugiere **qué strikes vender** en el vencimiento que elijas. Todos los datos (strikes, primas, vol. implícita, delta) vienen de la misma cadena de CBOE.
+
+**Cómo elige los strikes**
+- **Call vendido:** el primer strike listado **en o por encima de la pared de Calls**, siempre que esa pared esté sobre el precio. La lógica: la pared suele actuar como techo, así que vender por encima tiene un "escudo" extra.
+- **Put vendido:** el primer strike listado **en o por debajo de la pared de Puts**, si esa pared está bajo el precio. La pared de Puts suele actuar como piso.
+- Si la pared no sirve (está del lado equivocado del precio), usa el **techo o piso del movimiento esperado** y, como último recurso, **±5%** del precio.
+
+**Cómo leer la tabla**
+- **Delta (CBOE):** la delta que publica CBOE para ese contrato.
+- **Prob. aprox. de terminar dentro del dinero:** es el valor absoluto de la delta expresado en porcentaje. Es una aproximación habitual, no una probabilidad exacta. Un put vendido con 15% quiere decir que, según el mercado, tiene alrededor de una chance en siete de terminar perdiendo.
+- **Prima media:** el promedio entre compra y venta, por acción (multiplicala por {mult} para tener el valor por contrato).
+
+**Cómo sacarle provecho**
+- Usalo como **punto de partida**: llevá esos strikes a la calculadora para ver el perfil de resultado, el máximo de pérdida y las griegas antes de decidir.
+- En **régimen positivo** las paredes tienden a sostenerse y esta lógica funciona mejor; en **régimen negativo** las paredes se rompen con más facilidad.
+- Comprobá siempre el **interés abierto** del strike: si es muy bajo, es difícil operarlo sin pagar un buen diferencial entre compra y venta.
+- Cruzalo con el **calendario de eventos** y con la **estructura de vol. implícita**: no conviene vender prima justo antes de un evento importante.
+
+**Límites**
+- Es una **referencia**, no una recomendación. Las paredes son un modelo y no garantizan que el precio no las cruce.
+- Vender opciones descubiertas puede generar pérdidas grandes. Verificá el riesgo en la calculadora antes de operar.
+- Los datos tienen ~15 minutos de retraso y el interés abierto es del día anterior.
+""")
+
 
 # ==============================================================
 #  UI PRINCIPAL
@@ -1067,11 +1528,14 @@ def modulo_gex():
     if df is None:
         st.warning(f"No hay cadena utilizable: {diag['motivo']}")
         return
+    df, n_delta_rell = reparar_delta(df, S, r, q)
 
     st.caption(f"📡 Fuente: CBOE · {simbolo} · precio {fmt_precio(S)} · descargado {datos['descargado']} · "
                f"{diag['vtos']} vencimientos · {diag['filas']:,} contratos")
     if diag['iv_rellenadas']:
         st.caption(f"ℹ️ {diag['iv_rellenadas']} contratos tenían vol. implícita inválida; se reemplazó por la mediana del vencimiento.")
+    if n_delta_rell:
+        st.caption(f"ℹ️ {n_delta_rell} contratos no traían delta válida de CBOE; se completó con Black-Scholes (afecta solo al DEX y a los strikes sugeridos).")
 
     piv = calcular_gex_por_strike(df, S, r, q, mult, rango_pct / 100)
     if piv.empty:
@@ -1080,6 +1544,9 @@ def modulo_gex():
         return
     grid, total = gex_total_vs_spot(df, S, r, q, mult)
     z = calcular_zonas_gex(piv, grid, total, S)
+
+    # Puente base hacia Valuación de Opciones (la pestaña "Puente" lo completa con strikes sugeridos)
+    publicar_puente_gex(simbolo, S, z)
 
     m1, m2, m3, m4 = st.columns(4)
     with m1: st.metric('GEX total (al precio actual)', f"{z['gex_total']/1e6:,.1f} millones de US$")
@@ -1152,5 +1619,6 @@ Responde a esta pregunta: *"si el activo estuviera en otro precio, ¿cuál serí
                'publicada por CBOE (con ~15 min de retraso; puede ser ruidosa en precios de ejercicio ilíquidos). '
                'Es una referencia de régimen, no una señal por sí sola.')
 
-    # ── Análisis complementarios: Put/Call, Max Pain, mov. esperado, GEX por vencimiento, IV y flujo ──
-    _render_analisis_extra(_subset_vtos(datos['df'], n_vtos), df, S, r, q, mult, rango_pct, f'{simbolo}_{n_vtos}')
+    # ── Análisis complementarios: Put/Call, Max Pain, mov. esperado, GEX por vencimiento, IV, flujo, DEX, Vanna/Charm y puente ──
+    _render_analisis_extra(_subset_vtos(datos['df'], n_vtos), df, S, r, q, mult, rango_pct,
+                           f'{simbolo}_{n_vtos}', z, simbolo)
