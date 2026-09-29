@@ -2,8 +2,10 @@
 #  MÓDULO OPCIONES — Black-Scholes (Europea) / Binomial (Americana)
 #  Adaptado del script standalone a Streamlit nativo.
 #  Integrar en el Analizador Cuantitativo como horizonte propio.
+#  (El GEX vive aparte, en modulo_gex.py, y no comparte nada con este módulo.)
 # ==============================================================
 
+import time
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -26,10 +28,6 @@ NOMBRES_GRIEGAS = ["Delta", "Gamma", "Theta", "Vega", "Rho"]
 N_SIMULACIONES_OPC = 3000          # trayectorias de la simulación Monte Carlo
 VENTANA_VOL_CORTA_OPC = 40         # ruedas usadas para estimar la tendencia reciente
 
-# Símbolos de Buenos Aires (.BA) → ADR de EEUU que sí tiene cadena de opciones en Yahoo
-MAPA_ADR = {'GGAL.BA': 'GGAL', 'YPFD.BA': 'YPF', 'PAMP.BA': 'PAM', 'BMA.BA': 'BMA',
-            'BBAR.BA': 'BBAR', 'SUPV.BA': 'SUPV', 'CEPU.BA': 'CEPU', 'EDN.BA': 'EDN',
-            'LOMA.BA': 'LOMA', 'TGSU2.BA': 'TGS', 'TEO.BA': 'TEO', 'CRES.BA': 'CRESY'}
 
 
 # True = las explicaciones debajo de cada gráfico aparecen abiertas; False = plegadas
@@ -40,37 +38,6 @@ def render_explicacion(titulo, contenido_md):
     """Bloque explicativo debajo de un gráfico: qué muestra, cómo leerlo y cómo usarlo."""
     with st.expander(f'📘 {titulo}', expanded=EXPLICACIONES_ABIERTAS):
         st.markdown(contenido_md)
-
-
-def lectura_personalizada_gex(z, S):
-    """Traduce los números actuales de GEX a frases en criollo."""
-    L = []
-    flip, cw, pw = z['flip'], z['call_wall'], z['put_wall']
-    if flip:
-        d = (S / flip - 1) * 100
-        if d > 0:
-            L.append(f"El precio actual ({S:,.2f}) está **{d:.1f}% por encima** del punto de cambio de gamma ({flip:,.2f}). "
-                     f"Ese es tu colchón: mientras el precio se mantenga arriba, el régimen es de amortiguación. "
-                     f"Si cae por debajo de {flip:,.2f}, el mercado pasa a amplificar los movimientos.")
-        else:
-            L.append(f"El precio actual ({S:,.2f}) está **{abs(d):.1f}% por debajo** del punto de cambio de gamma ({flip:,.2f}). "
-                     f"Ya estamos en régimen de amplificación: los movimientos tienden a ser más bruscos. "
-                     f"Recuperar {flip:,.2f} devolvería el efecto amortiguador.")
-    else:
-        L.append("No hay punto de cambio de gamma dentro del rango analizado (±15% del precio): el régimen es "
-                 f"**{z['regimen']}** en todo ese rango, así que no hay un nivel cercano donde cambie.")
-    if cw:
-        dc = (cw / S - 1) * 100
-        pos = "por encima" if dc > 0 else "por debajo"
-        L.append(f"La **pared de Calls ({cw:,.2f})** está {abs(dc):.1f}% {pos} del precio. "
-                 f"Es el nivel donde más gamma de calls se concentra: suele comportarse como imán o resistencia.")
-    if pw:
-        dp = (pw / S - 1) * 100
-        pos = "por encima" if dp > 0 else "por debajo"
-        L.append(f"La **pared de Puts ({pw:,.2f})** está {abs(dp):.1f}% {pos} del precio. "
-                 f"Es el nivel donde más gamma de puts se concentra: suele comportarse como soporte, "
-                 f"y si se pierde, la caída puede acelerarse.")
-    return L
 
 
 def fmt_precio_opc(p):
@@ -152,13 +119,20 @@ def _opc_serie_precios_completa(ticker, periodo='2y'):
 # ==============================================================
 
 @st.cache_data(ttl=900, show_spinner=False)
+def _opc_vencimientos_cached(ticker):
+    import yfinance as yf
+    vtos = yf.Ticker(ticker).options
+    if not vtos:
+        raise ValueError('sin vencimientos')      # lanzar = NO se cachea
+    return list(vtos)
+
+
 def _opc_vencimientos_disponibles(ticker):
-    """Fechas de vencimiento reales que Yahoo Finance tiene publicadas para el símbolo."""
+    """Fechas de vencimiento reales publicadas por Yahoo. Devuelve [] si falla (sin cachear el fallo)."""
     try:
-        import yfinance as yf
-        vtos = yf.Ticker(ticker).options
-        return list(vtos) if vtos else []
-    except Exception:
+        return _opc_vencimientos_cached(ticker)
+    except Exception as e:
+        st.session_state['opc_ultimo_error'] = f'{type(e).__name__}: {e}'
         return []
 
 
@@ -187,12 +161,15 @@ def _opc_cadena_opciones(ticker, vencimiento):
     return {'calls': calls, 'puts': puts}
 
 
-def _opc_cadena_segura(ticker, vencimiento):
-    """Wrapper: mantiene el contrato (dict o None) sin cachear el None."""
-    try:
-        return _opc_cadena_opciones(ticker, vencimiento)
-    except Exception:
-        return None
+def _opc_cadena_segura(ticker, vencimiento, reintentos=3):
+    """Devuelve dict o None. Reintenta con pausa (Yahoo corta ráfagas) y guarda el error real."""
+    for i in range(reintentos):
+        try:
+            return _opc_cadena_opciones(ticker, vencimiento)
+        except Exception as e:
+            st.session_state['opc_ultimo_error'] = f'{type(e).__name__}: {e}'
+            time.sleep(0.7 * (i + 1))
+    return None
 
 
 def _opc_fila_strike_mas_cercano(df_lado, strike_objetivo):
@@ -606,299 +583,6 @@ def fig_monte_carlo_distribucion(precios_finales, S, strikes, p40_mc, p60_mc, p4
 
 
 # ==============================================================
-#  GEX — Gamma Exposure, Gamma Flip y zonas
-# ==============================================================
-
-def _gamma_bs_vec(S, K, T, r, sigma, q=0.0):
-    """Gamma Black-Scholes vectorizado (acepta arrays / broadcasting)."""
-    d1 = (np.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    return np.exp(-q * T) * norm.pdf(d1) / (S * sigma * np.sqrt(T))
-
-
-def resolver_ticker_gex(ticker):
-    """Devuelve (ticker_con_opciones, aviso). Si el símbolo no tiene cadena en Yahoo, prueba con el ADR.
-    Devuelve (None, None) si no hay forma de conseguir una cadena."""
-    if _opc_vencimientos_disponibles(ticker):
-        return ticker, None
-    adr = MAPA_ADR.get(ticker)
-    if adr and _opc_vencimientos_disponibles(adr):
-        return adr, f'{ticker} no tiene opciones en Yahoo; se usa el ADR **{adr}** (precio en USD del ADR).'
-    return None, None
-
-
-@st.cache_data(ttl=900, show_spinner=False)
-def _opc_gex_base(ticker, max_vtos=6, iv_respaldo=0.40):
-    """Cadena de los próximos vencimientos en un solo DataFrame largo
-    (precio de ejercicio, tipo, interés abierto, vol. implícita, T).
-    Devuelve (df, diag). Si df es None, diag['motivo'] explica qué pasó."""
-    diag = {'vtos': 0, 'filas': 0, 'oi_desde_volumen': False, 'iv_rellenadas': 0, 'motivo': None}
-    vtos = _opc_vencimientos_disponibles(ticker)
-    if not vtos:
-        diag['motivo'] = 'Yahoo no publica vencimientos para este símbolo.'
-        return None, diag
-
-    partes = []
-    for v in vtos[:max_vtos]:
-        cad = _opc_cadena_segura(ticker, v)
-        if not cad:
-            continue
-        diag['vtos'] += 1
-        dias = max((datetime.strptime(v, '%Y-%m-%d').date() - date.today()).days, 0)
-        T = max(dias, 0.5) / 365          # piso para que 0DTE no rompa la división
-        for tipo, key in (('C', 'calls'), ('P', 'puts')):
-            d = cad[key][['strike', 'openInterest', 'volume', 'impliedVolatility']].copy()
-            d['tipo'], d['T'], d['vto'] = tipo, T, v
-            partes.append(d)
-    if not partes:
-        diag['motivo'] = 'No se pudo descargar ninguna cadena (¿límite de Yahoo? probá de nuevo en unos minutos).'
-        return None, diag
-
-    df = pd.concat(partes, ignore_index=True)
-    df['openInterest'] = pd.to_numeric(df['openInterest'], errors='coerce').fillna(0)
-    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
-    df['impliedVolatility'] = pd.to_numeric(df['impliedVolatility'], errors='coerce')
-
-    # 1) Interés abierto: si Yahoo lo trae todo en 0/NaN, uso el volumen como aproximación
-    if df['openInterest'].sum() == 0:
-        if df['volume'].sum() > 0:
-            df['openInterest'] = df['volume']
-            diag['oi_desde_volumen'] = True
-        else:
-            diag['motivo'] = 'Todos los contratos vienen sin interés abierto ni volumen (mercado cerrado / sin datos).'
-            return None, diag
-    df = df[df['openInterest'] > 0].copy()
-
-    # 2) IV basura (<1% o NaN): la reemplazo por la mediana de las IV válidas del mismo vencimiento
-    malo = ~(df['impliedVolatility'] > 0.01)
-    if malo.any():
-        med = df.loc[~malo].groupby('vto')['impliedVolatility'].median()
-        relleno = df['vto'].map(med).fillna(iv_respaldo)
-        df.loc[malo, 'impliedVolatility'] = relleno[malo]
-        diag['iv_rellenadas'] = int(malo.sum())
-
-    df = df.drop(columns='volume').reset_index(drop=True)
-    diag['filas'] = len(df)
-    if df.empty:
-        diag['motivo'] = 'Después de filtrar no quedó ningún contrato.'
-        return None, diag
-    return df, diag
-
-
-def calcular_gex_por_strike(df, S, r, q, mult=100, rango=0.20):
-    """GEX neto por precio de ejercicio, separado en calls (+) y puts (−). Solo precios de ejercicio dentro de ±rango del precio actual."""
-    g = _gamma_bs_vec(S, df['strike'].values, df['T'].values, r, df['impliedVolatility'].values, q)
-    signo = np.where(df['tipo'] == 'C', 1.0, -1.0)
-    d = df.copy()
-    d['gex'] = signo * g * d['openInterest'] * mult * S ** 2 * 0.01
-    d = d[(d['strike'] >= S * (1 - rango)) & (d['strike'] <= S * (1 + rango))]
-    if d.empty:
-        return pd.DataFrame(columns=['strike', 'gex_calls', 'gex_puts', 'neto'])
-    piv = d.pivot_table(index='strike', columns='tipo', values='gex', aggfunc='sum').fillna(0.0)
-    for c in ('C', 'P'):
-        if c not in piv.columns:
-            piv[c] = 0.0
-    piv['neto'] = piv['C'] + piv['P']
-    return piv.reset_index().rename(columns={'C': 'gex_calls', 'P': 'gex_puts'})
-
-
-def gex_total_vs_spot(df, S, r, q, mult=100, rango=0.15, n=121):
-    """GEX total recalculado sobre una grilla de precios → sirve para ubicar el punto de cambio de gamma."""
-    grid = np.linspace(S * (1 - rango), S * (1 + rango), n)
-    K, T, iv = (df[c].values[None, :] for c in ('strike', 'T', 'impliedVolatility'))
-    oi = df['openInterest'].values[None, :]
-    signo = np.where(df['tipo'].values == 'C', 1.0, -1.0)[None, :]
-    g = _gamma_bs_vec(grid[:, None], K, T, r, iv, q)
-    total = (g * signo * oi * mult * grid[:, None] ** 2 * 0.01).sum(axis=1)
-    return grid, total
-
-
-def encontrar_gamma_flip(grid, total, S):
-    """Cruce por cero (interpolado) más cercano al precio actual. None si no hay cruce en el rango."""
-    cruces = np.where(np.sign(total[:-1]) * np.sign(total[1:]) < 0)[0]
-    if len(cruces) == 0:
-        return None
-    i = cruces[np.argmin(np.abs(grid[cruces] - S))]
-    return float(grid[i] - total[i] * (grid[i + 1] - grid[i]) / (total[i + 1] - total[i]))
-
-
-def calcular_zonas_gex(piv, grid, total, S):
-    flip = encontrar_gamma_flip(grid, total, S)
-    call_wall = float(piv.loc[piv['gex_calls'].idxmax(), 'strike']) if (piv['gex_calls'] > 0).any() else None
-    put_wall = float(piv.loc[piv['gex_puts'].idxmin(), 'strike']) if (piv['gex_puts'] < 0).any() else None
-    gex_total_spot = float(np.interp(S, grid, total))
-    if flip is None:
-        regimen = 'positivo' if gex_total_spot > 0 else 'negativo'
-    else:
-        regimen = 'positivo' if S > flip else 'negativo'
-    return dict(flip=flip, call_wall=call_wall, put_wall=put_wall,
-                gex_total=gex_total_spot, regimen=regimen)
-
-
-def fig_gex(piv, zonas, S):
-    y_max = float(max(piv['gex_calls'].max(), abs(piv['gex_puts'].min()), 1.0)) * 1.1
-    x_min, x_max = float(piv['strike'].min()), float(piv['strike'].max())
-    fig = go.Figure()
-
-    # zonas de fondo: gamma negativa (rojo) / positiva (verde) según el flip
-    flip = zonas['flip']
-    if flip is not None:
-        fig.add_vrect(x0=x_min, x1=min(max(flip, x_min), x_max), fillcolor='rgba(248,81,73,0.08)', line_width=0)
-        fig.add_vrect(x0=min(max(flip, x_min), x_max), x1=x_max, fillcolor='rgba(63,185,80,0.08)', line_width=0)
-    else:
-        col = 'rgba(63,185,80,0.08)' if zonas['regimen'] == 'positivo' else 'rgba(248,81,73,0.08)'
-        fig.add_vrect(x0=x_min, x1=x_max, fillcolor=col, line_width=0)
-
-    fig.add_trace(go.Bar(x=piv['strike'], y=piv['gex_calls'], marker_color=C_GREEN, name='GEX Calls', opacity=0.85))
-    fig.add_trace(go.Bar(x=piv['strike'], y=piv['gex_puts'], marker_color=C_RED, name='GEX Puts', opacity=0.85))
-
-    def _linea(x, color, dash, nombre):
-        if x is None:
-            return
-        fig.add_trace(go.Scatter(x=[x, x], y=[-y_max, y_max], mode='lines',
-                                 line=dict(color=color, dash=dash, width=1.8),
-                                 name=f'{nombre} ({x:,.2f})', hoverinfo='skip'))
-    _linea(S, C_YELL, 'dot', 'Precio actual')
-    _linea(flip, '#bc8cff', 'dash', 'Punto de cambio de gamma')
-    _linea(zonas['call_wall'], C_GREEN, 'dashdot', 'Pared de Calls')
-    _linea(zonas['put_wall'], C_RED, 'dashdot', 'Pared de Puts')
-
-    fig.update_layout(**PLOTLY_LAYOUT_OPC, height=460, barmode='relative',
-                      title=dict(text='GEX por precio de ejercicio (USD por cada 1% de movimiento)', font=dict(color=C_TEXT, size=13), y=0.98),
-                      legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0,
-                                  font=dict(size=10.5, color=C_TEXT)),
-                      xaxis=dict(title='Precio de ejercicio', gridcolor=C_GRID),
-                      yaxis=dict(title='GEX ($ / 1%)', gridcolor=C_GRID),
-                      margin=dict(l=10, r=10, t=90, b=10))
-    return fig
-
-
-def render_gex(ticker, S, r, q, mult=100, vol_hist=0.40):
-    if not ticker:
-        return
-
-    # 1) Resolver el símbolo que realmente tiene opciones (ADR si es un .BA)
-    ticker_gex, aviso = resolver_ticker_gex(ticker)
-    if ticker_gex is None:
-        st.warning(f'Yahoo Finance no tiene opciones para **{ticker}** ni un ADR equivalente conocido. '
-                   'Probá con el símbolo de EEUU (ej. GGAL en vez de GGAL.BA).')
-        if st.button('🔄 Reintentar (limpiar caché)', key='opc_gex_retry0'):
-            st.cache_data.clear(); st.rerun()
-        return
-    if aviso:
-        st.info(aviso)
-        d_adr = _opc_datos_activo(ticker_gex)
-        if d_adr is None:
-            st.warning(f'No se pudo obtener el precio de {ticker_gex}.')
-            return
-        S = d_adr['S']          # GEX debe calcularse con el spot del subyacente que tiene las opciones
-
-    c1, _ = st.columns([1, 2])
-    with c1:
-        n_vtos = st.slider('Vencimientos a incluir', 1, 12, 6, key='opc_gex_nvtos',
-                           help='Más vencimientos = más panorama, pero los cercanos pesan mucho más (gamma alta).')
-    st.caption(f'Tasa usada: {r:.2%} (la que cargaste en el paso 1).')
-
-    # 2) Cadena tolerante con diagnóstico
-    df, diag = _opc_gex_base(ticker_gex, n_vtos, vol_hist)
-    if df is None:
-        st.warning(f"No hay cadena utilizable para GEX: {diag['motivo']}")
-        if st.button('🔄 Reintentar (limpiar caché)', key='opc_gex_retry'):
-            st.cache_data.clear(); st.rerun()
-        return
-    if diag['oi_desde_volumen']:
-        st.caption('ℹ️ Yahoo no informó interés abierto; se usó el **volumen** como aproximación (menos confiable).')
-    if diag['iv_rellenadas']:
-        st.caption(f"ℹ️ {diag['iv_rellenadas']} contratos tenían vol. implícita inválida; se reemplazó por la mediana del vencimiento.")
-
-    piv = calcular_gex_por_strike(df, S, r, q, mult)
-    if piv.empty:
-        st.warning('No hay precios de ejercicio con interés abierto/vol. implícita utilizable cerca del precio actual para estos vencimientos.')
-        return
-    grid, total = gex_total_vs_spot(df, S, r, q, mult)
-    z = calcular_zonas_gex(piv, grid, total, S)
-
-    m1, m2, m3, m4 = st.columns(4)
-    with m1: st.metric('GEX total (al precio actual)', f"{z['gex_total']/1e6:,.1f} millones de US$")
-    with m2: st.metric('Punto de cambio de gamma', fmt_precio_opc(z['flip']) if z['flip'] else 'N/D')
-    with m3: st.metric('Pared de Calls', fmt_precio_opc(z['call_wall']) if z['call_wall'] else 'N/D')
-    with m4: st.metric('Pared de Puts', fmt_precio_opc(z['put_wall']) if z['put_wall'] else 'N/D')
-
-    if z['regimen'] == 'positivo':
-        st.success('🟢 **Zona gamma POSITIVA** — los creadores de mercado amortiguan el movimiento: más reversión a la media, '
-                   'menor volatilidad realizada. Las paredes de Calls y Puts tienden a funcionar como imanes/límites.')
-    else:
-        st.error('🔴 **Zona gamma NEGATIVA** — los creadores de mercado amplifican el movimiento: más tendencia y volatilidad. '
-                 'Perder la pared de Puts puede acelerar la caída.')
-
-    render_explicacion('Cómo leer estos 4 indicadores', """
-**Qué es cada uno**
-- **GEX total (al precio actual):** el GEX es la *exposición gamma*: la suma de la gamma de todas las opciones, en dólares que los *creadores de mercado* deberían comprar o vender por cada 1% que se mueva el precio. Lo que importa es el **signo**: positivo = frenan el movimiento, negativo = lo aceleran. El tamaño no se compara entre distintos activos.
-- **Punto de cambio de gamma:** el precio donde el GEX total pasa de negativo a positivo. Es la **frontera entre los dos regímenes**.
-- **Pared de Calls:** el precio de ejercicio con más gamma de calls. Suele actuar como **techo o imán**.
-- **Pared de Puts:** el precio de ejercicio con más gamma de puts. Suele actuar como **piso o soporte**.
-
-**Cómo usarlo**
-- Régimen **positivo** (verde): esperá mercado más tranquilo y de rango. Sirve para estrategias que ganan con el precio quieto (vender prima, Cóndor de hierro, Strangle vendido con cobertura).
-- Régimen **negativo** (rojo): esperá movimientos más grandes y bruscos. Sirve para estrategias que ganan con movimiento (Straddle, Strangle) y hay que ser más cuidadoso con las que venden prima.
-- Mirá la **distancia entre el precio y el punto de cambio de gamma**: cuanto más cerca, más probable un cambio de comportamiento.
-""")
-
-    st.plotly_chart(fig_gex(piv, z, S), use_container_width=True, key='opc_fig_gex')
-
-    render_explicacion('Cómo leer el gráfico "GEX por precio de ejercicio" y cómo usarlo', """
-**Qué muestra**
-Cada barra es un precio de ejercicio. **Verde hacia arriba** = gamma de las calls. **Rojo hacia abajo** = gamma de las puts. Cuanto más alta la barra, más peso tiene ese precio de ejercicio en las coberturas de los creadores de mercado. El fondo verde/rojo marca dónde rige cada régimen según el punto de cambio de gamma, y las líneas verticales marcan el precio actual (precio actual), el punto de cambio de gamma y las paredes.
-
-**Cómo leerlo**
-- Una **barra muy alta** es un nivel "pegajoso": el precio tiende a orbitar o detenerse cerca.
-- Si el **precio actual está pegado a una barra grande**, el precio está en una zona de mucha influencia.
-- Si las barras están **casi todas del lado de las calls**, el neto da positivo; si dominan las puts, da negativo.
-- Zonas **sin barras** = casi sin influencia de opciones: el precio se mueve más libre ahí.
-
-**Cómo sacarle provecho**
-- Usá los precios de ejercicio con barras grandes como **referencias** para elegir precios de ejercicio vendidos (por ejemplo, vender una Call por encima de la pared de Calls o una Put por debajo de la pared de Puts).
-- Si el precio se acerca a la pared de Puts desde arriba, prestá atención: perderla puede acelerar la caída.
-- Combinalo siempre con el resto del análisis (tendencia, volatilidad, perfil de resultado). **No es una señal de compra o venta por sí solo.**
-""")
-
-    st.markdown('**Lectura con los datos de hoy:**')
-    for _linea in lectura_personalizada_gex(z, S):
-        st.markdown(f'- {_linea}')
-
-    fig_flip = go.Figure(go.Scatter(x=grid, y=total / 1e6, line=dict(color=C_ACENT, width=2.2)))
-    fig_flip.add_hline(y=0, line_color=C_MUTED, opacity=0.6)
-    fig_flip.add_vline(x=S, line_dash='dot', line_color=C_YELL, opacity=0.7)
-    if z['flip']:
-        fig_flip.add_vline(x=z['flip'], line_dash='dash', line_color='#bc8cff', opacity=0.8)
-    fig_flip.update_layout(**PLOTLY_LAYOUT_OPC, height=300,
-                           title=dict(text='GEX total vs precio del subyacente (el cruce por 0 es el punto de cambio de gamma)',
-                                      font=dict(color=C_TEXT, size=13)),
-                           xaxis=dict(title='Precio', gridcolor=C_GRID),
-                           yaxis=dict(title='GEX total (millones de US$ / 1%)', gridcolor=C_GRID),
-                           margin=dict(l=10, r=10, t=45, b=10))
-    st.plotly_chart(fig_flip, use_container_width=True, key='opc_fig_gex_flip')
-
-    render_explicacion('Cómo leer el gráfico "GEX total vs precio" y cómo usarlo', """
-**Qué muestra**
-Responde a esta pregunta: *"si el activo estuviera en otro precio, ¿cuál sería el GEX total?"*. El eje horizontal es el precio hipotético y el vertical es el GEX total. La línea punteada amarilla es el precio actual y la violeta es el punto de cambio de gamma.
-
-**Cómo leerlo**
-- Donde la curva está **por encima de 0** = régimen positivo (los creadores de mercado amortiguan).
-- Donde está **por debajo de 0** = régimen negativo (los creadores de mercado amplifican).
-- El punto donde **cruza el cero** es el punto de cambio de gamma.
-- Una curva que **cae rápido hacia el cero** al bajar el precio indica que el régimen es frágil: no hace falta una caída grande para cambiar de escenario.
-- Los picos y pequeñas muescas suelen venir de muchos precios de ejercicio juntos o de datos ruidosos de Yahoo; no los tomes como niveles exactos.
-
-**Cómo sacarle provecho**
-- Es el gráfico ideal para responder *"¿cuánto tiene que moverse el precio para que cambie el comportamiento del mercado?"*.
-- Si el precio está **lejos del punto de cambio y del lado positivo**, hay más margen para estrategias de rango.
-- Si está **cerca del punto de cambio**, conviene achicar el tamaño o elegir estrategias con riesgo definido.
-""")
-
-    st.caption('⚠️ Asume creadores de mercado largos calls / cortos puts. Usa el interés abierto del día anterior y la vol. implícita de Yahoo (ruidosa en precios de ejercicio '
-               'ilíquidos). Es una referencia de régimen, no una señal por sí sola.')
-
-# ==============================================================
 #  CATÁLOGO DE ESTRATEGIAS
 # ==============================================================
 
@@ -1262,6 +946,8 @@ def modulo_opciones():
                 if ticker:
                     st.caption('⚠️ Yahoo Finance no tiene cadena de opciones publicada para este símbolo '
                                '(común en algunos ADRs/CEDEARs y en los tickers .BA). Carga manual de precios.')
+                    if st.session_state.get('opc_ultimo_error'):
+                        st.caption(f"Detalle técnico: {st.session_state['opc_ultimo_error']}")
         with c4:
             r = st.number_input('Tasa de interés anual (decimal)', min_value=0.0, max_value=3.0,
                                  value=float(st.session_state['opc_r']), step=0.01, format='%.4f', key='opc_r_input')
@@ -1310,11 +996,6 @@ def modulo_opciones():
     dias_vto = max((st.session_state['opc_vto'] - date.today()).days, 1)
     T = dias_vto / 365
     r, q, estilo, mult = st.session_state['opc_r'], st.session_state['opc_q'], st.session_state['opc_estilo'], st.session_state['opc_mult']
-
-    # GEX: solo se calcula si activás el toggle (evita descargar cadenas en cada rerun)
-    with st.expander('🧲 GEX — Exposición Gamma y zonas', expanded=False):
-        if st.toggle('Calcular GEX', value=False, key='opc_gex_toggle'):
-            render_gex(st.session_state['opc_ticker'].strip().upper(), S, r, q, mult, vol_hist)
 
     # ── PASO 2: elegir estrategia ────────────────────────────────────────
     st.markdown('---')
