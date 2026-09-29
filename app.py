@@ -9554,7 +9554,7 @@ with st.container(key='nav_mobile_wrap'):
         ('🧮 Optimizar' if TIENE_ACCESO_PRO else '🔒 Optimizar (Pro)'): 'optimizador',
         ('🔗 Pares' if TIENE_ACCESO_PRO else '🔒 Pares (Pro)'): 'pares',
         '🎲 Opciones': 'opciones',
-        ('🧲 GEX' if TIENE_ACCESO_PRO else '🔒 Pares (Pro)'): 'gex',
+        ('🧲 GEX' if TIENE_ACCESO_PRO else '🔒 GEX (Pro)'): 'gex',
         '📐 Promediador': 'promediador',
         ('🎯 Señales' if TIENE_ACCESO_PRO else '🔒 Señales (Pro)'): 'senales',
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
@@ -9801,14 +9801,15 @@ elif MODULO == 'pares':
             modulo_volatilidad(PLOTLY_CONFIG=PLOTLY_CONFIG)
     else:
         _mostrar_bloqueo_pro('Rotación y Pares')
+
 elif MODULO == 'opciones':
     modulo_opciones()
 
-  elif MODULO == 'gex':
-      if TIENE_ACCESO_PRO:
-          modulo_gex()
-      else:
-          _mostrar_bloqueo_pro('GEX')
+elif MODULO == 'gex':
+    if TIENE_ACCESO_PRO:
+        modulo_gex()
+    else:
+        _mostrar_bloqueo_pro('GEX')
 
 elif MODULO == 'senales':
     if TIENE_ACCESO_PRO:
