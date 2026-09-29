@@ -23,8 +23,8 @@ PLOTLY_LAYOUT_OPC = dict(plot_bgcolor=C_BG1, paper_bgcolor=C_BG2,
 N_PASOS_BINOMIAL = 150
 TOLERANCIA_VOL = 0.10
 NOMBRES_GRIEGAS = ["Delta", "Gamma", "Theta", "Vega", "Rho"]
-N_SIMULACIONES_OPC = 3000          # trayectorias del Monte Carlo real-world
-VENTANA_VOL_CORTA_OPC = 40         # ruedas usadas para estimar el drift reciente
+N_SIMULACIONES_OPC = 3000          # trayectorias de la simulación Monte Carlo
+VENTANA_VOL_CORTA_OPC = 40         # ruedas usadas para estimar la tendencia reciente
 
 
 # True = las explicaciones debajo de cada gráfico aparecen abiertas; False = plegadas
@@ -44,25 +44,25 @@ def lectura_personalizada_gex(z, S):
     if flip:
         d = (S / flip - 1) * 100
         if d > 0:
-            L.append(f"El precio actual ({S:,.2f}) está **{d:.1f}% por encima** del Gamma Flip ({flip:,.2f}). "
+            L.append(f"El precio actual ({S:,.2f}) está **{d:.1f}% por encima** del punto de cambio de gamma ({flip:,.2f}). "
                      f"Ese es tu colchón: mientras el precio se mantenga arriba, el régimen es de amortiguación. "
                      f"Si cae por debajo de {flip:,.2f}, el mercado pasa a amplificar los movimientos.")
         else:
-            L.append(f"El precio actual ({S:,.2f}) está **{abs(d):.1f}% por debajo** del Gamma Flip ({flip:,.2f}). "
+            L.append(f"El precio actual ({S:,.2f}) está **{abs(d):.1f}% por debajo** del punto de cambio de gamma ({flip:,.2f}). "
                      f"Ya estamos en régimen de amplificación: los movimientos tienden a ser más bruscos. "
                      f"Recuperar {flip:,.2f} devolvería el efecto amortiguador.")
     else:
-        L.append("No hay Gamma Flip dentro del rango analizado (±15% del precio): el régimen es "
+        L.append("No hay punto de cambio de gamma dentro del rango analizado (±15% del precio): el régimen es "
                  f"**{z['regimen']}** en todo ese rango, así que no hay un nivel cercano donde cambie.")
     if cw:
         dc = (cw / S - 1) * 100
         pos = "por encima" if dc > 0 else "por debajo"
-        L.append(f"El **Call Wall ({cw:,.2f})** está {abs(dc):.1f}% {pos} del precio. "
+        L.append(f"La **pared de Calls ({cw:,.2f})** está {abs(dc):.1f}% {pos} del precio. "
                  f"Es el nivel donde más gamma de calls se concentra: suele comportarse como imán o resistencia.")
     if pw:
         dp = (pw / S - 1) * 100
         pos = "por encima" if dp > 0 else "por debajo"
-        L.append(f"El **Put Wall ({pw:,.2f})** está {abs(dp):.1f}% {pos} del precio. "
+        L.append(f"La **pared de Puts ({pw:,.2f})** está {abs(dp):.1f}% {pos} del precio. "
                  f"Es el nivel donde más gamma de puts se concentra: suele comportarse como soporte, "
                  f"y si se pierde, la caída puede acelerarse.")
     return L
@@ -81,7 +81,7 @@ def fmt_precio_opc(p):
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def _opc_datos_activo(ticker):
-    """Precio, volatilidad histórica, dividend yield sugerido, RSI, SMA20."""
+    """Precio, volatilidad histórica, rendimiento por dividendos sugerido, RSI, media móvil de 20 ruedas."""
     try:
         import yfinance as yf
         df = yf.download(ticker, period='2y', interval='1d', auto_adjust=True, progress=False)
@@ -148,7 +148,7 @@ def _opc_serie_precios_completa(ticker, periodo='2y'):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _opc_vencimientos_disponibles(ticker):
-    """Fechas de vencimiento reales que Yahoo Finance tiene publicadas para el ticker."""
+    """Fechas de vencimiento reales que Yahoo Finance tiene publicadas para el símbolo."""
     try:
         import yfinance as yf
         vtos = yf.Ticker(ticker).options
@@ -159,7 +159,7 @@ def _opc_vencimientos_disponibles(ticker):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _opc_cadena_opciones(ticker, vencimiento):
-    """Descarga la cadena de opciones (calls y puts) de Yahoo Finance para un ticker
+    """Descarga la cadena de opciones (calls y puts) de Yahoo Finance para un símbolo
     y una fecha de vencimiento puntual (formato 'YYYY-MM-DD', tal cual la devuelve
     yfinance en .options). Devuelve dict {'calls': df, 'puts': df} o None si falla."""
     try:
@@ -184,8 +184,8 @@ def _opc_cadena_opciones(ticker, vencimiento):
 
 
 def _opc_fila_strike_mas_cercano(df_lado, strike_objetivo):
-    """Dado un DataFrame de calls o puts y un strike de referencia (ej. el spot),
-    devuelve la fila cuyo strike está más cerca — útil para pre-seleccionar ATM."""
+    """Dado un DataFrame de calls o puts y un precio de ejercicio de referencia (ej. el precio actual),
+    devuelve la fila cuyo precio de ejercicio está más cerca — útil para pre-seleccionar en el dinero."""
     if df_lado is None or df_lado.empty:
         return None
     idx = (df_lado['strike'] - strike_objetivo).abs().idxmin()
@@ -193,22 +193,22 @@ def _opc_fila_strike_mas_cercano(df_lado, strike_objetivo):
 
 
 def render_tabla_cadena_opciones(cadena, S, tipo=None):
-    """Muestra calls y/o puts de la cadena real, resaltando el strike más cercano
-    al spot y formateando bid/ask/IV/volumen para lectura rápida."""
+    """Muestra calls y/o puts de la cadena real, resaltando el precio de ejercicio más cercano
+    al precio actual y formateando compra/venta/vol. implícita/volumen para lectura rápida."""
     if cadena is None:
         st.warning('No se pudo descargar la cadena de opciones para este vencimiento.')
         return
 
     def _fmt_df(df):
         d = df.copy()
-        d['ITM'] = d['inTheMoney'].map({True: '🟢 ITM', False: '⚪ OTM'})
-        d['IV'] = d['impliedVolatility'].apply(lambda v: f'{v:.1%}' if pd.notna(v) else 'N/D')
-        d['Bid'] = d['bid'].apply(lambda v: f'{v:.2f}' if pd.notna(v) else 'N/D')
-        d['Ask'] = d['ask'].apply(lambda v: f'{v:.2f}' if pd.notna(v) else 'N/D')
+        d['Dentro del dinero'] = d['inTheMoney'].map({True: '🟢 Dentro del dinero', False: '⚪ Fuera del dinero'})
+        d['Vol. implícita'] = d['impliedVolatility'].apply(lambda v: f'{v:.1%}' if pd.notna(v) else 'N/D')
+        d['Compra'] = d['bid'].apply(lambda v: f'{v:.2f}' if pd.notna(v) else 'N/D')
+        d['Venta'] = d['ask'].apply(lambda v: f'{v:.2f}' if pd.notna(v) else 'N/D')
         d['Último'] = d['lastPrice'].apply(lambda v: f'{v:.2f}' if pd.notna(v) else 'N/D')
         d['Vol.'] = d['volume'].fillna(0).astype(int)
-        d['OI'] = d['openInterest'].fillna(0).astype(int)
-        return d[['strike', 'Último', 'Bid', 'Ask', 'Vol.', 'OI', 'IV', 'ITM']].rename(columns={'strike': 'Strike'})
+        d['Interés abierto'] = d['openInterest'].fillna(0).astype(int)
+        return d[['strike', 'Último', 'Compra', 'Venta', 'Vol.', 'Interés abierto', 'Vol. implícita', 'Dentro del dinero']].rename(columns={'strike': 'Precio de ejercicio'})
 
     tabs_lado = []
     if tipo in (None, 'C'): tabs_lado.append(('📈 Calls', cadena['calls']))
@@ -360,8 +360,8 @@ def generar_senal_operacion(precio_teorico, precio_mercado, vol_hist, vol_implic
         return f"❌ Vol. implícita no disponible" + (f" ({motivo_falla})" if motivo_falla else "")
     spread_vol = vol_implicita - vol_hist
     sobre = precio_mercado - precio_teorico
-    if spread_vol > TOLERANCIA_VOL and sobre > 0: return "🔴 CARA (IV alta y precio mercado > teórico)"
-    if spread_vol < -TOLERANCIA_VOL and sobre < 0: return "🟢 BARATA (IV baja y precio mercado < teórico)"
+    if spread_vol > TOLERANCIA_VOL and sobre > 0: return "🔴 CARA (vol. implícita alta y precio mercado > teórico)"
+    if spread_vol < -TOLERANCIA_VOL and sobre < 0: return "🟢 BARATA (vol. implícita baja y precio mercado < teórico)"
     if sobre > 0: return "🟠 Levemente cara"
     if sobre < 0: return "🟡 Levemente barata"
     return "⚪ Neutra / a precio justo"
@@ -384,8 +384,8 @@ def evaluar_liquidez(bid, ask):
 # ==============================================================
 
 def simular_monte_carlo_opc(S0, sigma, drift, dias, n_sims=N_SIMULACIONES_OPC, seed=42):
-    """GBM vectorizado. 'drift' es el retorno esperado anualizado real-world (no risk-neutral),
-    a diferencia del pricing Black-Scholes/Binomial que usa la tasa libre de riesgo."""
+    """GBM vectorizado. 'Tendencia' es el retorno esperado anualizado del mundo real (no neutral al riesgo),
+    a diferencia de la valuación Black-Scholes/Binomial que usa la tasa libre de riesgo."""
     dt_ = 1 / 365
     pasos = max(int(dias), 1)
     rng = np.random.default_rng(seed)
@@ -419,14 +419,14 @@ def sugerir_alternativas_opcion(checks, accion, tipo, precio_mercado, precio_teo
 
     if not checks['iv']['ok']:
         if accion == 'comprar':
-            sugerencias.append("La IV está relativamente inflada frente a la referencia → buscá un strike o "
-                                "vencimiento con IV más alineada, o evaluá vender premium en vez de comprar.")
+            sugerencias.append("La vol. implícita está relativamente inflada frente a la referencia → buscá un precio de ejercicio o "
+                                "vencimiento con vol. implícita más alineada, o evaluá vender prima en vez de comprar.")
         else:
-            sugerencias.append("La IV está relativamente comprimida frente a la referencia → vender acá deja "
-                                "poca prima; buscá un strike/vencimiento con más IV, o evaluá comprar en su lugar.")
+            sugerencias.append("La vol. implícita está relativamente comprimida frente a la referencia → vender acá deja "
+                                "poca prima; buscá un precio de ejercicio/vencimiento con más vol. implícita, o evaluá comprar en su lugar.")
 
     if not checks['tendencia']['ok']:
-        sugerencias.append(f"La tendencia de corto plazo (SMA20) no acompaña esta opción para {verbo} → "
+        sugerencias.append(f"La tendencia de corto plazo (media móvil de 20 ruedas) no acompaña esta opción para {verbo} → "
                             f"esperá una confirmación de tendencia antes de entrar, o reconsiderá el sesgo.")
 
     if not checks['momentum']['ok']:
@@ -434,7 +434,7 @@ def sugerir_alternativas_opcion(checks, accion, tipo, precio_mercado, precio_teo
                             "o reducí el tamaño de la posición si igual querés entrar.")
 
     if not checks['delta']['ok']:
-        sugerencias.append("El Delta está fuera de la zona ATM ideal (0.4-0.6) → probá un strike más cercano "
+        sugerencias.append("El Delta está fuera de la zona en el dinero ideal (0.4-0.6) → probá un precio de ejercicio más cercano "
                             "al precio actual para mejor apalancamiento, o aceptá el perfil más direccional/especulativo.")
 
     if not checks['precio']['ok']:
@@ -442,16 +442,16 @@ def sugerir_alternativas_opcion(checks, accion, tipo, precio_mercado, precio_teo
         if accion == 'comprar':
             sugerencias.append(f"Estás pagando {diff_pct:.1f}% más de lo que el modelo considera valor justo "
                                 f"(${precio_teorico:,.2f} vs ${precio_mercado:,.2f} de mercado) → esperá que "
-                                f"baje la prima, buscá otro strike/vencimiento, o evaluá vender en vez de comprar.")
+                                f"baje la prima, buscá otro precio de ejercicio/vencimiento, o evaluá vender en vez de comprar.")
         else:
             sugerencias.append(f"Estás cobrando {diff_pct:.1f}% menos de lo que el modelo considera valor justo "
-                                f"(${precio_teorico:,.2f} vs ${precio_mercado:,.2f} de mercado) → buscá un strike "
+                                f"(${precio_teorico:,.2f} vs ${precio_mercado:,.2f} de mercado) → buscá un precio de ejercicio "
                                 f"con mejor prima, o evaluá comprar en vez de vender.")
 
     if not checks['monte_carlo']['ok']:
         sugerencias.append("Según el Monte Carlo, la probabilidad de que el precio favorezca a esta opción es "
                             "menor al 45% → la estadística del activo no acompaña esta opción en particular. "
-                            "Considerá un strike más cercano al spot, o esperá a que el escenario se corra a favor.")
+                            "Considerá un precio de ejercicio más cercano al precio actual, o esperá a que el escenario se corra a favor.")
 
     return sugerencias
 
@@ -461,7 +461,7 @@ def evaluar_señal_opcion(tipo, accion, S, vol_hist, vol_empirica, vol_implicita
                         prob_mc_favorable, tolerancia=TOLERANCIA_VOL):
     """6 chequeos independientes, adaptados según si la opción se COMPRA o se VENDE.
     'Favorable' siempre significa: a favor del resultado de ESTA opción en particular,
-    no de la estrategia completa (eso ya lo cubren el payoff y los breakevens).
+    no de la estrategia completa (eso ya lo cubren el perfil de resultado y los puntos de equilibrio).
     Devuelve también color (para la tarjeta HTML) y sugerencias tipo 'Qué mirar en cambio'."""
     es_alcista_favorable = (tipo == 'C' and accion == 'comprar') or (tipo == 'P' and accion == 'vender')
     vol_referencia = np.nanmean([vol_hist, vol_empirica]) if not np.isnan(vol_empirica) else vol_hist
@@ -471,20 +471,20 @@ def evaluar_señal_opcion(tipo, accion, S, vol_hist, vol_empirica, vol_implicita
     if accion == 'comprar':
         ok_iv = (vol_implicita < vol_referencia + tolerancia) if not np.isnan(vol_implicita) else False
         ok_precio = precio_mercado < precio_teorico
-        txt_iv = 'IV relativamente barata (favorable para comprar)'
+        txt_iv = 'Vol. implícita relativamente barata (favorable para comprar)'
         txt_precio = 'Precio de mercado < precio justo (no pagás de más)'
     else:
         ok_iv = (vol_implicita > vol_referencia - tolerancia) if not np.isnan(vol_implicita) else False
         ok_precio = precio_mercado > precio_teorico
-        txt_iv = 'IV relativamente cara (favorable para vender)'
+        txt_iv = 'Vol. implícita relativamente cara (favorable para vender)'
         txt_precio = 'Precio de mercado > precio justo (cobrás de más)'
 
     if es_alcista_favorable:
         ok_tendencia, ok_momentum = S > sma20, rsi > 50
-        txt_tendencia, txt_momentum = 'Tendencia (precio sobre SMA20) a favor', 'Momentum (RSI > 50) a favor'
+        txt_tendencia, txt_momentum = 'Tendencia (precio sobre media móvil de 20 ruedas) a favor', 'Impulso (RSI > 50) a favor'
     else:
         ok_tendencia, ok_momentum = S < sma20, rsi < 50
-        txt_tendencia, txt_momentum = 'Tendencia (precio bajo SMA20) a favor', 'Momentum (RSI < 50) a favor'
+        txt_tendencia, txt_momentum = 'Tendencia (precio bajo media móvil de 20 ruedas) a favor', 'Impulso (RSI < 50) a favor'
 
     ok_delta = 0.4 <= abs(delta) <= 0.6
     ok_mc = prob_mc_favorable > 45
@@ -493,7 +493,7 @@ def evaluar_señal_opcion(tipo, accion, S, vol_hist, vol_empirica, vol_implicita
         'iv': {'ok': bool(ok_iv), 'texto': txt_iv},
         'tendencia': {'ok': bool(ok_tendencia), 'texto': txt_tendencia},
         'momentum': {'ok': bool(ok_momentum), 'texto': txt_momentum},
-        'delta': {'ok': bool(ok_delta), 'texto': 'Delta en zona 0.4-0.6 (ATM, buen apalancamiento/gamma)'},
+        'delta': {'ok': bool(ok_delta), 'texto': 'Delta en zona 0.4-0.6 (en el dinero, buen apalancamiento/gamma)'},
         'precio': {'ok': bool(ok_precio), 'texto': txt_precio},
         'monte_carlo': {'ok': bool(ok_mc), 'texto': 'Monte Carlo favorece esta opción (prob. > 45%)'},
     }
@@ -574,19 +574,19 @@ def fig_monte_carlo_distribucion(precios_finales, S, strikes, p40_mc, p60_mc, p4
                                   line=dict(color=color, dash=dash, width=1.6),
                                   name=f'{nombre} ({x:,.2f})', hoverinfo='skip'))
 
-    _linea_vertical(S, C_YELL, 'dot', 'Spot')
-    _linea_vertical(p40_mc, C_MUTED, 'dash', 'MC 40%')
-    _linea_vertical(p60_mc, C_MUTED, 'dash', 'MC 60%')
+    _linea_vertical(S, C_YELL, 'dot', 'Precio actual')
+    _linea_vertical(p40_mc, C_MUTED, 'dash', 'Monte Carlo 40%')
+    _linea_vertical(p60_mc, C_MUTED, 'dash', 'Monte Carlo 60%')
     if p40_emp is not None:
         _linea_vertical(p40_emp, C_GREEN, 'dashdot', 'Emp. 40%')
         _linea_vertical(p60_emp, C_GREEN, 'dashdot', 'Emp. 60%')
     for k in sorted(set(strikes)):
-        _linea_vertical(k, C_RED, 'dot', f'Strike {k:,.2f}')
+        _linea_vertical(k, C_RED, 'dot', f'Precio de ejercicio {k:,.2f}')
 
     fig.update_layout(**PLOTLY_LAYOUT_OPC, height=430, showlegend=True,
                        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0,
                                    font=dict(size=10.5, color=C_TEXT)),
-                       title=dict(text='Distribución Monte Carlo real-world al vencimiento',
+                       title=dict(text='Distribución Monte Carlo del mundo real al vencimiento',
                                   font=dict(color=C_TEXT, size=13), y=0.98),
                        xaxis=dict(title='Precio del subyacente', gridcolor=C_GRID),
                        yaxis=dict(title='Frecuencia', gridcolor=C_GRID, range=[0, y_top]),
@@ -606,7 +606,7 @@ def _gamma_bs_vec(S, K, T, r, sigma, q=0.0):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _opc_gex_base(ticker, max_vtos=6):
-    """Cadena de los próximos vencimientos en un solo DataFrame largo (strike, tipo, OI, IV, T)."""
+    """Cadena de los próximos vencimientos en un solo DataFrame largo (precio de ejercicio, tipo, interés abierto, vol. implícita, T)."""
     vtos = _opc_vencimientos_disponibles(ticker)[:max_vtos]
     partes = []
     for v in vtos:
@@ -627,7 +627,7 @@ def _opc_gex_base(ticker, max_vtos=6):
 
 
 def calcular_gex_por_strike(df, S, r, q, mult=100, rango=0.20):
-    """GEX neto por strike, separado en calls (+) y puts (−). Solo strikes dentro de ±rango del spot."""
+    """GEX neto por precio de ejercicio, separado en calls (+) y puts (−). Solo precios de ejercicio dentro de ±rango del precio actual."""
     g = _gamma_bs_vec(S, df['strike'].values, df['T'].values, r, df['impliedVolatility'].values, q)
     signo = np.where(df['tipo'] == 'C', 1.0, -1.0)
     d = df.copy()
@@ -644,7 +644,7 @@ def calcular_gex_por_strike(df, S, r, q, mult=100, rango=0.20):
 
 
 def gex_total_vs_spot(df, S, r, q, mult=100, rango=0.15, n=121):
-    """GEX total recalculado sobre una grilla de spots → sirve para ubicar el Gamma Flip."""
+    """GEX total recalculado sobre una grilla de precios → sirve para ubicar el punto de cambio de gamma."""
     grid = np.linspace(S * (1 - rango), S * (1 + rango), n)
     K, T, iv = (df[c].values[None, :] for c in ('strike', 'T', 'impliedVolatility'))
     oi = df['openInterest'].values[None, :]
@@ -655,7 +655,7 @@ def gex_total_vs_spot(df, S, r, q, mult=100, rango=0.15, n=121):
 
 
 def encontrar_gamma_flip(grid, total, S):
-    """Cruce por cero (interpolado) más cercano al spot. None si no hay cruce en el rango."""
+    """Cruce por cero (interpolado) más cercano al precio actual. None si no hay cruce en el rango."""
     cruces = np.where(np.sign(total[:-1]) * np.sign(total[1:]) < 0)[0]
     if len(cruces) == 0:
         return None
@@ -699,16 +699,16 @@ def fig_gex(piv, zonas, S):
         fig.add_trace(go.Scatter(x=[x, x], y=[-y_max, y_max], mode='lines',
                                  line=dict(color=color, dash=dash, width=1.8),
                                  name=f'{nombre} ({x:,.2f})', hoverinfo='skip'))
-    _linea(S, C_YELL, 'dot', 'Spot')
-    _linea(flip, '#bc8cff', 'dash', 'Gamma Flip')
-    _linea(zonas['call_wall'], C_GREEN, 'dashdot', 'Call Wall')
-    _linea(zonas['put_wall'], C_RED, 'dashdot', 'Put Wall')
+    _linea(S, C_YELL, 'dot', 'Precio actual')
+    _linea(flip, '#bc8cff', 'dash', 'Punto de cambio de gamma')
+    _linea(zonas['call_wall'], C_GREEN, 'dashdot', 'Pared de Calls')
+    _linea(zonas['put_wall'], C_RED, 'dashdot', 'Pared de Puts')
 
     fig.update_layout(**PLOTLY_LAYOUT_OPC, height=460, barmode='relative',
-                      title=dict(text='GEX por strike (USD por cada 1% de movimiento)', font=dict(color=C_TEXT, size=13), y=0.98),
+                      title=dict(text='GEX por precio de ejercicio (USD por cada 1% de movimiento)', font=dict(color=C_TEXT, size=13), y=0.98),
                       legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0,
                                   font=dict(size=10.5, color=C_TEXT)),
-                      xaxis=dict(title='Strike', gridcolor=C_GRID),
+                      xaxis=dict(title='Precio de ejercicio', gridcolor=C_GRID),
                       yaxis=dict(title='GEX ($ / 1%)', gridcolor=C_GRID),
                       margin=dict(l=10, r=10, t=90, b=10))
     return fig
@@ -724,59 +724,59 @@ def render_gex(ticker, S, r, q, mult=100):
     st.caption(f'Tasa usada: {r:.2%} (la que cargaste en el paso 1).')
     df = _opc_gex_base(ticker, n_vtos)
     if df is None:
-        st.warning('No hay cadena de opciones utilizable (OI / IV) para este ticker. '
+        st.warning('No hay cadena de opciones utilizable (interés abierto / vol. implícita) para este símbolo. '
                    'GEX necesita cadena real; no funciona con carga manual.')
         return
 
     piv = calcular_gex_por_strike(df, S, r, q, mult)
     if piv.empty:
-        st.warning('No hay strikes con OI/IV utilizable cerca del spot para estos vencimientos.')
+        st.warning('No hay precios de ejercicio con interés abierto/vol. implícita utilizable cerca del precio actual para estos vencimientos.')
         return
     grid, total = gex_total_vs_spot(df, S, r, q, mult)
     z = calcular_zonas_gex(piv, grid, total, S)
 
     m1, m2, m3, m4 = st.columns(4)
-    with m1: st.metric('GEX total (al spot)', f"{z['gex_total']/1e6:,.1f} M$")
-    with m2: st.metric('Gamma Flip', fmt_precio_opc(z['flip']) if z['flip'] else 'N/D')
-    with m3: st.metric('Call Wall', fmt_precio_opc(z['call_wall']) if z['call_wall'] else 'N/D')
-    with m4: st.metric('Put Wall', fmt_precio_opc(z['put_wall']) if z['put_wall'] else 'N/D')
+    with m1: st.metric('GEX total (al precio actual)', f"{z['gex_total']/1e6:,.1f} millones de US$")
+    with m2: st.metric('Punto de cambio de gamma', fmt_precio_opc(z['flip']) if z['flip'] else 'N/D')
+    with m3: st.metric('Pared de Calls', fmt_precio_opc(z['call_wall']) if z['call_wall'] else 'N/D')
+    with m4: st.metric('Pared de Puts', fmt_precio_opc(z['put_wall']) if z['put_wall'] else 'N/D')
 
     if z['regimen'] == 'positivo':
-        st.success('🟢 **Zona gamma POSITIVA** — los dealers amortiguan el movimiento: más reversión a la media, '
-                   'menor volatilidad realizada. Call/Put Wall tienden a funcionar como imanes/límites.')
+        st.success('🟢 **Zona gamma POSITIVA** — los creadores de mercado amortiguan el movimiento: más reversión a la media, '
+                   'menor volatilidad realizada. Las paredes de Calls y Puts tienden a funcionar como imanes/límites.')
     else:
-        st.error('🔴 **Zona gamma NEGATIVA** — los dealers amplifican el movimiento: más tendencia y volatilidad. '
-                 'Perder el Put Wall puede acelerar la caída.')
+        st.error('🔴 **Zona gamma NEGATIVA** — los creadores de mercado amplifican el movimiento: más tendencia y volatilidad. '
+                 'Perder la pared de Puts puede acelerar la caída.')
 
     render_explicacion('Cómo leer estos 4 indicadores', """
 **Qué es cada uno**
-- **GEX total (al spot):** suma de la gamma de todas las opciones, en dólares que los *dealers* (market makers) deberían comprar o vender por cada 1% que se mueva el precio. Lo que importa es el **signo**: positivo = frenan el movimiento, negativo = lo aceleran. El tamaño no se compara entre distintos activos.
-- **Gamma Flip:** el precio donde el GEX total pasa de negativo a positivo. Es la **frontera entre los dos regímenes**.
-- **Call Wall:** el strike con más gamma de calls. Suele actuar como **techo o imán**.
-- **Put Wall:** el strike con más gamma de puts. Suele actuar como **piso o soporte**.
+- **GEX total (al precio actual):** el GEX es la *exposición gamma*: la suma de la gamma de todas las opciones, en dólares que los *creadores de mercado* deberían comprar o vender por cada 1% que se mueva el precio. Lo que importa es el **signo**: positivo = frenan el movimiento, negativo = lo aceleran. El tamaño no se compara entre distintos activos.
+- **Punto de cambio de gamma:** el precio donde el GEX total pasa de negativo a positivo. Es la **frontera entre los dos regímenes**.
+- **Pared de Calls:** el precio de ejercicio con más gamma de calls. Suele actuar como **techo o imán**.
+- **Pared de Puts:** el precio de ejercicio con más gamma de puts. Suele actuar como **piso o soporte**.
 
 **Cómo usarlo**
-- Régimen **positivo** (verde): esperá mercado más tranquilo y de rango. Sirve para estrategias que ganan con el precio quieto (vender prima, Iron Condor, Short Strangle con cobertura).
+- Régimen **positivo** (verde): esperá mercado más tranquilo y de rango. Sirve para estrategias que ganan con el precio quieto (vender prima, Cóndor de hierro, Strangle vendido con cobertura).
 - Régimen **negativo** (rojo): esperá movimientos más grandes y bruscos. Sirve para estrategias que ganan con movimiento (Straddle, Strangle) y hay que ser más cuidadoso con las que venden prima.
-- Mirá la **distancia entre el precio y el Gamma Flip**: cuanto más cerca, más probable un cambio de comportamiento.
+- Mirá la **distancia entre el precio y el punto de cambio de gamma**: cuanto más cerca, más probable un cambio de comportamiento.
 """)
 
     st.plotly_chart(fig_gex(piv, z, S), use_container_width=True, key='opc_fig_gex')
 
-    render_explicacion('Cómo leer el gráfico "GEX por strike" y cómo usarlo', """
+    render_explicacion('Cómo leer el gráfico "GEX por precio de ejercicio" y cómo usarlo', """
 **Qué muestra**
-Cada barra es un strike. **Verde hacia arriba** = gamma de las calls. **Rojo hacia abajo** = gamma de las puts. Cuanto más alta la barra, más peso tiene ese strike en las coberturas de los dealers. El fondo verde/rojo marca dónde rige cada régimen según el Gamma Flip, y las líneas verticales marcan el precio actual (Spot), el Gamma Flip y las paredes.
+Cada barra es un precio de ejercicio. **Verde hacia arriba** = gamma de las calls. **Rojo hacia abajo** = gamma de las puts. Cuanto más alta la barra, más peso tiene ese precio de ejercicio en las coberturas de los creadores de mercado. El fondo verde/rojo marca dónde rige cada régimen según el punto de cambio de gamma, y las líneas verticales marcan el precio actual (precio actual), el punto de cambio de gamma y las paredes.
 
 **Cómo leerlo**
 - Una **barra muy alta** es un nivel "pegajoso": el precio tiende a orbitar o detenerse cerca.
-- Si el **Spot está pegado a una barra grande**, el precio está en una zona de mucha influencia.
+- Si el **precio actual está pegado a una barra grande**, el precio está en una zona de mucha influencia.
 - Si las barras están **casi todas del lado de las calls**, el neto da positivo; si dominan las puts, da negativo.
 - Zonas **sin barras** = casi sin influencia de opciones: el precio se mueve más libre ahí.
 
 **Cómo sacarle provecho**
-- Usá los strikes con barras grandes como **referencias** para elegir strikes vendidos (por ejemplo, vender una Call por encima del Call Wall o una Put por debajo del Put Wall).
-- Si el precio se acerca al Put Wall desde arriba, prestá atención: perderlo puede acelerar la caída.
-- Combinalo siempre con el resto del análisis (tendencia, volatilidad, payoff). **No es una señal de compra o venta por sí solo.**
+- Usá los precios de ejercicio con barras grandes como **referencias** para elegir precios de ejercicio vendidos (por ejemplo, vender una Call por encima de la pared de Calls o una Put por debajo de la pared de Puts).
+- Si el precio se acerca a la pared de Puts desde arriba, prestá atención: perderla puede acelerar la caída.
+- Combinalo siempre con el resto del análisis (tendencia, volatilidad, perfil de resultado). **No es una señal de compra o venta por sí solo.**
 """)
 
     st.markdown('**Lectura con los datos de hoy:**')
@@ -789,31 +789,31 @@ Cada barra es un strike. **Verde hacia arriba** = gamma de las calls. **Rojo hac
     if z['flip']:
         fig_flip.add_vline(x=z['flip'], line_dash='dash', line_color='#bc8cff', opacity=0.8)
     fig_flip.update_layout(**PLOTLY_LAYOUT_OPC, height=300,
-                           title=dict(text='GEX total vs precio del subyacente (el cruce por 0 es el Gamma Flip)',
+                           title=dict(text='GEX total vs precio del subyacente (el cruce por 0 es el punto de cambio de gamma)',
                                       font=dict(color=C_TEXT, size=13)),
                            xaxis=dict(title='Precio', gridcolor=C_GRID),
-                           yaxis=dict(title='GEX total (M$ / 1%)', gridcolor=C_GRID),
+                           yaxis=dict(title='GEX total (millones de US$ / 1%)', gridcolor=C_GRID),
                            margin=dict(l=10, r=10, t=45, b=10))
     st.plotly_chart(fig_flip, use_container_width=True, key='opc_fig_gex_flip')
 
     render_explicacion('Cómo leer el gráfico "GEX total vs precio" y cómo usarlo', """
 **Qué muestra**
-Responde a esta pregunta: *"si el activo estuviera en otro precio, ¿cuál sería el GEX total?"*. El eje horizontal es el precio hipotético y el vertical es el GEX total. La línea punteada amarilla es el precio actual y la violeta es el Gamma Flip.
+Responde a esta pregunta: *"si el activo estuviera en otro precio, ¿cuál sería el GEX total?"*. El eje horizontal es el precio hipotético y el vertical es el GEX total. La línea punteada amarilla es el precio actual y la violeta es el punto de cambio de gamma.
 
 **Cómo leerlo**
-- Donde la curva está **por encima de 0** = régimen positivo (los dealers amortiguan).
-- Donde está **por debajo de 0** = régimen negativo (los dealers amplifican).
-- El punto donde **cruza el cero** es el Gamma Flip.
+- Donde la curva está **por encima de 0** = régimen positivo (los creadores de mercado amortiguan).
+- Donde está **por debajo de 0** = régimen negativo (los creadores de mercado amplifican).
+- El punto donde **cruza el cero** es el punto de cambio de gamma.
 - Una curva que **cae rápido hacia el cero** al bajar el precio indica que el régimen es frágil: no hace falta una caída grande para cambiar de escenario.
-- Los picos y pequeñas muescas suelen venir de muchos strikes juntos o de datos ruidosos de Yahoo; no los tomes como niveles exactos.
+- Los picos y pequeñas muescas suelen venir de muchos precios de ejercicio juntos o de datos ruidosos de Yahoo; no los tomes como niveles exactos.
 
 **Cómo sacarle provecho**
 - Es el gráfico ideal para responder *"¿cuánto tiene que moverse el precio para que cambie el comportamiento del mercado?"*.
-- Si el precio está **lejos del flip y del lado positivo**, hay más margen para estrategias de rango.
-- Si está **cerca del flip**, conviene achicar el tamaño o elegir estrategias con riesgo definido.
+- Si el precio está **lejos del punto de cambio y del lado positivo**, hay más margen para estrategias de rango.
+- Si está **cerca del punto de cambio**, conviene achicar el tamaño o elegir estrategias con riesgo definido.
 """)
 
-    st.caption('⚠️ Asume dealers largos calls / cortos puts. Usa OI del día anterior e IV de Yahoo (ruidosa en strikes '
+    st.caption('⚠️ Asume creadores de mercado largos calls / cortos puts. Usa el interés abierto del día anterior y la vol. implícita de Yahoo (ruidosa en precios de ejercicio '
                'ilíquidos). Es una referencia de régimen, no una señal por sí sola.')
 
 # ==============================================================
@@ -821,49 +821,49 @@ Responde a esta pregunta: *"si el activo estuviera en otro precio, ¿cuál serí
 # ==============================================================
 
 CATALOGO_ESTRATEGIAS = [
-    {"id": 1, "nombre": "Long Call", "sesgo": "alcista",
-     "descripcion": "Comprás una Call. Ganás si el precio sube por encima del break-even (strike + prima). Pérdida máxima = prima. Ganancia ilimitada.",
+    {"id": 1, "nombre": "Compra de Call", "sesgo": "alcista",
+     "descripcion": "Comprás una Call. Ganás si el precio sube por encima del punto de equilibrio (precio de ejercicio + prima). Pérdida máxima = prima. Ganancia ilimitada.",
      "opciones": [{"tipo": "C", "accion": "comprar", "prompt": "Call que comprás"}]},
-    {"id": 2, "nombre": "Bull Call Spread", "sesgo": "alcista",
-     "descripcion": "Comprás Call de strike bajo y vendés Call de strike alto. Baja costo y riesgo, ganancia limitada al ancho entre strikes menos el débito.",
-     "opciones": [{"tipo": "C", "accion": "comprar", "prompt": "Call COMPRADA (strike más bajo)"},
-               {"tipo": "C", "accion": "vender", "prompt": "Call VENDIDA (strike más alto)"}]},
-    {"id": 3, "nombre": "Bull Put Spread (credit)", "sesgo": "alcista",
-     "descripcion": "Vendés Put de strike alto, comprás Put de strike bajo como cobertura. Cobrás crédito neto. Ganás si el precio queda arriba del strike vendido.",
-     "opciones": [{"tipo": "P", "accion": "vender", "prompt": "Put VENDIDA (strike más alto)"},
-               {"tipo": "P", "accion": "comprar", "prompt": "Put COMPRADA (strike más bajo, cobertura)"}]},
-    {"id": 4, "nombre": "Cash-Secured Put", "sesgo": "alcista",
+    {"id": 2, "nombre": "Vertical alcista con Calls", "sesgo": "alcista",
+     "descripcion": "Comprás Call de precio de ejercicio bajo y vendés Call de precio de ejercicio alto. Baja costo y riesgo, ganancia limitada al ancho entre precios de ejercicio menos el débito.",
+     "opciones": [{"tipo": "C", "accion": "comprar", "prompt": "Call COMPRADA (precio de ejercicio más bajo)"},
+               {"tipo": "C", "accion": "vender", "prompt": "Call VENDIDA (precio de ejercicio más alto)"}]},
+    {"id": 3, "nombre": "Vertical alcista con Puts (crédito)", "sesgo": "alcista",
+     "descripcion": "Vendés Put de precio de ejercicio alto, comprás Put de precio de ejercicio bajo como cobertura. Cobrás crédito neto. Ganás si el precio queda arriba del precio de ejercicio vendido.",
+     "opciones": [{"tipo": "P", "accion": "vender", "prompt": "Put VENDIDA (precio de ejercicio más alto)"},
+               {"tipo": "P", "accion": "comprar", "prompt": "Put COMPRADA (precio de ejercicio más bajo, cobertura)"}]},
+    {"id": 4, "nombre": "Put con garantía en efectivo", "sesgo": "alcista",
      "descripcion": "Vendés una Put reservando efectivo para comprar el subyacente si te asignan. Riesgo bajista grande si el precio se derrumba.",
      "opciones": [{"tipo": "P", "accion": "vender", "prompt": "Put que vendés"}]},
-    {"id": 5, "nombre": "Comprar Call + Vender Put (Risk Reversal / Sintética)", "sesgo": "alcista",
-     "descripcion": "Comprás Call y vendés Put. Mismo strike = sintética (como tener el subyacente, apalancado). Strikes distintos = Risk Reversal. Pérdida potencial grande si cae fuerte.",
+    {"id": 5, "nombre": "Comprar Call + Vender Put (Reversión de riesgo / Sintética)", "sesgo": "alcista",
+     "descripcion": "Comprás Call y vendés Put. Mismo precio de ejercicio = sintética (como tener el subyacente, apalancado). Precios de ejercicio distintos = Reversión de riesgo. Pérdida potencial grande si cae fuerte.",
      "opciones": [{"tipo": "C", "accion": "comprar", "prompt": "Call que comprás"},
                {"tipo": "P", "accion": "vender", "prompt": "Put que vendés"}]},
-    {"id": 6, "nombre": "Long Put", "sesgo": "bajista",
-     "descripcion": "Comprás una Put. Ganás si el precio cae por debajo del break-even (strike - prima). Pérdida máxima = prima.",
+    {"id": 6, "nombre": "Compra de Put", "sesgo": "bajista",
+     "descripcion": "Comprás una Put. Ganás si el precio cae por debajo del punto de equilibrio (precio de ejercicio - prima). Pérdida máxima = prima.",
      "opciones": [{"tipo": "P", "accion": "comprar", "prompt": "Put que comprás"}]},
-    {"id": 7, "nombre": "Bear Put Spread", "sesgo": "bajista",
-     "descripcion": "Comprás Put de strike alto y vendés Put de strike bajo. Ganancia limitada al ancho entre strikes menos el débito pagado.",
-     "opciones": [{"tipo": "P", "accion": "comprar", "prompt": "Put COMPRADA (strike más alto)"},
-               {"tipo": "P", "accion": "vender", "prompt": "Put VENDIDA (strike más bajo)"}]},
-    {"id": 8, "nombre": "Bear Call Spread (credit)", "sesgo": "bajista",
-     "descripcion": "Vendés Call de strike bajo y comprás Call de strike alto como cobertura. Ganás si el precio queda debajo del strike vendido.",
-     "opciones": [{"tipo": "C", "accion": "vender", "prompt": "Call VENDIDA (strike más bajo)"},
-               {"tipo": "C", "accion": "comprar", "prompt": "Call COMPRADA (strike más alto, cobertura)"}]},
-    {"id": 9, "nombre": "Long Straddle", "sesgo": "neutral",
-     "descripcion": "Comprás Call y Put del mismo strike (ATM). Ganás con movimiento fuerte en cualquier dirección; perdés si el precio queda quieto.",
-     "opciones": [{"tipo": "C", "accion": "comprar", "prompt": "Call y Put (mismo strike) que comprás"},
+    {"id": 7, "nombre": "Vertical bajista con Puts", "sesgo": "bajista",
+     "descripcion": "Comprás Put de precio de ejercicio alto y vendés Put de precio de ejercicio bajo. Ganancia limitada al ancho entre precios de ejercicio menos el débito pagado.",
+     "opciones": [{"tipo": "P", "accion": "comprar", "prompt": "Put COMPRADA (precio de ejercicio más alto)"},
+               {"tipo": "P", "accion": "vender", "prompt": "Put VENDIDA (precio de ejercicio más bajo)"}]},
+    {"id": 8, "nombre": "Vertical bajista con Calls (crédito)", "sesgo": "bajista",
+     "descripcion": "Vendés Call de precio de ejercicio bajo y comprás Call de precio de ejercicio alto como cobertura. Ganás si el precio queda debajo del precio de ejercicio vendido.",
+     "opciones": [{"tipo": "C", "accion": "vender", "prompt": "Call VENDIDA (precio de ejercicio más bajo)"},
+               {"tipo": "C", "accion": "comprar", "prompt": "Call COMPRADA (precio de ejercicio más alto, cobertura)"}]},
+    {"id": 9, "nombre": "Straddle comprado", "sesgo": "neutral",
+     "descripcion": "Comprás Call y Put del mismo precio de ejercicio (en el dinero). Ganás con movimiento fuerte en cualquier dirección; perdés si el precio queda quieto.",
+     "opciones": [{"tipo": "C", "accion": "comprar", "prompt": "Call y Put (mismo precio de ejercicio) que comprás"},
                {"tipo": "P", "accion": "comprar", "prompt": None, "mismo_strike_que": 0}]},
-    {"id": 10, "nombre": "Long Strangle", "sesgo": "neutral",
-     "descripcion": "Comprás Call OTM y Put OTM. Más barato que el Straddle, necesita movimiento más grande para ser rentable.",
-     "opciones": [{"tipo": "C", "accion": "comprar", "prompt": "Call OTM (strike más alto)"},
-               {"tipo": "P", "accion": "comprar", "prompt": "Put OTM (strike más bajo)"}]},
-    {"id": 11, "nombre": "Short Strangle", "sesgo": "neutral",
-     "descripcion": "Vendés Call OTM y Put OTM cobrando ambas primas. Ganás si el precio queda dentro del rango. Riesgo ILIMITADO si se escapa fuerte.",
-     "opciones": [{"tipo": "C", "accion": "vender", "prompt": "Call OTM VENDIDA (strike más alto)"},
-               {"tipo": "P", "accion": "vender", "prompt": "Put OTM VENDIDA (strike más bajo)"}]},
-    {"id": 12, "nombre": "Iron Condor", "sesgo": "neutral",
-     "descripcion": "Versión con cobertura del Short Strangle: vendés Put y Call, comprás otras más lejanas. Crédito neto acotado, pérdida máxima definida.",
+    {"id": 10, "nombre": "Strangle comprado", "sesgo": "neutral",
+     "descripcion": "Comprás Call fuera del dinero y Put fuera del dinero. Más barato que el Straddle, necesita movimiento más grande para ser rentable.",
+     "opciones": [{"tipo": "C", "accion": "comprar", "prompt": "Call fuera del dinero (precio de ejercicio más alto)"},
+               {"tipo": "P", "accion": "comprar", "prompt": "Put fuera del dinero (precio de ejercicio más bajo)"}]},
+    {"id": 11, "nombre": "Strangle vendido", "sesgo": "neutral",
+     "descripcion": "Vendés Call fuera del dinero y Put fuera del dinero cobrando ambas primas. Ganás si el precio queda dentro del rango. Riesgo ILIMITADO si se escapa fuerte.",
+     "opciones": [{"tipo": "C", "accion": "vender", "prompt": "Call fuera del dinero VENDIDA (precio de ejercicio más alto)"},
+               {"tipo": "P", "accion": "vender", "prompt": "Put fuera del dinero VENDIDA (precio de ejercicio más bajo)"}]},
+    {"id": 12, "nombre": "Cóndor de hierro", "sesgo": "neutral",
+     "descripcion": "Versión con cobertura del Strangle vendido: vendés Put y Call, comprás otras más lejanas. Crédito neto acotado, pérdida máxima definida.",
      "opciones": [{"tipo": "P", "accion": "vender", "prompt": "Put VENDIDA (ala interna)"},
                {"tipo": "P", "accion": "comprar", "prompt": "Put COMPRADA (ala externa, cobertura)"},
                {"tipo": "C", "accion": "vender", "prompt": "Call VENDIDA (ala interna)"},
@@ -875,32 +875,23 @@ GLOSARIO_TERMINOS = {
     'Opción': 'Contrato que da el DERECHO (no la obligación) de comprar (Call) o vender (Put) un activo a un precio fijado, antes o en una fecha determinada.',
     'Americana/Europea': 'Americana: se ejerce en cualquier momento antes del vencimiento (acciones en Argentina y EEUU). Europea: solo se ejerce en la fecha de vencimiento (ej. índices como el SPX).',
     'Subyacente': 'El activo sobre el que está armada la opción.',
-    'Strike (K)': 'Precio al que se puede ejercer la opción.',
+    'Precio de ejercicio (K)': 'Precio al que se puede ejercer la opción.',
     'Prima': 'Precio que pagás (si comprás) o cobrás (si vendés) la opción.',
     'Vencimiento': 'Fecha límite hasta la que la opción existe.',
-    'Call / Put': 'Call = derecho a COMPRAR al strike. Put = derecho a VENDER al strike.',
-    'ITM/OTM/ATM': 'In/Out/At the Money — con valor intrínseco, sin valor intrínseco, o strike ≈ precio actual.',
+    'Call / Put': 'Call = derecho a COMPRAR al precio de ejercicio. Put = derecho a VENDER al precio de ejercicio.',
+    'Dentro / fuera / en el dinero': 'Dentro del dinero: la opción tiene valor intrínseco. Fuera del dinero: no lo tiene. En el dinero: el precio de ejercicio es casi igual al precio actual.',
     'Asignación': 'Lo que le pasa al VENDEDOR de una opción cuando el comprador decide ejercerla: queda obligado a cumplir.',
-    'Break-even': 'Precio del subyacente al vencimiento donde la estrategia empieza a ser rentable.',
+    'Punto de equilibrio': 'Precio del subyacente al vencimiento donde la estrategia empieza a ser rentable.',
     'Crédito / Débito': 'Crédito = cobrás dinero al armar la estrategia. Débito = pagás dinero.',
-    'Bid/Ask': 'Bid = precio al que podés vender ahora. Ask = precio al que podés comprar ahora. El Ask siempre es mayor o igual al Bid.',
-    'Spread (bid-ask)': 'Diferencia entre Ask y Bid. Más grande = menos líquida, más cuesta entrar/salir.',
-    'Deslizamiento (Slippage)': 'Costo de ejecutar a precios reales (cruzando el spread) en vez del precio medio teórico. Comprar te cuesta el Ask; vender te da el Bid.',
-    'Vol. Histórica (HV)': 'Cuánto se movió el activo en el pasado.',
-    'Vol. Implícita (IV)': 'Cuánto movimiento futuro está pricing el mercado a través del precio de la opción.',
-    'Dividend Yield (q)': 'Rendimiento de dividendos anual continuo. Baja el precio de la Call y sube el de la Put (quien tiene la opción no cobra esos dividendos).',
+    'Compra / Venta': 'Compra = el precio más alto que alguien ofrece pagar por la opción: a ese precio vos vendés. Venta = el precio más bajo al que alguien ofrece vender: a ese precio vos comprás. La venta siempre es mayor o igual a la compra.',
+    'Diferencial (compra-venta)': 'Diferencia entre la venta y la compra. Más grande = menos líquida, más cuesta entrar y salir.',
+    'Deslizamiento': 'Costo de ejecutar a precios reales (cruzando el diferencial) en vez del precio medio teórico. Comprar te cuesta el precio de venta; vender te da el precio de compra.',
+    'Vol. Histórica': 'Cuánto se movió el activo en el pasado.',
+    'Vol. Implícita': 'Cuánto movimiento futuro está descontando el mercado a través del precio de la opción.',
+    'Rendimiento por dividendos (q)': 'Rendimiento de dividendos anual continuo. Baja el precio de la Call y sube el de la Put (quien tiene la opción no cobra esos dividendos).',
     'Tamaño de posición': 'Cuántos contratos operar según tu capital y tu tolerancia al riesgo. Una regla común es no arriesgar más de 1-2% del capital total en una sola operación.',
-    'Lote/Contrato': 'Cuántas unidades del subyacente representa 1 contrato. En EEUU suele ser 100 (hay que multiplicar). En Argentina puede variar según el bróker — confirmalo antes de operar.',
-}
-
-# ── Glosario específico de las griegas (separado, porque son el motor de sensibilidad) ──
-GLOSARIO_GRIEGAS = {
-    'Delta': 'Cuánto se mueve el precio de la opción por cada $1 que se mueve el subyacente. También aproxima la probabilidad de terminar ITM.',
-    'Gamma': 'Qué tan rápido cambia el Delta cuando se mueve el subyacente. Más alto cerca del ATM y cerca del vencimiento.',
-    'Theta': 'Cuánto vale la opción por día, solo por el paso del tiempo (negativo si comprás prima, a favor si vendés prima).',
-    'Vega': 'Cuánto cambia el precio de la opción si la volatilidad implícita sube o baja 1 punto porcentual. Comprar = Vega positiva; vender = Vega negativa.',
-    'Rho': 'Cuánto cambia el precio de la opción si la tasa de interés sube o baja 1 punto porcentual.',
     'Efecto Palanca': 'Efecto Palanca = Delta * S / Precio_opción. Cuántas veces más se mueve, en %, la opción respecto del subyacente.',
+    'Lote/Contrato': 'Cuántas unidades del subyacente representa 1 contrato. En EEUU suele ser 100 (hay que multiplicar). En Argentina puede variar según el bróker — confirmalo antes de operar.',
 }
 
 
@@ -967,7 +958,7 @@ def calcular_tamano_posicion(analisis, opciones, capital, pct_riesgo, mult=100):
     L = [f"Capital: {capital:,.2f} · Riesgo máx. por operación: {pct_riesgo:.1%} → {riesgo_maximo:,.2f}"]
     if analisis["perdida_ilimitada"]:
         L.append("⚠️ Pérdida ILIMITADA (opción vendida sin cobertura). No se puede fijar tamaño por 'pérdida máxima'. "
-                  "Evaluá agregar una opción de protección (ej. Short Strangle → Iron Condor).")
+                  "Evaluá agregar una opción de protección (ej. Strangle vendido → Cóndor de hierro).")
     else:
         perdida_x_contrato = abs(analisis["perdida_max"]) * mult
         if perdida_x_contrato <= 0:
@@ -999,23 +990,23 @@ def verificar_paridad_put_call(filas, umbral=0.08):
         if ivc is not None and ivp is not None and not np.isnan(ivc) and not np.isnan(ivp):
             diff = abs(ivc - ivp)
             if diff > umbral:
-                alertas.append(f"Strike {k}: IV Call {ivc:.2%} vs IV Put {ivp:.2%} → diferencia {diff:.2%}")
+                alertas.append(f"Precio de ejercicio {k}: vol. implícita Call {ivc:.2%} vs vol. implícita Put {ivp:.2%} → diferencia {diff:.2%}")
     if not alertas:
         return True, "✅ Sin violaciones grandes de paridad Put-Call."
-    return False, "⚠️ Diferencias grandes de IV en el mismo strike:\n" + "\n".join(alertas)
+    return False, "⚠️ Diferencias grandes de vol. implícita en el mismo precio de ejercicio:\n" + "\n".join(alertas)
 
 
 def analizar_skew(filas, S):
     puts_otm = [f["_iv"] for f in filas if f["_tipo"] == "P" and f["_strike"] < S and not np.isnan(f["_iv"])]
     calls_otm = [f["_iv"] for f in filas if f["_tipo"] == "C" and f["_strike"] > S and not np.isnan(f["_iv"])]
     if not puts_otm or not calls_otm:
-        return "⚠️ No hay strikes OTM de ambos lados del spot para medir skew."
+        return "⚠️ No hay precios de ejercicio fuera del dinero de ambos lados del precio actual para medir sesgo de volatilidad."
     iv_p, iv_c = sum(puts_otm)/len(puts_otm), sum(calls_otm)/len(calls_otm)
     diff = iv_p - iv_c
-    txt = f"IV prom. Puts OTM: {iv_p:.2%} · IV prom. Calls OTM: {iv_c:.2%} · Diferencia: {diff:+.2%}. "
-    if diff > 0.03: txt += "📐 Skew bajista: el mercado paga más por protección a la baja."
-    elif diff < -0.03: txt += "📐 Skew alcista: el mercado paga más por upside especulativo."
-    else: txt += "📐 Skew plano."
+    txt = f"Vol. implícita prom. Puts fuera del dinero: {iv_p:.2%} · vol. implícita prom. Calls fuera del dinero: {iv_c:.2%} · Diferencia: {diff:+.2%}. "
+    if diff > 0.03: txt += "📐 Sesgo de volatilidad bajista: el mercado paga más por protección a la baja."
+    elif diff < -0.03: txt += "📐 Sesgo de volatilidad alcista: el mercado paga más por potencial alcista especulativo."
+    else: txt += "📐 Sesgo de volatilidad plano."
     return txt
 
 
@@ -1028,19 +1019,19 @@ def fig_payoff(opciones, S, analisis):
     ys = [payoff_total(opciones, x) for x in xs]
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=xs, y=ys, line=dict(color=C_ACENT, width=2.4), fill='tozeroy',
-                              fillcolor='rgba(58,123,213,0.10)', name='P&L al vencimiento'))
+                              fillcolor='rgba(58,123,213,0.10)', name='Resultado al vencimiento'))
     fig.add_hline(y=0, line_color=C_MUTED, opacity=0.5)
     fig.add_vline(x=S, line_dash='dot', line_color=C_YELL, opacity=0.6,
-                  annotation_text=f'Spot {S:.2f}', annotation_font_color=C_YELL)
+                  annotation_text=f'Precio actual {S:.2f}', annotation_font_color=C_YELL)
     for be in analisis['breakevens']:
         fig.add_vline(x=be, line_dash='dash', line_color=C_GREEN, opacity=0.5,
-                      annotation_text=f'BE {be:.2f}', annotation_font_color=C_GREEN)
+                      annotation_text=f'PE {be:.2f}', annotation_font_color=C_GREEN)
     for p in opciones:
         fig.add_vline(x=p['strike'], line_dash='dot', line_color=C_MUTED, opacity=0.25)
     fig.update_layout(**PLOTLY_LAYOUT_OPC, height=440,
-                       title=dict(text='Payoff al vencimiento', font=dict(color=C_TEXT, size=14)),
+                       title=dict(text='Perfil de resultado al vencimiento', font=dict(color=C_TEXT, size=14)),
                        xaxis=dict(title='Precio del subyacente', gridcolor=C_GRID),
-                       yaxis=dict(title='P&L por acción', gridcolor=C_GRID),
+                       yaxis=dict(title='Resultado por acción', gridcolor=C_GRID),
                        margin=dict(l=10, r=10, t=45, b=10))
     return fig
 
@@ -1092,13 +1083,13 @@ def fig_repricing(opciones, S, T, r, sigmas, q, estilo, costo_neto):
         valores.append(v); xs.append(S_T)
     pnl = [v - costo_neto for v in valores]
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=xs, y=pnl, line=dict(color=C_MONSTER, width=2.2), name='P&L mark-to-market (hoy)'))
+    fig.add_trace(go.Scatter(x=xs, y=pnl, line=dict(color=C_MONSTER, width=2.2), name='Resultado a precio de mercado (hoy)'))
     fig.add_hline(y=0, line_color=C_MUTED, opacity=0.5)
     fig.add_vline(x=S, line_dash='dot', line_color=C_YELL, opacity=0.6)
     fig.update_layout(**PLOTLY_LAYOUT_OPC, height=380,
-                       title=dict(text='P&L si el subyacente se mueve HOY (mismo T, sin pasar tiempo)', font=dict(color=C_TEXT, size=13)),
+                       title=dict(text='Resultado si el subyacente se mueve HOY (mismo T, sin pasar tiempo)', font=dict(color=C_TEXT, size=13)),
                        xaxis=dict(title='Precio del subyacente', gridcolor=C_GRID),
-                       yaxis=dict(title='P&L por acción', gridcolor=C_GRID),
+                       yaxis=dict(title='Resultado por acción', gridcolor=C_GRID),
                        margin=dict(l=10, r=10, t=45, b=10))
     return fig
 
@@ -1109,12 +1100,6 @@ def render_glosario_opciones():
     with st.expander('📖 Glosario — términos de opciones', expanded=False):
         for term, desc in GLOSARIO_TERMINOS.items():
             st.markdown(f"<div style='margin-bottom:8px'><b style='color:#bc8cff;font-size:12.5px'>{term}</b><br>"
-                        f"<span style='color:#f5f7fa;font-size:12px;line-height:1.5'>{desc}</span></div>",
-                        unsafe_allow_html=True)
-
-    with st.expander('📐 Glosario — qué significa cada griega', expanded=False):
-        for term, desc in GLOSARIO_GRIEGAS.items():
-            st.markdown(f"<div style='margin-bottom:8px'><b style='color:#3a7bd5;font-size:12.5px'>{term}</b><br>"
                         f"<span style='color:#f5f7fa;font-size:12px;line-height:1.5'>{desc}</span></div>",
                         unsafe_allow_html=True)
 
@@ -1147,8 +1132,8 @@ def modulo_opciones():
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
       <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🎲 Valuación de Opciones</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Elegí una estrategia del catálogo, cargá bid/ask de cada opción y obtené precio teórico,
-        volatilidad implícita, griegas, liquidez/deslizamiento, payoff, escenarios de repricing y
+        Elegí una estrategia del catálogo, cargá compra/venta de cada opción y obtené precio teórico,
+        volatilidad implícita, griegas, liquidez/deslizamiento, perfil de resultado, escenarios de revaluación y
         tamaño de posición sugerido. Modelo <b style="color:#f0883e">Binomial (americana)</b> o
         <b style="color:#3a7bd5">Black-Scholes (europea)</b> según el estilo de ejercicio.
       </div>
@@ -1161,7 +1146,7 @@ def modulo_opciones():
     with st.expander('1️⃣ Activo y parámetros generales', expanded=(st.session_state['opc_paso'] == 1)):
         c1, c2 = st.columns([2, 1])
         with c1:
-            ticker = st.text_input('Ticker (ej: GGAL.BA, AAPL, YPFD.BA)', value=st.session_state['opc_ticker'],
+            ticker = st.text_input('Símbolo (ej: GGAL.BA, AAPL, YPFD.BA)', value=st.session_state['opc_ticker'],
                                     key='opc_ticker_input')
         with c2:
             estilo = st.selectbox('Estilo de ejercicio', ['americana', 'europea'],
@@ -1193,13 +1178,13 @@ def modulo_opciones():
                 vto = st.date_input('Vencimiento', value=st.session_state['opc_vto'] or date.today(),
                                      min_value=date.today(), key='opc_vto_input')
                 if ticker:
-                    st.caption('⚠️ Yahoo Finance no tiene cadena de opciones publicada para este ticker '
+                    st.caption('⚠️ Yahoo Finance no tiene cadena de opciones publicada para este símbolo '
                                '(común en algunos ADRs/CEDEARs). Carga manual de precios.')
         with c4:
             r = st.number_input('Tasa de interés anual (decimal)', min_value=0.0, max_value=3.0,
                                  value=float(st.session_state['opc_r']), step=0.01, format='%.4f', key='opc_r_input')
         with c5:
-            q = st.number_input('Dividend yield anual (decimal)', min_value=0.0, max_value=1.0,
+            q = st.number_input('Rendimiento por dividendos anual (decimal)', min_value=0.0, max_value=1.0,
                                  value=float(st.session_state['opc_q']), step=0.001, format='%.4f', key='opc_q_input')
 
         datos_activo = None
@@ -1210,13 +1195,13 @@ def modulo_opciones():
                 st.warning(f'No se encontraron datos para {ticker}. Verificá el símbolo.')
             else:
                 if datos_activo.get('q_sugerido') is not None:
-                    st.caption(f"💡 Dividend yield sugerido por Yahoo Finance: {datos_activo['q_sugerido']:.2%} "
+                    st.caption(f"💡 Rendimiento por dividendos sugerido por Yahoo Finance: {datos_activo['q_sugerido']:.2%} "
                                f"(ajustá arriba si querés usarlo)")
                 cm1, cm2, cm3, cm4 = st.columns(4)
                 with cm1: st.metric('Precio', fmt_precio_opc(datos_activo['S']), help=datos_activo['fuente'])
                 with cm2: st.metric('Vol. Histórica (40d)', f"{datos_activo['vol_hist']:.2%}")
                 with cm3: st.metric('RSI', f"{datos_activo['rsi']:.1f}")
-                with cm4: st.metric('SMA20', fmt_precio_opc(datos_activo['sma20']))
+                with cm4: st.metric('Media móvil de 20 ruedas', fmt_precio_opc(datos_activo['sma20']))
 
         mult = st.number_input('Multiplicador de contrato (100 = 1 contrato representa 100 acciones; '
                                 'poné 1 si tu bróker ya muestra el costo total)',
@@ -1230,12 +1215,12 @@ def modulo_opciones():
         st.session_state['opc_mult'] = mult
 
     if not st.session_state['opc_ticker']:
-        st.info('Ingresá un ticker para continuar.')
+        st.info('Ingresá un símbolo para continuar.')
         return
 
     datos_activo = _opc_datos_activo(st.session_state['opc_ticker'].strip().upper())
     if datos_activo is None:
-        st.error('No se pudieron obtener datos del activo. Revisá el ticker.')
+        st.error('No se pudieron obtener datos del activo. Revisá el símbolo.')
         return
 
     S = datos_activo['S']
@@ -1245,7 +1230,7 @@ def modulo_opciones():
     r, q, estilo, mult = st.session_state['opc_r'], st.session_state['opc_q'], st.session_state['opc_estilo'], st.session_state['opc_mult']
 
     # GEX: solo se calcula si activás el toggle (evita descargar cadenas en cada rerun)
-    with st.expander('🧲 GEX — Gamma Exposure y zonas', expanded=False):
+    with st.expander('🧲 GEX — Exposición Gamma y zonas', expanded=False):
         if st.toggle('Calcular GEX', value=False, key='opc_gex_toggle'):
             render_gex(st.session_state['opc_ticker'].strip().upper(), S, r, q, mult)
 
@@ -1286,7 +1271,7 @@ def modulo_opciones():
 
     # ── PASO 3: cargar opciones (strike, bid, ask) ─────────────────────────
     st.markdown('---')
-    st.markdown('### 3️⃣ Cargá Strike, Bid y Ask de cada opción')
+    st.markdown('### 3️⃣ Cargá precio de ejercicio, compra y venta de cada opción')
 
     vencimiento_str = st.session_state['opc_vto'].strftime('%Y-%m-%d')
     cadena_disponible = vencimiento_str in vtos_reales if vtos_reales else False
@@ -1318,30 +1303,30 @@ def modulo_opciones():
 
             if spec.get('mismo_strike_que') is not None:
                 strike = strikes_previos[spec['mismo_strike_que']]
-                st.caption(f'Mismo strike que opción {spec["mismo_strike_que"]+1}: {strike:.2f}')
-                bid = st.number_input(f'Bid opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
-                ask = st.number_input(f'Ask opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
+                st.caption(f'Mismo precio de ejercicio que opción {spec["mismo_strike_que"]+1}: {strike:.2f}')
+                bid = st.number_input(f'Compra opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
+                ask = st.number_input(f'Venta opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
 
             elif usar_cadena_opcion:
                 strikes_disp = lado_df['strike'].tolist()
                 fila_atm = _opc_fila_strike_mas_cercano(lado_df, S)
                 idx_def = strikes_disp.index(float(fila_atm['strike'])) if fila_atm is not None else 0
-                strike = st.selectbox(f'Strike opción {i+1} (cadena real)', strikes_disp,
+                strike = st.selectbox(f'Precio de ejercicio opción {i+1} (cadena real)', strikes_disp,
                                        index=idx_def, key=f'opc_strike_cadena_{i}')
                 fila_sel = lado_df[lado_df['strike'] == strike].iloc[0]
                 bid_def = float(fila_sel['bid']) if pd.notna(fila_sel['bid']) else 0.0
                 ask_def = float(fila_sel['ask']) if pd.notna(fila_sel['ask']) else 0.0
                 iv_txt = f"{fila_sel['impliedVolatility']:.1%}" if pd.notna(fila_sel['impliedVolatility']) else 'N/D'
                 oi_txt = int(fila_sel['openInterest']) if pd.notna(fila_sel['openInterest']) else 0
-                st.caption(f"IV mercado: {iv_txt} · OI: {oi_txt} · {'🟢 ITM' if fila_sel['inTheMoney'] else '⚪ OTM'}")
-                bid = st.number_input(f'Bid opción {i+1}', min_value=0.0, value=bid_def, step=0.01, key=f'opc_bid_{i}')
-                ask = st.number_input(f'Ask opción {i+1}', min_value=0.0, value=ask_def, step=0.01, key=f'opc_ask_{i}')
+                st.caption(f"Vol. implícita de mercado: {iv_txt} · interés abierto: {oi_txt} · {'🟢 Dentro del dinero' if fila_sel['inTheMoney'] else '⚪ Fuera del dinero'}")
+                bid = st.number_input(f'Compra opción {i+1}', min_value=0.0, value=bid_def, step=0.01, key=f'opc_bid_{i}')
+                ask = st.number_input(f'Venta opción {i+1}', min_value=0.0, value=ask_def, step=0.01, key=f'opc_ask_{i}')
 
             else:
-                strike = st.number_input(f'Strike opción {i+1}', min_value=0.01,
+                strike = st.number_input(f'Precio de ejercicio opción {i+1}', min_value=0.01,
                                           value=round(S, 2), step=0.5, key=f'opc_strike_{i}')
-                bid = st.number_input(f'Bid opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
-                ask = st.number_input(f'Ask opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
+                bid = st.number_input(f'Compra opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_bid_{i}')
+                ask = st.number_input(f'Venta opción {i+1}', min_value=0.0, value=0.0, step=0.01, key=f'opc_ask_{i}')
 
             strikes_previos[i] = strike
             opciones_input.append({'tipo': spec['tipo'], 'accion': spec['accion'], 'strike': strike,
@@ -1350,7 +1335,7 @@ def modulo_opciones():
     calcular = st.button('▶ Calcular', type='primary', key='opc_btn_calcular')
     if calcular:
         if any(p['ask'] <= 0 for p in opciones_input):
-            st.error('Cargá Bid y Ask (> 0) de todas las opciones antes de calcular.')
+            st.error('Cargá compra y venta (> 0) de todas las opciones antes de calcular.')
             return
         st.session_state['opc_calculado'] = True
         st.session_state['opc_opciones_data'] = opciones_input
@@ -1373,9 +1358,9 @@ def modulo_opciones():
         accion_desc = 'comprada' if opcion['accion'] == 'comprar' else 'vendida'
         tipo_desc = 'Call' if tipo == 'C' else 'Put'
         filas.append({
-            'Opción': f'{tipo_desc} {accion_desc}', 'Strike': K, 'Bid': opcion['bid'], 'Ask': opcion['ask'],
-            'Mid': round(mid, 2), 'Spread': round(spread_abs, 2),
-            'Spread %': f'{spread_pct:.1%}' if not np.isnan(spread_pct) else 'N/D',
+            'Opción': f'{tipo_desc} {accion_desc}', 'Precio de ejercicio': K, 'Compra': opcion['bid'], 'Venta': opcion['ask'],
+            'Punto medio': round(mid, 2), 'Diferencial': round(spread_abs, 2),
+            'Diferencial %': f'{spread_pct:.1%}' if not np.isnan(spread_pct) else 'N/D',
             'Liquidez': senal_liq, 'Precio Teórico': round(precio_teorico, 2),
             'Vol. Histórica': f'{vol_hist:.2%}',
             'Vol. Implícita': f'{vol_impl:.2%}' if not np.isnan(vol_impl) else 'N/D',
@@ -1388,7 +1373,7 @@ def modulo_opciones():
 
     st.markdown('---')
     st.markdown('### 📊 Valuación y liquidez de cada opción')
-    st.dataframe(df_filas[['Opción', 'Strike', 'Bid', 'Ask', 'Mid', 'Spread', 'Spread %', 'Liquidez',
+    st.dataframe(df_filas[['Opción', 'Precio de ejercicio', 'Compra', 'Venta', 'Punto medio', 'Diferencial', 'Diferencial %', 'Liquidez',
                             'Precio Teórico', 'Vol. Histórica', 'Vol. Implícita', 'Señal']],
                  use_container_width=True, hide_index=True)
 
@@ -1422,14 +1407,14 @@ def modulo_opciones():
 
         cmc1, cmc2, cmc3 = st.columns(3)
         with cmc1: st.metric('Precio medio simulado', fmt_precio_opc(float(np.mean(precios_finales_mc))))
-        with cmc2: st.metric('Rango MC (perc. 40-60%)', f'{p40_mc:,.2f} – {p60_mc:,.2f}')
-        with cmc3: st.metric('Prob. de pérdida vs spot', f'{prob_perdida:.1f}%')
+        with cmc2: st.metric('Rango Monte Carlo (perc. 40-60%)', f'{p40_mc:,.2f} – {p60_mc:,.2f}')
+        with cmc3: st.metric('Prob. de pérdida vs precio actual', f'{prob_perdida:.1f}%')
 
         st.markdown(f"**Comparación de 3 fuentes de rango probable a {dias_vto} días:**")
-        st.markdown(f"- 🎲 Monte Carlo (real-world, drift {drift_real:+.1%} anual): {p40_mc:,.2f} – {p60_mc:,.2f}")
+        st.markdown(f"- 🎲 Monte Carlo (con tendencia reciente {drift_real:+.1%} anual): {p40_mc:,.2f} – {p60_mc:,.2f}")
         st.markdown(f"- 📐 Analítico ±1σ (vol. histórica): {banda_inf_1s:,.2f} – {banda_sup_1s:,.2f}")
         if p40_emp is not None:
-            st.markdown(f"- 📊 Empírico histórico (n={n_ventanas_emp} ventanas, IV implícita en el rango "
+            st.markdown(f"- 📊 Empírico histórico (n={n_ventanas_emp} ventanas, vol. implícita en el rango "
                         f"{vol_empirica:.2%}): {p40_emp:,.2f} – {p60_emp:,.2f}")
         else:
             st.caption('⚠️ Historial insuficiente para calcular el rango empírico.')
@@ -1441,19 +1426,19 @@ def modulo_opciones():
 
         render_explicacion('Cómo leer la distribución Monte Carlo y cómo usarla', f"""
 **Qué muestra**
-Se simularon miles de caminos posibles del precio hasta el vencimiento ({dias_vto} días), usando la volatilidad histórica y la tendencia reciente. El histograma muestra **dónde terminó el precio en cada simulación**: las barras más altas son los resultados más probables. Las líneas verticales marcan el precio actual, los rangos del 40% al 60% (Monte Carlo y empírico histórico) y los strikes de tu estrategia.
+Se simularon miles de caminos posibles del precio hasta el vencimiento ({dias_vto} días), usando la volatilidad histórica y la tendencia reciente. El histograma muestra **dónde terminó el precio en cada simulación**: las barras más altas son los resultados más probables. Las líneas verticales marcan el precio actual, los rangos del 40% al 60% (Monte Carlo y empírico histórico) y los precios de ejercicio de tu estrategia.
 
 **Datos de hoy**
 - La mitad central de los resultados simulados cae entre **{p40_mc:,.2f} y {p60_mc:,.2f}**.
 - La probabilidad de que el precio termine por debajo del actual es **{prob_perdida:.1f}%**.
 
 **Cómo leerlo**
-- Si un **strike vendido** queda en una zona con pocas barras (lejos del centro), es menos probable que el precio llegue ahí.
-- Si un **strike comprado** queda en una zona con muchas barras, es más probable que termine con valor.
+- Si un **precio de ejercicio vendido** queda en una zona con pocas barras (lejos del centro), es menos probable que el precio llegue ahí.
+- Si un **precio de ejercicio comprado** queda en una zona con muchas barras, es más probable que termine con valor.
 - Cuando el Monte Carlo y el rango empírico **coinciden**, la estimación es más confiable; si difieren mucho, hay que tomarla con más cautela.
 
 **Cómo sacarle provecho**
-Usalo para comparar tus strikes contra el rango probable. Es una **estimación estadística basada en el pasado**, no una predicción: un evento inesperado puede dejar el precio fuera de todo el gráfico.
+Usalo para comparar tus precios de ejercicio contra el rango probable. Es una **estimación estadística basada en el pasado**, no una predicción: un evento inesperado puede dejar el precio fuera de todo el gráfico.
 """)
 
         st.markdown('#### Veredicto por opción (6 chequeos independientes)')
@@ -1479,21 +1464,21 @@ Usalo para comparar tus strikes contra el rango probable. Es una **estimación e
 
     ok_par, msg_par = verificar_paridad_put_call(filas)
     st.markdown(f"**⚖️ Paridad Put-Call:** {msg_par}" if ok_par else f"**⚖️ Paridad Put-Call:**\n\n{msg_par}")
-    st.markdown(f"**📐 Skew:** {analizar_skew(filas, S)}")
+    st.markdown(f"**📐 Sesgo de volatilidad:** {analizar_skew(filas, S)}")
 
     # ── liquidez y deslizamiento (slippage) de la estrategia ────────────
     costo_teorico = costo_neto_estrategia(opciones)
     costo_real = costo_neto_real_estrategia(opciones)
     slippage = costo_real - costo_teorico
-    st.markdown('### 💧 Liquidez y deslizamiento (slippage) de la estrategia')
+    st.markdown('### 💧 Liquidez y deslizamiento de la estrategia')
     cl1, cl2, cl3 = st.columns(3)
-    with cl1: st.metric('Costo neto teórico (mid)', f'{costo_teorico:.2f}/acción')
-    with cl2: st.metric('Costo neto real (bid/ask)', f'{costo_real:.2f}/acción')
-    with cl3: st.metric('Deslizamiento (Slippage)', f'{slippage:.2f}/acción', f'{slippage*mult:.2f} por contrato')
+    with cl1: st.metric('Costo neto teórico (punto medio)', f'{costo_teorico:.2f}/acción')
+    with cl2: st.metric('Costo neto real (compra/venta)', f'{costo_real:.2f}/acción')
+    with cl3: st.metric('Deslizamiento', f'{slippage:.2f}/acción', f'{slippage*mult:.2f} por contrato')
     opciones_iliquidas = [f for f in filas if '🔴' in f['Liquidez'] or '🟠' in f['Liquidez']]
     if opciones_iliquidas:
         st.warning('⚠️ Opciones con liquidez media/baja — priorizá orden límite: ' +
-                   ', '.join(f"{f['Opción']} K={f['Strike']}" for f in opciones_iliquidas))
+                   ', '.join(f"{f['Opción']} K={f['Precio de ejercicio']}" for f in opciones_iliquidas))
     else:
         st.success('✅ Todas las opciones tienen buena liquidez.')
 
@@ -1507,30 +1492,30 @@ Usalo para comparar tus strikes contra el rango probable. Es una **estimación e
     per_txt = 'ILIMITADA ⬆️' if analisis['perdida_ilimitada'] else f"{analisis['perdida_max']:.2f} ({analisis['perdida_max']*mult:.2f} x{mult})"
 
     kc1, kc2, kc3 = st.columns(3)
-    with kc1: st.metric('Break-even(s)', be_txt)
+    with kc1: st.metric('Puntos de equilibrio', be_txt)
     with kc2: st.metric('Ganancia máxima', gan_txt)
     with kc3: st.metric('Pérdida máxima', per_txt)
 
     st.plotly_chart(fig_payoff(opciones, S, analisis), use_container_width=True, key='opc_fig_payoff')
 
-    render_explicacion('Cómo leer el gráfico de payoff y cómo usarlo', f"""
+    render_explicacion('Cómo leer el gráfico de perfil de resultado y cómo usarlo', f"""
 **Qué muestra**
 La ganancia o pérdida **por acción** de toda la estrategia **al vencimiento**, según el precio final del activo. Por encima de la línea de cero hay ganancia; por debajo, pérdida.
 
 **Datos de hoy**
-- Break-even(s): **{be_txt}**
+- Puntos de equilibrio: **{be_txt}**
 - Ganancia máxima: **{gan_txt}**
 - Pérdida máxima: **{per_txt}**
 
 **Cómo leerlo**
-- Los **break-even** (líneas verdes) son los precios donde la estrategia pasa de perder a ganar.
+- Los **puntos de equilibrio** (líneas verdes) son los precios donde la estrategia pasa de perder a ganar.
 - La parte **plana** de la curva indica ganancia o pérdida acotada; una parte que **sigue subiendo o bajando** indica que no hay tope en ese lado.
-- La línea amarilla es el precio actual: fijate de qué lado de los break-even quedás hoy.
+- La línea amarilla es el precio actual: fijate de qué lado de los puntos de equilibrio quedás hoy.
 
 **Cómo sacarle provecho**
-- Preguntate: *"¿el precio necesita moverse mucho para llegar al break-even?"* y compará con el rango probable del Monte Carlo.
+- Preguntate: *"¿el precio necesita moverse mucho para llegar al punto de equilibrio?"* y compará con el rango probable del Monte Carlo.
 - Revisá la **pérdida máxima** antes de operar y asegurate de que entra en tu regla de riesgo (más abajo está el tamaño de posición sugerido).
-- Este gráfico es **al vencimiento**. Antes del vencimiento, el resultado depende también del tiempo y la volatilidad (mirá el gráfico de repricing).
+- Este gráfico es **al vencimiento**. Antes del vencimiento, el resultado depende también del tiempo y la volatilidad (mirá el gráfico de revaluación).
 """)
 
     # ── gestión de riesgo / tamaño de posición ──────────────────────────
@@ -1551,22 +1536,22 @@ La ganancia o pérdida **por acción** de toda la estrategia **al vencimiento**,
     sigmas_por_opcion = [f['_iv'] if not np.isnan(f['_iv']) else vol_hist for f in filas]
 
     st.markdown('---')
-    st.markdown('### 💲 Repricing si el subyacente se mueve HOY (sin pasar tiempo)')
+    st.markdown('### 💲 Revaluación si el subyacente se mueve HOY (sin pasar tiempo)')
     st.plotly_chart(fig_repricing(opciones, S, T, r, sigmas_por_opcion, q, estilo, costo_teorico),
                      use_container_width=True, key='opc_fig_repricing')
 
-    render_explicacion('Cómo leer el gráfico de repricing y cómo usarlo', """
+    render_explicacion('Cómo leer el gráfico de revaluación y cómo usarlo', """
 **Qué muestra**
 Cuánto ganarías o perderías **hoy** (no al vencimiento) si el activo se moviera de golpe, sin que pase el tiempo. Se vuelve a calcular el precio de cada opción para cada nuevo valor del activo.
 
 **Cómo leerlo**
-- Es una curva **más suave** que el payoff, porque las opciones todavía tienen valor por el tiempo que les queda.
+- Es una curva **más suave** que el perfil de resultado, porque las opciones todavía tienen valor por el tiempo que les queda.
 - Cuanto más **inclinada** es la curva, más sensible es tu posición a los movimientos del activo (delta alto).
 - Cuanto más **curva** es, más importa la gamma.
 
 **Cómo sacarle provecho**
 - Sirve para saber cuánto podrías ganar o perder si el activo se mueve en los próximos días y **querés salir antes del vencimiento**.
-- Compará este gráfico con el de payoff: la diferencia entre ambos es el valor temporal que todavía tienen las opciones.
+- Compará este gráfico con el de perfil de resultado: la diferencia entre ambos es el valor temporal que todavía tienen las opciones.
 """)
 
     variaciones_tabla = [i / 100 for i in range(-10, 11, 2)]
@@ -1582,10 +1567,10 @@ Cuánto ganarías o perderías **hoy** (no al vencimiento) si el activo se movie
                 precio_rep = float('nan')
             fila[f'Opción {i}'] = round(precio_rep, 2)
             v_total += precio_rep if opcion['accion'] == 'comprar' else -precio_rep
-        fila['P&L hoy'] = round(v_total - costo_teorico, 2)
-        fila['P&L vencimiento'] = round(payoff_total(opciones, S_T), 2)
+        fila['Resultado hoy'] = round(v_total - costo_teorico, 2)
+        fila['Resultado al vencimiento'] = round(payoff_total(opciones, S_T), 2)
         filas_esc.append(fila)
-    st.markdown('### 📋 Escenarios: precios repreciados, P&L hoy y P&L al vencimiento')
+    st.markdown('### 📋 Escenarios: precios revaluados, resultado hoy y resultado al vencimiento')
     st.dataframe(pd.DataFrame(filas_esc), use_container_width=True, hide_index=True)
 
     st.markdown('### 🧮 Sensibilidad de las griegas')
@@ -1612,7 +1597,7 @@ Cómo cambian las griegas **netas** de toda tu estrategia cuando el activo sube 
     # ── simulador interactivo ────────────────────────────────────────────
     st.markdown('---')
     st.markdown('### 🎮 Simulador interactivo')
-    st.caption('Movés el subyacente y los días transcurridos, y ves el precio repreciado, griegas y P&L al instante '
+    st.caption('Movés el subyacente y los días transcurridos, y ves el precio revaluado, griegas y resultado al instante '
                '(separando el efecto del precio del efecto del paso del tiempo — Theta).')
 
     sc1, sc2 = st.columns(2)
@@ -1660,9 +1645,9 @@ Cómo cambian las griegas **netas** de toda tu estrategia cuando el activo sube 
     pnl_vto = payoff_total(opciones, S_T_sim)
 
     sm1, sm2, sm3 = st.columns(3)
-    with sm1: st.metric('P&L sin pasar tiempo', f'{pnl_sin_tiempo:.2f}', f'x{mult}: {pnl_sin_tiempo*mult:.2f}')
-    with sm2: st.metric(f'P&L con {dias_sim}d pasados', f'{pnl_con_tiempo:.2f}', f'x{mult}: {pnl_con_tiempo*mult:.2f}')
-    with sm3: st.metric('P&L si fuera al vencimiento', f'{pnl_vto:.2f}', f'x{mult}: {pnl_vto*mult:.2f}')
+    with sm1: st.metric('Resultado sin pasar tiempo', f'{pnl_sin_tiempo:.2f}', f'x{mult}: {pnl_sin_tiempo*mult:.2f}')
+    with sm2: st.metric(f'Resultado con {dias_sim}d pasados', f'{pnl_con_tiempo:.2f}', f'x{mult}: {pnl_con_tiempo*mult:.2f}')
+    with sm3: st.metric('Resultado si fuera al vencimiento', f'{pnl_vto:.2f}', f'x{mult}: {pnl_vto*mult:.2f}')
     st.caption(f'💀 Efecto acumulado del paso del tiempo (Theta): {efecto_tiempo_total:.2f} por acción '
                f'(x{mult} = {efecto_tiempo_total*mult:.2f} por contrato)')
 
