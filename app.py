@@ -9428,7 +9428,6 @@ with st.container(key='nav_pills_wrap'):
             '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),          # ← nuevo
         }
         _trading_horizontes = {'pares', 'senales', 'opciones', 'gex'}   # ← agregar 'gex'
-        _trading_horizontes = {'pares', 'senales', 'opciones'}
         _trading_activo = HORIZONTE in _trading_horizontes
         _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
         _label_trading = f'📈 {_trading_label_actual.split(" ",1)[1]}' if _trading_label_actual else '📈 Trading'
