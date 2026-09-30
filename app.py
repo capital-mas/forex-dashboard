@@ -818,6 +818,7 @@ _autorefresh_activo = (
     or _nav_h_actual == 'corto'
     or (_nav_h_actual == 'largo' and _nav_m_actual in ('tdc', 'reversion'))
     or _nav_h_actual in ('renta_fija_macro', 'breadth')
+    or (_nav_h_actual == 'watchlist' and _tiene_alertas_activas_watchlist(supabase, USER_ID))
 )
 
 if _autorefresh_activo:
