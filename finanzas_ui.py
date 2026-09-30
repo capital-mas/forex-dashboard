@@ -809,7 +809,11 @@ def _render_gastos(client, user_id: str) -> None:
             "subcategoria": subcategoria if subcategoria != "—" else "",
             "monto": monto, "cuenta": cuenta, "notas": notas,
         })
-        _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
+        if r["ok"]:
+            _toast_ok(r["mensaje"])
+            psi.mostrar_impacto_gasto(client, user_id, monto, fecha.isoformat())
+        else:
+            _toast_err(r["mensaje"])
 
     df = fd.listar_gastos(client, user_id)
     if not df.empty:
@@ -861,7 +865,11 @@ def _render_deudas(client, user_id: str) -> None:
             "fechaInicio": fecha_inicio.isoformat(), "fechaVencimiento": fecha_vencimiento.isoformat(),
             "notas": notas,
         })
-        _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
+        if r["ok"]:
+            _toast_ok(r["mensaje"])
+            psi.mostrar_impacto_deuda(client, user_id, cuota_mensual, monto_pendiente)
+        else:
+            _toast_err(r["mensaje"])
 
     df = fd.listar_deudas(client, user_id)
     if not df.empty:
@@ -1275,6 +1283,7 @@ def _render_trading(client, user_id: str) -> None:
     st.subheader("⚡ Registrar Operación de Trading")
     _mostrar_flash()
     st.info("⚡ Para operaciones abiertas, el precio actual se trae en vivo y el P&L se calcula solo.")
+    psi.render_panel_pretrading(client, user_id)
 
     estado_sel = st.selectbox("Estado *", ["Abierta", "Cerrada", "Cancelada"], key="tr_estado_sel")
 
