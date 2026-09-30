@@ -223,32 +223,86 @@ def _render_alertas(client, user_id: str) -> None:
                 renderers[nivel]("\n\n".join(mensajes))
 
 
-def _pie(df: pd.DataFrame, cat_col: str, val_col: str, alto: int = 300) -> None:
-    """Gráfico de torta (donut) con Altair. Ignora categorías en $0 o
-    negativas. Muestra monto y porcentaje al pasar el mouse."""
+def _pie(df: pd.DataFrame, cat_col: str, val_col: str, alto: int = 320) -> None:
+    """Gráfico de torta (donut) con Altair. Ignora categorías en $0 o negativas.
+    - En el centro: monto total y 100%.
+    - Al hacer clic en una porción: el centro muestra el nombre, el monto y
+      el porcentaje de esa porción (la porción se resalta con un borde).
+    - Clic afuera de la torta: vuelve al total."""
     if df is None or df.empty:
         st.caption("Sin datos para graficar.")
         return
-    d = df[df[val_col] > 0].copy()
+    d = df[[cat_col, val_col]].copy()
+    d = d[d[val_col] > 0]
     if d.empty:
         st.caption("Sin datos para graficar.")
         return
-    d["pct"] = d[val_col] / d[val_col].sum()
-    chart = (
-        alt.Chart(d)
-        .mark_arc(innerRadius=55)
-        .encode(
-            theta=alt.Theta(f"{val_col}:Q", stack=True),
-            color=alt.Color(f"{cat_col}:N", legend=alt.Legend(title=None)),
-            order=alt.Order(f"{val_col}:Q", sort="descending"),
-            tooltip=[
-                alt.Tooltip(f"{cat_col}:N", title="Detalle"),
-                alt.Tooltip(f"{val_col}:Q", title="Monto", format=",.2f"),
-                alt.Tooltip("pct:Q", title="Porcentaje", format=".1%"),
-            ],
-        )
-        .properties(height=alto)
+
+    total = float(d[val_col].sum())
+    d["pct"] = d[val_col] / total
+    d["monto_txt"] = d[val_col].map(lambda v: f"${v:,.2f}")
+    d["pct_txt"] = d["pct"].map(lambda v: f"{v * 100:.1f}%")
+    d["tot_txt"] = f"${total:,.2f}"
+    d["lbl"] = d[cat_col].astype(str).str.slice(0, 22)
+
+    # Color del texto central según el tema (oscuro por defecto).
+    try:
+        base_tema = st.get_option("theme.base")
+    except Exception:
+        base_tema = None
+    color_txt = "#31333F" if base_tema == "light" else "#fafafa"
+    color_sec = "#808495"
+
+    # Compatibilidad Altair 5 (selection_point) y Altair 4 (selection_single).
+    if hasattr(alt, "selection_point"):
+        sel = alt.selection_point(fields=[cat_col], on="click", empty=False)
+        def _aplicar(ch):
+            return ch.add_params(sel)
+    else:
+        sel = alt.selection_single(fields=[cat_col], on="click", empty="none")
+        def _aplicar(ch):
+            return ch.add_selection(sel)
+
+    base = alt.Chart(d)
+
+    arco = base.mark_arc(innerRadius=75).encode(
+        theta=alt.Theta(f"{val_col}:Q", stack=True),
+        color=alt.Color(f"{cat_col}:N", legend=alt.Legend(title=None)),
+        order=alt.Order(f"{val_col}:Q", sort="descending"),
+        stroke=alt.value(color_txt),
+        strokeWidth=alt.condition(sel, alt.value(3), alt.value(0)),
+        tooltip=[
+            alt.Tooltip(f"{cat_col}:N", title="Detalle"),
+            alt.Tooltip("monto_txt:N", title="Monto"),
+            alt.Tooltip("pct_txt:N", title="Porcentaje"),
+        ],
     )
+
+    def _texto(valor, size, dy, filtro, bold=False, color=color_txt, unico=False):
+        """Texto centrado. 'valor' es un campo del DataFrame o un literal
+        (alt.value). 'unico' deja una sola fila para no superponer textos."""
+        ch = base.mark_text(
+            align="center", baseline="middle", fontSize=size, dy=dy,
+            fontWeight="bold" if bold else "normal", color=color,
+        )
+        ch = ch.encode(text=valor).transform_filter(filtro)
+        if unico:
+            ch = ch.transform_window(rn="row_number()").transform_filter("datum.rn == 1")
+        return ch
+
+    capas = [
+        arco,
+        # Sin selección: total
+        _texto(alt.value("Total"), 12, -26, ~sel, color=color_sec, unico=True),
+        _texto("tot_txt:N", 17, 0, ~sel, bold=True, unico=True),
+        _texto(alt.value("100%"), 14, 24, ~sel, color=color_sec, unico=True),
+        # Con selección: detalle de la porción elegida
+        _texto("lbl:N", 12, -26, sel, color=color_sec),
+        _texto("monto_txt:N", 17, 0, sel, bold=True),
+        _texto("pct_txt:N", 14, 24, sel, color=color_sec),
+    ]
+
+    chart = _aplicar(alt.layer(*capas)).properties(height=alto)
     st.altair_chart(chart, use_container_width=True)
 
 
