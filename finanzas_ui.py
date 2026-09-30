@@ -18,6 +18,7 @@ import pandas as pd
 import streamlit as st
 
 import finanzas_data as fd
+import psicologia_ui as psi
 
 ACCENT = "#6CC24A"
 POS = "#00e676"
@@ -128,6 +129,9 @@ OPCIONES_EDICION = {
         "categoria": ["Transferencia", "Efectivo", "Débito automático", "Redondeo", "Premio / Bonus", "Otro"],
     },
 }
+# Opciones de edición del módulo Psicología (diario emocional)
+OPCIONES_EDICION.update(psi.OPCIONES_EDICION)
+
 PCT_EDICION = {"inv_corto": ("tasa_anual",), "deudas": ("tasa_interes",)}
 COLUMNAS_ENTERAS = ("cuotas_totales", "cuotas_pagadas")
 
@@ -1489,6 +1493,7 @@ SECCIONES_FINANZAS = {
     "📈 Largo Plazo": "inv_largo",
     "🎯 Trading": "trading",
     "🏆 Objetivos": "objetivos",
+    "🧠 Psicología": "psicologia",
 }
 
 
@@ -1529,6 +1534,8 @@ def render_finanzas_personales(client, user_id: str) -> None:
         _render_trading(client, user_id)
     elif seccion == "objetivos":
         _render_objetivos(client, user_id)
+    elif seccion == "psicologia":
+        psi.render_psicologia(client, user_id, _tabla_editable)
 
 
 if __name__ == "__main__":
