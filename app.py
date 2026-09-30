@@ -8632,13 +8632,10 @@ _label_vert = _vert_label_actual if (_vert_activo and _vert_label_actual) else '
 
 n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
 n_pagos_pend = _contar_pagos_pendientes(supabase) if ES_ADMIN else 0
-n_alertas_watch = _contar_alertas_watchlist(USER_ID)
 
 _partes_badge = []
 if n_alertas_fin > 0:
     _partes_badge.append(f'🔴{n_alertas_fin}')
-if n_alertas_watch > 0:
-    _partes_badge.append(f'⭐{n_alertas_watch}')
 if n_pagos_pend > 0:
     _partes_badge.append(f'💳{n_pagos_pend}')
 
@@ -8691,11 +8688,6 @@ def _render_mi_cuenta(col):
                     'Gestioná tu cuenta</div>',
                     unsafe_allow_html=True
                 )
-                label_wl = f'⭐ Mi Watchlist ({n_alertas_watch})' if n_alertas_watch > 0 else '⭐ Mi Watchlist'
-                if st.button(label_wl, use_container_width=True, key='menu_watchlist'):
-                    st.session_state['nav_horizonte'] = 'watchlist'
-                    st.session_state['nav_modulo'] = 'watchlist'
-                    st.rerun()
                 if st.button(_label_finanzas, use_container_width=True, key='menu_finanzas'):
                     st.session_state['nav_horizonte'] = 'finanzas'
                     st.session_state['nav_modulo'] = 'finanzas'
@@ -8994,7 +8986,6 @@ def _mobile_cambiar_modulo():
     st.session_state['nav_modulo'] = mods_disp[label_sel]
 
 with st.container(key='nav_mobile_wrap'):
-    _label_wl_mobile = f'⭐ Watchlist ({n_alertas_watch})' if n_alertas_watch > 0 else '⭐ Watchlist'
     _OPCIONES_HORIZONTE_MOBILE = {
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
         '🔍 Buscador': 'buscador', _label_wl_mobile: 'watchlist', '⚖️ Comparar': 'comparador',
@@ -9143,7 +9134,6 @@ titulos = {
     'renta_fija_macro': ('Renta Fija, Salud del Mercado y Macro', '📉','Bonos, tasas del Tesoro, crédito corporativo y 12 ratios macro estratégicos'),
     'senales': ('Señales de Trading', '🎯', 'Publicación de señales y simulador de capital'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
-    'watchlist': ('Mi Watchlist', '⭐', 'Hasta 15 activos con alertas de Corto Plazo, Reversión y Top-Down Cuantitativo'),
     'promediador': ('Promediador + Stop Loss', '📐', 'Precio promedio, tendencia y gestión de riesgo con apalancamiento'),
     'fscore': ('F-Score (Piotroski)', '🧮', 'Calidad financiera 0-9 por sector — Piotroski Score'),
     'breadth': ('Salud del Mercado', '📡', 'Amplitud, avance/declive, máximos/mínimos y concentración'),
@@ -9168,7 +9158,6 @@ badge_map = {
     'gex': ('#bc8cff', 'rgba(188,140,255,0.12)', 'GEX'),
     'senales': ('#ff6ec7', 'rgba(255,110,199,0.12)', 'SEÑALES'),
     'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
-    'watchlist': ('#e3b341', 'rgba(227,179,65,0.12)', 'WATCHLIST'),
     'promediador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'PROMEDIADOR'),
     'fscore': ('#3fb950', 'rgba(63,185,80,0.12)', 'F-SCORE'),
     'breadth': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BREADTH'),
@@ -9273,8 +9262,6 @@ elif MODULO == 'noticias':
 elif MODULO == 'finanzas':
     render_finanzas_personales(supabase, USER_ID)
 
-elif MODULO == 'watchlist':
-    render_watchlist(supabase, USER_ID)
 
 elif MODULO == 'promediador':                 # ← agregar
     modulo_promediador(
