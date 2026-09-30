@@ -23,6 +23,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
+from modulo_landing import pantalla_landing
 from modulo_opciones import modulo_opciones
 from modulo_gex import modulo_gex
 from modulo_estados_financieros import render_analisis_profundo, render_comparativo_estados
