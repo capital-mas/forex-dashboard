@@ -11,7 +11,7 @@
 # autenticados desde afuera.
 # ============================================================
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -54,9 +54,20 @@ def _toast_err(msg: str) -> None:
     st.error(msg)
 
 
+# Mensaje "flash": sobrevive al st.rerun() para que se vea el resultado de una acción.
+def _flash(ok: bool, msg: str) -> None:
+    st.session_state["_fin_flash"] = (ok, msg)
+
+
+def _mostrar_flash() -> None:
+    f = st.session_state.pop("_fin_flash", None)
+    if f:
+        (st.success if f[0] else st.error)(f[1])
+
+
 # ============================================================
 # TABLA EDITABLE — editar y eliminar registros existentes
-# Se reutiliza en las 8 secciones para no duplicar la lógica de
+# Se reutiliza en las secciones para no duplicar la lógica de
 # diff (qué cambió) y de borrado con confirmación.
 # ============================================================
 
@@ -80,20 +91,23 @@ def _valores_distintos(a, b) -> bool:
 
 def _tabla_editable(
     client, user_id: str, seccion_key: str, df: pd.DataFrame,
-    actualizar_fn, eliminar_fn, label_fn, columnas_ocultas: tuple = ("user_id", "created_at"),
+    actualizar_fn, eliminar_fn, label_fn,
+    columnas_ocultas: tuple = ("user_id", "created_at"), solo_lectura: tuple = (),
 ) -> None:
-    """Muestra la tabla con edición de celdas + un selector de borrado con
-    confirmación explícita. 'label_fn' arma la etiqueta legible de cada fila
-    para el selector de borrado (ej: '06/07/2026 · Supermercado · $12000')."""
+    """Tabla con edición de celdas + selector de borrado con confirmación.
+    'label_fn' arma la etiqueta legible de cada fila para el selector de
+    borrado. 'solo_lectura' = columnas que se muestran pero no se pueden
+    editar (ej. columnas calculadas) y nunca se mandan al update."""
     if df.empty:
         st.caption("Todavía no hay registros cargados.")
         return
 
     df_mostrado = df.drop(columns=[c for c in columnas_ocultas if c in df.columns])
+    bloqueadas = ["id"] + [c for c in solo_lectura if c in df_mostrado.columns]
 
     editado = st.data_editor(
         df_mostrado, key=f"editor_{seccion_key}", num_rows="fixed",
-        disabled=["id"], use_container_width=True, hide_index=True,
+        disabled=bloqueadas, use_container_width=True, hide_index=True,
     )
 
     col_guardar, col_borrar = st.columns([1, 1.4])
@@ -110,7 +124,7 @@ def _tabla_editable(
                 fila_original = fila_original.iloc[0]
                 cambios = {
                     col: fila_nueva[col] for col in editado.columns
-                    if col != "id" and _valores_distintos(fila_nueva[col], fila_original[col])
+                    if col not in bloqueadas and _valores_distintos(fila_nueva[col], fila_original[col])
                 }
                 if cambios:
                     r = actualizar_fn(client, user_id, fila_id, cambios)
@@ -415,44 +429,114 @@ def _render_deudas(client, user_id: str) -> None:
 
 def _render_inv_corto(client, user_id: str) -> None:
     st.subheader("⚡ Inversión Corto Plazo")
-    with st.form("form_inv_corto", clear_on_submit=True):
-        nombre = st.text_input("Nombre *", placeholder="Ej: Plazo Fijo Banco Nación…")
-        col1, col2 = st.columns(2)
-        tipo = col1.selectbox(
-            "Tipo *", ["", "Plazo Fijo", "Crypto", "Fondos Comunes", "Bonos Corto", "Cuenta Remunerada", "Otros"]
-        )
-        estado = col2.selectbox("Estado", ["Activa", "Vencida", "Cancelada", "Renovada"])
-        col1, col2 = st.columns(2)
-        monto = col1.number_input("Monto *", min_value=0.0, step=0.01)
-        tasa = col2.number_input("Tasa Anual % *", step=0.01)
-        col1, col2 = st.columns(2)
-        fecha_inicio = col1.date_input("Fecha Inicio *", value=date.today())
-        fecha_vencimiento = col2.date_input("Fecha Vencimiento *")
-        notas = st.text_area("Notas")
-        enviado = st.form_submit_button("⚡ Registrar Inversión")
+    _mostrar_flash()
+    sub = st.radio(
+        "", ["➕ Nueva", "📋 Mis inversiones", "🔁 Renovar / Cobrar"],
+        horizontal=True, label_visibility="collapsed", key="ic_sub",
+    )
 
-    if enviado:
-        if not nombre or not tipo or not monto:
-            _toast_err("⚠️ Completá los campos obligatorios (*)")
-            return
-        r = fd.insertar_inv_corto(client, user_id, {
-            "nombre": nombre, "tipo": tipo, "monto": monto, "tasa": tasa,
-            "fechaInicio": fecha_inicio.isoformat(), "fechaVencimiento": fecha_vencimiento.isoformat(),
-            "estado": estado, "notas": notas,
-        })
-        _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
+    if sub == "➕ Nueva":
+        with st.form("form_inv_corto", clear_on_submit=True):
+            nombre = st.text_input("Nombre *", placeholder="Ej: Plazo Fijo Banco Nación…")
+            col1, col2 = st.columns(2)
+            tipo = col1.selectbox(
+                "Tipo *", ["", "Plazo Fijo", "Crypto", "Fondos Comunes", "Bonos Corto", "Cuenta Remunerada", "Otros"]
+            )
+            estado = col2.selectbox("Estado", ["Activa", "Vencida", "Cancelada", "Renovada", "Cobrada"])
+            col1, col2 = st.columns(2)
+            monto = col1.number_input("Monto *", min_value=0.0, step=0.01)
+            tasa = col2.number_input("Tasa Anual % *", step=0.01)
+            col1, col2 = st.columns(2)
+            fecha_inicio = col1.date_input("Fecha Inicio *", value=date.today())
+            fecha_vencimiento = col2.date_input("Fecha Vencimiento *")
+            notas = st.text_area("Notas")
+            enviado = st.form_submit_button("⚡ Registrar Inversión")
+
+        if enviado:
+            if not nombre or not tipo or not monto:
+                _toast_err("⚠️ Completá los campos obligatorios (*)")
+                return
+            r = fd.insertar_inv_corto(client, user_id, {
+                "nombre": nombre, "tipo": tipo, "monto": monto, "tasa": tasa,
+                "fechaInicio": fecha_inicio.isoformat(), "fechaVencimiento": fecha_vencimiento.isoformat(),
+                "estado": estado, "notas": notas,
+            })
+            _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
+        return
 
     df = fd.listar_inv_corto(client, user_id)
-    if not df.empty:
-        df_info = df.copy()
-        df_info["monto_proyectado"] = df_info.apply(lambda r: fd.monto_proyectado_inv_corto(r), axis=1)
-        st.dataframe(df_info, use_container_width=True, hide_index=True)
-        st.markdown("###### Editar / eliminar")
+
+    if sub == "📋 Mis inversiones":
+        if df.empty:
+            st.caption("Todavía no hay inversiones cargadas.")
+            return
+        df_t = df.copy()
+        df_t["monto_proyectado"] = df_t.apply(lambda r: fd.monto_proyectado_inv_corto(r), axis=1)
+        st.caption("Podés editar las celdas directo en la tabla (el monto proyectado se calcula solo).")
         _tabla_editable(
-            client, user_id, "inv_corto", df,
+            client, user_id, "inv_corto", df_t.sort_values("fecha_vencimiento"),
             fd.actualizar_inv_corto, fd.eliminar_inv_corto,
-            label_fn=lambda r: f"{r['nombre']} · {r['tipo']} · {_money(r['monto'])}",
+            label_fn=lambda r: f"{r['nombre']} · {r['tipo']} · {_money(r['monto'])} · {r['estado']}",
+            solo_lectura=("monto_proyectado",),
         )
+        return
+
+    # ---- Renovar / Cobrar ----
+    if df.empty:
+        st.caption("No hay inversiones para renovar o cobrar.")
+        return
+    candidatas = df[df["estado"].isin(["Activa", "Vencida"])]
+    if candidatas.empty:
+        st.caption("No hay inversiones activas o vencidas.")
+        return
+
+    opciones = {
+        f"{r['nombre']} · {_money(r['monto'])} · vence {r['fecha_vencimiento']}": r
+        for _, r in candidatas.sort_values("fecha_vencimiento").iterrows()
+    }
+    sel = st.selectbox("Inversión", ["—"] + list(opciones.keys()), key="ic_sel")
+    if sel == "—":
+        return
+
+    fila = opciones[sel]
+    fid = int(fila["id"])
+    proyectado = fd.monto_proyectado_inv_corto(fila)
+    venc_actual = pd.to_datetime(fila["fecha_vencimiento"]).date()
+    st.info(f"Capital: {_money(fila['monto'])} · Monto proyectado al vencimiento: **{_money(proyectado)}**")
+
+    col_ren, col_cob = st.columns(2)
+
+    with col_ren:
+        st.markdown("###### 🔁 Renovar")
+        nueva_venc = st.date_input(
+            "Nuevo vencimiento", value=venc_actual + timedelta(days=30), key=f"ic_ren_venc_{fid}",
+        )
+        nueva_tasa = st.number_input(
+            "Nueva tasa anual %", value=float(fila["tasa_anual"]) * 100, step=0.01, key=f"ic_ren_tasa_{fid}",
+        )
+        capitalizar = st.checkbox(
+            "Capitalizar intereses (reinvertir capital + intereses)", value=True, key=f"ic_ren_cap_{fid}",
+        )
+        st.caption(f"Nuevo monto: {_money(proyectado if capitalizar else float(fila['monto']))}")
+        if st.button("🔁 Confirmar renovación", key=f"ic_ren_btn_{fid}"):
+            r = fd.renovar_inv_corto(client, user_id, fid, nueva_venc.isoformat(), nueva_tasa, capitalizar)
+            _flash(r["ok"], r["mensaje"])
+            st.rerun()
+
+    with col_cob:
+        st.markdown("###### ✅ Cobrar / Cerrar")
+        cobrado = st.number_input(
+            "Monto cobrado", min_value=0.0, value=float(round(proyectado, 2)), step=0.01, key=f"ic_cob_monto_{fid}",
+        )
+        carteras = fd.listar_carteras(client, user_id)
+        nombres = {r["nombre"]: int(r["id"]) for _, r in carteras.iterrows()} if not carteras.empty else {}
+        destino = st.selectbox(
+            "Acreditar liquidez en cartera", ["— (no acreditar)"] + list(nombres.keys()), key=f"ic_cob_cart_{fid}",
+        )
+        if st.button("✅ Confirmar cobro", key=f"ic_cob_btn_{fid}"):
+            r = fd.cobrar_inv_corto(client, user_id, fid, cobrado, nombres.get(destino))
+            _flash(r["ok"], r["mensaje"])
+            st.rerun()
 
 
 # ============================================================
@@ -465,53 +549,281 @@ SIMBOLOS_COMUNES = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "NVDA", "META",
 
 def _render_inv_largo(client, user_id: str) -> None:
     st.subheader("📈 Inversión Largo Plazo")
-    st.info("📡 El precio actual se trae en vivo con yfinance al cargar la sección.")
+    _mostrar_flash()
+    sub = st.radio(
+        "", ["📋 Posiciones", "🗂️ Carteras", "💸 Vender / Cerrar"],
+        horizontal=True, label_visibility="collapsed", key="il_sub",
+    )
 
-    with st.form("form_inv_largo", clear_on_submit=True):
-        activo = st.text_input("Nombre del Activo *", placeholder="Ej: Apple Inc., Tesla…")
-        col1, col2 = st.columns(2)
-        tipo = col1.selectbox("Tipo *", ["", "Acción", "ETF", "Crypto", "Bono", "Fondo", "REIT", "Otro"])
-        simbolo = col2.text_input("Símbolo (Ticker) *", placeholder="AAPL, TSLA…").upper()
-        col1, col2 = st.columns(2)
-        cantidad = col1.number_input("Cantidad *", min_value=0.0, step=0.0001, format="%.4f")
-        precio_compra = col2.number_input("Precio Compra *", min_value=0.0, step=0.01)
-        col1, col2 = st.columns(2)
-        fecha_compra = col1.date_input("Fecha Compra *", value=date.today())
-        estado = col2.selectbox("Estado", ["Activo", "Vendido", "En espera"])
-        notas = st.text_area("Notas")
-        enviado = st.form_submit_button("📈 Registrar Inversión")
+    df_cart = fd.listar_carteras(client, user_id)
+    cart_por_nombre = {r["nombre"]: int(r["id"]) for _, r in df_cart.iterrows()} if not df_cart.empty else {}
+    cart_por_id = {v: k for k, v in cart_por_nombre.items()}
 
-    st.caption("Símbolos comunes: " + ", ".join(SIMBOLOS_COMUNES))
+    # ---------------- POSICIONES ----------------
+    if sub == "📋 Posiciones":
+        st.info("📡 El precio actual se trae en vivo con yfinance al cargar la sección.")
+        with st.form("form_inv_largo", clear_on_submit=True):
+            activo = st.text_input("Nombre del Activo *", placeholder="Ej: Apple Inc., Tesla…")
+            col1, col2 = st.columns(2)
+            tipo = col1.selectbox("Tipo *", ["", "Acción", "ETF", "Crypto", "Bono", "Fondo", "REIT", "Otro"])
+            simbolo = col2.text_input("Símbolo (Ticker) *", placeholder="AAPL, TSLA…").upper()
+            col1, col2 = st.columns(2)
+            cantidad = col1.number_input("Cantidad *", min_value=0.0, step=0.0001, format="%.4f")
+            precio_compra = col2.number_input("Precio Compra *", min_value=0.0, step=0.01)
+            col1, col2, col3 = st.columns(3)
+            fecha_compra = col1.date_input("Fecha Compra *", value=date.today())
+            estado = col2.selectbox("Estado", ["Activo", "En espera"])
+            cartera_sel = col3.selectbox("Cartera", ["Sin cartera"] + list(cart_por_nombre.keys()))
+            notas = st.text_area("Notas")
+            enviado = st.form_submit_button("📈 Registrar Inversión")
 
-    if enviado:
-        if not activo or not tipo or not simbolo or not cantidad or not precio_compra:
-            _toast_err("⚠️ Completá los campos obligatorios (*)")
+        st.caption("Símbolos comunes: " + ", ".join(SIMBOLOS_COMUNES))
+
+        if enviado:
+            if not activo or not tipo or not simbolo or not cantidad or not precio_compra:
+                _toast_err("⚠️ Completá los campos obligatorios (*)")
+                return
+            r = fd.insertar_inv_largo(client, user_id, {
+                "activo": activo, "tipo": tipo, "simbolo": simbolo, "cantidad": cantidad,
+                "precioCompra": precio_compra, "fechaCompra": fecha_compra.isoformat(),
+                "estado": estado, "notas": notas, "carteraId": cart_por_nombre.get(cartera_sel),
+            })
+            _toast_ok(f"✅ {activo} ({simbolo}) guardado") if r["ok"] else _toast_err(r["mensaje"])
+
+        df = fd.listar_inv_largo_con_precios(client, user_id)
+        if df.empty:
             return
-        r = fd.insertar_inv_largo(client, user_id, {
-            "activo": activo, "tipo": tipo, "simbolo": simbolo, "cantidad": cantidad,
-            "precioCompra": precio_compra, "fechaCompra": fecha_compra.isoformat(),
-            "estado": estado, "notas": notas,
-        })
-        _toast_ok(f"✅ {activo} ({simbolo}) guardado") if r["ok"] else _toast_err(r["mensaje"])
 
-    df = fd.listar_inv_largo_con_precios(client, user_id)
-    if not df.empty:
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        st.markdown("###### Editar / eliminar")
-        df_raw = fd.listar_inv_largo(client, user_id)
-        _tabla_editable(
-            client, user_id, "inv_largo", df_raw,
-            fd.actualizar_inv_largo, fd.eliminar_inv_largo,
-            label_fn=lambda r: f"{r['activo']} ({r['simbolo']}) · {r['cantidad']} u.",
+        df_v = df.copy()
+        df_v["ganancia_pct"] = df_v["ganancia_pct"] * 100
+        df_v["cartera"] = df_v["cartera_id"].map(
+            lambda x: cart_por_id.get(int(x), "—") if pd.notna(x) else "—"
         )
+        columnas = ["activo", "simbolo", "cartera", "estado", "cantidad", "precio_compra", "precio_hoy",
+                    "inversion_total", "valor_actual", "ganancia_perdida", "ganancia_pct"]
+        st.dataframe(
+            df_v[columnas], use_container_width=True, hide_index=True,
+            column_config={
+                "precio_hoy": st.column_config.NumberColumn("Precio actual / venta", format="$%.4f"),
+                "precio_compra": st.column_config.NumberColumn("Precio compra", format="$%.4f"),
+                "inversion_total": st.column_config.NumberColumn("Invertido", format="$%.2f"),
+                "valor_actual": st.column_config.NumberColumn("Valor actual", format="$%.2f"),
+                "ganancia_perdida": st.column_config.NumberColumn("Ganancia $", format="$%.2f"),
+                "ganancia_pct": st.column_config.NumberColumn("Ganancia %", format="%.2f%%"),
+            },
+        )
+
+        with st.expander("🗂️ Asignar un activo a una cartera"):
+            activos_df = df[df["estado"].isin(["Activo", "En espera"])]
+            if activos_df.empty or not cart_por_nombre:
+                st.caption("Necesitás al menos un activo y una cartera creada.")
+            else:
+                ops = {
+                    f"{r['activo']} ({r['simbolo']}) · {r['cantidad']} u.": int(r["id"])
+                    for _, r in activos_df.iterrows()
+                }
+                a_sel = st.selectbox("Activo", list(ops.keys()), key="il_asig_activo")
+                c_sel = st.selectbox("Cartera", ["Sin cartera"] + list(cart_por_nombre.keys()), key="il_asig_cart")
+                if st.button("Asignar", key="il_asig_btn"):
+                    r = fd.actualizar_inv_largo(client, user_id, ops[a_sel], {"cartera_id": cart_por_nombre.get(c_sel)})
+                    _flash(r["ok"], r["mensaje"])
+                    st.rerun()
+
+        with st.expander("✏️ Editar / eliminar"):
+            df_raw = fd.listar_inv_largo(client, user_id)
+            _tabla_editable(
+                client, user_id, "inv_largo", df_raw,
+                fd.actualizar_inv_largo, fd.eliminar_inv_largo,
+                label_fn=lambda r: f"{r['activo']} ({r['simbolo']}) · {r['cantidad']} u. · {r['estado']}",
+                solo_lectura=("cartera_id",),
+            )
+        return
+
+    # ---------------- CARTERAS ----------------
+    if sub == "🗂️ Carteras":
+        with st.form("form_cartera", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            nombre = col1.text_input("Nombre de la cartera *", placeholder="Ej: Largo plazo USA, Cripto…")
+            efectivo = col2.number_input("Liquidez inicial", min_value=0.0, step=0.01)
+            descripcion = st.text_input("Descripción")
+            enviado = st.form_submit_button("🗂️ Crear cartera")
+        if enviado:
+            if not nombre:
+                _toast_err("⚠️ Poné un nombre a la cartera")
+            else:
+                r = fd.insertar_cartera(client, user_id, {"nombre": nombre, "descripcion": descripcion, "efectivo": efectivo})
+                _flash(r["ok"], r["mensaje"])
+                st.rerun()
+
+        res = fd.carteras_resumen(client, user_id)
+        if res.empty:
+            st.caption("Todavía no hay carteras.")
+            return
+
+        st.markdown("###### Resumen de carteras")
+        st.dataframe(
+            res.drop(columns=["cartera_id"]), use_container_width=True, hide_index=True,
+            column_config={
+                "cartera": "Cartera", "activos": "Activos",
+                "invertido": st.column_config.NumberColumn("Invertido", format="$%.2f"),
+                "valor_actual": st.column_config.NumberColumn("Valor actual", format="$%.2f"),
+                "ganancia": st.column_config.NumberColumn("Ganancia $", format="$%.2f"),
+                "rend_promedio_pct": st.column_config.NumberColumn("Rendimiento (promedio)", format="%.2f%%"),
+                "rend_ponderado_pct": st.column_config.NumberColumn("Rendimiento (ponderado)", format="%.2f%%"),
+                "efectivo": st.column_config.NumberColumn("Liquidez", format="$%.2f"),
+                "total": st.column_config.NumberColumn("Total (valor + liquidez)", format="$%.2f"),
+            },
+        )
+        st.caption(
+            "Rendimiento (promedio) = promedio de (precio actual − compra) / compra de cada activo. "
+            "Rendimiento (ponderado) = ganancia total $ / total invertido."
+        )
+
+        if cart_por_nombre:
+            st.markdown("###### 💵 Ajustar liquidez")
+            c1, c2, c3 = st.columns([2, 1.3, 1.3])
+            c_liq = c1.selectbox("Cartera", list(cart_por_nombre.keys()), key="il_liq_cart")
+            mov = c2.selectbox("Movimiento", ["Depositar", "Retirar"], key="il_liq_mov")
+            m_liq = c3.number_input("Monto", min_value=0.0, step=0.01, key="il_liq_monto")
+            if st.button("Aplicar", key="il_liq_btn"):
+                if not m_liq:
+                    _toast_err("⚠️ Ingresá un monto")
+                else:
+                    r = fd.ajustar_liquidez(
+                        client, user_id, cart_por_nombre[c_liq], m_liq if mov == "Depositar" else -m_liq,
+                    )
+                    _flash(r["ok"], r["mensaje"])
+                    st.rerun()
+
+            st.markdown("###### Detalle por cartera")
+            df_pos = fd.listar_inv_largo_con_precios(client, user_id)
+            for nombre_c, cid in cart_por_nombre.items():
+                with st.expander(f"🗂️ {nombre_c}"):
+                    sub_df = (
+                        df_pos[(df_pos["estado"] == "Activo") & (df_pos["cartera_id"] == cid)]
+                        if not df_pos.empty else df_pos
+                    )
+                    if sub_df.empty:
+                        st.caption("Sin activos en esta cartera.")
+                    else:
+                        d_v = sub_df[[
+                            "activo", "simbolo", "cantidad", "precio_compra", "precio_hoy",
+                            "ganancia_perdida", "ganancia_pct",
+                        ]].copy()
+                        d_v["ganancia_pct"] = d_v["ganancia_pct"] * 100
+                        st.dataframe(
+                            d_v, use_container_width=True, hide_index=True,
+                            column_config={
+                                "precio_compra": st.column_config.NumberColumn("Compra", format="$%.4f"),
+                                "precio_hoy": st.column_config.NumberColumn("Actual", format="$%.4f"),
+                                "ganancia_perdida": st.column_config.NumberColumn("Ganancia $", format="$%.2f"),
+                                "ganancia_pct": st.column_config.NumberColumn("Ganancia %", format="%.2f%%"),
+                            },
+                        )
+
+        with st.expander("✏️ Editar / eliminar carteras"):
+            st.caption("Si eliminás una cartera, sus activos quedan 'Sin cartera' y se pierde su liquidez registrada.")
+            _tabla_editable(
+                client, user_id, "carteras", df_cart,
+                fd.actualizar_cartera, fd.eliminar_cartera,
+                label_fn=lambda r: f"{r['nombre']} · liquidez {_money(r['efectivo'])}",
+                solo_lectura=("efectivo",),
+            )
+        return
+
+    # ---------------- VENDER / CERRAR ----------------
+    df = fd.listar_inv_largo(client, user_id)
+    activos_df = df[df["estado"] == "Activo"] if not df.empty else df
+    if activos_df.empty:
+        st.caption("No hay posiciones activas para vender.")
+    else:
+        opciones = {
+            f"{r['activo']} ({r['simbolo']}) · {r['cantidad']} u. @ {_money(r['precio_compra'])}": r
+            for _, r in activos_df.iterrows()
+        }
+        sel = st.selectbox("Posición a vender", ["—"] + list(opciones.keys()), key="il_venta_sel")
+        if sel != "—":
+            pos = opciones[sel]
+            pid = int(pos["id"])
+            total = float(pos["cantidad"])
+            precio_ref = fd.precio_actual(pos["simbolo"]) or float(pos["precio_compra"])
+
+            col1, col2 = st.columns(2)
+            cant_v = col1.number_input(
+                "Cantidad a vender", min_value=0.0, max_value=total, value=total,
+                step=0.0001, format="%.4f", key=f"il_v_cant_{pid}",
+            )
+            precio_v = col2.number_input(
+                "Precio de venta", min_value=0.0, value=float(precio_ref),
+                step=0.0001, format="%.4f", key=f"il_v_precio_{pid}",
+            )
+            col1, col2 = st.columns(2)
+            fecha_v = col1.date_input("Fecha de venta", value=date.today(), key=f"il_v_fecha_{pid}")
+            opciones_cart = ["— (no acreditar)"] + list(cart_por_nombre.keys())
+            idx_def = 0
+            if pd.notna(pos.get("cartera_id")) and int(pos["cartera_id"]) in cart_por_id:
+                idx_def = opciones_cart.index(cart_por_id[int(pos["cartera_id"])])
+            destino = col2.selectbox("Acreditar liquidez en", opciones_cart, index=idx_def, key=f"il_v_cart_{pid}")
+
+            pnl = (precio_v - float(pos["precio_compra"])) * cant_v
+            color = POS if pnl > 0 else NEG if pnl < 0 else "#9e9e9e"
+            st.markdown(
+                f"Producido: **{_money(cant_v * precio_v)}** · P&L realizado: "
+                f"<span style='color:{color};font-weight:700'>{_money(pnl)}</span>",
+                unsafe_allow_html=True,
+            )
+            if st.button("💸 Confirmar venta", key=f"il_v_btn_{pid}"):
+                if not cant_v or not precio_v:
+                    _toast_err("⚠️ Completá cantidad y precio de venta")
+                else:
+                    r = fd.vender_inv_largo(
+                        client, user_id, pid, cant_v, precio_v, fecha_v.isoformat(), cart_por_nombre.get(destino),
+                    )
+                    _flash(r["ok"], r["mensaje"])
+                    st.rerun()
+
+    if not df.empty:
+        vendidos = df[df["estado"] == "Vendido"].copy()
+        if not vendidos.empty:
+            st.markdown("###### 📜 Historial de ventas")
+            vendidos["pnl_realizado"] = (vendidos["precio_venta"] - vendidos["precio_compra"]) * vendidos["cantidad"]
+            st.dataframe(
+                vendidos[["activo", "simbolo", "cantidad", "precio_compra", "precio_venta", "fecha_venta", "pnl_realizado"]],
+                use_container_width=True, hide_index=True,
+                column_config={"pnl_realizado": st.column_config.NumberColumn("P&L realizado", format="$%.2f")},
+            )
 
 
 # ============================================================
 # TRADING
 # ============================================================
 
+def _estilizar_trading(df: pd.DataFrame):
+    """Verde = ganando, rojo = perdiendo, gris = igual. Sin precio → sin color."""
+    def _fila(fila):
+        pnl = fila.get("pnl")
+        if pnl is None or pd.isna(pnl):
+            return [""] * len(fila)
+        if abs(pnl) < 1e-9:
+            estilo = "background-color: rgba(158,158,158,0.25); color: #e0e0e0"
+        elif pnl > 0:
+            estilo = "background-color: rgba(0,230,118,0.22)"
+        else:
+            estilo = "background-color: rgba(255,82,82,0.25)"
+        return [estilo] * len(fila)
+
+    return (
+        df.style.apply(_fila, axis=1)
+        .format({
+            "cantidad": "{:,.4f}", "precio_entrada": "{:,.4f}", "precio_ref": "{:,.4f}",
+            "pnl": "${:,.2f}", "pnl_pct": "{:+.2f}%",
+        }, na_rep="—")
+    )
+
+
 def _render_trading(client, user_id: str) -> None:
     st.subheader("⚡ Registrar Operación de Trading")
+    _mostrar_flash()
     st.info("⚡ Para operaciones abiertas, el precio actual se trae en vivo y el P&L se calcula solo.")
 
     estado_sel = st.selectbox("Estado *", ["Abierta", "Cerrada", "Cancelada"], key="tr_estado_sel")
@@ -586,17 +898,43 @@ def _render_trading(client, user_id: str) -> None:
                     _toast_err("⚠️ Ingresá el precio de cierre")
                 else:
                     r = fd.cerrar_operacion(client, user_id, op["id"], precio_cierre_final, fecha_cierre_final.isoformat())
-                    _toast_ok(r["mensaje"]) if r["ok"] else _toast_err(r["mensaje"])
+                    _flash(r["ok"], r["mensaje"])
+                    st.rerun()
 
-    df = fd.listar_trading(client, user_id)
-    if not df.empty:
-        st.markdown("###### Historial de operaciones (editar / eliminar)")
+    st.divider()
+    st.markdown("##### 📊 Operaciones — 🟢 ganando · 🔴 perdiendo · ⚪ igual")
+    df = fd.listar_trading_con_pnl(client, user_id)
+    if df.empty:
+        st.caption("Todavía no hay operaciones cargadas.")
+        return
+
+    df = df.sort_values("fecha_entrada", ascending=False)
+
+    abiertas_df = df[df["estado"] == "Abierta"].dropna(subset=["pnl"])
+    if not abiertas_df.empty:
+        total_pnl = float(abiertas_df["pnl"].sum())
+        st.metric("P&L no realizado (abiertas)", _money(total_pnl))
+
+    columnas = ["fecha_entrada", "simbolo", "direccion", "estado", "cantidad",
+                "precio_entrada", "precio_ref", "pnl", "pnl_pct", "resultado"]
+    st.dataframe(
+        _estilizar_trading(df[columnas]), use_container_width=True, hide_index=True,
+        column_config={
+            "precio_ref": "Precio actual / cierre",
+            "pnl": "P&L $",
+            "pnl_pct": "P&L %",
+        },
+    )
+
+    with st.expander("✏️ Editar / eliminar operaciones"):
         _tabla_editable(
-            client, user_id, "trading", df.sort_values("fecha_entrada", ascending=False),
+            client, user_id, "trading",
+            df.drop(columns=["precio_ref", "pnl", "pnl_pct", "resultado"]),
             fd.actualizar_trading, fd.eliminar_trading,
             label_fn=lambda r: f"{r['simbolo']} · {r['direccion']} · {r['fecha_entrada']}",
         )
-        
+
+
 # ============================================================
 # OBJETIVOS DE AHORRO
 # ============================================================
