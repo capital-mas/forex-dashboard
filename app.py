@@ -491,7 +491,7 @@ def restaurar_sesion():
 restaurar_sesion()
 
 if "usuario" not in st.session_state:
-    pantalla_landing()
+    pantalla_landing(auth_client, cookies)
     st.stop()
     
 USER_ID = st.session_state["usuario"].id
