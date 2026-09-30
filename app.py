@@ -785,6 +785,21 @@ if not tiene_acceso:
 
 from streamlit_autorefresh import st_autorefresh
 
+@st.cache_data(ttl=30, show_spinner=False)
+def _tiene_alertas_activas_watchlist(_client, user_id):
+    """Chequeo liviano e independiente de obtener_alertas_personalizadas (que
+    todavía no está definida en este punto del archivo). Solo se usa para
+    decidir si vale la pena disparar el autorefresh en la pantalla Watchlist."""
+    try:
+        res = (_client.table('alertas_personalizadas')
+               .select('id', count='exact')
+               .eq('user_id', user_id)
+               .eq('activa', True)
+               .execute())
+        return (res.count or 0) > 0
+    except Exception:
+        return False
+
 # Auto-actualización: relanza el script cada 5 minutos para que los cachés
 # (que ya vencen solos por TTL: 5/30/60 min según el módulo) se refresquen
 # sin que el usuario tenga que tocar "↺ Actualizar". Como Streamlit conserva
