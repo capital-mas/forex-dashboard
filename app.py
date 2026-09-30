@@ -785,21 +785,6 @@ if not tiene_acceso:
 
 from streamlit_autorefresh import st_autorefresh
 
-@st.cache_data(ttl=30, show_spinner=False)
-def _tiene_alertas_activas_watchlist(_client, user_id):
-    """Chequeo liviano e independiente de obtener_alertas_personalizadas (que
-    todavía no está definida en este punto del archivo). Solo se usa para
-    decidir si vale la pena disparar el autorefresh en la pantalla Watchlist."""
-    try:
-        res = (_client.table('alertas_personalizadas')
-               .select('id', count='exact')
-               .eq('user_id', user_id)
-               .eq('activa', True)
-               .execute())
-        return (res.count or 0) > 0
-    except Exception:
-        return False
-
 # Auto-actualización: relanza el script cada 5 minutos para que los cachés
 # (que ya vencen solos por TTL: 5/30/60 min según el módulo) se refresquen
 # sin que el usuario tenga que tocar "↺ Actualizar". Como Streamlit conserva
@@ -813,29 +798,11 @@ def _tiene_alertas_activas_watchlist(_client, user_id):
 _nav_h_actual = st.session_state.get('nav_horizonte', 'inicio')
 _nav_m_actual = st.session_state.get('nav_modulo', 'inicio')
 
-@st.cache_data(ttl=30, show_spinner=False)
-def _tiene_alertas_activas_watchlist(_client, user_id):
-    """Chequeo directo e independiente, porque acá todavía no existe
-    obtener_alertas_personalizadas (se define más abajo en el archivo).
-    Solo sirve para decidir si conviene mantener vivo el autorefresh."""
-    try:
-        res = (_client.table('alertas_personalizadas')
-               .select('id', count='exact')
-               .eq('user_id', user_id)
-               .eq('activa', True)
-               .execute())
-        return (res.count or 0) > 0
-    except Exception:
-        return False
-
-_tiene_alertas_watch = _tiene_alertas_activas_watchlist(supabase, USER_ID)
-
 _autorefresh_activo = (
     _nav_m_actual == 'inicio'
     or _nav_h_actual == 'corto'
     or (_nav_h_actual == 'largo' and _nav_m_actual in ('tdc', 'reversion'))
     or _nav_h_actual in ('renta_fija_macro', 'breadth')
-    or _tiene_alertas_watch
 )
 
 if _autorefresh_activo:
@@ -2409,44 +2376,6 @@ def eliminar_alerta_personalizada(client, user_id, alerta_id):
     except Exception:
         return False
 
-
-# ── NUEVO: agregar acá ───────────────────────────────────────────
-def _marcar_disparo_alerta(client, alerta_id, disparada: bool):
-    try:
-        payload = {'disparada': disparada,
-                   'disparada_en': ahora_ar().isoformat() if disparada else None}
-        client.table('alertas_personalizadas').update(payload).eq('id', alerta_id).execute()
-        obtener_alertas_personalizadas.clear()
-    except Exception:
-        pass
-
-
-def sincronizar_disparos_watchlist(client, user_id):
-    """Compara lo que está cumplido AHORA contra lo que ya estaba marcado
-    'disparada' en Supabase. Actualiza el estado y devuelve solo las
-    reglas que ACABAN de pasar de False a True — esas son las que hay
-    que notificar. Si una alerta deja de cumplirse, se resetea para que
-    pueda volver a dispararse en el futuro."""
-    tickers = tuple(sorted(obtener_watchlist(client, user_id)))
-    reglas = obtener_alertas_personalizadas(client, user_id)
-    if not tickers or not reglas:
-        return []
-
-    datos = calcular_datos_watchlist(tickers)
-    disparadas_ahora = evaluar_alertas_personalizadas(reglas, datos)
-    mapa_ahora = {d['id']: d for d in disparadas_ahora}
-
-    nuevas = []
-    for r in reglas:
-        estaba = bool(r.get('disparada'))
-        esta = r['id'] in mapa_ahora
-        if esta and not estaba:
-            _marcar_disparo_alerta(client, r['id'], True)
-            nuevas.append(mapa_ahora[r['id']])
-        elif not esta and estaba:
-            _marcar_disparo_alerta(client, r['id'], False)
-    return nuevas
-# ── FIN NUEVO ─────────────────────────────────────────────────────
 
 def _contar_alertas_watchlist(user_id):
     tickers = tuple(sorted(obtener_watchlist(supabase, user_id)))
@@ -9256,16 +9185,6 @@ _label_vert = _vert_label_actual if (_vert_activo and _vert_label_actual) else '
 n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
 n_pagos_pend = _contar_pagos_pendientes(supabase) if ES_ADMIN else 0
 n_alertas_watch = _contar_alertas_watchlist(USER_ID)
-
-# ── NUEVO: agregar acá ───────────────────────────────────────────
-for _na in sincronizar_disparos_watchlist(supabase, USER_ID):
-    _signo = '≥' if _na['condicion'] == 'mayor' else '≤'
-    st.toast(
-        f"🔔 {_na['ticker']}: {_na['metrica']} {_signo} {_na['valor']} "
-        f"(actual: {_na['valor_actual']:.2f})",
-        icon='🔔',
-    )
-# ── FIN NUEVO ─────────────────────────────────────────────────────
 
 _partes_badge = []
 if n_alertas_fin > 0:
