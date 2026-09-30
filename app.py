@@ -9257,6 +9257,16 @@ n_alertas_fin = _contar_alertas_finanzas(supabase, USER_ID)
 n_pagos_pend = _contar_pagos_pendientes(supabase) if ES_ADMIN else 0
 n_alertas_watch = _contar_alertas_watchlist(USER_ID)
 
+# ── NUEVO: agregar acá ───────────────────────────────────────────
+for _na in sincronizar_disparos_watchlist(supabase, USER_ID):
+    _signo = '≥' if _na['condicion'] == 'mayor' else '≤'
+    st.toast(
+        f"🔔 {_na['ticker']}: {_na['metrica']} {_signo} {_na['valor']} "
+        f"(actual: {_na['valor_actual']:.2f})",
+        icon='🔔',
+    )
+# ── FIN NUEVO ─────────────────────────────────────────────────────
+
 _partes_badge = []
 if n_alertas_fin > 0:
     _partes_badge.append(f'🔴{n_alertas_fin}')
