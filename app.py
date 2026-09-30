@@ -813,12 +813,29 @@ def _tiene_alertas_activas_watchlist(_client, user_id):
 _nav_h_actual = st.session_state.get('nav_horizonte', 'inicio')
 _nav_m_actual = st.session_state.get('nav_modulo', 'inicio')
 
+@st.cache_data(ttl=30, show_spinner=False)
+def _tiene_alertas_activas_watchlist(_client, user_id):
+    """Chequeo directo e independiente, porque acá todavía no existe
+    obtener_alertas_personalizadas (se define más abajo en el archivo).
+    Solo sirve para decidir si conviene mantener vivo el autorefresh."""
+    try:
+        res = (_client.table('alertas_personalizadas')
+               .select('id', count='exact')
+               .eq('user_id', user_id)
+               .eq('activa', True)
+               .execute())
+        return (res.count or 0) > 0
+    except Exception:
+        return False
+
+_tiene_alertas_watch = _tiene_alertas_activas_watchlist(supabase, USER_ID)
+
 _autorefresh_activo = (
     _nav_m_actual == 'inicio'
     or _nav_h_actual == 'corto'
     or (_nav_h_actual == 'largo' and _nav_m_actual in ('tdc', 'reversion'))
     or _nav_h_actual in ('renta_fija_macro', 'breadth')
-    or (_nav_h_actual == 'watchlist' and _tiene_alertas_activas_watchlist(supabase, USER_ID))
+    or _tiene_alertas_watch
 )
 
 if _autorefresh_activo:
