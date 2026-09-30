@@ -435,6 +435,59 @@ def monto_proyectado_inv_corto(fila: dict) -> float:
     return float(fila["monto"]) * (1 + float(fila["tasa_anual"]) * (dias / 365))
 
 
+def renovar_inv_corto(client, user_id: str, id_: int, nueva_fecha_venc: str,
+                      nueva_tasa_pct: float, capitalizar: bool) -> dict:
+    """Renueva una inversión: marca la original como 'Renovada' y crea una
+    nueva que arranca en el vencimiento anterior. Si capitalizar=True, el
+    nuevo monto es el capital + intereses de la anterior."""
+    try:
+        resp = client.table("inversiones_corto").select("*").eq("id", id_).eq("user_id", user_id).execute()
+        if not resp.data:
+            return {"ok": False, "mensaje": "❌ No se encontró la inversión."}
+        old = resp.data[0]
+        if pd.to_datetime(nueva_fecha_venc) <= pd.to_datetime(old["fecha_vencimiento"]):
+            return {"ok": False, "mensaje": "⚠️ El nuevo vencimiento tiene que ser posterior al actual."}
+        monto_nuevo = round(monto_proyectado_inv_corto(old) if capitalizar else float(old["monto"]), 2)
+        nuevo = {
+            "user_id": user_id, "nombre": old["nombre"], "tipo": old["tipo"],
+            "monto": monto_nuevo, "tasa_anual": float(nueva_tasa_pct) / 100,
+            "fecha_inicio": old["fecha_vencimiento"], "fecha_vencimiento": nueva_fecha_venc,
+            "estado": "Activa", "notas": f"Renovación de #{id_}",
+        }
+        r = _insertar_fila(client, "inversiones_corto", nuevo, "")
+        if not r["ok"]:
+            return r
+        r2 = _actualizar_fila(client, "inversiones_corto", user_id, id_, {"estado": "Renovada"})
+        if not r2["ok"]:
+            return {"ok": False, "mensaje": "⚠️ Se creó la renovación pero no se pudo marcar la original como Renovada. Revisala en la tabla."}
+        return {"ok": True, "mensaje": f"🔁 Renovada: ${monto_nuevo:,.2f} hasta {nueva_fecha_venc}"}
+    except Exception as e:
+        return {"ok": False, "mensaje": f"❌ No se pudo renovar: {_mensaje_error_legible(e)}"}
+
+
+def cobrar_inv_corto(client, user_id: str, id_: int, monto_cobrado: float,
+                     cartera_id: int | None = None) -> dict:
+    """Cierra una inversión de corto plazo como 'Cobrada'. Si se pasa
+    cartera_id, el monto cobrado se suma a la liquidez de esa cartera."""
+    try:
+        resp = client.table("inversiones_corto").select("*").eq("id", id_).eq("user_id", user_id).execute()
+        if not resp.data:
+            return {"ok": False, "mensaje": "❌ No se encontró la inversión."}
+        old = resp.data[0]
+        r = _actualizar_fila(client, "inversiones_corto", user_id, id_, {"estado": "Cobrada"})
+        if not r["ok"]:
+            return r
+        resultado = float(monto_cobrado) - float(old["monto"])
+        signo = "+" if resultado >= 0 else ""
+        msg = f"✅ Cobrada | Resultado: {signo}${resultado:,.2f}"
+        if cartera_id:
+            rl = ajustar_liquidez(client, user_id, int(cartera_id), float(monto_cobrado))
+            msg += " | 💵 acreditado en la cartera" if rl["ok"] else f" | ⚠️ no se pudo acreditar: {rl['mensaje']}"
+        return {"ok": True, "mensaje": msg}
+    except Exception as e:
+        return {"ok": False, "mensaje": f"❌ No se pudo cobrar: {_mensaje_error_legible(e)}"}
+
+
 # ============================================================
 # INVERSIONES LARGO PLAZO
 # El precio actual y la ganancia se calculan en vivo (no se guardan).
@@ -451,6 +504,7 @@ def insertar_inv_largo(client, user_id: str, d: dict) -> dict:
         "fecha_compra": d["fechaCompra"],
         "estado": d.get("estado", "Activo"),
         "notas": d.get("notas", ""),
+        "cartera_id": d.get("carteraId"),
     }
     return _insertar_fila(client, "inversiones_largo", payload, "✅ Inversión guardada")
 
@@ -462,21 +516,26 @@ def listar_inv_largo(client, user_id: str) -> pd.DataFrame:
 
 
 def listar_inv_largo_con_precios(client, user_id: str) -> pd.DataFrame:
-    """Devuelve la cartera de largo plazo con precio actual, valor
-    actual, ganancia $ y ganancia % calculados en vivo con yfinance."""
+    """Cartera de largo plazo con precio actual, valor actual, ganancia $ y
+    ganancia % (fracción). Activos: precio en vivo (yfinance). Vendidos:
+    se usa el precio de venta (ganancia realizada)."""
     data = _rows(client, "inversiones_largo", user_id)
     if not data:
         return pd.DataFrame(
             columns=[
                 "id", "activo", "tipo", "simbolo", "cantidad", "precio_compra",
                 "precio_hoy", "inversion_total", "valor_actual",
-                "ganancia_perdida", "ganancia_pct", "fecha_compra", "estado", "notas",
+                "ganancia_perdida", "ganancia_pct", "fecha_compra", "estado",
+                "notas", "cartera_id", "precio_venta", "fecha_venta",
             ]
         )
+    precios = precios_actuales([r["simbolo"] for r in data if r.get("estado") == "Activo"])
     filas = []
-    precios = precios_actuales([row["simbolo"] for row in data])
     for row in data:
-        precio_hoy = precios.get(row["simbolo"])
+        if row.get("estado") == "Vendido" and row.get("precio_venta") is not None:
+            precio_hoy = float(row["precio_venta"])
+        else:
+            precio_hoy = precios.get(row["simbolo"])
         inversion_total = row["cantidad"] * row["precio_compra"]
         valor_actual = row["cantidad"] * precio_hoy if precio_hoy is not None else None
         ganancia = (valor_actual - inversion_total) if valor_actual is not None else None
@@ -521,6 +580,138 @@ def rendimiento_total_inv(client, user_id: str) -> str:
     if base <= 0:
         return "0%"
     return f"{(ganancia_total_inv_largo(client, user_id) / base) * 100:.2f}%"
+
+
+def vender_inv_largo(client, user_id: str, id_: int, cantidad: float, precio_venta: float,
+                     fecha_venta: str, cartera_id: int | None = None) -> dict:
+    """Vende total o parcialmente una posición. Parcial: la original queda con
+    la cantidad restante y se crea una fila 'Vendido' con lo vendido. El
+    producido (cantidad * precio_venta) se suma a la liquidez de cartera_id."""
+    try:
+        resp = client.table("inversiones_largo").select("*").eq("id", id_).eq("user_id", user_id).execute()
+        if not resp.data:
+            return {"ok": False, "mensaje": "❌ No se encontró la posición."}
+        pos = resp.data[0]
+        total = float(pos["cantidad"])
+        cantidad = float(cantidad)
+        if cantidad <= 0 or cantidad > total + 1e-9:
+            return {"ok": False, "mensaje": f"⚠️ La cantidad a vender debe estar entre 0 y {total}."}
+        pnl = (float(precio_venta) - float(pos["precio_compra"])) * cantidad
+
+        if abs(cantidad - total) < 1e-9:
+            r = _actualizar_fila(client, "inversiones_largo", user_id, id_, {
+                "estado": "Vendido", "precio_venta": float(precio_venta), "fecha_venta": fecha_venta,
+            })
+            if not r["ok"]:
+                return r
+        else:
+            vendida = {
+                "user_id": user_id, "activo": pos["activo"], "tipo": pos["tipo"],
+                "simbolo": pos["simbolo"], "cantidad": cantidad,
+                "precio_compra": pos["precio_compra"], "fecha_compra": pos["fecha_compra"],
+                "estado": "Vendido", "notas": pos.get("notas") or "",
+                "cartera_id": pos.get("cartera_id"),
+                "precio_venta": float(precio_venta), "fecha_venta": fecha_venta,
+            }
+            r = _insertar_fila(client, "inversiones_largo", vendida, "")
+            if not r["ok"]:
+                return r
+            r2 = _actualizar_fila(client, "inversiones_largo", user_id, id_, {"cantidad": round(total - cantidad, 8)})
+            if not r2["ok"]:
+                return {"ok": False, "mensaje": "⚠️ Se registró la venta pero no se pudo descontar la cantidad de la posición original. Revisala en la tabla."}
+
+        signo = "+" if pnl >= 0 else ""
+        msg = f"✅ Venta registrada | P&L realizado: {signo}${pnl:,.2f}"
+        if cartera_id:
+            rl = ajustar_liquidez(client, user_id, int(cartera_id), cantidad * float(precio_venta))
+            msg += " | 💵 liquidez acreditada" if rl["ok"] else f" | ⚠️ no se pudo acreditar: {rl['mensaje']}"
+        return {"ok": True, "mensaje": msg, "pnl": pnl}
+    except Exception as e:
+        return {"ok": False, "mensaje": f"❌ No se pudo vender: {_mensaje_error_legible(e)}"}
+
+
+# ============================================================
+# CARTERAS + LIQUIDEZ
+# ============================================================
+
+def insertar_cartera(client, user_id: str, d: dict) -> dict:
+    payload = {
+        "user_id": user_id,
+        "nombre": d["nombre"],
+        "descripcion": d.get("descripcion", ""),
+        "efectivo": float(d.get("efectivo") or 0),
+    }
+    return _insertar_fila(client, "carteras", payload, "✅ Cartera creada")
+
+
+def listar_carteras(client, user_id: str) -> pd.DataFrame:
+    return _df(client, "carteras", user_id)
+
+
+def actualizar_cartera(client, user_id: str, id_: int, cambios: dict) -> dict:
+    return _actualizar_fila(client, "carteras", user_id, id_, cambios)
+
+
+def eliminar_cartera(client, user_id: str, id_: int) -> dict:
+    """Los activos de la cartera quedan 'Sin cartera' (on delete set null)."""
+    return _eliminar_fila(client, "carteras", user_id, id_)
+
+
+def ajustar_liquidez(client, user_id: str, cartera_id: int, delta: float) -> dict:
+    """Suma (delta>0) o resta (delta<0) efectivo de una cartera."""
+    try:
+        resp = client.table("carteras").select("efectivo").eq("id", cartera_id).eq("user_id", user_id).execute()
+        if not resp.data:
+            return {"ok": False, "mensaje": "❌ No se encontró la cartera."}
+        actual = float(resp.data[0]["efectivo"] or 0)
+        nuevo = actual + float(delta)
+        if nuevo < -1e-9:
+            return {"ok": False, "mensaje": f"❌ Liquidez insuficiente (hay ${actual:,.2f})."}
+        return _actualizar_fila(client, "carteras", user_id, cartera_id, {"efectivo": round(nuevo, 2)})
+    except Exception as e:
+        return {"ok": False, "mensaje": f"❌ No se pudo ajustar la liquidez: {_mensaje_error_legible(e)}"}
+
+
+def carteras_resumen(client, user_id: str) -> pd.DataFrame:
+    """Una fila por cartera (más 'Sin cartera' si hay activos sueltos).
+    - rend_promedio_pct: promedio simple de ((precio actual - compra) / compra)
+      de cada activo de la cartera.
+    - rend_ponderado_pct: ganancia $ total / inversión total (pesa por monto)."""
+    carteras = listar_carteras(client, user_id)
+    pos = listar_inv_largo_con_precios(client, user_id)
+    activos = pos[pos["estado"] == "Activo"] if not pos.empty else pos
+
+    def _calc(nombre, cid, efectivo, sub):
+        con_precio = sub.dropna(subset=["precio_hoy"]) if not sub.empty else sub
+        n = len(sub)
+        if con_precio.empty:
+            invertido = float(sub["inversion_total"].sum()) if n else 0.0
+            valor = ganancia = 0.0
+            prom = pond = None
+        else:
+            invertido = float(sub["inversion_total"].sum())
+            inv_cp = float(con_precio["inversion_total"].sum())
+            valor = float(con_precio["valor_actual"].sum())
+            ganancia = valor - inv_cp
+            prom = float(con_precio["ganancia_pct"].mean()) * 100
+            pond = (ganancia / inv_cp * 100) if inv_cp else None
+        return {
+            "cartera_id": cid, "cartera": nombre, "activos": n,
+            "invertido": invertido, "valor_actual": valor, "ganancia": ganancia,
+            "rend_promedio_pct": prom, "rend_ponderado_pct": pond,
+            "efectivo": float(efectivo), "total": valor + float(efectivo),
+        }
+
+    filas = []
+    if not carteras.empty:
+        for _, c in carteras.iterrows():
+            sub = activos[activos["cartera_id"] == c["id"]] if not activos.empty else activos
+            filas.append(_calc(c["nombre"], int(c["id"]), c.get("efectivo") or 0, sub))
+    if not activos.empty:
+        sueltos = activos[activos["cartera_id"].isna()]
+        if not sueltos.empty:
+            filas.append(_calc("Sin cartera", None, 0, sueltos))
+    return pd.DataFrame(filas)
 
 
 # ============================================================
@@ -587,6 +778,44 @@ def operaciones_abiertas(client, user_id: str) -> list[dict]:
             "fecha_entrada": r["fecha_entrada"],
         })
     return resultado
+
+
+def listar_trading_con_pnl(client, user_id: str) -> pd.DataFrame:
+    """Operaciones con precio de referencia (actual si está abierta, de cierre
+    si está cerrada), P&L en $ y %, y un texto de resultado."""
+    df = listar_trading(client, user_id)
+    if df.empty:
+        return df
+    df = df.copy()
+    abiertas = df[df["estado"] == "Abierta"]
+    precios = precios_actuales(abiertas["simbolo"].tolist()) if not abiertas.empty else {}
+
+    refs, pnls, pcts, resultados = [], [], [], []
+    for _, r in df.iterrows():
+        ref = None
+        if r["estado"] == "Abierta":
+            ref = precios.get(r["simbolo"])
+        elif r["estado"] == "Cerrada" and pd.notna(r.get("precio_cierre")):
+            ref = float(r["precio_cierre"])
+        if ref is None:
+            refs.append(None); pnls.append(None); pcts.append(None); resultados.append("—")
+            continue
+        pnl = _pnl_operacion(r["direccion"], r["precio_entrada"], ref, r["cantidad"])
+        base = r["precio_entrada"] * r["cantidad"]
+        refs.append(ref)
+        pnls.append(pnl)
+        pcts.append(pnl / base * 100 if base else None)
+        if abs(pnl) < 1e-9:
+            resultados.append("⚪ Igual")
+        elif pnl > 0:
+            resultados.append("🟢 Ganando" if r["estado"] == "Abierta" else "🟢 Ganada")
+        else:
+            resultados.append("🔴 Perdiendo" if r["estado"] == "Abierta" else "🔴 Perdida")
+    df["precio_ref"] = refs
+    df["pnl"] = pnls
+    df["pnl_pct"] = pcts
+    df["resultado"] = resultados
+    return df
 
 
 def cerrar_operacion(client, user_id: str, trade_id: int, precio_cierre: float, fecha_cierre: str) -> dict:
