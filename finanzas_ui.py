@@ -90,74 +90,257 @@ def _valores_distintos(a, b) -> bool:
     return str(a) != str(b)
 
 
+# Opciones de los selects al editar (por sección) y columnas guardadas como
+# fracción que se editan en % (tasa_anual 0.08 -> 8 %).
+OPCIONES_EDICION = {
+    "ingresos": {
+        "categoria": CATEGORIAS_INGRESOS,
+        "cuenta": ["Efectivo", "Banco", "Mercado Pago", "Crypto", "Otro"],
+    },
+    "gastos": {
+        "categoria": CATEGORIAS_GASTOS,
+        "cuenta": ["Efectivo", "Débito", "Crédito", "Mercado Pago", "Otro"],
+    },
+    "deudas": {
+        "tipo": ["Préstamo Personal", "Tarjeta de Crédito", "Hipoteca", "Auto", "Estudiante", "Familiar", "Otros"],
+        "estado": ["Activa", "En mora", "Pagada", "Refinanciada"],
+    },
+    "inv_corto": {
+        "tipo": ["Plazo Fijo", "Crypto", "Fondos Comunes", "Bonos Corto", "Cuenta Remunerada", "Otros"],
+        "estado": ["Activa", "Vencida", "Cancelada", "Renovada", "Cobrada"],
+    },
+    "inv_largo": {
+        "tipo": ["Acción", "ETF", "Crypto", "Bono", "Fondo", "REIT", "Otro"],
+        "estado": ["Activo", "Vendido", "En espera"],
+    },
+    "trading": {
+        "tipo": ["Acción", "ETF", "Crypto", "Forex", "Futuros", "CFD", "Opción"],
+        "direccion": ["Long (Compra)", "Short (Venta)"],
+        "estado": ["Abierta", "Cerrada", "Cancelada"],
+        "estrategia": ["", "Scalping", "Day Trade", "Swing", "Posición", "Tendencia", "Ruptura", "Reversión", "Otros"],
+    },
+    "objetivos": {
+        "categoria": ["Viaje", "Auto", "Casa", "Fondo Emergencia", "Educación", "Tecnología",
+                      "Inversión", "Boda", "Jubilación", "Otros"],
+        "estado": ["Activo", "Pausado", "Cumplido", "Cancelado"],
+    },
+    "aportes": {
+        "categoria": ["Transferencia", "Efectivo", "Débito automático", "Redondeo", "Premio / Bonus", "Otro"],
+    },
+}
+PCT_EDICION = {"inv_corto": ("tasa_anual",), "deudas": ("tasa_interes",)}
+COLUMNAS_ENTERAS = ("cuotas_totales", "cuotas_pagadas")
+
+
+def _a_python(v):
+    """Convierte valores de pandas/numpy a tipos que Supabase (JSON) acepta:
+    numpy → nativo, NaN/NaT → None, fechas → 'AAAA-MM-DD'."""
+    if v is None or v is pd.NaT:
+        return None
+    if isinstance(v, pd.Timestamp):
+        return v.date().isoformat()
+    if isinstance(v, date):
+        return v.isoformat()
+    if hasattr(v, "item") and not isinstance(v, (str, bytes)):
+        try:
+            v = v.item()
+        except Exception:
+            pass
+    if isinstance(v, float) and pd.isna(v):
+        return None
+    return v
+
+
+def _es_nulo(v) -> bool:
+    if v is None or v is pd.NaT:
+        return True
+    try:
+        return bool(pd.isna(v))
+    except (TypeError, ValueError):
+        return False
+
+
+def _campo_edicion(df: pd.DataFrame, col: str, orig, key: str, opciones: dict, pct_cols: tuple):
+    """Dibuja el campo de edición adecuado para una columna y devuelve el valor ingresado."""
+    etiqueta = col.replace("_", " ").capitalize()
+    nulo = _es_nulo(orig)
+
+    if col in opciones:
+        ops = list(opciones[col])
+        actual = "" if nulo else str(orig)
+        if actual and actual not in ops:
+            ops = [actual] + ops
+        return st.selectbox(etiqueta, ops, index=ops.index(actual) if actual in ops else 0, key=key)
+
+    if "fecha" in col:
+        val = None
+        if not nulo:
+            try:
+                val = pd.to_datetime(orig).date()
+            except Exception:
+                val = None
+        if val is None:
+            t = st.text_input(f"{etiqueta} (AAAA-MM-DD, vacío = sin fecha)", value="" if nulo else str(orig), key=key)
+            return t.strip() or None
+        return st.date_input(etiqueta, value=val, key=key).isoformat()
+
+    serie = df[col]
+    if pd.api.types.is_bool_dtype(serie):
+        return st.checkbox(etiqueta, value=False if nulo else bool(orig), key=key)
+
+    if pd.api.types.is_numeric_dtype(serie):
+        if col in COLUMNAS_ENTERAS or col.endswith("_id"):
+            return int(st.number_input(etiqueta, value=0 if nulo else int(orig), step=1, key=key))
+        v = 0.0 if nulo else float(orig)
+        if col in pct_cols:
+            v *= 100
+            etiqueta += " %"
+        return float(st.number_input(etiqueta, value=v, step=0.01, format="%.4f", key=key))
+
+    txt = "" if nulo else str(orig)
+    if col == "notas":
+        return st.text_area(etiqueta, value=txt, key=key)
+    return st.text_input(etiqueta, value=txt, key=key)
+
+
+def _form_editar(client, user_id, seccion_key, df, actualizar_fn, etiquetas, columnas, opciones, pct_cols) -> None:
+    sel = st.selectbox("Registro a editar", ["—"] + list(etiquetas.keys()), key=f"ed_sel_{seccion_key}")
+    if sel == "—":
+        return
+    fila = etiquetas[sel]
+    rid = int(fila["id"])
+
+    nuevos = {}
+    with st.form(f"form_edit_{seccion_key}_{rid}"):
+        cols_ui = st.columns(2)
+        for i, col in enumerate(columnas):
+            with cols_ui[i % 2]:
+                nuevos[col] = _campo_edicion(df, col, fila[col], f"ed_{seccion_key}_{rid}_{col}", opciones, pct_cols)
+        guardar = st.form_submit_button("💾 Guardar cambios")
+
+    if not guardar:
+        return
+
+    cambios = {}
+    for col, nuevo in nuevos.items():
+        orig = fila[col]
+        nulo = _es_nulo(orig)
+        if "fecha" in col:
+            if nuevo is not None:
+                try:
+                    date.fromisoformat(str(nuevo))
+                except ValueError:
+                    st.error(f"⚠️ La fecha de '{col}' no es válida (usá AAAA-MM-DD).")
+                    return
+            orig_iso = None if nulo else pd.to_datetime(orig).date().isoformat()
+            if nuevo != orig_iso:
+                cambios[col] = nuevo
+        elif isinstance(nuevo, bool):
+            if nuevo != (False if nulo else bool(orig)):
+                cambios[col] = nuevo
+        elif isinstance(nuevo, (int, float)):
+            valor = nuevo / 100 if (col in pct_cols and isinstance(nuevo, float)) else nuevo
+            if nulo and valor == 0:
+                continue
+            if nulo or round(float(valor), 6) != round(float(orig), 6):
+                cambios[col] = valor
+        else:
+            if nulo and nuevo in ("", None):
+                continue
+            if str(nuevo) != ("" if nulo else str(orig)):
+                cambios[col] = nuevo
+
+    if not cambios:
+        st.info("No había cambios para guardar.")
+        return
+    r = actualizar_fn(client, user_id, rid, {k: _a_python(v) for k, v in cambios.items()})
+    _flash(r["ok"], "✅ Registro actualizado" if r["ok"] else r["mensaje"])
+    st.rerun()
+
+
+def _editor_rapido(client, user_id, seccion_key, df_mostrado, actualizar_fn, bloqueadas) -> None:
+    """Edición celda por celda directo en la tabla (con conversión de tipos segura)."""
+    editado = st.data_editor(
+        df_mostrado, key=f"editor_{seccion_key}", num_rows="fixed",
+        disabled=bloqueadas, use_container_width=True, hide_index=True,
+    )
+    if st.button("💾 Guardar cambios de la tabla", key=f"guardar_{seccion_key}"):
+        filas_actualizadas = 0
+        errores = []
+        for _, fila_nueva in editado.iterrows():
+            fila_id = int(fila_nueva["id"])
+            fila_original = df_mostrado[df_mostrado["id"] == fila_id]
+            if fila_original.empty:
+                continue
+            fila_original = fila_original.iloc[0]
+            cambios = {
+                col: _a_python(fila_nueva[col]) for col in editado.columns
+                if col not in bloqueadas and _valores_distintos(fila_nueva[col], fila_original[col])
+            }
+            if cambios:
+                r = actualizar_fn(client, user_id, fila_id, cambios)
+                if r["ok"]:
+                    filas_actualizadas += 1
+                else:
+                    errores.append(f"Fila {fila_id}: {r['mensaje']}")
+        if errores:
+            st.error("⚠️ Algunos cambios no se pudieron guardar:\n" + "\n".join(errores))
+        if filas_actualizadas:
+            _flash(True, f"✅ {filas_actualizadas} registro(s) actualizado(s)")
+            st.rerun()
+        elif not errores:
+            st.info("No había cambios para guardar.")
+
+
 def _tabla_editable(
     client, user_id: str, seccion_key: str, df: pd.DataFrame,
     actualizar_fn, eliminar_fn, label_fn,
     columnas_ocultas: tuple = ("user_id", "created_at"), solo_lectura: tuple = (),
 ) -> None:
-    """Tabla con edición de celdas + selector de borrado con confirmación.
-    'label_fn' arma la etiqueta legible de cada fila para el selector de
-    borrado. 'solo_lectura' = columnas que se muestran pero no se pueden
-    editar (ej. columnas calculadas) y nunca se mandan al update."""
+    """Editar / eliminar registros de cualquier sección.
+    - ✏️ Editar: elegís el registro y se abre un formulario con todos sus
+      campos (selects, fechas, números). Además hay una 'edición rápida'
+      celda por celda en la tabla.
+    - 🗑️ Eliminar: elegís el registro y confirmás.
+    'solo_lectura' = columnas que se muestran pero no se pueden editar."""
+    _mostrar_flash()
     if df.empty:
         st.caption("Todavía no hay registros cargados.")
         return
 
+    df = df.reset_index(drop=True)
     df_mostrado = df.drop(columns=[c for c in columnas_ocultas if c in df.columns])
     bloqueadas = ["id"] + [c for c in solo_lectura if c in df_mostrado.columns]
+    columnas_form = [c for c in df_mostrado.columns if c not in bloqueadas]
+    opciones = OPCIONES_EDICION.get(seccion_key, {})
+    pct_cols = PCT_EDICION.get(seccion_key, ())
+    etiquetas = {f"{label_fn(r)} · #{int(r['id'])}": r for _, r in df.iterrows()}
 
-    editado = st.data_editor(
-        df_mostrado, key=f"editor_{seccion_key}", num_rows="fixed",
-        disabled=bloqueadas, use_container_width=True, hide_index=True,
+    modo = st.radio("Acción", ["✏️ Editar", "🗑️ Eliminar"], horizontal=True, key=f"modo_{seccion_key}")
+
+    if modo == "✏️ Editar":
+        _form_editar(client, user_id, seccion_key, df, actualizar_fn, etiquetas, columnas_form, opciones, pct_cols)
+        # (checkbox y no expander: algunas secciones ya llaman a esta tabla dentro de un expander)
+        if st.checkbox("⚡ Edición rápida en la tabla (celda por celda)", key=f"rapida_{seccion_key}"):
+            _editor_rapido(client, user_id, seccion_key, df_mostrado, actualizar_fn, bloqueadas)
+        return
+
+    st.dataframe(df_mostrado, use_container_width=True, hide_index=True)
+    seleccion = st.selectbox(
+        "Registro a eliminar", ["—"] + list(etiquetas.keys()), key=f"del_sel_{seccion_key}",
     )
-
-    col_guardar, col_borrar = st.columns([1, 1.4])
-
-    with col_guardar:
-        if st.button("💾 Guardar cambios", key=f"guardar_{seccion_key}"):
-            filas_actualizadas = 0
-            errores = []
-            for _, fila_nueva in editado.iterrows():
-                fila_id = int(fila_nueva["id"])
-                fila_original = df_mostrado[df_mostrado["id"] == fila_id]
-                if fila_original.empty:
-                    continue
-                fila_original = fila_original.iloc[0]
-                cambios = {
-                    col: fila_nueva[col] for col in editado.columns
-                    if col not in bloqueadas and _valores_distintos(fila_nueva[col], fila_original[col])
-                }
-                if cambios:
-                    r = actualizar_fn(client, user_id, fila_id, cambios)
-                    if r["ok"]:
-                        filas_actualizadas += 1
-                    else:
-                        errores.append(f"Fila {fila_id}: {r['mensaje']}")
-            if errores:
-                st.error("⚠️ Algunos cambios no se pudieron guardar:\n" + "\n".join(errores))
-            if filas_actualizadas:
-                st.success(f"✅ {filas_actualizadas} registro(s) actualizado(s)")
-                st.rerun()
-            elif not errores:
-                st.info("No había cambios para guardar.")
-
-    with col_borrar:
-        opciones = {label_fn(row): int(row["id"]) for _, row in df.iterrows()}
-        seleccion = st.selectbox(
-            "Eliminar un registro", ["—"] + list(opciones.keys()), key=f"del_sel_{seccion_key}",
+    if seleccion != "—":
+        id_a_borrar = int(etiquetas[seleccion]["id"])
+        confirmado = st.checkbox(
+            f"Confirmo que quiero eliminar: {seleccion}", key=f"del_confirm_{seccion_key}_{id_a_borrar}",
         )
-        if seleccion != "—":
-            id_a_borrar = opciones[seleccion]
-            confirmado = st.checkbox(
-                f"Confirmo que quiero eliminar: {seleccion}", key=f"del_confirm_{seccion_key}_{id_a_borrar}",
-            )
-            if confirmado and st.button("🗑️ Eliminar definitivamente", key=f"del_btn_{seccion_key}"):
-                r = eliminar_fn(client, user_id, id_a_borrar)
-                if r["ok"]:
-                    st.success(r["mensaje"])
-                    st.rerun()
-                else:
-                    st.error(r["mensaje"])
+        if confirmado and st.button("🗑️ Eliminar definitivamente", key=f"del_btn_{seccion_key}"):
+            r = eliminar_fn(client, user_id, id_a_borrar)
+            if r["ok"]:
+                _flash(True, r["mensaje"])
+                st.rerun()
+            else:
+                st.error(r["mensaje"])
 
 
 # ============================================================
