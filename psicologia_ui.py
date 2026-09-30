@@ -11,6 +11,7 @@
 
 from datetime import date
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -146,13 +147,135 @@ def _efecto_disposicion(client, user_id: str) -> None:
     st.caption(f"Basado en {r['n']} operaciones cerradas ({r['n_gan']} ganadoras, {r['n_per']} perdedoras).")
 
 
+def _m(v) -> str:
+    return f"${v:,.0f}"
+
+
+def _sel_nearest(campo: str):
+    # Compatibilidad Altair 5 (selection_point) y Altair 4 (selection_single).
+    if hasattr(alt, "selection_point"):
+        sel = alt.selection_point(nearest=True, on="mouseover", fields=[campo], empty=False)
+        return sel, (lambda ch: ch.add_params(sel))
+    sel = alt.selection_single(nearest=True, on="mouseover", fields=[campo], empty="none")
+    return sel, (lambda ch: ch.add_selection(sel))
+
+
+def _grafico_lineas(df: pd.DataFrame, mapa: dict, alto: int = 320) -> None:
+    """Líneas interactivas: al pasar el mouse, una regla vertical muestra todos los valores del año."""
+    largo = df.melt(id_vars="anio", value_vars=list(mapa), var_name="k", value_name="monto")
+    largo["serie"] = largo["k"].map(mapa)
+    nearest, aplicar = _sel_nearest("anio")
+    lineas = alt.Chart(largo).mark_line(strokeWidth=3).encode(
+        x=alt.X("anio:Q", title="Años"), y=alt.Y("monto:Q", title="$"),
+        color=alt.Color("serie:N", legend=alt.Legend(title=None, orient="bottom")),
+    )
+    base = alt.Chart(df)
+    selector = aplicar(base.mark_point().encode(x="anio:Q", opacity=alt.value(0)))
+    tips = [alt.Tooltip("anio:Q", title="Año")] + [
+        alt.Tooltip(f"{k}:Q", title=t, format="$,.0f") for k, t in mapa.items()
+    ]
+    regla = base.mark_rule(color="#808495").encode(x="anio:Q", tooltip=tips).transform_filter(nearest)
+    st.altair_chart(alt.layer(lineas, selector, regla).properties(height=alto), use_container_width=True)
+
+
+def _interes_compuesto(client, user_id: str) -> None:
+    st.markdown("###### 📈 El tiempo hace el trabajo pesado")
+    c1, c2, c3, c4 = st.columns(4)
+    capital = c1.number_input("Capital inicial ($)", min_value=0.0, value=1000.0, step=100.0, key="psi_ic_cap")
+    aporte = c2.number_input("Aporte mensual ($)", min_value=0.0, value=200.0, step=50.0, key="psi_ic_aporte")
+    tasa = c3.slider("Rendimiento anual %", 0.0, 30.0, 8.0, 0.5, key="psi_ic_tasa")
+    anios = c4.slider("Años", 1, 50, 20, key="psi_ic_anios")
+    infl = st.slider("Inflación anual % (para ver el valor real)", 0.0, 10.0, 3.0, 0.5, key="psi_ic_infl")
+
+    df = psd.proyeccion_compuesta(capital, aporte, tasa, anios, infl)
+    f = df.iloc[-1]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Valor final", _m(f["total"]))
+    m2.metric("Lo que pusiste", _m(f["aportado"]))
+    m3.metric("Generado por intereses", _m(f["intereses"]))
+    m4.metric("Valor real (con inflación)", _m(f["total_real"]))
+
+    _grafico_lineas(df, {"aportado": "Lo que pusiste", "total": "Valor nominal", "total_real": "Valor real"})
+
+    cruce = df[(df["anio"] > 0) & (df["interes_anio"] > aporte * 12)]
+    if aporte > 0 and not cruce.empty:
+        st.info(f"⏳ Desde el **año {int(cruce.iloc[0]['anio'])}**, tu plata genera en un año más de lo que vos aportás "
+                "en ese año. Los primeros años parecen lentos: ahí es donde la impaciencia hace abandonar.")
+    if tasa > 0:
+        st.caption(f"Regla del 72: a {tasa:.1f}% anual, tu capital se duplica cada ~{72 / tasa:.1f} años.")
+
+    tabla = pd.DataFrame({
+        "Escenario": ["Pesimista (−3 pp)", "Base", "Optimista (+3 pp)"],
+        "Valor final": [
+            psd.proyeccion_compuesta(capital, aporte, max(tasa + d, 0), anios)["total"].iloc[-1]
+            for d in (-3, 0, 3)
+        ],
+    })
+    st.dataframe(tabla, hide_index=True, use_container_width=True,
+                 column_config={"Valor final": st.column_config.NumberColumn(format="$%.0f")})
+
+    s = psd.salud_financiera(client, user_id)
+    if s["ingresos"] > 0 and s["capacidad"] > 0:
+        st.caption(f"💡 Tu capacidad de inversión mensual estimada hoy es ~{_m(s['capacidad'])}: probá ese valor como aporte.")
+
+
+def _costo_esperar() -> None:
+    st.markdown("###### ⏳ ¿Cuánto cuesta esperar 'el momento perfecto'?")
+    c1, c2, c3, c4 = st.columns(4)
+    capital = c1.number_input("Capital inicial ($)", min_value=0.0, value=1000.0, step=100.0, key="psi_ce_cap")
+    aporte = c2.number_input("Aporte mensual ($)", min_value=0.0, value=200.0, step=50.0, key="psi_ce_aporte")
+    tasa = c3.slider("Rendimiento anual %", 0.0, 30.0, 8.0, 0.5, key="psi_ce_tasa")
+    anios = c4.slider("Horizonte (años)", 5, 50, 25, key="psi_ce_anios")
+    espera = st.slider("Si esperás (años) antes de empezar", 1, anios - 1, min(5, anios - 1), key="psi_ce_espera")
+
+    df = psd.costo_de_esperar(capital, aporte, tasa, anios, espera)
+    hoy_final, tarde_final = float(df["empezar_hoy"].iloc[-1]), float(df["esperar"].iloc[-1])
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Empezando hoy", _m(hoy_final))
+    m2.metric(f"Empezando en {espera} años", _m(tarde_final))
+    m3.metric("Costo de esperar", _m(hoy_final - tarde_final))
+    _grafico_lineas(df, {"empezar_hoy": "Empezar hoy", "esperar": f"Esperar {espera} años"})
+    st.info("No esperás 'una mejor entrada': esperás perder los años de capitalización, que son los más valiosos. "
+            "Si te cuesta decidir, empezá con un monto chico y constante: el hábito importa más que el timing.")
+
+
+def _volatilidad() -> None:
+    st.markdown("###### 🌫️ La proyección real no es una línea recta")
+    c1, c2, c3 = st.columns(3)
+    capital = c1.number_input("Capital inicial ($)", min_value=0.0, value=1000.0, step=100.0, key="psi_mc_cap")
+    aporte = c2.number_input("Aporte mensual ($)", min_value=0.0, value=200.0, step=50.0, key="psi_mc_aporte")
+    anios = c3.slider("Años", 5, 40, 20, key="psi_mc_anios")
+    c1, c2 = st.columns(2)
+    mu = c1.slider("Rendimiento anual esperado %", 0.0, 20.0, 8.0, 0.5, key="psi_mc_mu")
+    sigma = c2.slider("Volatilidad anual %", 1.0, 40.0, 15.0, 1.0, key="psi_mc_sigma")
+
+    df, p_perd, p_neg = psd.montecarlo_proyeccion(capital, aporte, mu, sigma, anios)
+    f = df.iloc[-1]
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Caso pesimista (10%)", _m(f["p10"]))
+    m2.metric("Caso mediano", _m(f["p50"]))
+    m3.metric("Caso optimista (90%)", _m(f["p90"]))
+    _grafico_lineas(df, {"p10": "Pesimista (p10)", "p50": "Mediana", "p90": "Optimista (p90)"})
+    st.warning(f"En {p_neg * 100:.0f}% de los años el resultado es negativo: es normal, no una señal para salir. "
+               f"Aun así, solo en {p_perd * 100:.1f}% de los escenarios terminás por debajo de lo que aportaste.")
+    st.caption("Simulación con 1000 trayectorias y rendimientos anuales aleatorios (distribución normal). "
+               "Es una ilustración, no una predicción.")
+
+
 def _render_dinero(client, user_id: str) -> None:
     vista = st.radio(
-        "", ["📚 Sesgos", "🎲 Apuestas", "📉 Recuperación", "🔥 Rachas", "🪞 Tu efecto disposición"],
+        "", ["📚 Sesgos", "📈 Interés compuesto", "⏳ Costo de esperar", "🌫️ Volatilidad",
+             "🎲 Apuestas", "📉 Recuperación", "🔥 Rachas", "🪞 Efecto disposición"],
         horizontal=True, label_visibility="collapsed", key="psi_din_vista",
     )
     if vista == "📚 Sesgos":
         _sesgos()
+    elif vista == "📈 Interés compuesto":
+        _interes_compuesto(client, user_id)
+    elif vista == "⏳ Costo de esperar":
+        _costo_esperar()
+    elif vista == "🌫️ Volatilidad":
+        _volatilidad()
     elif vista == "🎲 Apuestas":
         _sim_apuestas()
     elif vista == "📉 Recuperación":
@@ -226,12 +349,106 @@ def _test_habitos(client, user_id: str) -> None:
         st.bar_chart(pd.Series(hist.iloc[-1]["detalle"]), height=200)
 
 
+def _msg_nivel(nivel: str, texto: str) -> None:
+    {"success": st.success, "warning": st.warning, "error": st.error}.get(nivel, st.info)(texto)
+
+
+def mostrar_impacto_gasto(client, user_id: str, monto: float, fecha_iso: str) -> None:
+    """Aviso de impacto tras registrar un gasto (se llama desde finanzas_ui)."""
+    try:
+        r = psd.impacto_gasto(client, user_id, float(monto), fecha_iso)
+        _msg_nivel(r["nivel"], f"🧠 Impacto: {r['mensaje']}")
+    except Exception:
+        pass
+
+
+def mostrar_impacto_deuda(client, user_id: str, cuota_mensual: float, monto_pendiente: float) -> None:
+    """Aviso de impacto tras registrar una deuda (se llama desde finanzas_ui)."""
+    try:
+        r = psd.impacto_deuda(client, user_id, float(cuota_mensual or 0), float(monto_pendiente or 0))
+        _msg_nivel(r["nivel"], f"🧠 Impacto: {r['mensaje']}")
+    except Exception:
+        pass
+
+
+def _salud_financiera(client, user_id: str) -> None:
+    st.markdown("###### ❤️ Indicadores de salud financiera (promedio de los últimos 3 meses)")
+    s = psd.salud_financiera(client, user_id)
+    if s["ingresos"] <= 0:
+        st.info("Cargá ingresos y gastos de los últimos meses para calcular tus indicadores.")
+        return
+    etiqueta = {"success": "🟢 Sana", "warning": "🟡 En alerta", "error": "🔴 Tensionada"}[s["nivel"]]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Salud financiera", f"{s['score']:.0f}/100", etiqueta, delta_color="off")
+    c2.metric("Carga de deuda", f"{s['dti'] * 100:.1f}%", "sana ≤ 30%", delta_color="off")
+    c3.metric("Tasa de ahorro", f"{s['ahorro'] * 100:.1f}%", "meta ≥ 20%", delta_color="off")
+    c4.metric("Autonomía", "—" if s["meses_autonomia"] is None else f"{s['meses_autonomia']:.1f} meses", "meta ≥ 3", delta_color="off")
+    st.progress(min(s["score"] / 100, 1.0))
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Capacidad de inversión mensual", _m(s["capacidad"]))
+    c2.metric("Cuotas de deuda por mes", _m(s["cuotas"]))
+    c3.metric("Deuda pendiente total", _m(s["deuda_total"]))
+    st.bar_chart(pd.Series(s["componentes"]), height=200)
+    st.caption("Puntaje = carga de deuda (35%) + ahorro (30%) + gasto/ingreso (20%) + ausencia de mora (15%). "
+               "La capacidad de inversión descuenta gastos de vida y cuotas.")
+
+    if s["dti"] > 0.30:
+        st.warning(f"Tus cuotas se llevan el {s['dti'] * 100:.0f}% del ingreso. Con esa carga cada decisión se toma bajo presión, "
+                   "y la presión es lo que empuja a operar para 'zafar'. Atacá primero la deuda más cara.")
+    if s["ahorro"] < 0.10:
+        st.warning("Ahorrás menos del 10%: automatizá un aporte el día que cobrás, antes de poder gastarlo.")
+    if s["meses_autonomia"] is not None and s["meses_autonomia"] < 3:
+        st.warning("Tu liquidez cubre menos de 3 meses: sin colchón, una mala racha te obliga a vender en el peor momento.")
+    if s["en_mora"]:
+        st.error(f"Tenés {s['en_mora']} deuda(s) en mora: es la prioridad antes de invertir.")
+    if s["nivel"] == "success":
+        st.success("Tus números dan margen para decidir con calma. Cuidá que siga así.")
+
+
+def _test_estres(client, user_id: str) -> None:
+    st.markdown("###### 🧪 Test de estrés financiero")
+    st.caption("¿Qué pasa con tu capacidad de invertir si las cosas salen mal?")
+    s = psd.salud_financiera(client, user_id)
+    if s["ingresos"] <= 0:
+        st.info("Cargá ingresos y gastos de los últimos meses para correr el test.")
+        return
+    c1, c2, c3 = st.columns(3)
+    caida = c1.slider("Caída de ingresos %", 0, 60, 20, key="psi_est_caida")
+    suba = c2.slider("Suba de cuotas %", 0, 100, 25, key="psi_est_suba")
+    extra = c3.number_input("Gasto imprevisto mensual ($)", min_value=0.0, value=0.0, step=50.0, key="psi_est_extra")
+
+    e = psd.test_estres(s, caida, suba, extra)
+    base = psd.test_estres(s, 0, 0, 0)
+    tabla = pd.DataFrame({
+        "Indicador": ["Ingresos", "Cuotas", "Capacidad de inversión", "Carga de deuda", "Autonomía (meses)"],
+        "Hoy": [base["ingresos"], base["cuotas"], base["capacidad"], (base["dti"] or 0) * 100, base["meses_autonomia"]],
+        "Escenario": [e["ingresos"], e["cuotas"], e["capacidad"], (e["dti"] or 0) * 100, e["meses_autonomia"]],
+    })
+    st.dataframe(tabla, hide_index=True, use_container_width=True, column_config={
+        "Hoy": st.column_config.NumberColumn(format="%.1f"),
+        "Escenario": st.column_config.NumberColumn(format="%.1f"),
+    })
+    if base["pct_absorbido"] is not None:
+        st.metric("Parte de tu dinero libre que hoy se come la deuda", f"{base['pct_absorbido'] * 100:.0f}%")
+    textos = {
+        "error": "🔴 En este escenario no te alcanza: tu capacidad de inversión pasa a negativo. La deuda te dejaría sin margen y con presión para tomar decisiones apuradas.",
+        "warning": "🟡 Aguantás, pero casi sin margen para invertir. Bajá cuotas o armá colchón antes de asumir más riesgo.",
+        "success": "🟢 Aun bajo este escenario conservás capacidad de inversión. Buen margen de seguridad.",
+    }
+    _msg_nivel(e["nivel"], textos[e["nivel"]])
+
+
 def _render_financiera(client, user_id: str) -> None:
     vista = st.radio(
-        "", ["🧾 Hábitos", "🐑 Test de FOMO"],
+        "", ["❤️ Salud financiera", "🧪 Test de estrés", "🧾 Hábitos", "🐑 Test de FOMO"],
         horizontal=True, label_visibility="collapsed", key="psi_fin_vista",
     )
-    if vista == "🧾 Hábitos":
+    if vista == "❤️ Salud financiera":
+        _salud_financiera(client, user_id)
+    elif vista == "🧪 Test de estrés":
+        _test_estres(client, user_id)
+    elif vista == "🧾 Hábitos":
         _test_habitos(client, user_id)
     else:
         _test_fomo(client, user_id)
@@ -327,12 +544,103 @@ def _disciplina(client, user_id: str) -> None:
     st.dataframe(df[cols], use_container_width=True, hide_index=True)
 
 
+def _mostrar_alertas_control(ctl: dict, cfg: dict) -> None:
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Operaciones hoy", f"{ctl['ops_hoy']} / {int(cfg['max_ops_dia'])}")
+    racha = "—" if not ctl["racha_tipo"] else f"{ctl['racha_n']} {ctl['racha_tipo']}"
+    c2.metric("Racha actual", racha)
+    c3.metric("P&L realizado hoy", f"${ctl['pnl_hoy']:,.2f}")
+    if not ctl["alertas"]:
+        st.success("Sin alertas: estás dentro de tus límites.")
+    for nivel, msg in ctl["alertas"]:
+        _msg_nivel(nivel, msg)
+
+
+def _limites(client, user_id: str, cfg: dict, prefijo: str) -> dict:
+    # (checkbox y no expander: este panel ya se muestra dentro de un expander en Trading)
+    if not st.checkbox("⚙️ Editar mis límites anti-overtrading", key=f"{prefijo}_lim_toggle"):
+        return cfg
+    c1, c2, c3, c4 = st.columns(4)
+    nuevo = {
+        "max_ops_dia": c1.number_input("Máx. operaciones por día", 1, 50, int(cfg["max_ops_dia"]), key=f"{prefijo}_lim_ops"),
+        "max_perdidas_seguidas": c2.number_input("Pausa tras N pérdidas seguidas", 1, 20, int(cfg["max_perdidas_seguidas"]), key=f"{prefijo}_lim_per"),
+        "max_ganancias_seguidas": c3.number_input("Aviso tras N ganancias seguidas", 1, 20, int(cfg["max_ganancias_seguidas"]), key=f"{prefijo}_lim_gan"),
+        "perdida_diaria_max": c4.number_input("Pérdida diaria máx. ($, 0 = sin límite)", 0.0, value=float(cfg["perdida_diaria_max"]), step=10.0, key=f"{prefijo}_lim_usd"),
+    }
+    if st.button("💾 Guardar límites", key=f"{prefijo}_lim_btn"):
+        r = psd.guardar_config(client, user_id, {k: (int(v) if k != "perdida_diaria_max" else float(v)) for k, v in nuevo.items()})
+        _flash(r["ok"], r["mensaje"])
+        st.rerun()
+    return nuevo
+
+
+def _preoperativo(client, user_id: str, prefijo: str = "psi") -> None:
+    st.markdown("###### 🧭 Check-in pre-operativo")
+    _mostrar_flash()
+    cfg = psd.obtener_config(client, user_id)
+    cfg = _limites(client, user_id, cfg, prefijo)
+
+    estado = st.radio(
+        "¿Cómo estás AHORA, antes de operar?", list(psd.ESTADOS_PREOP), horizontal=True,
+        format_func=lambda e: f"{psd.ESTADOS_PREOP[e][0]} {e}", key=f"{prefijo}_estado",
+    )
+    c1, c2 = st.columns(2)
+    intensidad = c1.slider("Intensidad de la emoción", 1, 5, 3, key=f"{prefijo}_intens")
+    simbolo = c2.text_input("Activo que estás mirando (opcional)", key=f"{prefijo}_simb")
+
+    ctl = psd.estado_control(client, user_id, cfg, estado)
+    st.markdown("**Control de overtrading**")
+    _mostrar_alertas_control(ctl, cfg)
+
+    st.markdown("**Checklist antes de entrar**")
+    marcas = {c: st.checkbox(txt, key=f"{prefijo}_chk_{c}") for c, txt in psd.CHECKS_PRE}
+    checks_ok = all(marcas.values())
+    decision = psd.decision_preop(ctl["nivel"], checks_ok)
+    _msg_nivel(
+        {"Operar": "success", "Operar con tamaño reducido": "warning"}.get(decision, "error" if decision == "Esperar" else "warning"),
+        f"**Decisión sugerida: {decision}**",
+    )
+    nota = st.text_input("Nota (opcional)", key=f"{prefijo}_nota")
+    if st.button("💾 Guardar check-in", key=f"{prefijo}_guardar"):
+        r = psd.insertar_preop(client, user_id, {
+            "estado": estado, "intensidad": intensidad, "simbolo": simbolo, "decision": decision,
+            "checks_ok": checks_ok, "semaforo": ctl["nivel"], "nota": nota,
+        })
+        _flash(r["ok"], r["mensaje"])
+        st.rerun()
+
+    hist = psd.listar_preop(client, user_id)
+    if not hist.empty:
+        st.markdown("###### Tus últimos check-ins")
+        st.bar_chart(hist["estado"].value_counts(), height=180)
+        st.dataframe(hist[["fecha", "estado", "intensidad", "simbolo", "decision", "checks_ok"]].head(10),
+                     use_container_width=True, hide_index=True)
+        fuera = hist[hist["estado"] != "Calma"]
+        st.caption(f"Empezaste a operar sin estar en calma en {len(fuera)} de {len(hist)} check-ins.")
+
+
+def render_panel_pretrading(client, user_id: str) -> None:
+    """Semáforo compacto + check-in completo. Se muestra arriba del formulario de Trading."""
+    try:
+        cfg = psd.obtener_config(client, user_id)
+        ctl = psd.estado_control(client, user_id, cfg)
+        titulo = {"success": "🟢 Luz verde para operar", "warning": "🟡 Precaución", "error": "🔴 Pausa recomendada"}[ctl["nivel"]]
+        _msg_nivel(ctl["nivel"], f"🧠 {titulo} · {ctl['ops_hoy']}/{int(cfg['max_ops_dia'])} operaciones hoy"
+                   + (f" · racha: {ctl['racha_n']} {ctl['racha_tipo']}" if ctl["racha_tipo"] else ""))
+        with st.expander("🧭 Check-in pre-operativo y control anti-overtrading"):
+            _preoperativo(client, user_id, prefijo="trd")
+    except Exception:
+        pass
+
+
 def _render_psicotrading(client, user_id: str, tabla_editable) -> None:
     vista = st.radio(
-        "", ["📓 Diario emocional", "✅ Disciplina"],
+        "", ["🧭 Pre-operativo y control", "📓 Diario emocional", "✅ Disciplina"],
         horizontal=True, label_visibility="collapsed", key="psi_trd_vista",
     )
-    if vista == "📓 Diario emocional":
+    if vista == "🧭 Pre-operativo y control":
+        _preoperativo(client, user_id, prefijo="psi")
+    elif vista == "📓 Diario emocional":
         _diario(client, user_id, tabla_editable)
     else:
         _disciplina(client, user_id)
