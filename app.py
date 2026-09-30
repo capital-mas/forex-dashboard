@@ -32,6 +32,7 @@ from modulo_noticias_mercado import render_noticias_mercado
 from modulo_senales_trading import render_senales_trading
 from modulo_fscore import modulo_fscore
 from modulo_market_breadth import render_market_breadth
+from modulo_velas import modulo_velas
 from modulo_renta_fija_macro import modulo_renta_fija_macro
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
@@ -8538,8 +8539,8 @@ for key, default in [
 
 
 _now_str = ahora_ar().strftime('%H:%M')
-_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'gex': '#bc8cff', 'renta_fija_macro': '#00838f', 'ia_asistente': '#bc8cff', 'senales': '#ff6ec7', 'finanzas': '#6CC24A'}
-_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'gex': 'GEX', 'renta_fija_macro': 'Renta Fija', 'ia_asistente': 'Asistente IA', 'senales': 'Señales', 'finanzas': 'Finanzas'}
+_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'gex': '#bc8cff', 'renta_fija_macro': '#00838f', 'ia_asistente': '#bc8cff', 'senales': '#ff6ec7', 'finanzas': '#6CC24A', 'velas': '#e3b341'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'gex': 'GEX', 'renta_fija_macro': 'Renta Fija', 'ia_asistente': 'Asistente IA', 'senales': 'Señales', 'finanzas': 'Finanzas', 'velas': 'Velas'}
 
 HORIZONTE = st.session_state['nav_horizonte']
 MODULO    = st.session_state['nav_modulo']
@@ -8866,8 +8867,9 @@ with st.container(key='nav_pills_wrap'):
                                      ('senales', 'senales'),
             '🎲 Valuación de Opciones': ('opciones', 'opciones'),
             '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),          # ← nuevo
+            '🕯️ Lectura de Velas': ('velas', 'velas'),
         }
-        _trading_horizontes = {'pares', 'senales', 'opciones', 'gex'}   # ← agregar 'gex'
+        _trading_horizontes = {'pares', 'senales', 'opciones', 'gex', 'velas'}
         _trading_activo = HORIZONTE in _trading_horizontes
         _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
         _label_trading = f'📈 {_trading_label_actual.split(" ",1)[1]}' if _trading_label_actual else '📈 Trading'
@@ -8993,6 +8995,7 @@ with st.container(key='nav_mobile_wrap'):
         ('🔗 Pares' if TIENE_ACCESO_PRO else '🔒 Pares (Pro)'): 'pares',
         '🎲 Opciones': 'opciones',
         ('🧲 GEX' if TIENE_ACCESO_PRO else '🔒 GEX (Pro)'): 'gex',
+        '🕯️ Velas': 'velas',
         '📐 Promediador': 'promediador',
         ('🎯 Señales' if TIENE_ACCESO_PRO else '🔒 Señales (Pro)'): 'senales',
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
@@ -9131,6 +9134,7 @@ titulos = {
     'tff': ('Análisis TFF — Traders in Financial Futures', '📑', 'Posicionamiento Asset Manager vs. Leveraged Funds — índices, forex y cripto'),
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
     'gex': ('GEX — Gamma Exposure', '🧲', 'Exposición gamma, punto de cambio de gamma y paredes de Calls/Puts · datos CBOE'),
+    'velas': ('Lectura de Velas Diarias', '🕯️', 'Patrones de velas japonesas · freno de caída / freno de suba'),
     'renta_fija_macro': ('Renta Fija, Salud del Mercado y Macro', '📉','Bonos, tasas del Tesoro, crédito corporativo y 12 ratios macro estratégicos'),
     'senales': ('Señales de Trading', '🎯', 'Publicación de señales y simulador de capital'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
@@ -9156,6 +9160,7 @@ badge_map = {
     'pares': ('#79c0ff', 'rgba(121,192,255,0.12)', 'ROTACIÓN'),
     'opciones': ('#bc5cff', 'rgba(188,92,255,0.12)', 'OPCIONES'),
     'gex': ('#bc8cff', 'rgba(188,140,255,0.12)', 'GEX'),
+    'velas': ('#e3b341', 'rgba(227,179,65,0.12)', 'VELAS'),
     'senales': ('#ff6ec7', 'rgba(255,110,199,0.12)', 'SEÑALES'),
     'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
     'promediador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'PROMEDIADOR'),
@@ -9302,6 +9307,15 @@ elif MODULO == 'renta_fija_macro':
         )
     else:
         _mostrar_bloqueo_pro('Renta Fija y Macro')
+
+elif MODULO == 'velas':
+    modulo_velas(
+        descargar_datos=descargar_datos,
+        selector_ticker_autocomplete=selector_ticker_autocomplete,
+        kpi_cards_4=kpi_cards_4,
+        fmt_precio=fmt_precio,
+        PLOTLY_CONFIG=PLOTLY_CONFIG,
+    )
 
 elif MODULO == 'ia_asistente':
     if TIENE_ACCESO_PRO:
