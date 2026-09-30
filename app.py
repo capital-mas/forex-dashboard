@@ -2410,6 +2410,44 @@ def eliminar_alerta_personalizada(client, user_id, alerta_id):
         return False
 
 
+# ── NUEVO: agregar acá ───────────────────────────────────────────
+def _marcar_disparo_alerta(client, alerta_id, disparada: bool):
+    try:
+        payload = {'disparada': disparada,
+                   'disparada_en': ahora_ar().isoformat() if disparada else None}
+        client.table('alertas_personalizadas').update(payload).eq('id', alerta_id).execute()
+        obtener_alertas_personalizadas.clear()
+    except Exception:
+        pass
+
+
+def sincronizar_disparos_watchlist(client, user_id):
+    """Compara lo que está cumplido AHORA contra lo que ya estaba marcado
+    'disparada' en Supabase. Actualiza el estado y devuelve solo las
+    reglas que ACABAN de pasar de False a True — esas son las que hay
+    que notificar. Si una alerta deja de cumplirse, se resetea para que
+    pueda volver a dispararse en el futuro."""
+    tickers = tuple(sorted(obtener_watchlist(client, user_id)))
+    reglas = obtener_alertas_personalizadas(client, user_id)
+    if not tickers or not reglas:
+        return []
+
+    datos = calcular_datos_watchlist(tickers)
+    disparadas_ahora = evaluar_alertas_personalizadas(reglas, datos)
+    mapa_ahora = {d['id']: d for d in disparadas_ahora}
+
+    nuevas = []
+    for r in reglas:
+        estaba = bool(r.get('disparada'))
+        esta = r['id'] in mapa_ahora
+        if esta and not estaba:
+            _marcar_disparo_alerta(client, r['id'], True)
+            nuevas.append(mapa_ahora[r['id']])
+        elif not esta and estaba:
+            _marcar_disparo_alerta(client, r['id'], False)
+    return nuevas
+# ── FIN NUEVO ─────────────────────────────────────────────────────
+
 def _contar_alertas_watchlist(user_id):
     tickers = tuple(sorted(obtener_watchlist(supabase, user_id)))
     reglas = obtener_alertas_personalizadas(supabase, user_id)
