@@ -8988,7 +8988,7 @@ def _mobile_cambiar_modulo():
 with st.container(key='nav_mobile_wrap'):
     _OPCIONES_HORIZONTE_MOBILE = {
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
-        '🔍 Buscador': 'buscador', _label_wl_mobile: 'watchlist', '⚖️ Comparar': 'comparador',
+        '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
         ('🧮 Optimizar' if TIENE_ACCESO_PRO else '🔒 Optimizar (Pro)'): 'optimizador',
         ('🔗 Pares' if TIENE_ACCESO_PRO else '🔒 Pares (Pro)'): 'pares',
         '🎲 Opciones': 'opciones',
