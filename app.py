@@ -8866,9 +8866,12 @@ with st.container(key='nav_pills_wrap'):
             ('🎯 Señales de Trading' if TIENE_ACCESO_PRO else '🔒 Señales de Trading (Pro)'):
                                      ('senales', 'senales'),
             '🎲 Valuación de Opciones': ('opciones', 'opciones'),
-            '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),          # ← nuevo
-            '🕯️ Lectura de Velas': ('velas', 'velas'),
+            '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),
+            # ← borrá acá la línea de '🕯️ Lectura de Velas'
         }
+        if ES_ADMIN:
+            _TRADING_MAP['🕯️ Lectura de Velas'] = ('velas', 'velas')
+        
         _trading_horizontes = {'pares', 'senales', 'opciones', 'gex', 'velas'}
         _trading_activo = HORIZONTE in _trading_horizontes
         _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
@@ -8995,7 +8998,6 @@ with st.container(key='nav_mobile_wrap'):
         ('🔗 Pares' if TIENE_ACCESO_PRO else '🔒 Pares (Pro)'): 'pares',
         '🎲 Opciones': 'opciones',
         ('🧲 GEX' if TIENE_ACCESO_PRO else '🔒 GEX (Pro)'): 'gex',
-        '🕯️ Velas': 'velas',
         '📐 Promediador': 'promediador',
         ('🎯 Señales' if TIENE_ACCESO_PRO else '🔒 Señales (Pro)'): 'senales',
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
@@ -9007,6 +9009,7 @@ with st.container(key='nav_mobile_wrap'):
     if ES_ADMIN:
         _label_admin_mobile = f'🛠️ Panel de Pagos 🔴{n_pagos_pend}' if n_pagos_pend > 0 else '🛠️ Panel de Pagos'
         _OPCIONES_HORIZONTE_MOBILE[_label_admin_mobile] = 'admin_pagos'
+        _OPCIONES_HORIZONTE_MOBILE['🕯️ Velas'] = 'velas'   # ← agregar
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
                   '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
@@ -9309,13 +9312,16 @@ elif MODULO == 'renta_fija_macro':
         _mostrar_bloqueo_pro('Renta Fija y Macro')
 
 elif MODULO == 'velas':
-    modulo_velas(
-        descargar_datos=descargar_datos,
-        selector_ticker_autocomplete=selector_ticker_autocomplete,
-        kpi_cards_4=kpi_cards_4,
-        fmt_precio=fmt_precio,
-        PLOTLY_CONFIG=PLOTLY_CONFIG,
-    )
+    if ES_ADMIN:
+        modulo_velas(
+            descargar_datos=descargar_datos,
+            selector_ticker_autocomplete=selector_ticker_autocomplete,
+            kpi_cards_4=kpi_cards_4,
+            fmt_precio=fmt_precio,
+            PLOTLY_CONFIG=PLOTLY_CONFIG,
+        )
+    else:
+        st.warning('Este módulo todavía no está disponible.')
 
 elif MODULO == 'ia_asistente':
     if TIENE_ACCESO_PRO:
