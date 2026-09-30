@@ -4097,42 +4097,6 @@ def _perfil_supabase_leer(ticker):
         pass
     return None, None
 
-MAX_WATCHLIST = 15
-
-@st.cache_data(ttl=60, show_spinner=False)
-def obtener_watchlist(_client, user_id):
-    try:
-        res = (_client.table('watchlist_personal')
-               .select('ticker').eq('user_id', user_id)
-               .order('creado_en').execute())
-        return [r['ticker'] for r in (res.data or [])]
-    except Exception:
-        return []
-
-def agregar_a_watchlist(client, user_id, ticker):
-    ticker = validar_ticker(ticker)
-    if not ticker:
-        return False, 'Ticker inválido.'
-    actuales = obtener_watchlist(client, user_id)
-    if ticker in actuales:
-        return False, f'{ticker} ya está en tu watchlist.'
-    if len(actuales) >= MAX_WATCHLIST:
-        return False, f'Límite de {MAX_WATCHLIST} activos alcanzado. Sacá uno para agregar otro.'
-    try:
-        client.table('watchlist_personal').insert({'user_id': user_id, 'ticker': ticker}).execute()
-        obtener_watchlist.clear()
-        return True, f'{ticker} agregado a tu watchlist.'
-    except Exception as e:
-        return False, f'Error al agregar: {e}'
-
-def quitar_de_watchlist(client, user_id, ticker):
-    try:
-        client.table('watchlist_personal').delete().eq('user_id', user_id).eq('ticker', ticker).execute()
-        obtener_watchlist.clear()
-        return True
-    except Exception:
-        return False
-
 
 PERFIL_TTL_SEGUNDOS = 24 * 3600  # el perfil de una empresa cambia mucho menos que sus ratios
 
