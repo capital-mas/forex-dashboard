@@ -255,13 +255,16 @@ def _pie(df: pd.DataFrame, cat_col: str, val_col: str, alto: int = 320) -> None:
 
     # Compatibilidad Altair 5 (selection_point) y Altair 4 (selection_single).
     if hasattr(alt, "selection_point"):
-        sel = alt.selection_point(fields=[cat_col], on="click", empty=False)
+        sel = alt.selection_point(name="sel_pie", fields=[cat_col], on="click", empty=False)
         def _aplicar(ch):
             return ch.add_params(sel)
     else:
-        sel = alt.selection_single(fields=[cat_col], on="click", empty="none")
+        sel = alt.selection_single(name="sel_pie", fields=[cat_col], on="click", empty="none")
         def _aplicar(ch):
             return ch.add_selection(sel)
+
+    # Verdadero solo cuando NO hay ninguna porción seleccionada (global, no por fila).
+    sin_seleccion = "length(data('sel_pie_store')) == 0"
 
     base = alt.Chart(d)
 
@@ -293,9 +296,9 @@ def _pie(df: pd.DataFrame, cat_col: str, val_col: str, alto: int = 320) -> None:
     capas = [
         arco,
         # Sin selección: total
-        _texto(alt.value("Total"), 12, -26, ~sel, color=color_sec, unico=True),
-        _texto("tot_txt:N", 17, 0, ~sel, bold=True, unico=True),
-        _texto(alt.value("100%"), 14, 24, ~sel, color=color_sec, unico=True),
+        _texto(alt.value("Total"), 12, -26, sin_seleccion, color=color_sec, unico=True),
+        _texto("tot_txt:N", 17, 0, sin_seleccion, bold=True, unico=True),
+        _texto(alt.value("100%"), 14, 24, sin_seleccion, color=color_sec, unico=True),
         # Con selección: detalle de la porción elegida
         _texto("lbl:N", 12, -26, sel, color=color_sec),
         _texto("monto_txt:N", 17, 0, sel, bold=True),
