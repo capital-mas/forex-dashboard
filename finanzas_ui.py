@@ -13,6 +13,7 @@
 
 from datetime import date, timedelta
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -222,16 +223,218 @@ def _render_alertas(client, user_id: str) -> None:
                 renderers[nivel]("\n\n".join(mensajes))
 
 
+def _pie(df: pd.DataFrame, cat_col: str, val_col: str, alto: int = 300) -> None:
+    """Gráfico de torta (donut) con Altair. Ignora categorías en $0 o
+    negativas. Muestra monto y porcentaje al pasar el mouse."""
+    if df is None or df.empty:
+        st.caption("Sin datos para graficar.")
+        return
+    d = df[df[val_col] > 0].copy()
+    if d.empty:
+        st.caption("Sin datos para graficar.")
+        return
+    d["pct"] = d[val_col] / d[val_col].sum()
+    chart = (
+        alt.Chart(d)
+        .mark_arc(innerRadius=55)
+        .encode(
+            theta=alt.Theta(f"{val_col}:Q", stack=True),
+            color=alt.Color(f"{cat_col}:N", legend=alt.Legend(title=None)),
+            order=alt.Order(f"{val_col}:Q", sort="descending"),
+            tooltip=[
+                alt.Tooltip(f"{cat_col}:N", title="Detalle"),
+                alt.Tooltip(f"{val_col}:Q", title="Monto", format=",.2f"),
+                alt.Tooltip("pct:Q", title="Porcentaje", format=".1%"),
+            ],
+        )
+        .properties(height=alto)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
 def _render_categoria_breakdown(titulo: str, df: pd.DataFrame) -> None:
     """Muestra el desglose por categoría (todas las categorías, incluso
-    en $0) como gráfico de barras + tabla."""
+    en $0) como gráfico de torta + tabla."""
     st.markdown(f"##### {titulo}")
     if df.empty or df["monto"].sum() == 0:
         st.caption("Sin movimientos en el período seleccionado.")
         st.dataframe(df, use_container_width=True, hide_index=True)
         return
-    st.bar_chart(df.set_index("categoria")["monto"])
+    _pie(df, "categoria", "monto")
     st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# Si tu Streamlit soporta fragments, cambiar el selector de abajo solo
+# re-ejecuta esa parte (no recarga todo el dashboard ni los precios).
+_fragment = getattr(st, "fragment", None) or getattr(st, "experimental_fragment", None)
+
+
+def _como_fragment(fn):
+    return _fragment(fn) if _fragment else fn
+
+
+def _pct_txt(v) -> str:
+    return f"{v:.2f}%" if v is not None and pd.notna(v) else "—"
+
+
+@_como_fragment
+def _render_inversiones_detalle(client, user_id: str) -> None:
+    """Composición de las inversiones con selector: General, Corto plazo,
+    Largo plazo o cada cartera por individual."""
+    vista = st.radio(
+        "Ver composición de", ["General", "Corto plazo", "Largo plazo", "Carteras"],
+        horizontal=True, key="dash_inv_vista",
+    )
+
+    # ---------------- GENERAL ----------------
+    if vista == "General":
+        carteras = fd.listar_carteras(client, user_id)
+        liquidez = float(carteras["efectivo"].sum()) if not carteras.empty else 0.0
+        datos = pd.DataFrame({
+            "concepto": ["Corto plazo", "Largo plazo (a costo)", "Liquidez en carteras"],
+            "monto": [fd.resumen_inv_corto(client, user_id), fd.resumen_inv_largo(client, user_id), liquidez],
+        })
+        _pie(datos, "concepto", "monto")
+        return
+
+    # ---------------- CORTO PLAZO ----------------
+    if vista == "Corto plazo":
+        df = fd.listar_inv_corto(client, user_id)
+        activas = df[df["estado"] == "Activa"] if not df.empty else df
+        if activas.empty:
+            st.caption("No hay inversiones de corto plazo activas.")
+            return
+        agrupar = st.radio("Agrupar por", ["Tipo", "Inversión"], horizontal=True, key="dash_corto_group")
+        col = "tipo" if agrupar == "Tipo" else "nombre"
+        datos = activas.groupby(col, as_index=False)["monto"].sum()
+        c1, c2 = st.columns(2)
+        with c1:
+            _pie(datos, col, "monto")
+        with c2:
+            t = activas.copy()
+            t["monto_proyectado"] = t.apply(lambda r: fd.monto_proyectado_inv_corto(r), axis=1)
+            t["tasa_anual"] = t["tasa_anual"] * 100
+            st.dataframe(
+                t[["nombre", "tipo", "monto", "tasa_anual", "fecha_vencimiento", "monto_proyectado"]],
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "monto": st.column_config.NumberColumn("Monto", format="$%.2f"),
+                    "tasa_anual": st.column_config.NumberColumn("Tasa anual", format="%.2f%%"),
+                    "monto_proyectado": st.column_config.NumberColumn("Proyectado", format="$%.2f"),
+                },
+            )
+        return
+
+    # ---------------- LARGO PLAZO ----------------
+    if vista == "Largo plazo":
+        df = fd.listar_inv_largo_con_precios(client, user_id)
+        activos = df[df["estado"] == "Activo"].copy() if not df.empty else df
+        if activos.empty:
+            st.caption("No hay inversiones de largo plazo activas.")
+            return
+        carteras = fd.listar_carteras(client, user_id)
+        nombres = {int(r["id"]): r["nombre"] for _, r in carteras.iterrows()} if not carteras.empty else {}
+        activos["cartera"] = activos["cartera_id"].map(
+            lambda x: nombres.get(int(x), "Sin cartera") if pd.notna(x) else "Sin cartera"
+        )
+        sin_precio = int(activos["valor_actual"].isna().sum())
+        con_precio = activos.dropna(subset=["valor_actual"])
+        if con_precio.empty:
+            st.caption("No se pudieron traer los precios actuales.")
+            return
+        agrupar = st.radio("Agrupar por", ["Activo", "Tipo", "Cartera"], horizontal=True, key="dash_largo_group")
+        col = {"Activo": "activo", "Tipo": "tipo", "Cartera": "cartera"}[agrupar]
+        datos = con_precio.groupby(col, as_index=False)["valor_actual"].sum()
+        c1, c2 = st.columns(2)
+        with c1:
+            _pie(datos, col, "valor_actual")
+        with c2:
+            t = con_precio.copy()
+            t["ganancia_pct"] = t["ganancia_pct"] * 100
+            st.dataframe(
+                t[["activo", "simbolo", "cartera", "valor_actual", "ganancia_perdida", "ganancia_pct"]],
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "valor_actual": st.column_config.NumberColumn("Valor actual", format="$%.2f"),
+                    "ganancia_perdida": st.column_config.NumberColumn("Ganancia $", format="$%.2f"),
+                    "ganancia_pct": st.column_config.NumberColumn("Ganancia %", format="%.2f%%"),
+                },
+            )
+        if sin_precio:
+            st.caption(f"⚠️ {sin_precio} activo(s) sin precio en vivo no se incluyeron en el gráfico.")
+        return
+
+    # ---------------- CARTERAS (individual) ----------------
+    res = fd.carteras_resumen(client, user_id)
+    if res.empty:
+        st.caption("Todavía no hay carteras ni activos de largo plazo.")
+        return
+
+    opciones = ["Todas (comparar)"] + res["cartera"].tolist()
+    sel = st.selectbox("Cartera", opciones, key="dash_inv_cartera")
+
+    if sel == "Todas (comparar)":
+        st.caption("Total por cartera (valor actual de los activos + liquidez).")
+        _pie(res, "cartera", "total")
+        st.dataframe(
+            res.drop(columns=["cartera_id"]), use_container_width=True, hide_index=True,
+            column_config={
+                "cartera": "Cartera", "activos": "Activos",
+                "invertido": st.column_config.NumberColumn("Invertido", format="$%.2f"),
+                "valor_actual": st.column_config.NumberColumn("Valor actual", format="$%.2f"),
+                "ganancia": st.column_config.NumberColumn("Ganancia $", format="$%.2f"),
+                "rend_promedio_pct": st.column_config.NumberColumn("Rend. (promedio)", format="%.2f%%"),
+                "rend_ponderado_pct": st.column_config.NumberColumn("Rend. (ponderado)", format="%.2f%%"),
+                "efectivo": st.column_config.NumberColumn("Liquidez", format="$%.2f"),
+                "total": st.column_config.NumberColumn("Total", format="$%.2f"),
+            },
+        )
+        return
+
+    fila = res[res["cartera"] == sel].iloc[0]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Valor actual", _money(fila["valor_actual"]))
+    c2.metric("Ganancia/Pérdida", _money(fila["ganancia"]))
+    c3.metric("Rendimiento (promedio)", _pct_txt(fila["rend_promedio_pct"]))
+    c4.metric("Rendimiento (ponderado)", _pct_txt(fila["rend_ponderado_pct"]))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Invertido", _money(fila["invertido"]))
+    c2.metric("Liquidez", _money(fila["efectivo"]))
+    c3.metric("Total (valor + liquidez)", _money(fila["total"]))
+
+    pos = fd.listar_inv_largo_con_precios(client, user_id)
+    activos = pos[pos["estado"] == "Activo"] if not pos.empty else pos
+    if not activos.empty:
+        if pd.isna(fila["cartera_id"]):
+            activos = activos[activos["cartera_id"].isna()]
+        else:
+            activos = activos[activos["cartera_id"] == fila["cartera_id"]]
+    activos = activos.dropna(subset=["valor_actual"]) if not activos.empty else activos
+
+    incluir_liq = st.checkbox("Incluir liquidez en el gráfico", value=True, key=f"dash_cart_liq_{sel}")
+    partes = [{"concepto": r["activo"], "monto": float(r["valor_actual"])} for _, r in activos.iterrows()]
+    if incluir_liq and float(fila["efectivo"]) > 0:
+        partes.append({"concepto": "💵 Liquidez", "monto": float(fila["efectivo"])})
+
+    g1, g2 = st.columns(2)
+    with g1:
+        _pie(pd.DataFrame(partes), "concepto", "monto")
+    with g2:
+        if activos.empty:
+            st.caption("Esta cartera no tiene activos activos con precio.")
+        else:
+            t = activos.copy()
+            t["ganancia_pct"] = t["ganancia_pct"] * 100
+            st.dataframe(
+                t[["activo", "simbolo", "cantidad", "precio_compra", "precio_hoy", "ganancia_perdida", "ganancia_pct"]],
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "precio_compra": st.column_config.NumberColumn("Compra", format="$%.4f"),
+                    "precio_hoy": st.column_config.NumberColumn("Actual", format="$%.4f"),
+                    "ganancia_perdida": st.column_config.NumberColumn("Ganancia $", format="$%.2f"),
+                    "ganancia_pct": st.column_config.NumberColumn("Ganancia %", format="%.2f%%"),
+                },
+            )
 
 
 def _render_dashboard(client, user_id: str) -> None:
@@ -277,6 +480,9 @@ def _render_dashboard(client, user_id: str) -> None:
     c2.metric("Largo plazo", _money(d["inv_largo"]))
     c3.metric("Ganancia/Pérdida", _money(d["ganancia"]))
     c4.metric("Rendimiento %", d["rendimiento"])
+
+    st.markdown("###### 🔍 Composición de inversiones")
+    _render_inversiones_detalle(client, user_id)
 
     st.markdown("##### ⚡ Trading")
     c1, c2, c3 = st.columns(3)
