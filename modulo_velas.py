@@ -39,6 +39,41 @@ _LAYOUT_BASE = dict(
 #  CÁLCULO DE INDICADORES Y PATRONES
 # ==============================================================
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _descargar_velas_intradia(ticker, period, interval='1h'):
+    """Velas intradiarias directo de Yahoo (el caché de Supabase de la app solo guarda fechas
+    diarias, así que acá se cachea 10 min con el caché de Streamlit)."""
+    try:
+        import yfinance as yf
+        d = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
+        if d is None or d.empty:
+            return None
+        if isinstance(d.columns, pd.MultiIndex):
+            d.columns = d.columns.get_level_values(0)
+        if not {'Open', 'High', 'Low', 'Close'}.issubset(d.columns):
+            return None
+        if 'Volume' not in d.columns:
+            d['Volume'] = 0
+        return d[['Open', 'High', 'Low', 'Close', 'Volume']].dropna(
+            subset=['Open', 'High', 'Low', 'Close'])
+    except Exception:
+        return None
+
+
+def _preparar_intradia(df, excluir_formacion=True):
+    """Opcionalmente descarta la vela de la hora en curso (todavía incompleta) y pasa
+    el índice a horario Argentina, sin zona horaria, para mostrar y graficar."""
+    d = df.copy()
+    tz = d.index.tz
+    if excluir_formacion and len(d) > 1:
+        ahora = pd.Timestamp.now(tz=tz) if tz is not None else pd.Timestamp.now()
+        if d.index[-1] + pd.Timedelta(hours=1) > ahora:
+            d = d.iloc[:-1]
+    if tz is not None:
+        d.index = d.index.tz_convert('America/Argentina/Buenos_Aires').tz_localize(None)
+    return d
+
+
 def _rsi(close, periodo=14):
     delta = close.diff()
     gan = delta.clip(lower=0).ewm(alpha=1 / periodo, adjust=False).mean()
@@ -47,7 +82,7 @@ def _rsi(close, periodo=14):
     return (100 - 100 / (1 + rs)).fillna(50)
 
 
-def preparar_velas(df):
+def preparar_velas(df, umbral_mov=0.03):
     d = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
     for c in d.columns:
         d[c] = pd.to_numeric(d[c], errors='coerce')
@@ -114,8 +149,8 @@ def preparar_velas(df):
 
     # Contexto
     d['RET_5'] = d['Close'].pct_change(5)
-    d['CAIDA_PREVIA'] = d['RET_5'] <= -0.03
-    d['SUBA_PREVIA'] = d['RET_5'] >= 0.03
+    d['CAIDA_PREVIA'] = d['RET_5'] <= -umbral_mov
+    d['SUBA_PREVIA'] = d['RET_5'] >= umbral_mov
     d['VOLUMEN_ALTO'] = d['Volume'] > d['VOL_MEDIA20'] * 1.20
 
     d['RSI_REBOTE'] = (d['RSI14'] > d['RSI14'].shift(1)) & (d['RSI14'].shift(1) < 40)
@@ -156,7 +191,10 @@ def preparar_velas(df):
 #  GRÁFICO
 # ==============================================================
 
-def _fig_velas(d, ticker):
+def _fig_velas(d, ticker, intradia=False):
+    if intradia:
+        d = d.copy()
+        d.index = d.index.strftime('%d/%m %H:%M')
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03,
                         row_heights=[0.76, 0.24])
 
@@ -199,17 +237,20 @@ def _fig_velas(d, ticker):
                              line=dict(color=C_MUTED, width=1, dash='dot'),
                              showlegend=False), row=2, col=1)
 
-    # Saltar días sin rueda (fines de semana / feriados) para que no queden huecos
-    fechas_presentes = set(d.index.normalize())
-    todas = pd.date_range(d.index.min(), d.index.max(), freq='D')
-    faltantes = [str(x.date()) for x in todas if x not in fechas_presentes]
-
-    fig.update_xaxes(gridcolor=C_GRID, rangeslider=dict(visible=False),
-                     rangebreaks=[dict(values=faltantes)])
+    if intradia:
+        # eje categórico: elimina solo los huecos de noches, fines de semana y feriados
+        fig.update_xaxes(gridcolor=C_GRID, rangeslider=dict(visible=False),
+                         type='category', nticks=12, tickangle=-45)
+    else:
+        fechas_presentes = set(d.index.normalize())
+        todas = pd.date_range(d.index.min(), d.index.max(), freq='D')
+        faltantes = [str(x.date()) for x in todas if x not in fechas_presentes]
+        fig.update_xaxes(gridcolor=C_GRID, rangeslider=dict(visible=False),
+                         rangebreaks=[dict(values=faltantes)])
     fig.update_yaxes(gridcolor=C_GRID)
     fig.update_layout(
         **_LAYOUT_BASE,
-        title=dict(text=f'{ticker} — Velas diarias', font=dict(color=C_TEXT, size=14),
+        title=dict(text=f"{ticker} — {'Velas de 1 hora' if intradia else 'Velas diarias'}", font=dict(color=C_TEXT, size=14),
                    x=0.01, xanchor='left', y=0.97),
         height=620, hovermode='x unified',
         legend=dict(orientation='h', y=1.08, x=0, font=dict(size=9)),
@@ -287,7 +328,7 @@ def _texto_conclusion(u, fmt):
         f'👁️ Máximo a vigilar: <b>{hi}</b> &nbsp;·&nbsp; Mínimo a vigilar: <b>{lo}</b>')
 
 
-def _render_conclusion(d, ticker, fmt, kpi_cards_4):
+def _render_conclusion(d, ticker, fmt, kpi_cards_4, intradia=False):
     u = d.iloc[-1]
     emoji, color = _SENAL_STYLE.get(u['SEÑAL_VELA'], ('⚪', '#8b949e'))
 
@@ -295,7 +336,7 @@ def _render_conclusion(d, ticker, fmt, kpi_cards_4):
                if pd.notna(u['VOL_MEDIA20']) and u['VOL_MEDIA20'] > 0 else None)
 
     kpi_cards_4([
-        ('Último cierre', fmt(u['Close']), f"Rueda: {d.index[-1].strftime('%d/%m/%Y')}", C_ACENT, ''),
+        ('Último cierre', fmt(u['Close']), f"{'Vela' if intradia else 'Rueda'}: {d.index[-1].strftime('%d/%m %H:%M' if intradia else '%d/%m/%Y')}", C_ACENT, ''),
         ('RSI 14', f"{u['RSI14']:.1f}",
          'Sobreventa' if u['RSI14'] < 30 else ('Sobrecompra' if u['RSI14'] > 70 else 'Zona media'),
          C_YELL, ''),
@@ -336,13 +377,13 @@ def _render_conclusion(d, ticker, fmt, kpi_cards_4):
     """, unsafe_allow_html=True)
 
 
-def _render_historial(d, n=15):
+def _render_historial(d, n=15, intradia=False):
     sig = d[d['SEÑAL_VELA'] != 'SIN SEÑAL CLARA'].tail(n).iloc[::-1]
     if sig.empty:
         st.info('No hubo señales relevantes en el período mostrado.')
         return
     tabla = pd.DataFrame({
-        'Fecha': sig.index.strftime('%d/%m/%Y'),
+        'Fecha': sig.index.strftime('%d/%m %H:%M' if intradia else '%d/%m/%Y'),
         'Señal': sig['SEÑAL_VELA'].values,
         'Cierre': sig['Close'].round(2).values,
         'Score caída': sig['SCORE_ALCISTA'].astype(int).values,
@@ -380,27 +421,43 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d; border-top:2px solid #e3b341;
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🕯️ Lectura de Velas Diarias</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🕯️ Lectura de Velas</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
         Detecta patrones de velas japonesas (martillo, estrella fugaz, envolventes, rechazos, doji),
-        los combina con RSI, volumen y contexto de las últimas 5 ruedas, y arma un score de
+        los combina con RSI, volumen y contexto de las últimas 5 velas, y arma un score de
         <b style="color:#3fb950">freno de caída</b> / <b style="color:#f85149">freno de suba</b>
-        con niveles de confirmación e invalidación.
+        con niveles de confirmación e invalidación. Disponible en velas <b>diarias</b> y de <b>1 hora</b>.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    c_inp, c_per, c_rue, c_btn = st.columns([3, 1, 1, 1])
+    c_inp, c_tf, c_per, c_rue, c_btn = st.columns([3, 1.2, 1, 1, 1])
     with c_inp:
         ticker = selector_ticker_autocomplete('velas_ticker', st.session_state.get('ticker_from_table', ''))
+    with c_tf:
+        tf = st.selectbox('Temporalidad', ['1d', '1h'], key='velas_tf',
+                          format_func=lambda x: {'1d': 'Diaria (1D)', '1h': '1 hora (1H)'}[x])
+    intradia = (tf == '1h')
     with c_per:
-        periodo = st.selectbox('Historial', ['3mo', '6mo', '2y'], index=1, key='velas_periodo',
-                               format_func=lambda x: {'3mo': '3 meses', '6mo': '6 meses', '2y': '2 años'}[x])
+        if intradia:
+            periodo = st.selectbox('Historial', ['1mo', '3mo', '6mo'], index=1, key='velas_periodo_1h',
+                                   format_func=lambda x: {'1mo': '1 mes', '3mo': '3 meses', '6mo': '6 meses'}[x])
+        else:
+            periodo = st.selectbox('Historial', ['3mo', '6mo', '2y'], index=1, key='velas_periodo_1d',
+                                   format_func=lambda x: {'3mo': '3 meses', '6mo': '6 meses', '2y': '2 años'}[x])
     with c_rue:
-        ruedas = st.selectbox('Ruedas en gráfico', [30, 60, 90, 120], index=1, key='velas_ruedas')
+        opciones_vel = [60, 120, 200, 300] if intradia else [30, 60, 90, 120]
+        ruedas = st.selectbox('Velas en gráfico', opciones_vel, index=1,
+                              key='velas_ruedas_1h' if intradia else 'velas_ruedas_1d')
     with c_btn:
         st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
         analizar = st.button('▶ Analizar', use_container_width=True, key='velas_btn')
+
+    excluir_formacion = True
+    if intradia:
+        excluir_formacion = st.checkbox(
+            'Excluir la vela de la hora en curso (todavía incompleta)', value=True, key='velas_excl',
+            help='Una vela de 1H que aún no cerró puede cambiar de forma y disparar señales falsas.')
 
     if analizar and ticker:
         st.session_state['velas_ticker_ok'] = ticker
@@ -411,35 +468,45 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
         <div style="border:1px dashed #21262d;border-radius:12px;padding:48px;text-align:center;margin-top:20px">
           <div style="font-size:44px;margin-bottom:14px;opacity:.6">🕯️</div>
           <div style="color:#6b7d9a;font-size:13px;line-height:1.8">
-            Elegí el activo arriba y presioná <b style="color:#e6edf3">Analizar</b>
-            para leer sus velas diarias.
+            Elegí el activo y la temporalidad, y presioná <b style="color:#e6edf3">Analizar</b>
+            para leer sus velas.
           </div>
         </div>
         """, unsafe_allow_html=True)
         return
 
-    with st.spinner(f'Descargando velas de {ticker_ok}...'):
-        df = descargar_datos(ticker_ok, periodo)
+    with st.spinner(f'Descargando velas de {ticker_ok} ({"1H" if intradia else "1D"})...'):
+        if intradia:
+            df = _descargar_velas_intradia(ticker_ok, periodo, '1h')
+        else:
+            df = descargar_datos(ticker_ok, periodo)
 
     if df is None or df.empty or not {'Open', 'High', 'Low', 'Close'}.issubset(df.columns):
         st.error(f'No se pudieron descargar velas para {ticker_ok}. Verificá el símbolo o probá en unos minutos.')
         return
 
-    d = preparar_velas(df)
+    if intradia:
+        df = _preparar_intradia(df, excluir_formacion)
+
+    d = preparar_velas(df, umbral_mov=0.01 if intradia else 0.03)
     if len(d) < 25:
-        st.warning('Hay muy poco historial para leer las velas con indicadores confiables (se necesitan ≥ 25 ruedas).')
+        st.warning('Hay muy poco historial para leer las velas con indicadores confiables (se necesitan ≥ 25 velas).')
         return
 
-    st.markdown(f'<div class="sec-title">Resultados para: {ticker_ok}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sec-title">Resultados para: {ticker_ok} · {"1 hora" if intradia else "Diario"}</div>',
+                unsafe_allow_html=True)
+    if intradia:
+        st.caption('🕐 Horario Argentina · SMA20/SMA50 y RSI calculados sobre velas de 1 hora · '
+                   '"Movimiento previo" mide las últimas 5 horas (umbral 1%).')
 
     tab_graf, tab_hist = st.tabs(['📈 Gráfico y conclusión', '🗂️ Historial de señales'])
     with tab_graf:
-        st.plotly_chart(_fig_velas(d.tail(ruedas), ticker_ok), use_container_width=True,
-                        config=PLOTLY_CONFIG, key=f'velas_fig_{ticker_ok}')
-        _render_conclusion(d, ticker_ok, fmt_precio, kpi_cards_4)
+        st.plotly_chart(_fig_velas(d.tail(ruedas), ticker_ok, intradia), use_container_width=True,
+                        config=PLOTLY_CONFIG, key=f'velas_fig_{ticker_ok}_{tf}')
+        _render_conclusion(d, ticker_ok, fmt_precio, kpi_cards_4, intradia)
     with tab_hist:
-        st.caption('Últimas 15 ruedas con alguna señal distinta de "Sin señal clara".')
-        _render_historial(d, 15)
+        st.caption('Últimas 15 velas con alguna señal distinta de "Sin señal clara".')
+        _render_historial(d, 15, intradia)
 
     st.markdown(
         '<div style="font-size:11px;color:#6b7d9a;margin-top:12px">Las velas son una herramienta de '
