@@ -1431,18 +1431,7 @@ CBOE publica la vol. implícita y el interés abierto de cada contrato, pero no 
                 'techo_esperado': float(fila_em['alto']) if fila_em is not None else None,
                 'piso_esperado': float(fila_em['bajo']) if fila_em is not None else None})
             st.success(f"✅ Datos publicados para **Valuación de Opciones** ({simbolo}, {etiq.get(vto_p, vto_p)}). "
-                       "La calculadora puede leerlos con `leer_puente_gex()`.")
 
-            with st.expander('🧩 Cómo leerlo desde la calculadora (código)', expanded=False):
-                st.code("""from modulo_gex import leer_puente_gex
-
-p = leer_puente_gex('SPY')          # None si no hay datos, son de otro símbolo o tienen +30 min
-if p:
-    p['flip'], p['call_wall'], p['put_wall'], p['regimen'], p['spot']
-    for s in p.get('sugerencias', []):
-        s['lado'], s['strike'], s['prima_mid'], s['delta']   # 'Call vendido' / 'Put vendido'
-    sq = p.get('squeeze')            # {'score', 'nivel', 'direccion', 'inminente', 'hora'} o None
-""", language='python')
 
             render_explicacion('Cómo funciona el puente con Valuación de Opciones y cómo usarlo', f"""
 **Qué hace**
