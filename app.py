@@ -7942,7 +7942,7 @@ def modulo_inicio():
 
     # ── Tabs principales ─────────────────────────────────────────────────
     tab_indices, tab_etfs, tab_sectores, tab_mercados, tab_forex, tab_acciones = st.tabs([
-        '🌍 Índices', '📦 ETFs', '📊 Sectores', '🛢️ Mercados', '💱 Forex', '📈 Acciones',
+        '🌍 Índices', '📦 ETFs y Bonos', '📊 Sectores', '🛢️ Mercados', '💱 Forex', '📈 Acciones',
     ])
 
     with st.spinner('Cargando cotizaciones...'):
