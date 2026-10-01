@@ -29,13 +29,10 @@ PRODUCTOS = {
             descripcion="Acceso a los módulos esenciales de mercados.",
             duraciones={
                 "Mensual": dict(
-                    dias=30, precio_usd=10,
-                ),
-                "Trimestral": dict(
-                    dias=90, precio_usd=25,
+                    dias=30, precio_usd=14,
                 ),
                 "Anual": dict(
-                    dias=365, precio_usd=80,
+                    dias=365, precio_usd=120,
                 ),
             },
         ),
@@ -43,13 +40,10 @@ PRODUCTOS = {
             descripcion="Acceso completo: Optimizador, Opciones, Señales, Asistente IA y más.",
             duraciones={
                 "Mensual": dict(
-                    dias=30, precio_usd=15,
-                ),
-                "Trimestral": dict(
-                    dias=90, precio_usd=40,
+                    dias=30, precio_usd=20,
                 ),
                 "Anual": dict(
-                    dias=365, precio_usd=130,
+                    dias=365, precio_usd=160,
                 ),
             },
         ),
