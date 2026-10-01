@@ -1,43 +1,18 @@
 # ==============================================================
 #  MÓDULO F-SCORE (PIOTROSKI) — Streamlit
-#  Convertido desde el script de Google Colab (ipywidgets) al
-#  mismo patrón que el resto de los módulos de Capital+
-#  (modulo_senales_trading.py, modulo_promediador.py, etc.):
-#  una función `modulo_fscore()` autocontenida que se importa y
-#  se llama desde app.py, sin más dependencias que streamlit,
-#  pandas, numpy y yfinance.
+#  Versión completa: la tabla muestra TODOS los ratios y el
+#  resultado (✅/❌) de cada uno de los 9 criterios de Piotroski.
 #
 #  USO DESDE app.py:
 #      from modulo_fscore import modulo_fscore
 #      ...
 #      elif MODULO == 'fscore':
 #          if TIENE_ACCESO_PRO:
-#              modulo_fscore()
+#              modulo_fscore(supabase)
 #          else:
 #              _mostrar_bloqueo_pro('F-Score (Piotroski)')
 #
-#  Y agregar 'fscore' a los mapas de navegación (_TRADING_MAP o
-#  donde prefieras colgarlo), a MODULOS_SOLO_PRO si querés que
-#  sea Pro, y a `titulos` / `badge_map` para el page header.
-#  Ver bloque comentado al final de este archivo con el snippet
-#  completo de integración.
-#
-#  CAMBIOS respecto al script de Colab:
-#   - Los checkboxes de ipywidgets se reemplazan por un
-#     st.multiselect + checkbox "Universo completo" (equivalente
-#     funcional, pero nativo de Streamlit).
-#   - La descarga secuencial con prints se reemplaza por
-#     ThreadPoolExecutor (misma lógica de paralelismo que el
-#     resto de la app) + una barra de progreso st.progress.
-#   - El resultado se cachea con st.cache_data (TTL 1h) por
-#     combinación de sectores elegidos, para no volver a pegarle
-#     a Yahoo Finance en cada rerun de Streamlit.
-#   - Se agrega estilo de tabla (fondo oscuro, resaltado de
-#     F-Score) igual al de las demás tablas de la app, un botón
-#     de descarga CSV y tarjetas KPI de resumen.
-#   - La lógica de cálculo del F-Score (calculate_fscore) es la
-#     misma que en el script original — no se tocó el criterio
-#     financiero, solo el envoltorio de ejecución/UI.
+#  Ver snippet de integración al final del archivo.
 # ==============================================================
 
 import time
@@ -56,14 +31,47 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 FSC_MIN_CRITERIOS_VALIDOS = 6
 FSC_UMBRAL_HISTORIAL_ANIOS = 4.5
 FSC_MAX_REINTENTOS = 3
-FSC_SLEEP_ENTRE_REQUESTS = (0.4, 0.9)   # más corto que en Colab: acá corre en paralelo
+FSC_SLEEP_ENTRE_REQUESTS = (0.4, 0.9)
 FSC_TOP_N_DEFAULT = 15
+FSC_TTL_SEGUNDOS = 6 * 3600  # F-Score no cambia intra-día; 6h alcanza de sobra
+
+# Columnas de criterios (nombre visible -> clave interna en `criterios`)
+FSC_CRITERIOS_COLS = {
+    'C1 Net Income ↑':       'net_income',
+    'C2 ROA ↑':              'roa',
+    'C3 OCF ↑':              'ocf_growth',
+    'C4 OCF > NI':           'ocf_vs_ni',
+    'C5 Deuda ↓':            'debt',
+    'C6 Current Ratio > 1':  'current_ratio',
+    'C7 Sin dilución':       'shares',
+    'C8 Margen Bruto ↑':     'gross_margin',
+    'C9 Asset Turnover ≥ 1': 'asset_turnover',
+}
+_FSC_COLS_CRITERIOS = list(FSC_CRITERIOS_COLS.keys())
+
+_FSC_COLS_PCT = ['ROA', 'Last Year ROA']
+_FSC_COLS_X = ['Current Ratio', 'Asset Turnover']
+_FSC_COLS_MONEY = [
+    'Net Income', 'Last Year Net Income',
+    'Operating Cash Flow', 'Last Year Operating Cash Flow',
+    'Total Debt', 'Last Year Total Debt',
+    'Shares Outstanding', 'Last Year Shares Outstanding',
+    'Gross Profit', 'Last Year Gross Profit',
+]
+
+FSC_COLS_MOSTRAR = (
+    ['Ticker', 'Sectores', 'F-Score', 'Criterios evaluados']
+    + _FSC_COLS_CRITERIOS
+    + ['ROA', 'Last Year ROA', 'Current Ratio', 'Asset Turnover',
+       'Net Income', 'Last Year Net Income',
+       'Operating Cash Flow', 'Last Year Operating Cash Flow',
+       'Total Debt', 'Last Year Total Debt',
+       'Shares Outstanding', 'Last Year Shares Outstanding',
+       'Gross Profit', 'Last Year Gross Profit']
+)
 
 # ---------------------------------------------------------------------------
 # UNIVERSO DE ACTIVOS POR INDUSTRIA
-#  (mismo universo que el script de Colab; prefijado FSC_ para no
-#  colisionar con ACCIONES_POR_INDUSTRIA de app.py si en algún
-#  momento se importan ambos módulos en el mismo namespace)
 # ---------------------------------------------------------------------------
 
 FSC_ACCIONES_POR_INDUSTRIA = {
@@ -124,8 +132,7 @@ _FSC_SECTORES_ORDENADOS = sorted(FSC_ACCIONES_POR_INDUSTRIA.keys())
 # ---------------------------------------------------------------------------
 
 def _fsc_construir_universo(sectores_elegidos):
-    """sectores_elegidos: lista de nombres de industria (ya validados).
-    Devuelve (ticker_list, ticker_a_sectores)."""
+    """Devuelve (ticker_list, ticker_a_sectores)."""
     ticker_a_sectores = {}
     for sector in sectores_elegidos:
         for ticker in FSC_ACCIONES_POR_INDUSTRIA[sector]:
@@ -184,10 +191,9 @@ def _fsc_get_alias(df, canonical_key, col_idx):
 
 # ---------------------------------------------------------------------------
 # CÁLCULO DEL F-SCORE (tolerante a datos faltantes)
-#  Misma lógica financiera que el script de Colab: 9 criterios de
-#  Piotroski (los que se puedan calcular con lo que devuelve
-#  yfinance), escalados a una nota sobre 9 según cuántos criterios
-#  hayan podido evaluarse.
+#  9 criterios de Piotroski, escalados a nota sobre 9 según cuántos
+#  hayan podido evaluarse. Ahora también devuelve el resultado
+#  individual de cada criterio (1 / 0 / None si no se pudo evaluar).
 # ---------------------------------------------------------------------------
 
 def _fsc_calculate(ticker, ticker_a_sectores):
@@ -223,37 +229,37 @@ def _fsc_calculate(ticker, ticker_a_sectores):
         criterios = {}
 
         if net_income_0 is not None and net_income_1 is not None:
-            criterios['net_income'] = net_income_0 >= net_income_1
+            criterios['net_income'] = bool(net_income_0 >= net_income_1)
 
         roa_0 = roa_1 = None
         if net_income_0 is not None and total_assets_0 and net_income_1 is not None and total_assets_1:
             roa_0 = net_income_0 / total_assets_0
             roa_1 = net_income_1 / total_assets_1
-            criterios['roa'] = roa_0 >= roa_1
+            criterios['roa'] = bool(roa_0 >= roa_1)
 
         if ocf_0 is not None and ocf_1 is not None:
-            criterios['ocf_growth'] = ocf_0 >= ocf_1
+            criterios['ocf_growth'] = bool(ocf_0 >= ocf_1)
         if ocf_0 is not None and net_income_0 is not None:
-            criterios['ocf_vs_ni'] = ocf_0 > net_income_0
+            criterios['ocf_vs_ni'] = bool(ocf_0 > net_income_0)
 
         if debt_0 is not None and debt_1 is not None:
-            criterios['debt'] = debt_0 < debt_1
+            criterios['debt'] = bool(debt_0 < debt_1)
 
         current_ratio = None
         if curr_assets_0 is not None and curr_liab_0:
             current_ratio = curr_assets_0 / curr_liab_0
-            criterios['current_ratio'] = current_ratio > 1
+            criterios['current_ratio'] = bool(current_ratio > 1)
 
         if shares_0 is not None and shares_1 is not None:
-            criterios['shares'] = shares_0 <= shares_1
+            criterios['shares'] = bool(shares_0 <= shares_1)
 
         if gross_profit_0 is not None and gross_profit_1 is not None:
-            criterios['gross_margin'] = gross_profit_0 >= gross_profit_1
+            criterios['gross_margin'] = bool(gross_profit_0 >= gross_profit_1)
 
         asset_turnover = None
         if total_revenue_0 is not None and total_assets_1:
             asset_turnover = total_revenue_0 / total_assets_1
-            criterios['asset_turnover'] = asset_turnover >= 1
+            criterios['asset_turnover'] = bool(asset_turnover >= 1)
 
         if len(criterios) < FSC_MIN_CRITERIOS_VALIDOS:
             return None
@@ -261,11 +267,12 @@ def _fsc_calculate(ticker, ticker_a_sectores):
         f_score = sum(criterios.values())
         f_score_escalado = round(f_score / len(criterios) * 9, 2)
 
-        return {
+        resultado = {
             'Ticker': ticker,
             'Sectores': ', '.join(ticker_a_sectores.get(ticker, [])),
             'F-Score': f_score_escalado,
             'Criterios evaluados': len(criterios),
+            # --- datos base ---
             'Net Income': net_income_0,
             'Last Year Net Income': net_income_1,
             'ROA': roa_0,
@@ -281,10 +288,18 @@ def _fsc_calculate(ticker, ticker_a_sectores):
             'Last Year Gross Profit': gross_profit_1,
             'Asset Turnover': asset_turnover,
         }
+        # --- resultado de cada criterio: 1 / 0 / None (no evaluable) ---
+        for col, clave in FSC_CRITERIOS_COLS.items():
+            resultado[col] = int(criterios[clave]) if clave in criterios else None
+
+        return resultado
     except Exception:
         return None
 
-FSC_TTL_SEGUNDOS = 6 * 3600  # F-Score no cambia intra-día; 6h alcanza de sobra
+
+# ---------------------------------------------------------------------------
+# CACHÉ COMPARTIDO EN SUPABASE
+# ---------------------------------------------------------------------------
 
 def _fsc_supabase_leer(client, ticker):
     if client is None:
@@ -306,12 +321,12 @@ def _fsc_supabase_guardar(client, ticker, datos):
     try:
         payload = {}
         for k, v in datos.items():
-            if isinstance(v, float) and pd.isna(v):
-                payload[k] = None
-            elif isinstance(v, (np.floating,)):
-                payload[k] = None if np.isnan(v) else float(v)
-            elif isinstance(v, (np.integer,)):
+            if isinstance(v, (np.floating, float)):
+                payload[k] = None if pd.isna(v) else float(v)
+            elif isinstance(v, np.integer):
                 payload[k] = int(v)
+            elif isinstance(v, np.bool_):
+                payload[k] = bool(v)
             else:
                 payload[k] = v
         client.table('fscore_cache').upsert({
@@ -333,6 +348,13 @@ def _fsc_es_dato_fresco(ts_iso, ttl_segundos):
     except Exception:
         return False
 
+
+def _fsc_cache_tiene_criterios(datos_db):
+    """Los registros guardados antes de esta versión no traen las columnas
+    C1-C9; en ese caso se los considera vencidos y se recalculan solos."""
+    return isinstance(datos_db, dict) and all(c in datos_db for c in _FSC_COLS_CRITERIOS)
+
+
 def _fsc_validate_price_history(ticker, fecha_inicio, fecha_fin, umbral_ruedas):
     try:
         import yfinance as yf
@@ -344,21 +366,26 @@ def _fsc_validate_price_history(ticker, fecha_inicio, fecha_fin, umbral_ruedas):
         return False
 
 
+def _fsc_desde_cache(datos_db, ticker, ticker_a_sectores):
+    d = dict(datos_db)
+    d['Sectores'] = ', '.join(ticker_a_sectores.get(ticker, [])) or d.get('Sectores', '')
+    return d
+
+
 def _fsc_procesar_ticker(client, ticker, ticker_a_sectores, fecha_inicio, fecha_fin, umbral_ruedas):
     """Caché compartido primero (Supabase, TTL 6h) -> cálculo en vivo si está
-    vencido/no existe -> Supabase vencido como último respaldo si Yahoo falla."""
+    vencido/no existe/es formato viejo -> caché vencido como último respaldo
+    si Yahoo falla."""
     datos_db, ts_db = _fsc_supabase_leer(client, ticker)
 
-    if datos_db is not None and _fsc_es_dato_fresco(ts_db, FSC_TTL_SEGUNDOS):
-        datos_db = dict(datos_db)
-        datos_db['Sectores'] = ', '.join(ticker_a_sectores.get(ticker, [])) or datos_db.get('Sectores', '')
-        return datos_db
+    if (datos_db is not None
+            and _fsc_cache_tiene_criterios(datos_db)
+            and _fsc_es_dato_fresco(ts_db, FSC_TTL_SEGUNDOS)):
+        return _fsc_desde_cache(datos_db, ticker, ticker_a_sectores)
 
     if not _fsc_validate_price_history(ticker, fecha_inicio, fecha_fin, umbral_ruedas):
         if datos_db is not None:
-            datos_db = dict(datos_db)
-            datos_db['Sectores'] = ', '.join(ticker_a_sectores.get(ticker, [])) or datos_db.get('Sectores', '')
-            return datos_db
+            return _fsc_desde_cache(datos_db, ticker, ticker_a_sectores)
         return None
 
     resultado = _fsc_calculate(ticker, ticker_a_sectores)
@@ -367,21 +394,17 @@ def _fsc_procesar_ticker(client, ticker, ticker_a_sectores, fecha_inicio, fecha_
         return resultado
 
     if datos_db is not None:
-        datos_db = dict(datos_db)
-        datos_db['Sectores'] = ', '.join(ticker_a_sectores.get(ticker, [])) or datos_db.get('Sectores', '')
-        return datos_db
+        return _fsc_desde_cache(datos_db, ticker, ticker_a_sectores)
 
     return None
 
 
 # ---------------------------------------------------------------------------
-# EJECUCIÓN CACHEADA
+# EJECUCIÓN
 # ---------------------------------------------------------------------------
 
 def _fsc_ejecutar_analisis(client, sectores_elegidos, max_workers=8):
-    """Ya NO está cacheado con @st.cache_data — el caché real ahora vive en
-    Supabase por ticker (compartido entre usuarios y entre combinaciones de
-    sectores). Devuelve (lista_de_dicts, n_total, n_ok)."""
+    """Devuelve (lista_de_dicts, n_total, n_ok)."""
     ticker_list, ticker_a_sectores = _fsc_construir_universo(sectores_elegidos)
 
     fecha_fin = dt.date.today()
@@ -391,7 +414,8 @@ def _fsc_ejecutar_analisis(client, sectores_elegidos, max_workers=8):
     resultados = []
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futuros = {
-            ex.submit(_fsc_procesar_ticker, client, tk, ticker_a_sectores, fecha_inicio, fecha_fin, umbral_ruedas): tk
+            ex.submit(_fsc_procesar_ticker, client, tk, ticker_a_sectores,
+                      fecha_inicio, fecha_fin, umbral_ruedas): tk
             for tk in ticker_list
         }
         for fut in as_completed(futuros):
@@ -403,8 +427,55 @@ def _fsc_ejecutar_analisis(client, sectores_elegidos, max_workers=8):
 
 
 # ---------------------------------------------------------------------------
-# ESTILO DE TABLA (mismo look & feel que el resto de la app)
+# FORMATEO Y ESTILO DE TABLA
 # ---------------------------------------------------------------------------
+
+def _fsc_fmt_pct(v):
+    return f'{v * 100:.1f}%' if pd.notna(v) else 'N/D'
+
+
+def _fsc_fmt_x(v):
+    return f'{v:.2f}x' if pd.notna(v) else 'N/D'
+
+
+def _fsc_fmt_money(v):
+    if pd.isna(v):
+        return 'N/D'
+    a = abs(v)
+    if a >= 1e9:
+        return f'{v / 1e9:,.2f}B'
+    if a >= 1e6:
+        return f'{v / 1e6:,.1f}M'
+    return f'{v:,.0f}'
+
+
+def _fsc_fmt_check(v):
+    if pd.isna(v):
+        return '—'
+    return '✅' if int(v) == 1 else '❌'
+
+
+def _fsc_preparar_tabla(df_f):
+    """Toma el DataFrame crudo y devuelve uno listo para mostrar con todas
+    las columnas (criterios + ratios + valores absolutos)."""
+    df = df_f.copy()
+    # Si algún registro viene de un caché viejo, rellenamos columnas faltantes
+    for c in FSC_COLS_MOSTRAR:
+        if c not in df.columns:
+            df[c] = np.nan
+
+    df_show = df[FSC_COLS_MOSTRAR].copy()
+
+    for c in _FSC_COLS_PCT:
+        df_show[c] = pd.to_numeric(df_show[c], errors='coerce').apply(_fsc_fmt_pct)
+    for c in _FSC_COLS_X:
+        df_show[c] = pd.to_numeric(df_show[c], errors='coerce').apply(_fsc_fmt_x)
+    for c in _FSC_COLS_MONEY:
+        df_show[c] = pd.to_numeric(df_show[c], errors='coerce').apply(_fsc_fmt_money)
+    for c in _FSC_COLS_CRITERIOS:
+        df_show[c] = pd.to_numeric(df_show[c], errors='coerce').apply(_fsc_fmt_check)
+    return df_show
+
 
 def _fsc_color_fscore(val):
     try:
@@ -418,11 +489,23 @@ def _fsc_color_fscore(val):
     return 'background-color:#051505;color:#3fb950;font-weight:700'
 
 
+def _fsc_color_check(val):
+    if val == '✅':
+        return 'background-color:#081a0a'
+    if val == '❌':
+        return 'background-color:#2a0a0a'
+    return 'color:#6b7d9a'
+
+
 def _fsc_estilizar_tabla(df):
     _map = 'map' if hasattr(df.style, 'map') else 'applymap'
+    styled = df.style
+    styled = getattr(styled, _map)(_fsc_color_fscore, subset=['F-Score'])
+    cols_chk = [c for c in _FSC_COLS_CRITERIOS if c in df.columns]
+    if cols_chk:
+        styled = getattr(styled, _map)(_fsc_color_check, subset=cols_chk)
     styled = (
-        df.style
-        .pipe(lambda s: getattr(s, _map)(_fsc_color_fscore, subset=['F-Score']))
+        styled
         .format({'F-Score': '{:.2f}'})
         .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
         .set_table_styles([
@@ -436,8 +519,7 @@ def _fsc_estilizar_tabla(df):
 
 
 def _fsc_kpi_cards_4(items):
-    """Copia liviana del helper kpi_cards_4 de app.py, para que este
-    módulo no dependa de ningún import cruzado. items = (label, value, sub, color)."""
+    """items = (label, value, sub, color)."""
     cols = st.columns(len(items))
     for col, (label, value, sub, color) in zip(cols, items):
         with col:
@@ -464,8 +546,7 @@ def modulo_fscore(supabase=None):
     """Punto de entrada del módulo. Llamar desde app.py:
         from modulo_fscore import modulo_fscore
         modulo_fscore(supabase)
-    Si no se pasa `supabase`, funciona igual pero sin caché compartido
-    (solo memoria dentro del mismo cálculo, como antes).
+    Si no se pasa `supabase`, funciona igual pero sin caché compartido.
     """
     st.markdown("""
     <div style="background:linear-gradient(135deg,#151d0d 0%,#0f2410 50%,#0d1117 100%);
@@ -477,8 +558,10 @@ def modulo_fscore(supabase=None):
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
         Calcula el <b style="color:#e6edf3">F-Score de Piotroski</b> (0-9) para las empresas de los
         sectores que elijas: rentabilidad, apalancamiento/liquidez y eficiencia operativa,
-        comparando el último ejercicio contra el anterior. Se excluyen cripto, forex y
-        commodities porque no tienen balance sheet / income statement en Yahoo Finance.
+        comparando el último ejercicio contra el anterior. La tabla muestra el resultado de
+        cada uno de los 9 criterios (✅/❌) junto con todos los ratios y valores base.
+        Se excluyen cripto, forex y commodities porque no tienen balance sheet /
+        income statement en Yahoo Finance.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -493,15 +576,17 @@ def modulo_fscore(supabase=None):
         )
         st.session_state['fsc_sectores_sel'] = sectores_sel
     with c2:
-        universo_completo = st.checkbox('Universo completo', key='fsc_universo_completo',
-                                         help='Analiza TODOS los sectores disponibles (puede tardar varios minutos).')
+        universo_completo = st.checkbox(
+            'Universo completo', key='fsc_universo_completo',
+            help='Analiza TODOS los sectores disponibles (puede tardar varios minutos).')
 
     cparam1, cparam2 = st.columns(2)
     with cparam1:
         top_n = st.slider('Top N a mostrar', 5, 50, FSC_TOP_N_DEFAULT, 1, key='fsc_top_n')
     with cparam2:
-        max_workers = st.slider('Descargas en paralelo', 2, 16, 8, 1, key='fsc_max_workers',
-                                 help='Más paralelismo = más rápido, pero mayor riesgo de rate-limit de Yahoo Finance.')
+        max_workers = st.slider(
+            'Descargas en paralelo', 2, 16, 8, 1, key='fsc_max_workers',
+            help='Más paralelismo = más rápido, pero mayor riesgo de rate-limit de Yahoo Finance.')
 
     sectores_a_usar = _FSC_SECTORES_ORDENADOS if universo_completo else sectores_sel
 
@@ -562,19 +647,30 @@ def modulo_fscore(supabase=None):
         df_f = df_f[df_f['Sectores'].str.contains(f_sector, regex=False)]
     df_f = df_f[df_f['F-Score'].between(*f_score_rng)]
 
-    cols_mostrar = ['Ticker', 'Sectores', 'F-Score', 'Criterios evaluados', 'ROA', 'Current Ratio', 'Asset Turnover']
-    df_show = df_f[cols_mostrar].copy()
-    df_show['ROA'] = df_show['ROA'].apply(lambda v: f'{v*100:.1f}%' if pd.notna(v) else 'N/D')
-    df_show['Current Ratio'] = df_show['Current Ratio'].apply(lambda v: f'{v:.2f}x' if pd.notna(v) else 'N/D')
-    df_show['Asset Turnover'] = df_show['Asset Turnover'].apply(lambda v: f'{v:.2f}x' if pd.notna(v) else 'N/D')
+    # Tabla completa: criterios C1-C9 + ratios + valores absolutos
+    df_show = _fsc_preparar_tabla(df_f)
 
     st.dataframe(_fsc_estilizar_tabla(df_show), use_container_width=True,
-                 height=min(700, max(200, len(df_show) * 32 + 45)))
+                 height=min(700, max(200, len(df_show) * 35 + 45)))
     st.caption(f'{len(df_show)} empresas mostradas de {len(df_fsc)} totales')
 
     st.markdown(f'### 🏆 Top {top_n} por F-Score')
     st.dataframe(_fsc_estilizar_tabla(df_show.head(top_n)), use_container_width=True,
                  height=min(600, top_n * 35 + 45))
+
+    with st.expander('ℹ️ Qué significa cada criterio'):
+        st.markdown(
+            '- **C1 Net Income ↑**: utilidad neta actual ≥ año anterior\n'
+            '- **C2 ROA ↑**: ROA actual ≥ ROA del año anterior\n'
+            '- **C3 OCF ↑**: flujo de caja operativo actual ≥ año anterior\n'
+            '- **C4 OCF > NI**: flujo operativo mayor que la utilidad neta (calidad de ganancias)\n'
+            '- **C5 Deuda ↓**: deuda total menor que el año anterior\n'
+            '- **C6 Current Ratio > 1**: activos corrientes / pasivos corrientes mayor a 1\n'
+            '- **C7 Sin dilución**: acciones en circulación ≤ año anterior\n'
+            '- **C8 Margen Bruto ↑**: utilidad bruta actual ≥ año anterior\n'
+            '- **C9 Asset Turnover ≥ 1**: ingresos / activos totales del año anterior ≥ 1\n\n'
+            '✅ cumple · ❌ no cumple · — no se pudo evaluar (dato faltante en Yahoo Finance).'
+        )
 
     csv_bytes = df_fsc.to_csv(index=False).encode('utf-8')
     nombre_sectores = '_'.join(sectores_a_usar) if not universo_completo else 'universo_completo'
@@ -589,22 +685,21 @@ def modulo_fscore(supabase=None):
 #  SNIPPET DE INTEGRACIÓN EN app.py (referencia, no se ejecuta)
 # ==============================================================
 #
-# 1) Import, junto a los demás módulos:
+# 1) Import:
 #       from modulo_fscore import modulo_fscore
 #
-# 2) Mapa de navegación (por ejemplo, dentro de _TRADING_MAP o
-#    _HERRAMIENTAS_MAP, junto al resto de las opciones):
+# 2) Mapa de navegación:
 #       '🧮 F-Score (Piotroski)': ('fscore', 'fscore'),
 #
-# 3) Si querés que sea exclusivo de Pro, agregar 'fscore' al set:
+# 3) Solo Pro (opcional):
 #       MODULOS_SOLO_PRO = {'optimizador', 'senales', 'pares', 'fscore'}
 #
-# 4) Título y badge para el page header:
+# 4) Título y badge:
 #       titulos['fscore'] = ('F-Score (Piotroski)', '🧮',
 #           'Calidad financiera 0-9 por sector — Piotroski Score')
 #       badge_map['fscore'] = ('#3fb950', 'rgba(63,185,80,0.12)', 'F-SCORE')
 #
-# 5) Renderizado, junto a los otros `elif MODULO == '...':`:
+# 5) Renderizado:
 #       elif MODULO == 'fscore':
 #           if TIENE_ACCESO_PRO:
 #               modulo_fscore(supabase)
