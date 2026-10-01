@@ -9051,11 +9051,16 @@ with st.container(key='nav_mobile_wrap'):
     if n_alertas_fin > 0:
         st.caption(f'🔔 {n_alertas_fin} alerta(s) en Finanzas Personales')
 
-    _mc3, _mc4 = st.columns(2)
+    _mc3, _mc4, _mc5 = st.columns(3)
     with _mc3:
         if st.button('↺ Actualizar', use_container_width=True, key='nav_refresh_mobile'):
             _refrescar_cotizaciones()
     with _mc4:
+        if st.button('🤖 Asistente IA' if TIENE_ACCESO_PRO else '🔒 Asistente IA',
+                     use_container_width=True, key='btn_ia_mobile'):
+            st.session_state['ia_chat_abierto'] = not st.session_state.get('ia_chat_abierto', False)
+            st.rerun()
+    with _mc5:
         if st.button('🚪 Cerrar sesión', use_container_width=True, key='btn_logout_mobile'):
             auth_client.auth.sign_out()
             cookies.remove("sb_refresh_token")
