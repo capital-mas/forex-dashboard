@@ -577,7 +577,7 @@ def _contar_pagos_pendientes(_client):
         return 0
 
 PLAN_USUARIO = _plan_cache(supabase, USER_ID)
-MODULOS_SOLO_PRO = {'optimizador', 'senales', 'pares', 'ia_asistente', 'fscore', 'breadth', 'renta_fija_macro', 'cot', 'tff'}
+MODULOS_SOLO_PRO = {'optimizador', 'pares', 'ia_asistente', 'fscore', 'breadth', 'renta_fija_macro', 'cot', 'tff'}
 TIENE_ACCESO_PRO = ES_ADMIN or PLAN_USUARIO in ('trial', 'pro')
 @st.cache_data(ttl=300, show_spinner=False)
 def _modulos_contratados_cache(_client, user_id):
@@ -647,7 +647,7 @@ def _mostrar_bloqueo_pro(nombre_funcion):
       </div>
       <div style="font-size:13px;color:#8b949e;line-height:1.7;max-width:480px;margin:0 auto 20px auto">
         Tu plan actual (Básico) no incluye esta función. Actualizá a Pro para
-        desbloquear Optimizador de Cartera, Señales de Trading y Rotación/Pares.
+        desbloquear Optimizador de Cartera y Rotación/Pares.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -8865,8 +8865,8 @@ with st.container(key='nav_pills_wrap'):
         _TRADING_MAP = {
             ('🔄 Rotación y Pares' if TIENE_ACCESO_PRO else '🔒 Rotación y Pares (Pro)'):
                                      ('pares', 'pares'),
-            ('🎯 Señales de Trading' if TIENE_ACCESO_PRO else '🔒 Señales de Trading (Pro)'):
-                                     ('senales', 'senales'),
+            ('🎯 Señales de Trading' if TIENE_ACCESO_PRO else '🎯 Señales de Trading (Básico: 1/día)'):
+                         ('senales', 'senales'),
             '🎲 Valuación de Opciones': ('opciones', 'opciones'),
             '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),
             # ← borrá acá la línea de '🕯️ Lectura de Velas'
@@ -9001,7 +9001,7 @@ with st.container(key='nav_mobile_wrap'):
         '🎲 Opciones': 'opciones',
         ('🧲 GEX' if TIENE_ACCESO_PRO else '🔒 GEX (Pro)'): 'gex',
         '📐 Promediador': 'promediador',
-        ('🎯 Señales' if TIENE_ACCESO_PRO else '🔒 Señales (Pro)'): 'senales',
+        ('🎯 Señales' if TIENE_ACCESO_PRO else '🎯 Señales (1/día)'): 'senales',
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
         ('📡 Salud Mercado' if TIENE_ACCESO_PRO else '🔒 Salud Mercado (Pro)'): 'breadth',
         ('📉 Renta Fija/Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija/Macro (Pro)'): 'renta_fija_macro',
@@ -9262,10 +9262,8 @@ elif MODULO == 'gex':
         _mostrar_bloqueo_pro('GEX')
 
 elif MODULO == 'senales':
-    if TIENE_ACCESO_PRO:
-        render_senales_trading(supabase, USER_ID, st.session_state["usuario"].email)
-    else:
-        _mostrar_bloqueo_pro('Señales de Trading')
+    render_senales_trading(supabase, USER_ID, st.session_state["usuario"].email,
+                           tiene_acceso_pro=TIENE_ACCESO_PRO)
 
 elif MODULO == 'calendario':
        render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
