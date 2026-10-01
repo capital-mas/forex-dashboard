@@ -1649,56 +1649,57 @@ MESES_ES = [
 ]
 
 
-def modulo_ia_asistente(ctx):
+def modulo_ia_asistente(ctx, compacto=False):
     if not ctx.get('tiene_acceso_pro'):
         st.markdown("""
         <div style="background:linear-gradient(135deg,#1a0d20 0%,#150a30 50%,#0d1117 100%);
              border:1px solid #21262d; border-top:2px solid #bc8cff;
-             border-radius:14px; padding:40px 32px; text-align:center; margin-top:20px;">
-          <div style="font-size:40px;margin-bottom:12px">🔒🤖</div>
-          <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:8px">
+             border-radius:14px; padding:24px 18px; text-align:center; margin-top:10px;">
+          <div style="font-size:32px;margin-bottom:8px">🔒🤖</div>
+          <div style="font-size:15px;font-weight:700;color:#e6edf3;margin-bottom:6px">
             El Asistente IA es exclusivo del plan Pro
           </div>
-          <div style="font-size:13px;color:#8b949e;max-width:480px;margin:0 auto">
-            Actualizá tu plan para acceder al asistente que analiza activos, compara opciones,
-            revisa tus finanzas personales, arma carteras automáticas (F-Score + Top-Down + Optimizador)
-            y te deja registrar movimientos por chat.
+          <div style="font-size:12px;color:#8b949e">
+            Actualizá tu plan para analizar activos, armar carteras automáticas y registrar movimientos por chat.
           </div>
         </div>
         """, unsafe_allow_html=True)
         return
 
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#0d1520 0%,#1a0d30 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid #bc8cff;
-         border-radius:14px; padding:22px 26px; margin-bottom:18px;">
-      <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:4px">🤖 Asistente Capital+</div>
-      <div style="font-size:12px;color:#6b7d9a">Preguntame por cualquier módulo de la app, pedime que registre un gasto/ingreso, o decime "armame una cartera con..." para el pipeline automático. ⚠️ No es asesoramiento financiero.</div>
-    </div>
-    """, unsafe_allow_html=True)
+    if not compacto:
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,#0d1520 0%,#1a0d30 50%,#0d1117 100%);
+             border:1px solid #21262d; border-top:2px solid #bc8cff;
+             border-radius:14px; padding:22px 26px; margin-bottom:18px;">
+          <div style="font-size:17px;font-weight:700;color:#e6edf3;margin-bottom:4px">🤖 Asistente Capital+</div>
+          <div style="font-size:12px;color:#6b7d9a">Preguntame por cualquier módulo de la app, pedime que registre un gasto/ingreso, o decime "armame una cartera con..." para el pipeline automático. ⚠️ No es asesoramiento financiero.</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     if 'ia_mensajes' not in st.session_state:
         st.session_state['ia_mensajes'] = []
 
-    # Los botones de sugerencia rápida ("Sectores más baratos", etc.) solo
-    # tienen sentido cuando no hay un wizard/confirmación en curso — si no,
-    # se pisan visualmente con los botones de opciones del paso actual.
     pares_botones = _opciones_pendientes_botones(ctx)
 
     sugerencia_click = None
     if not pares_botones:
-        cols_sug = st.columns(len(_SUGERENCIAS_RAPIDAS))
-        for col, sug in zip(cols_sug, _SUGERENCIAS_RAPIDAS):
-            with col:
-                if st.button(sug, use_container_width=True, key=f'ia_sug_{sug}'):
-                    sugerencia_click = sug
+        n_cols_sug = 2 if compacto else len(_SUGERENCIAS_RAPIDAS)
+        for i in range(0, len(_SUGERENCIAS_RAPIDAS), n_cols_sug):
+            fila = _SUGERENCIAS_RAPIDAS[i:i + n_cols_sug]
+            cols_sug = st.columns(len(fila))
+            for col, sug in zip(cols_sug, fila):
+                with col:
+                    if st.button(sug, use_container_width=True, key=f'ia_sug_{sug}'):
+                        sugerencia_click = sug
 
-    for msg in st.session_state['ia_mensajes']:
-        with st.chat_message(msg['role'], avatar='🤖' if msg['role'] == 'assistant' else None):
-            st.markdown(msg['content'])
+    # Caja con scroll fija en modo flotante; normal en pantalla completa
+    caja = st.container(height=340) if compacto else st.container()
 
-    # Botones de opción rápida para el paso actual del wizard/confirmación,
-    # renderizados justo debajo del último mensaje del asistente.
+    with caja:
+        for msg in st.session_state['ia_mensajes']:
+            with st.chat_message(msg['role'], avatar='🤖' if msg['role'] == 'assistant' else None):
+                st.markdown(msg['content'])
+
     boton_click = None
     if pares_botones:
         boton_click = _render_botones_rapidos(pares_botones, len(st.session_state['ia_mensajes']))
@@ -1709,16 +1710,17 @@ def modulo_ia_asistente(ctx):
     prompt = sugerencia_click or boton_click or chat_val
     if prompt:
         st.session_state['ia_mensajes'].append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        with st.chat_message("assistant", avatar='🤖'):
-            with st.spinner("Analizando..."):
-                resp = responder(prompt, ctx)
-            st.markdown(resp)
+        with caja:
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant", avatar='🤖'):
+                with st.spinner("Analizando..."):
+                    resp = responder(prompt, ctx)
+                st.markdown(resp)
         st.session_state['ia_mensajes'].append({"role": "assistant", "content": resp})
         st.rerun()
 
-    if st.button('🗑️ Limpiar conversación', key='ia_clear'):
+    if st.button('🗑️ Limpiar conversación', key='ia_clear', use_container_width=True):
         st.session_state['ia_mensajes'] = []
         st.session_state['ia_pendiente_mov'] = None
         st.session_state['ia_pendiente_tipo'] = None
