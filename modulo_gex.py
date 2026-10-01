@@ -1425,13 +1425,12 @@ CBOE publica la vol. implícita y el interés abierto de cada contrato, pero no 
                         st.caption(f"ℹ️ El put sugerido ({s['strike']:,.2f}) queda **por encima** del punto de cambio de gamma "
                                    f"({z['flip']:,.2f}): si el precio lo alcanza, ya estaría en régimen de amplificación.")
 
-            # publica todo en la sesión para que la calculadora lo lea (conserva el squeeze publicado)
             publicar_puente_gex(simbolo, S, z, extra={
                 'vto': vto_p, 'sugerencias': sug,
                 'techo_esperado': float(fila_em['alto']) if fila_em is not None else None,
                 'piso_esperado': float(fila_em['bajo']) if fila_em is not None else None})
             st.success(f"✅ Datos publicados para **Valuación de Opciones** ({simbolo}, {etiq.get(vto_p, vto_p)}). "
-
+                       "Ya podés usarlos en la calculadora.")
 
             render_explicacion('Cómo funciona el puente con Valuación de Opciones y cómo usarlo', f"""
 **Qué hace**
