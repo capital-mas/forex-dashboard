@@ -8701,6 +8701,10 @@ def _render_mi_cuenta(col):
                     st.session_state['nav_horizonte'] = 'noticias'
                     st.session_state['nav_modulo'] = 'noticias'
                     st.rerun()
+                if st.button('🤖 Asistente IA' if TIENE_ACCESO_PRO else '🔒 Asistente IA (Pro)',
+                             use_container_width=True, key='menu_ia_chat'):
+                    st.session_state['ia_chat_abierto'] = not st.session_state.get('ia_chat_abierto', False)
+                    st.rerun()
 
                 if ES_ADMIN:
                     st.markdown('<hr style="margin:6px 0;border-color:#21262d">', unsafe_allow_html=True)
@@ -8824,10 +8828,8 @@ with st.container(key='nav_pills_wrap'):
                                      ('breadth', 'breadth'),
             ('📉 Renta Fija y Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija y Macro (Pro)'):
                                      ('renta_fija_macro', 'renta_fija_macro'),
-            ('🤖 Asistente IA' if TIENE_ACCESO_PRO else '🔒 Asistente IA (Pro)'):
-                                     ('ia_asistente', 'ia_asistente'),
         }
-        _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth', 'renta_fija_macro', 'ia_asistente'}
+        _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth', 'renta_fija_macro'}
         _herr_activo = HORIZONTE in _herr_horizontes
         _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
         _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
@@ -9003,7 +9005,6 @@ with st.container(key='nav_mobile_wrap'):
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
         ('📡 Salud Mercado' if TIENE_ACCESO_PRO else '🔒 Salud Mercado (Pro)'): 'breadth',
         ('📉 Renta Fija/Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija/Macro (Pro)'): 'renta_fija_macro',
-        ('🤖 Asistente IA' if TIENE_ACCESO_PRO else '🔒 Asistente IA (Pro)'): 'ia_asistente',
         '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
     }
     if ES_ADMIN:
@@ -9322,12 +9323,6 @@ elif MODULO == 'velas':
         )
     else:
         st.warning('Este módulo todavía no está disponible.')
-
-elif MODULO == 'ia_asistente':
-    if TIENE_ACCESO_PRO:
-        modulo_ia_asistente(CTX_IA)
-    else:
-        _mostrar_bloqueo_pro('Asistente IA')
 
 elif MODULO == 'admin_pagos':
     if ES_ADMIN:
@@ -10245,7 +10240,47 @@ if HORIZONTE == 'largo' and MODULO == 'tff':
         modulo_tff(supabase, USER_ID, st.session_state["usuario"].email)
     else:
         _mostrar_bloqueo_pro('Análisis TFF')  
-    
+
+ # ==============================================================
+#  ASISTENTE IA — panel flotante tipo chatbot (lado derecho)
+# ==============================================================
+st.markdown("""
+<style>
+.st-key-ia_chat_flotante {
+    position: fixed !important;
+    bottom: 20px; right: 20px;
+    width: 390px; max-width: calc(100vw - 24px);
+    max-height: 88vh; overflow-y: auto;
+    z-index: 9999;
+    background: #0d1117;
+    border: 1px solid #21262d; border-top: 2px solid #bc8cff;
+    border-radius: 16px;
+    padding: 14px 14px 10px 14px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.65);
+}
+.st-key-ia_chat_flotante h1, .st-key-ia_chat_flotante h2,
+.st-key-ia_chat_flotante h3 { text-align: left !important; }
+@media (max-width: 768px) {
+    .st-key-ia_chat_flotante { right: 6px; bottom: 6px; width: calc(100vw - 12px); }
+}
+</style>
+""", unsafe_allow_html=True)
+
+if st.session_state.get('ia_chat_abierto'):
+    with st.container(key='ia_chat_flotante'):
+        _h1, _h2 = st.columns([5, 1])
+        with _h1:
+            st.markdown(
+                '<div style="font-size:15px;font-weight:700;color:#e6edf3">🤖 Asistente Capital+</div>'
+                '<div style="font-size:11px;color:#6b7d9a">No es asesoramiento financiero</div>',
+                unsafe_allow_html=True,
+            )
+        with _h2:
+            if st.button('✕', key='ia_chat_cerrar', use_container_width=True):
+                st.session_state['ia_chat_abierto'] = False
+                st.rerun()
+        modulo_ia_asistente(CTX_IA, compacto=True)
+        
 # ==============================================================
 #  FOOTER
 # ==============================================================
