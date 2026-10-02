@@ -21,6 +21,9 @@
 #       (múltiplos de σ + niveles técnicos), sin cargar objetivo a mano.
 #     - Historial de las últimas 15 velas del Monte Carlo (backtest:
 #       qué predijo el modelo vs. qué pasó realmente).
+#     - Opción "Usar precio en vivo" (1H): las probabilidades parten del
+#       precio de la vela en formación; el historial muestra la fila ⏳
+#       con la proyección vigente.
 # ==============================================================
 
 import numpy as np
@@ -444,15 +447,22 @@ def _render_historial(d, n=15, intradia=False):
 # ==============================================================
 
 def _datos_mc(ticker, horizonte, descargar_datos):
-    """Serie de precios con la frecuencia que corresponde al horizonte elegido:
+    """Devuelve (df, vivo).
+    df   = velas CERRADAS (con la frecuencia del horizonte elegido).
+    vivo = (precio_actual, hora_apertura_vela) de la vela en formación (solo 1h), o None.
     1h -> velas de 1 hora (últimos 3 meses) | 1d -> velas diarias (último año).
     Así σ se estima con retornos de la misma escala que se quiere proyectar."""
     if horizonte == '1h':
-        df = _descargar_velas_intradia(ticker, '3mo', '1h')
-        if df is None or df.empty:
-            return None
-        return _preparar_intradia(df, excluir_formacion=True)
-    return descargar_datos(ticker, '1y')
+        raw = _descargar_velas_intradia(ticker, '3mo', '1h')
+        if raw is None or raw.empty:
+            return None, None
+        cerradas = _preparar_intradia(raw, excluir_formacion=True)
+        completo = _preparar_intradia(raw, excluir_formacion=False)
+        vivo = None
+        if len(completo) > len(cerradas):
+            vivo = (float(completo['Close'].iloc[-1]), completo.index[-1])
+        return cerradas, vivo
+    return descargar_datos(ticker, '1y'), None
 
 
 def _retornos_full(df, horizonte):
@@ -569,7 +579,34 @@ def _historial_mc(df, horizonte, usar_drift, n_hist=MC_HIST_N, n_sims=MC_HIST_SI
     return filas
 
 
-def _render_historial_mc(df, horizonte, fmt, usar_drift):
+def _fila_en_curso(df, horizonte, usar_drift, vivo):
+    """Proyección vigente (desde el último cierre) comparada con el precio en vivo."""
+    if horizonte != '1h' or vivo is None:
+        return None
+    precio_vivo, t_vivo = vivo
+    close = pd.to_numeric(df['Close'], errors='coerce').dropna()
+    if close.empty:
+        return None
+    t_base = close.index[-1]
+    if t_vivo.normalize() != t_base.normalize():
+        return None   # la vela en formación es de otra rueda: no hay comparación válida
+    ret = _retornos_mc(df, horizonte)
+    if len(ret) < MC_MIN_RETORNOS:
+        return None
+    S0 = float(close.iloc[-1])
+    sigma = float(ret.std(ddof=1))
+    mu = float(ret.mean()) if usar_drift else -0.5 * sigma ** 2
+    finales = _simular_mc(S0, mu, sigma, MC_HIST_SIMS)[-1]
+    p5, p95 = np.percentile(finales, [5, 95])
+    return {
+        'base': t_base, 'S0': S0, 'p5': p5, 'p95': p95,
+        'prob_sube': float(np.mean(finales > S0) * 100),
+        'real': precio_vivo, 'var_real': (precio_vivo / S0 - 1) * 100,
+        'perc_real': float(np.mean(finales <= precio_vivo) * 100),
+    }
+
+
+def _render_historial_mc(df, horizonte, fmt, usar_drift, vivo=None):
     filas = _historial_mc(df, horizonte, usar_drift)
     if not filas:
         st.info('No hay suficientes velas para armar el historial del Monte Carlo.')
@@ -590,31 +627,54 @@ def _render_historial_mc(df, horizonte, fmt, usar_drift):
         with k3: st.metric('Velas evaluadas', f'{n}')
 
     intr = (horizonte == '1h')
-    tabla = pd.DataFrame({
-        'Vela base': [f['base'].strftime('%d/%m %H:%M' if intr else '%d/%m/%Y') for f in filas],
-        'Precio base': [fmt(f['S0']) for f in filas],
-        'Banda 5–95%': [f"{fmt(f['p5'])} – {fmt(f['p95'])}" for f in filas],
-        'Prob. subir': [f"{f['prob_sube']:.1f}%" for f in filas],
-        'Cierre real': [fmt(f['real']) for f in filas],
-        'Var. real': [f"{f['var_real']:+.2f}%" for f in filas],
-        'Percentil real': [f"P{f['perc_real']:.0f}" for f in filas],
-        '¿Dentro de 90%?': ['✅ Sí' if f['en_90'] else '❌ No' for f in filas],
-    })
+
+    def _desde(t):
+        # En 1H Yahoo etiqueta la vela por su hora de APERTURA; acá se muestra la hora de CIERRE,
+        # que es el momento desde el que se hizo la proyección.
+        return (t + pd.Timedelta(hours=1)).strftime('%d/%m %H:%M') if intr else t.strftime('%d/%m/%Y')
+
+    registros = []
+    ec = _fila_en_curso(df, horizonte, usar_drift, vivo)
+    if ec:
+        registros.append({
+            'Proyectado desde': _desde(ec['base']) + ' ⏳',
+            'Precio base': fmt(ec['S0']),
+            'Banda 5–95%': f"{fmt(ec['p5'])} – {fmt(ec['p95'])}",
+            'Prob. subir': f"{ec['prob_sube']:.1f}%",
+            'Cierre real': f"{fmt(ec['real'])} (en curso)",
+            'Var. real': f"{ec['var_real']:+.2f}%",
+            'Percentil real': f"P{ec['perc_real']:.0f}",
+            '¿Dentro de 90%?': '⏳ Va dentro' if ec['p5'] <= ec['real'] <= ec['p95'] else '⏳ Va fuera',
+        })
+    for f in filas:
+        registros.append({
+            'Proyectado desde': _desde(f['base']),
+            'Precio base': fmt(f['S0']),
+            'Banda 5–95%': f"{fmt(f['p5'])} – {fmt(f['p95'])}",
+            'Prob. subir': f"{f['prob_sube']:.1f}%",
+            'Cierre real': fmt(f['real']),
+            'Var. real': f"{f['var_real']:+.2f}%",
+            'Percentil real': f"P{f['perc_real']:.0f}",
+            '¿Dentro de 90%?': '✅ Sí' if f['en_90'] else '❌ No',
+        })
+    tabla = pd.DataFrame(registros)
 
     def _c_var(v):
         return f'color:{C_GREEN};font-weight:700' if v.startswith('+') else f'color:{C_RED};font-weight:700'
 
     def _c_ok(v):
-        return f'color:{C_GREEN};font-weight:700' if 'Sí' in v else f'color:{C_RED};font-weight:700'
+        return f'color:{C_GREEN};font-weight:700' if ('Sí' in v or 'Va dentro' in v) else f'color:{C_RED};font-weight:700'
 
     st.dataframe(_estilo_tabla(tabla, {'Var. real': _c_var, '¿Dentro de 90%?': _c_ok}),
-                 use_container_width=True, hide_index=True, height=min(620, n * 36 + 45))
+                 use_container_width=True, hide_index=True, height=min(640, len(tabla) * 36 + 45))
     st.caption(
-        f'Cada fila: se simuló la {"hora" if intr else "rueda"} siguiente usando solo los datos hasta la '
-        f'"vela base" y se comparó con el cierre real. "Percentil real" indica en qué lugar de la '
-        f'distribución simulada cayó el cierre real (P50 = justo en la mediana). '
-        f'{"En 1H se omiten los pasos que cruzan de una rueda a otra. " if intr else "La última rueda puede estar todavía en curso. "}'
-        f'Con drift apagado la prob. de subir ronda 50% por construcción: lo que se evalúa ahí es el rango, no la dirección.')
+        'Cada fila: se simuló la ' + ('hora' if intr else 'rueda') + ' siguiente usando solo los datos hasta '
+        '"Proyectado desde" y se comparó con el cierre real. "Percentil real" indica en qué lugar de la '
+        'distribución simulada cayó el cierre real (P50 = justo en la mediana). '
+        + ('La fila ⏳ es la proyección vigente: compara contra el precio de ahora y todavía no está resuelta '
+           '(no entra en las coberturas). En 1H se omiten los pasos que cruzan de una rueda a otra. ' if intr
+           else 'La última rueda puede estar todavía en curso. ')
+        + 'Con drift apagado la prob. de subir ronda 50% por construcción: lo que se evalúa ahí es el rango, no la dirección.')
 
 
 def _fig_mc_abanico(paths, S0, horizonte, objetivo=None):
@@ -686,7 +746,7 @@ def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
     st.caption('El Monte Carlo es independiente de la temporalidad de las velas: '
                'podés mirar velas de 1H y proyectar a 1 día, o al revés.')
 
-    c1, c2, c3 = st.columns([1.8, 1, 1.4])
+    c1, c2, c3, c4 = st.columns([1.8, 1, 1.4, 1.6])
     with c1:
         horizonte = st.radio('Horizonte de la simulación', list(MC_HORIZONTES.keys()),
                              format_func=lambda k: MC_HORIZONTES[k], horizontal=True,
@@ -698,9 +758,14 @@ def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
                                  help='Si está apagado, la simulación no tiene sesgo direccional '
                                       '(solo expande el rango según la volatilidad). Con drift '
                                       'encendido se usa la media reciente de retornos, que es muy ruidosa.')
+    with c4:
+        usar_vivo = st.checkbox('Usar precio en vivo (vela en formación)', value=True,
+                                key='velas_mc_vivo', disabled=(horizonte != '1h'),
+                                help='Solo 1H. Las probabilidades parten del precio de ahora y no del '
+                                     'cierre de la última vela completa.')
 
     with st.spinner('Descargando datos y simulando...'):
-        df = _datos_mc(ticker, horizonte, descargar_datos)
+        df, vivo = _datos_mc(ticker, horizonte, descargar_datos)
 
     if df is None or len(df) == 0 or 'Close' not in df.columns:
         st.error('No se pudieron obtener datos para la simulación.')
@@ -712,7 +777,9 @@ def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
                    f'Se necesitan al menos {MC_MIN_RETORNOS}.')
         return
 
-    S0 = float(pd.to_numeric(df['Close'], errors='coerce').dropna().iloc[-1])
+    S0_cerrada = float(pd.to_numeric(df['Close'], errors='coerce').dropna().iloc[-1])
+    en_vivo = bool(usar_vivo and vivo is not None and horizonte == '1h')
+    S0 = vivo[0] if en_vivo else S0_cerrada
     sigma = float(ret.std(ddof=1))
     mu_log = float(ret.mean()) if usar_drift else -0.5 * sigma ** 2
 
@@ -724,7 +791,8 @@ def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
     unidad = 'hora' if horizonte == '1h' else 'día'
 
     kpi_cards_4([
-        ('Precio actual', fmt(S0), 'Último cierre de la serie', C_ACENT, ''),
+        ('Precio actual', fmt(S0),
+         (f'En vivo · vela de las {vivo[1]:%H:%M}' if en_vivo else 'Último cierre de la serie'), C_ACENT, ''),
         (f'Volatilidad por {unidad}', f'{sigma * 100:.2f}%',
          f'Desvío de {len(ret)} retornos {"horarios" if horizonte == "1h" else "diarios"}', C_YELL, ''),
         ('Prob. de subir', f'{prob_sube:.1f}%', f'Terminar por encima de {fmt(S0)}', C_GREEN, ''),
@@ -797,7 +865,7 @@ def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
     st.markdown(f'<div class="sec-title">Historial Monte Carlo · últimas {MC_HIST_N} velas ({"1H" if horizonte == "1h" else "1D"})</div>',
                 unsafe_allow_html=True)
     with st.spinner('Calculando historial del Monte Carlo...'):
-        _render_historial_mc(df, horizonte, fmt, usar_drift)
+        _render_historial_mc(df, horizonte, fmt, usar_drift, vivo if horizonte == '1h' else None)
 
     st.caption('Modelo: movimiento browniano geométrico con volatilidad constante, estimada con los '
                'retornos recientes. No contempla gaps, saltos ni cambios de régimen, y las colas '
