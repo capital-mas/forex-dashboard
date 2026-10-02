@@ -7,12 +7,103 @@
 #      from modulo_landing import pantalla_landing
 #      ...
 #      pantalla_landing(auth_client, cookies)
+#
+#  NOVEDAD: el usuario elige el servicio que quiere probar
+#  (Mercados / PyMEs). La elección:
+#    - se guarda en st.session_state['servicio_elegido']
+#    - se guarda en el perfil de Supabase Auth (user_metadata)
+#      al registrarse, así sobrevive a la confirmación por email
+#    - se vuelve a leer al iniciar sesión
+#  El archivo principal usa ese valor para decidir a qué módulo
+#  mandarlo y de qué módulo darle la prueba gratis.
 # ==============================================================
 
 import streamlit as st
 
 
-def pantalla_landing(auth_client, cookies):
+# ──────────────────────────────────────────────────────────────
+#  CATÁLOGO DE SERVICIOS — para habilitar/deshabilitar uno,
+#  solo cambiá 'disponible'. El id debe coincidir con las claves
+#  de PRODUCTOS en modulo_pago_manual ('mercados', 'pyme', ...).
+# ──────────────────────────────────────────────────────────────
+SERVICIOS = {
+    'mercados': {
+        'icono': '📈',
+        'nombre': 'Mercados & Finanzas',
+        'desc': 'Scoring cuantitativo, fundamental, optimizador de cartera, opciones y más.',
+        'disponible': True,
+        'badge': '📡 Análisis Cuantitativo de Mercados',
+        'titulo_html': 'Invertí con datos,<br>no con <span>corazonadas</span>',
+        'subtitulo': ('Capital+ combina scores cuantitativos, análisis fundamental, optimización de '
+                      'cartera y valuación de opciones en una sola herramienta — para acciones, ETFs, '
+                      'forex, commodities y cripto.'),
+    },
+    'pyme': {
+        'icono': '🏢',
+        'nombre': 'PyMEs',
+        'desc': 'Gestión de tu negocio: ventas, stock, clientes y caja en un solo lugar.',
+        'disponible': False,   # ← ponelo en True cuando lo abras al público
+        'badge': '🏢 Gestión para PyMEs',
+        'titulo_html': 'Ordená tu negocio,<br>tomá decisiones con <span>números</span>',
+        'subtitulo': ('Controlá ventas, stock, clientes y caja desde un solo lugar, '
+                      'con acceso para todo tu equipo.'),
+    },
+}
+SERVICIO_DEFAULT = 'mercados'
+
+
+def _servicio_actual():
+    """Devuelve el id del servicio elegido, validando que exista y esté disponible."""
+    sel = st.session_state.get('landing_servicio', SERVICIO_DEFAULT)
+    if sel not in SERVICIOS or not SERVICIOS[sel]['disponible']:
+        sel = SERVICIO_DEFAULT
+        st.session_state['landing_servicio'] = sel
+    return sel
+
+
+def _render_selector_servicio():
+    """Tarjetas clickeables para elegir el servicio. Devuelve el id elegido."""
+    st.markdown(
+        '<div style="font-size:12px;font-weight:700;color:#8b949e;text-transform:uppercase;'
+        'letter-spacing:.8px;margin:22px 0 8px 0">¿Qué servicio querés probar?</div>',
+        unsafe_allow_html=True,
+    )
+    actual = _servicio_actual()
+    cols = st.columns(len(SERVICIOS))
+    css_extra = ''
+    for col, (sid, info) in zip(cols, SERVICIOS.items()):
+        with col:
+            cont_key = f'landing_svc_{sid}'
+            with st.container(key=cont_key):
+                etiqueta = f"{info['icono']} {info['nombre']}"
+                if not info['disponible']:
+                    etiqueta += ' · Próximamente'
+                if st.button(etiqueta, key=f'landing_btn_svc_{sid}',
+                             use_container_width=True, disabled=not info['disponible']):
+                    st.session_state['landing_servicio'] = sid
+                    st.rerun()
+            st.markdown(
+                f'<div style="font-size:11.5px;color:#6b7d9a;line-height:1.5;margin-top:4px">{info["desc"]}</div>',
+                unsafe_allow_html=True,
+            )
+        if sid == actual:
+            css_extra += f"""
+            .st-key-{cont_key} button {{
+                border: 1.5px solid #6CC24A !important;
+                background: rgba(108,194,74,0.10) !important;
+                color: #6CC24A !important;
+                font-weight: 700 !important;
+                box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+            }}"""
+    if css_extra:
+        st.markdown(f'<style>{css_extra}</style>', unsafe_allow_html=True)
+    return actual
+
+
+def pantalla_landing(auth_client, cookies, data_client=None):
+    """data_client: cliente de Supabase con service_role (el mismo `supabase` del
+    principal). Si se pasa, al registrarse se guarda el servicio elegido en
+    perfiles.servicio_elegido, además de en el metadata de Auth."""
     st.markdown("""
     <style>
     .landing-hero-wrap { max-width:1100px; margin:40px auto 0 auto; padding:0 20px; }
@@ -80,21 +171,27 @@ def pantalla_landing(auth_client, cookies):
     col_hero, col_auth = st.columns([1.15, 1], gap="large")
 
     with col_hero:
-        st.markdown("""
-        <div class="landing-badge">📡 Análisis Cuantitativo de Mercados</div>
-        <div class="landing-title">Invertí con datos,<br>no con <span>corazonadas</span></div>
-        <div class="landing-sub">
-          Capital+ combina scores cuantitativos, análisis fundamental, optimización de
-          cartera y valuación de opciones en una sola herramienta — para acciones, ETFs,
-          forex, commodities y cripto.
-        </div>
+        servicio = _servicio_actual()
+        info = SERVICIOS[servicio]
+        st.markdown(f"""
+        <div class="landing-badge">{info['badge']}</div>
+        <div class="landing-title">{info['titulo_html']}</div>
+        <div class="landing-sub">{info['subtitulo']}</div>
         <div class="landing-sub" style="margin-top:18px">
           🎁 <b style="color:#e6edf3">7 días de prueba gratis</b>, sin tarjeta. Cancelás cuando quieras.
         </div>
         """, unsafe_allow_html=True)
+        # Selector de servicio (si cambia, rerun y se actualiza todo el hero)
+        servicio = _render_selector_servicio()
+        info = SERVICIOS[servicio]
 
     with col_auth:
         st.markdown('<div class="landing-auth-card">', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="font-size:11.5px;color:#8b949e;margin-bottom:8px">'
+            f'Servicio elegido: <b style="color:#6CC24A">{info["icono"]} {info["nombre"]}</b></div>',
+            unsafe_allow_html=True,
+        )
         tab_login, tab_registro = st.tabs(["Iniciar sesión", "Crear cuenta gratis"])
 
         with tab_login:
@@ -109,12 +206,19 @@ def pantalla_landing(auth_client, cookies):
                         res = auth_client.auth.sign_in_with_password({"email": email, "password": password})
                         st.session_state["usuario"] = res.user
                         cookies.set("sb_refresh_token", res.session.refresh_token)
+                        # Si el usuario ya se había registrado con un servicio, lo respetamos;
+                        # si no, usamos el que eligió ahora en la landing.
+                        meta = getattr(res.user, "user_metadata", None) or {}
+                        st.session_state["servicio_elegido"] = meta.get("servicio_elegido") or servicio
                         st.rerun()
                     except Exception:
                         st.error("Email o contraseña incorrectos.")
 
         with tab_registro:
-            st.markdown('<div class="landing-auth-sub">Empezá gratis en 30 segundos</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="landing-auth-sub">Empezá tu prueba gratis de {info["nombre"]} en 30 segundos</div>',
+                unsafe_allow_html=True,
+            )
             email_r = st.text_input("Email", key="landing_reg_email")
             password_r = st.text_input("Contraseña", type="password", key="landing_reg_pass")
             password_r2 = st.text_input("Confirmar contraseña", type="password", key="landing_reg_pass2")
@@ -127,7 +231,24 @@ def pantalla_landing(auth_client, cookies):
                     st.error("La contraseña debe tener al menos 6 caracteres.")
                 else:
                     try:
-                        auth_client.auth.sign_up({"email": email_r, "password": password_r})
+                        res_reg = auth_client.auth.sign_up({
+                            "email": email_r,
+                            "password": password_r,
+                            # 1) Metadata de Auth: persiste aunque confirme el mail desde otro dispositivo
+                            "options": {"data": {"servicio_elegido": servicio}},
+                        })
+                        st.session_state["servicio_elegido"] = servicio
+
+                        # 2) Tabla perfiles: queda visible en Supabase y consultable desde el panel admin.
+                        #    Si la fila de perfiles todavía no existe o la columna falta, no rompe el registro.
+                        user_nuevo = getattr(res_reg, "user", None)
+                        if data_client is not None and user_nuevo is not None:
+                            try:
+                                (data_client.table("perfiles")
+                                 .update({"servicio_elegido": servicio})
+                                 .eq("id", user_nuevo.id).execute())
+                            except Exception:
+                                pass
                         st.success("¡Cuenta creada! Revisá tu email para confirmarla y después iniciá sesión.")
                     except Exception as e:
                         st.error(f"Error al registrarse: {e}")
@@ -135,6 +256,42 @@ def pantalla_landing(auth_client, cookies):
 
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # ── CONTENIDO SEGÚN SERVICIO ─────────────────────────────────────
+    # Por ahora solo Mercados tiene secciones propias. Cuando abras PyMEs
+    # agregá acá un bloque _seccion_pyme() y listo.
+    if servicio == 'mercados':
+        _seccion_mercados()
+    else:
+        st.markdown("""
+        <div class="landing-section-title">Muy pronto</div>
+        <div class="landing-section-sub">Estamos terminando de preparar este servicio.</div>
+        """, unsafe_allow_html=True)
+
+    # ── FAQ ──────────────────────────────────────────────────────────
+    st.markdown('<div class="landing-section-title">Preguntas frecuentes</div>', unsafe_allow_html=True)
+    _, col_faq, _ = st.columns([1, 3, 1])
+    with col_faq:
+        with st.expander("¿Necesito tarjeta para probarlo?"):
+            st.write("No. Te registrás con tu email y arrancás el trial de 7 días sin cargar ningún método de pago.")
+        with st.expander("¿Qué pasa cuando termina el trial?"):
+            st.write("Te pedimos que elijas un plan para seguir con acceso. El pago se realiza en criptomonedas.")
+        with st.expander("¿Puedo cancelar cuando quiera?"):
+            st.write("Sí, la suscripción se puede cancelar en cualquier momento, sin permanencia mínima.")
+        with st.expander("¿Puedo probar más de un servicio?"):
+            st.write("Cada servicio tiene su propia prueba gratuita. Podés sumar otro más adelante desde tu cuenta.")
+        with st.expander("¿Los datos son en tiempo real?"):
+            st.write("En Mercados, los precios se actualizan con caché de hasta 30 minutos según el módulo, usando datos de Yahoo Finance.")
+        with st.expander("¿Esto es asesoramiento financiero?"):
+            st.write("No. Capital+ es una herramienta de análisis cuantitativo con fines informativos, no constituye recomendación de inversión.")
+
+    st.markdown("""
+    <div class="landing-footer">
+      📡 Capital+ · Análisis cuantitativo de mercados · Solo informativo, no constituye asesoramiento financiero.
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def _seccion_mercados():
     # ── FEATURES ─────────────────────────────────────────────────────
     st.markdown("""
     <div class="landing-section-title">Todo lo que necesitás para decidir</div>
@@ -200,17 +357,11 @@ def pantalla_landing(auth_client, cookies):
     st.markdown("""
     <style>
     .pricing-grid {
-        display:grid;
-        grid-template-columns:repeat(4,1fr);
-        gap:16px;
-        max-width:1080px;
-        margin:0 auto;
-        padding:0 20px;
-        align-items:stretch;
+        display:grid; grid-template-columns:repeat(4,1fr); gap:16px;
+        max-width:1080px; margin:0 auto; padding:0 20px; align-items:stretch;
     }
     .pricing-card {
-        position:relative;
-        background:#0d1117; border:1px solid #21262d; border-top:2px solid #21262d;
+        position:relative; background:#0d1117; border:1px solid #21262d; border-top:2px solid #21262d;
         border-radius:14px; padding:26px 20px 22px 20px;
         text-align:center; display:flex; flex-direction:column;
         transition:border-color .2s, transform .2s;
@@ -230,22 +381,14 @@ def pantalla_landing(auth_client, cookies):
         font-size:12px; color:#8b949e; font-weight:700;
         text-transform:uppercase; letter-spacing:1px; margin-bottom:14px;
     }
-    .pricing-price {
-        font-size:26px; font-weight:800; color:#e6edf3; line-height:1.15;
-    }
+    .pricing-price { font-size:26px; font-weight:800; color:#e6edf3; line-height:1.15; }
     .pricing-price small { font-size:13px; color:#8b949e; font-weight:500; }
-    .pricing-permes {
-        font-size:12px; color:#6CC24A; font-weight:700; margin-top:6px;
-    }
+    .pricing-permes { font-size:12px; color:#6CC24A; font-weight:700; margin-top:6px; }
     .pricing-sub { font-size:11.5px; color:#8b949e; margin:10px 0 16px 0; flex-grow:1; }
     .pricing-trial { font-size:11.5px; color:#6CC24A; font-weight:700; margin-bottom:3px; }
     .pricing-cancel { font-size:10.5px; color:#6b7d9a; }
-    @media (max-width:900px) {
-        .pricing-grid { grid-template-columns:repeat(2,1fr); }
-    }
-    @media (max-width:560px) {
-        .pricing-grid { grid-template-columns:1fr; }
-    }
+    @media (max-width:900px) { .pricing-grid { grid-template-columns:repeat(2,1fr); } }
+    @media (max-width:560px) { .pricing-grid { grid-template-columns:1fr; } }
     </style>
     """, unsafe_allow_html=True)
 
@@ -271,26 +414,5 @@ def pantalla_landing(auth_client, cookies):
         <div class="pricing-trial">🎁 7 días gratis</div>
         <div class="pricing-cancel">Pago en cripto</div>
       </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── FAQ ──────────────────────────────────────────────────────────
-    st.markdown('<div class="landing-section-title">Preguntas frecuentes</div>', unsafe_allow_html=True)
-    _, col_faq, _ = st.columns([1, 3, 1])
-    with col_faq:
-        with st.expander("¿Necesito tarjeta para probarlo?"):
-            st.write("No. Te registrás con tu email y arrancás el trial de 7 días sin cargar ningún método de pago.")
-        with st.expander("¿Qué pasa cuando termina el trial?"):
-            st.write("Te pedimos que elijas un plan (Básico o Pro) para seguir con acceso. El pago se realiza en criptomonedas.")
-        with st.expander("¿Puedo cancelar cuando quiera?"):
-            st.write("Sí, la suscripción se puede cancelar en cualquier momento, sin permanencia mínima.")
-        with st.expander("¿Los datos son en tiempo real?"):
-            st.write("Los precios se actualizan con caché de hasta 30 minutos según el módulo, usando datos de Yahoo Finance.")
-        with st.expander("¿Esto es asesoramiento financiero?"):
-            st.write("No. Capital+ es una herramienta de análisis cuantitativo con fines informativos, no constituye recomendación de inversión.")
-
-    st.markdown("""
-    <div class="landing-footer">
-      📡 Capital+ · Análisis cuantitativo de mercados · Solo informativo, no constituye asesoramiento financiero.
     </div>
     """, unsafe_allow_html=True)
