@@ -1,7 +1,7 @@
 # ==============================================================
 #  MÓDULO PyMEs — v3 (DASHBOARD ÚNICO, MODO SIMULACIÓN, sin base de datos)
 #
-#  Una sola pantalla, sin pestañas, con 4 módulos visibles a la vez:
+#  Dashboard con 4 módulos, cada uno accesible con su botón (render_nav_pyme):
 #
 #     KPIs (arriba)  Caja chica · Bancos/Digital · Stock crítico · Resultado neto del mes
 #     A) Registradora exprés   Venta · Compra · Gasto · Cobro · Pago
@@ -531,8 +531,15 @@ def _kpis_header():
 # ==============================================================
 
 def _form_venta():
+    izq, der = st.columns([1, 1], gap='medium')
+    with izq:
+        _venta_busqueda()
+    with der:
+        _venta_ticket()
+
+
+def _venta_busqueda():
     productos = _s('productos')
-    carrito = _s('carrito')
 
     st.text_input('Buscar producto o código de barras (F2)', key='pw_busq',
                   placeholder='Escaneá o escribí y presioná Enter', on_change=_on_busqueda)
@@ -559,6 +566,11 @@ def _form_venta():
                           use_container_width=True, disabled=p['current_stock'] <= 0,
                           on_click=_cart_add, args=(p['id'],),
                           help=f"Stock: {p['current_stock']}")
+
+
+
+def _venta_ticket():
+    carrito = _s('carrito')
 
     _titulo('🧾 Ticket actual')
     if not carrito:
@@ -954,11 +966,14 @@ def _bloque_insumos():
 def _modulo_b():
     with st.container(border=True):
         _titulo('📦 B · Inventario y costos')
-        _bloque_catalogo()
-        _bloque_nuevo_producto()
-        _bloque_ajustes()
-        _bloque_escandallo()
-        _bloque_insumos()
+        izq, der = st.columns([1, 1], gap='medium')
+        with izq:
+            _bloque_catalogo()
+            _bloque_nuevo_producto()
+        with der:
+            _bloque_ajustes()
+            _bloque_escandallo()
+            _bloque_insumos()
 
 
 # ==============================================================
@@ -1053,71 +1068,73 @@ def _modulo_d():
                            index=2, key='pw_periodo', label_visibility='collapsed')
         desde, hasta = _rango_periodo(periodo)
 
-        # ---- Estado de Resultados (P&L)
         ventas, cogs, gastos = _pyl(desde, hasta)
         bruta = ventas - cogs
         neta = bruta - gastos
         margen_neto = (neta / ventas * 100) if ventas else 0
-        st.markdown('**Estado de Resultados (P&L)**')
-        st.markdown(
-            _fila_html('Ventas totales', _fmt_money(ventas), C_VERDE)
-            + _fila_html('(−) Costo de ventas (COGS)', _fmt_money(cogs), C_ROJO, tenue=True)
-            + _fila_html('= Utilidad bruta', _fmt_money(bruta), '#e6edf3', fuerte=True, linea=True)
-            + _fila_html('(−) Gastos operativos', _fmt_money(gastos), C_ROJO, tenue=True)
-            + _fila_html('= Utilidad / Pérdida neta', _fmt_money(neta), C_VERDE if neta >= 0 else C_ROJO,
-                         fuerte=True, linea=True)
-            + _fila_html('Margen neto', f'{margen_neto:.1f}%', C_GRIS, tenue=True),
-            unsafe_allow_html=True)
 
-        # ---- Flujo de caja
         caja, banco = _saldos()
         cobrar, pagar = _por_cobrar(), _por_pagar()
         t_cobrar, t_pagar = sum(t['amount'] for t in cobrar), sum(t['amount'] for t in pagar)
         disponible = caja + banco
         proyectado = disponible + t_cobrar - t_pagar
-        st.markdown('<div style="height:10px"></div>**Flujo de Caja** (a hoy)', unsafe_allow_html=True)
-        st.markdown(
-            _fila_html('Caja chica', _fmt_money(caja), tenue=True)
-            + _fila_html('Bancos / Digital', _fmt_money(banco), tenue=True)
-            + _fila_html('= Dinero disponible', _fmt_money(disponible), C_AZUL, fuerte=True, linea=True)
-            + _fila_html(f'(+) Cuentas por cobrar ({len(cobrar)})', _fmt_money(t_cobrar), C_VERDE, tenue=True)
-            + _fila_html(f'(−) Cuentas por pagar ({len(pagar)})', _fmt_money(t_pagar), C_ROJO, tenue=True)
-            + _fila_html('= Posición proyectada', _fmt_money(proyectado), C_VERDE if proyectado >= 0 else C_ROJO,
-                         fuerte=True, linea=True),
-            unsafe_allow_html=True)
 
-        venc = [t for t in cobrar + pagar if _vencida(t)]
-        if venc:
-            st.warning(f'⚠️ Hay {len(venc)} cuenta(s) vencida(s) sin saldar.')
+        izq, der = st.columns([1, 1], gap='medium')
+        with izq:
+            st.markdown('**Estado de Resultados (P&L)**')
+            st.markdown(
+                _fila_html('Ventas totales', _fmt_money(ventas), C_VERDE)
+                + _fila_html('(−) Costo de ventas (COGS)', _fmt_money(cogs), C_ROJO, tenue=True)
+                + _fila_html('= Utilidad bruta', _fmt_money(bruta), '#e6edf3', fuerte=True, linea=True)
+                + _fila_html('(−) Gastos operativos', _fmt_money(gastos), C_ROJO, tenue=True)
+                + _fila_html('= Utilidad / Pérdida neta', _fmt_money(neta), C_VERDE if neta >= 0 else C_ROJO,
+                             fuerte=True, linea=True)
+                + _fila_html('Margen neto', f'{margen_neto:.1f}%', C_GRIS, tenue=True),
+                unsafe_allow_html=True)
 
-        # ---- Próximos vencimientos
-        pend = sorted(cobrar + pagar, key=lambda t: (t['due_date'] is None, t['due_date'] or date.max))[:6]
-        if pend:
-            st.markdown('<div style="height:6px"></div>**Próximos vencimientos**', unsafe_allow_html=True)
-            df = pd.DataFrame([{
-                '': '⚠️' if _vencida(t) else '',
-                'Tipo': 'Por cobrar' if t['type'] == 'SALE' else 'Por pagar',
-                'Detalle': t['description'][:45],
-                'Vence': t['due_date'].strftime('%d/%m') if t['due_date'] else '—',
-                'Monto': _fmt_money(t['amount']),
-            } for t in pend])
-            st.dataframe(df, use_container_width=True, hide_index=True, height=min(260, len(df) * 36 + 42))
+            if periodo != 'Hoy':
+                v_d, g_d = {}, {}
+                for t in _s('transacciones'):
+                    if t['anulada'] or not _en_periodo(t, desde, hasta):
+                        continue
+                    d = t['created_at'].date().isoformat()
+                    if t['type'] == 'SALE':
+                        v_d[d] = v_d.get(d, 0) + t['amount']
+                    elif t['type'] == 'EXPENSE':
+                        g_d[d] = g_d.get(d, 0) + t['amount']
+                if v_d or g_d:
+                    st.markdown('<div style="height:10px"></div>**Ventas vs. gastos por día**', unsafe_allow_html=True)
+                    df = pd.DataFrame({'Ventas': pd.Series(v_d, dtype=float),
+                                       'Gastos': pd.Series(g_d, dtype=float)}).fillna(0).sort_index()
+                    st.bar_chart(df, height=220)
 
-        # ---- Evolución diaria
-        if periodo != 'Hoy':
-            v_d, g_d = {}, {}
-            for t in _s('transacciones'):
-                if t['anulada'] or not _en_periodo(t, desde, hasta):
-                    continue
-                d = t['created_at'].date().isoformat()
-                if t['type'] == 'SALE':
-                    v_d[d] = v_d.get(d, 0) + t['amount']
-                elif t['type'] == 'EXPENSE':
-                    g_d[d] = g_d.get(d, 0) + t['amount']
-            if v_d or g_d:
-                st.markdown('<div style="height:6px"></div>**Ventas vs. gastos por día**', unsafe_allow_html=True)
-                df = pd.DataFrame({'Ventas': pd.Series(v_d, dtype=float), 'Gastos': pd.Series(g_d, dtype=float)}).fillna(0).sort_index()
-                st.bar_chart(df, height=220)
+        with der:
+            st.markdown('**Flujo de Caja** (a hoy)')
+            st.markdown(
+                _fila_html('Caja chica', _fmt_money(caja), tenue=True)
+                + _fila_html('Bancos / Digital', _fmt_money(banco), tenue=True)
+                + _fila_html('= Dinero disponible', _fmt_money(disponible), C_AZUL, fuerte=True, linea=True)
+                + _fila_html(f'(+) Cuentas por cobrar ({len(cobrar)})', _fmt_money(t_cobrar), C_VERDE, tenue=True)
+                + _fila_html(f'(−) Cuentas por pagar ({len(pagar)})', _fmt_money(t_pagar), C_ROJO, tenue=True)
+                + _fila_html('= Posición proyectada', _fmt_money(proyectado), C_VERDE if proyectado >= 0 else C_ROJO,
+                             fuerte=True, linea=True),
+                unsafe_allow_html=True)
+
+            venc = [t for t in cobrar + pagar if _vencida(t)]
+            if venc:
+                st.warning(f'⚠️ Hay {len(venc)} cuenta(s) vencida(s) sin saldar.')
+
+            pend = sorted(cobrar + pagar, key=lambda t: (t['due_date'] is None, t['due_date'] or date.max))[:6]
+            if pend:
+                st.markdown('<div style="height:10px"></div>**Próximos vencimientos**', unsafe_allow_html=True)
+                df = pd.DataFrame([{
+                    '': '⚠️' if _vencida(t) else '',
+                    'Tipo': 'Por cobrar' if t['type'] == 'SALE' else 'Por pagar',
+                    'Detalle': t['description'][:45],
+                    'Vence': t['due_date'].strftime('%d/%m') if t['due_date'] else '—',
+                    'Monto': _fmt_money(t['amount']),
+                } for t in pend])
+                st.dataframe(df, use_container_width=True, hide_index=True, height=min(260, len(df) * 36 + 42))
 
 
 # ==============================================================
@@ -1215,13 +1232,51 @@ def _inyectar_extras():
 
 
 # ==============================================================
-#  COMPATIBILIDAD CON app.py
+#  NAVEGACIÓN — 4 botones (uno por módulo)
 # ==============================================================
 
+SECCIONES = {
+    'A': '⚡ Registradora exprés',
+    'B': '📦 Inventario y costos',
+    'C': '🧾 Historial de transacciones',
+    'D': '📊 Reportes financieros',
+}
+RENDER_SECCION = {'A': _modulo_a, 'B': _modulo_b, 'C': _modulo_c, 'D': _modulo_d}
+NAV_KEY = 'pyme_seccion_activa'
+
+
+def _ir_a(seccion):
+    st.session_state[NAV_KEY] = seccion
+
+
 def render_nav_pyme(columnas=None):
-    """Ya no hay navegación por pestañas/pills: el módulo es un dashboard único.
-    Se deja esta función vacía para que app.py no se rompa si todavía la llama."""
-    return None
+    """Dibuja los 4 botones de navegación del módulo PyMEs.
+
+    - Con `columnas` (lista de 4 columnas creadas en la barra superior de app.py),
+      los botones se dibujan ahí, al lado del selector "PyMEs ▾".
+    - Sin `columnas`, render_pyme() los dibuja arriba del contenido.
+    """
+    activa = st.session_state.get(NAV_KEY, 'A')
+    cols = columnas if columnas is not None else st.columns(len(SECCIONES))
+    st.session_state['_pyme_nav_externa'] = columnas is not None
+    for col, (clave, label) in zip(cols, SECCIONES.items()):
+        with col:
+            cont_key = f'navpyme_{clave}'
+            with st.container(key=cont_key):
+                st.button(label, key=f'pyme_nav_{clave}', use_container_width=True,
+                          on_click=_ir_a, args=(clave,))
+            if clave == activa:
+                st.markdown(f"""
+                <style>
+                .st-key-{cont_key} button {{
+                    background: #0d1117 !important;
+                    color: var(--verde-monster, #6cc24a) !important;
+                    border: 1.5px solid var(--verde-monster, #6cc24a) !important;
+                    font-weight: 700 !important;
+                    box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
+                }}
+                </style>
+                """, unsafe_allow_html=True)
 
 
 # ==============================================================
@@ -1261,17 +1316,14 @@ def render_pyme(supabase, user_id, **kwargs):
     _mostrar_flash()
     _kpis_header()
 
-    col_a, col_b = st.columns([1, 1], gap='medium')
-    with col_a:
-        _modulo_a()
-    with col_b:
-        _modulo_b()
+    # Si app.py no dibujó los botones en la barra superior, los dibujamos acá.
+    if not st.session_state.pop('_pyme_nav_externa', False):
+        render_nav_pyme()
 
-    col_c, col_d = st.columns([1, 1], gap='medium')
-    with col_c:
-        _modulo_c()
-    with col_d:
-        _modulo_d()
+    activa = st.session_state.get(NAV_KEY, 'A')
+    if activa not in RENDER_SECCION:
+        activa = 'A'
+    RENDER_SECCION[activa]()
 
     _bloque_config()
     _inyectar_extras()
