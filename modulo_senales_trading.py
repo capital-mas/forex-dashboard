@@ -5,10 +5,10 @@
 #  (ver senales_trading_schema.sql). El email de acá abajo tiene que
 #  coincidir EXACTAMENTE con el de esas políticas.
 #
-#  LÍMITES POR PLAN (NUEVO):
+#  LÍMITES POR PLAN:
 #   - Plan Pro / Admin: señales ilimitadas.
-#   - Plan Básico y Trial: máximo 1 señal por día, solo lunes a viernes
-#     (se ve la primera del día; configurable abajo).
+#   - Plan Básico y Trial: ven UNA sola señal, la que el admin marque como
+#     "gratuita" (columna visible_basico, solo una a la vez).
 #   - app.py decide qué plan es "pro para señales" y lo pasa en
 #     render_senales_trading(..., tiene_acceso_pro=...).
 #
@@ -21,7 +21,8 @@
 #       ADD COLUMN IF NOT EXISTS entradas jsonb DEFAULT '[]'::jsonb,
 #       ADD COLUMN IF NOT EXISTS hora_cierre text,
 #       ADD COLUMN IF NOT EXISTS fecha_activacion date,
-#       ADD COLUMN IF NOT EXISTS hora_activacion text;
+#       ADD COLUMN IF NOT EXISTS hora_activacion text,
+#       ADD COLUMN IF NOT EXISTS visible_basico boolean DEFAULT false;
 #   Si la columna "estado" tiene un CHECK constraint, agregale 'PENDIENTE'.
 #
 #  FUNCIONALIDADES:
@@ -45,11 +46,9 @@ ADMIN_EMAIL = "brainferreyra@gmail.com"
 TABLA_SENALES = "senales_trading"
 
 # ── Límites por plan ──────────────────────────────────────────
-# Plan Básico / Trial: máximo 1 señal por día, solo lunes a viernes.
-# Plan Pro / Admin: sin límites.
-BASICO_MAX_SENALES_POR_DIA = 1
-BASICO_DIAS_HABILES = (0, 1, 2, 3, 4)   # 0=lunes ... 4=viernes (agregá 5, 6 para fin de semana)
-BASICO_ELEGIR = "primera"               # "primera" o "ultima" señal del día
+# Plan Pro / Admin: ven TODAS las señales.
+# Plan Básico / Prueba: ven UNA sola señal, la que el admin marque como
+# "señal gratuita" (columna visible_basico). Solo puede haber una a la vez.
 
 # Margen de mantenimiento que exige el bróker, como % del tamaño
 # nominal de la posición. Se usa SOLO para calcular el precio de
@@ -121,38 +120,27 @@ def _es_admin(user_email):
 #  LÍMITES POR PLAN
 # ==============================================================
 
+def _es_gratis(d):
+    """True si la señal está marcada como gratuita (visible para Básico/Prueba)."""
+    v = d.get("visible_basico")
+    return (v is not None) and (not pd.isna(v)) and bool(v)
+
+
 def _filtrar_senales_por_plan(senales, es_pro):
     """Devuelve (senales_visibles, cantidad_ocultas).
-    Pro: todas. Básico/Trial: solo lun-vie y máx. BASICO_MAX_SENALES_POR_DIA por día."""
+    Pro/Admin: todas. Básico/Prueba: solo la señal marcada como gratuita."""
     if es_pro or not senales:
         return senales, 0
-
-    por_dia = {}
-    for s in senales:
-        try:
-            f = datetime.strptime(str(s.get("fecha"))[:10], "%Y-%m-%d").date()
-        except Exception:
-            continue
-        if f.weekday() not in BASICO_DIAS_HABILES:
-            continue
-        por_dia.setdefault(f, []).append(s)
-
-    visibles = []
-    for f, lista in por_dia.items():
-        lista_ord = sorted(lista, key=lambda x: str(x.get("hora") or ""),
-                           reverse=(BASICO_ELEGIR == "ultima"))
-        visibles.extend(lista_ord[:BASICO_MAX_SENALES_POR_DIA])
-
-    visibles.sort(key=lambda x: (str(x.get("fecha")), str(x.get("hora") or "")), reverse=True)
+    visibles = [s for s in senales if _es_gratis(s)][:1]
     return visibles, len(senales) - len(visibles)
 
 
 def _banner_plan_basico(ocultas):
     if ocultas:
-        msg = (f"🔒 **Plan Básico / Prueba**: ves 1 señal por día (lunes a viernes). "
+        msg = (f"🔒 **Plan Básico / Prueba**: ves 1 señal destacada. "
                f"Hay **{ocultas}** señal(es) más que solo ve el plan Pro, que tiene señales ilimitadas.")
     else:
-        msg = ("🔒 **Plan Básico / Prueba**: ves 1 señal por día (lunes a viernes). "
+        msg = ("🔒 **Plan Básico / Prueba**: ves 1 señal destacada. "
                "El plan Pro tiene señales ilimitadas.")
     st.info(msg)
 
@@ -562,6 +550,17 @@ def _render_entradas_form(es_largo, es_pendiente=False):
 #  ACCESO A SUPABASE
 # ==============================================================
 
+def _quitar_visible_basico(supabase):
+    """Desmarca cualquier señal gratuita (solo puede haber una)."""
+    supabase.table(TABLA_SENALES).update({"visible_basico": False}).eq("visible_basico", True).execute()
+
+
+def _marcar_visible_basico(supabase, senal_id):
+    """Hace de esta señal la única gratuita."""
+    _quitar_visible_basico(supabase)
+    supabase.table(TABLA_SENALES).update({"visible_basico": True}).eq("id", senal_id).execute()
+
+
 def _guardar_senal(supabase, datos, user_id, user_email):
     row = {
         "autor_id": user_id, "autor_email": user_email,
@@ -578,9 +577,12 @@ def _guardar_senal(supabase, datos, user_id, user_email):
         "riesgo_agresivo": datos.get("riesgo_agresivo", PERFILES_RIESGO["agresivo"]["default_pct"]),
         "notas": datos.get("notas", ""),
         "estado": datos.get("estado", "ABIERTA"),
+        "visible_basico": bool(datos.get("visible_basico", False)),
         "fecha_activacion": None, "hora_activacion": None,
         "precio_cierre": None, "fecha_cierre": None, "hora_cierre": None,
     }
+    if row["visible_basico"]:
+        _quitar_visible_basico(supabase)
     supabase.table(TABLA_SENALES).insert(row).execute()
 
 
@@ -981,6 +983,12 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
         help="La señal queda PENDIENTE y no evalúa TP/SL hasta que TODAS las entradas se "
              "activen. Ahí pasa sola a ABIERTA y el TP/SL se evalúa desde esa activación.")
 
+    es_gratis_pub = st.checkbox(
+        "⭐ Marcar como señal gratuita (la ven los planes Básico y Prueba)",
+        key="sen_es_gratis",
+        help="Solo puede haber una señal gratuita a la vez: si marcás esta, la anterior deja de serlo. "
+             "Los usuarios Pro ven todas las señales igual.")
+
     st.divider()
     entradas_form = _render_entradas_form(es_largo_pub, es_pendiente_pub)
     entradas_guardar = _entradas_para_guardar(entradas_form, es_pendiente_pub)
@@ -1027,7 +1035,8 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                          apalancamiento=apal_apertura_pub, notas=notas,
                          riesgo_conservador=riesgo_conservador, riesgo_moderado=riesgo_moderado,
                          riesgo_agresivo=riesgo_agresivo,
-                         estado="PENDIENTE" if es_pendiente_pub else "ABIERTA")
+                         estado="PENDIENTE" if es_pendiente_pub else "ABIERTA",
+                         visible_basico=es_gratis_pub)
             try:
                 _guardar_senal(supabase, datos, user_id, user_email)
                 _obtener_senales.clear()
@@ -1083,7 +1092,8 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
         col, bg, emoji = ESTADO_COLOR.get(estado_row, ("#8b949e", "rgba(139,148,158,0.12)", "⚪"))
         categoria_row = row.get("categoria") or "🔹 Otro"
         titulo = (f"{row.get('fecha','')} {row.get('hora','')} · {row.get('ticker','')} · "
-                  f"{categoria_row} · {row.get('tipo','')} · {estado_row}")
+                  f"{categoria_row} · {row.get('tipo','')} · {estado_row}"
+                  + (" · ⭐ GRATIS" if _es_gratis(row) else ""))
         with st.expander(f"{emoji} {titulo}"):
             entradas_lista = _entradas_de_senal(row.to_dict())
             v1, v2, v3, v4 = st.columns(4)
@@ -1183,6 +1193,19 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
             if estado_row == "PENDIENTE":
                 st.caption("🔧 Esta orden todavía no se puede cerrar ni ampliar manualmente: "
                            "esperá a que se active sola, o eliminala si ya no la querés.")
+
+            st.divider()
+            if _es_gratis(row):
+                st.success("⭐ Esta es la señal gratuita: la ven los planes Básico y Prueba.")
+                if st.button("Quitar como señal gratuita", key=f"sen_admin_quitar_gratis_{row['id']}"):
+                    _quitar_visible_basico(supabase)
+                    _obtener_senales.clear()
+                    st.rerun()
+            else:
+                if st.button("⭐ Hacer esta la señal gratuita", key=f"sen_admin_hacer_gratis_{row['id']}"):
+                    _marcar_visible_basico(supabase, row["id"])
+                    _obtener_senales.clear()
+                    st.rerun()
 
             st.divider()
             confirmar = st.checkbox("Confirmar eliminación", key=f"sen_admin_confirm_del_{row['id']}")
@@ -1815,7 +1838,7 @@ def render_senales_trading(supabase, user_id, user_email, tiene_acceso_pro=False
                                tiene_acceso_pro=TIENE_SENALES_PRO)
 
     tiene_acceso_pro=True  → señales ilimitadas (Pro / Admin).
-    tiene_acceso_pro=False → 1 señal por día, lunes a viernes (Básico / Trial).
+    tiene_acceso_pro=False → solo la señal gratuita (Básico / Trial).
     El admin siempre tiene acceso total.
     """
     es_admin = _es_admin(user_email)
@@ -1833,7 +1856,7 @@ def render_senales_trading(supabase, user_id, user_email, tiene_acceso_pro=False
         stop loss y take profit — o cargadas como órdenes pendientes (🕓) que se activan solas
         cuando el precio toca la entrada. Evaluación automática de aciertos/desaciertos, P&L en
         vivo para las abiertas, réplica de la posición a tu margen y simulador de capital.
-        Plan Pro: señales ilimitadas · Plan Básico: 1 señal por día (lunes a viernes).
+        Plan Pro: señales ilimitadas · Plan Básico/Prueba: 1 señal destacada.
       </div>
     </div>
     """, unsafe_allow_html=True)
