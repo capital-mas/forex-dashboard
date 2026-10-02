@@ -1,5 +1,5 @@
 # ==============================================================
-#  MÓDULO PyMEs — v3 (DASHBOARD ÚNICO, MODO SIMULACIÓN, sin base de datos)
+#  MÓDULO PyMEs — v4 (DASHBOARD ÚNICO, MODO SIMULACIÓN, sin base de datos)
 #
 #  Dashboard con 4 módulos, cada uno accesible con su botón (render_nav_pyme):
 #
@@ -8,6 +8,13 @@
 #     B) Inventario + Calculadora de costos (escandallo / BOM)
 #     C) Historial de transacciones (anular / editar)
 #     D) Reportes en tiempo real: Estado de Resultados (P&L) + Flujo de Caja
+#
+#  Novedades v4:
+#     - Compras con VARIOS productos en una sola operación (detalle tipo ticket)
+#     - Se pueden comprar productos que todavía no existen (se crean al confirmar)
+#     - Nombre del negocio configurable (Configuración) y visible en el encabezado
+#     - Importar compras y gastos desde CSV, Excel o PDF
+#       (requiere en requirements.txt:  openpyxl  y  pdfplumber)
 #
 #  Todo el estado vive en st.session_state (prefijo "pyme_sim_" para los
 #  datos y "pw_" para los widgets). Nada se persiste entre sesiones: es a
@@ -23,7 +30,9 @@
 #  F2 salta al buscador de productos.
 # ==============================================================
 
+import io
 import math
+import re
 from html import escape as _esc
 from datetime import date, datetime, timedelta
 
@@ -33,6 +42,7 @@ import streamlit.components.v1 as components
 
 SIM_PREFIX = 'pyme_sim_'      # datos simulados
 WIDGET_PREFIX = 'pw_'         # keys de widgets (se limpian al reiniciar)
+NEGOCIO_KEY = 'pyme_negocio_nombre'   # sin prefijo: "Reiniciar datos" no lo borra
 
 TIPOS_MOV = {
     'SALE':       ('🛒', 'Venta'),
@@ -53,6 +63,11 @@ def _key(nombre):
 
 def _s(nombre):
     return st.session_state[_key(nombre)]
+
+
+def get_nombre_negocio():
+    """Nombre del negocio configurado ('' si no hay). Se puede importar desde app.py."""
+    return st.session_state.get(NEGOCIO_KEY, '')
 
 
 # ==============================================================
@@ -112,6 +127,7 @@ def _seed_inicial():
     ss[_key('transacciones')] = []
     ss[_key('seq_transacciones')] = 0
     ss[_key('carrito')] = {}
+    ss[_key('carrito_compra')] = []
     ss[_key('saldo_caja')] = 60000.0
     ss[_key('saldo_banco')] = 600000.0
     ss[_key('init')] = True
@@ -141,6 +157,11 @@ def _init_sim():
 
 def _producto(pid):
     return next((p for p in _s('productos') if p['id'] == pid), None)
+
+
+def _buscar_producto(nombre):
+    n = (nombre or '').strip().lower()
+    return next((p for p in _s('productos') if p['name'].strip().lower() == n), None)
 
 
 def _insumo(iid):
@@ -174,6 +195,22 @@ def _recalcular_costo(prod):
     """Si el producto tiene receta o mano de obra, su costo es el del escandallo."""
     if prod.get('receta') or prod.get('mano_obra'):
         prod['unit_cost'] = round(_costo_receta(prod), 2)
+
+
+def _crear_producto(nombre, precio=0.0, costo=0.0, barcode='', minimo=5):
+    """Crea un producto con stock 0 (la compra le suma el stock). Si ya existe uno
+    con el mismo nombre, devuelve ese. Si el precio es 0, sugiere uno con 40% de margen."""
+    existente = _buscar_producto(nombre)
+    if existente:
+        return existente
+    costo, precio = float(costo or 0), float(precio or 0)
+    if precio <= 0 and costo > 0:
+        precio = float(math.ceil(costo / 0.6 / 10) * 10)
+    p = {'id': _siguiente_id('productos'), 'barcode': (barcode or '').strip(), 'name': nombre.strip(),
+         'current_stock': 0, 'min_stock': int(minimo), 'unit_cost': costo, 'sale_price': precio,
+         'receta': [], 'mano_obra': 0.0, 'margen': 40.0}
+    _s('productos').append(p)
+    return p
 
 
 # ==============================================================
@@ -224,6 +261,7 @@ def _reg_venta(carrito, medio, estado, vence, nota='', cuando=None):
 
 
 def _reg_compra(pid, cantidad, costo_unit, medio, estado, vence, cuando=None):
+    """Compra de UN producto (la usan los datos de ejemplo y el importador)."""
     p = _producto(pid)
     if p is None:
         return False, 'Producto inexistente.'
@@ -239,6 +277,35 @@ def _reg_compra(pid, cantidad, costo_unit, medio, estado, vence, cuando=None):
     _nueva_tx('PURCHASE', f"{int(cantidad)}× {p['name']} (compra)", cantidad * costo_unit,
               medio, estado, vence, 0.0, items, cuando)
     return True, f'Compra registrada por {_fmt_money(cantidad * costo_unit)}.'
+
+
+def _reg_compra_multiple(lineas, medio, estado, vence, nota='', cuando=None):
+    """Una sola transacción PURCHASE con varios productos.
+    Cada línea: {'pid': id o None, 'nombre', 'qty', 'costo', 'precio', 'barcode', 'minimo'}.
+    Si pid es None, crea el producto nuevo recién acá (al confirmar)."""
+    if not lineas:
+        return False, 'El detalle de la compra está vacío.'
+    items, total = [], 0.0
+    for l in lineas:
+        p = _producto(l['pid']) if l.get('pid') else None
+        if p is None:
+            p = _crear_producto(l['nombre'], l.get('precio', 0), l['costo'],
+                                l.get('barcode', ''), l.get('minimo', 5))
+        qty, costo = int(l['qty']), float(l['costo'])
+        stock_prev = p['current_stock']
+        if not p.get('receta') and not p.get('mano_obra'):
+            total_u = stock_prev + qty
+            p['unit_cost'] = round((stock_prev * p['unit_cost'] + qty * costo) / total_u, 2) if total_u else costo
+        p['current_stock'] = stock_prev + qty
+        items.append({'product_id': p['id'], 'name': p['name'], 'quantity': qty,
+                      'unit_price': 0.0, 'unit_cost': costo})
+        total += qty * costo
+    desc = ', '.join(f"{i['quantity']}× {i['name']}" for i in items) + ' (compra)'
+    if nota:
+        desc += f' — {nota}'
+    estado = _estado_efectivo(medio, estado)
+    _nueva_tx('PURCHASE', desc, total, medio, estado, vence, 0.0, items, cuando)
+    return True, f'Compra registrada por {_fmt_money(total)} ({len(items)} producto(s)).'
 
 
 def _reg_gasto(categoria, descripcion, monto, medio, estado, vence, cuando=None):
@@ -504,6 +571,20 @@ def _bom_agregar(pid, key_ins, key_qty):
     _recalcular_costo(p)
 
 
+def _compra_lineas():
+    return st.session_state.setdefault(_key('carrito_compra'), [])
+
+
+def _compra_quitar(idx):
+    l = _compra_lineas()
+    if 0 <= idx < len(l):
+        l.pop(idx)
+
+
+def _compra_vaciar():
+    st.session_state[_key('carrito_compra')] = []
+
+
 # ==============================================================
 #  HEADER — KPIs
 # ==============================================================
@@ -630,23 +711,296 @@ def _venta_ticket():
             st.error(msg)
 
 
+# ---------- Importador de CSV / Excel / PDF (Compras y Gastos) ----------
+
+NINGUNA = '— ninguna —'
+CATEGORIAS_GASTO = ['Alquiler', 'Sueldos', 'Servicios', 'Impuestos', 'Marketing', 'Mantenimiento', 'Otros']
+
+
+def _a_numero(v):
+    """Convierte '$ 1.234,50', '1,234.50', 1500, etc. a float. None si no se puede."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        try:
+            f = float(v)
+            return None if f != f else f
+        except (TypeError, ValueError):
+            pass
+    s = re.sub(r'[^\d,.\-]', '', str(v))
+    if not re.search(r'\d', s):
+        return None
+    if ',' in s and '.' in s:
+        if s.rfind(',') > s.rfind('.'):
+            s = s.replace('.', '').replace(',', '.')
+        else:
+            s = s.replace(',', '')
+    elif ',' in s:
+        s = s.replace(',', '.')
+    elif '.' in s and re.fullmatch(r'-?\d{1,3}(\.\d{3})+', s):
+        s = s.replace('.', '')
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _adivinar(cols, claves):
+    for c in cols:
+        if any(k in str(c).lower() for k in claves):
+            return c
+    return None
+
+
+def _sel_col(label, cols, claves, key, obligatoria=True):
+    opts = cols if obligatoria else [NINGUNA] + cols
+    g = _adivinar(cols, claves)
+    return st.selectbox(label, opts, index=opts.index(g) if g in opts else 0, key=key)
+
+
+def _leer_pdf(buf):
+    try:
+        import pdfplumber
+    except ImportError:
+        raise ImportError('falta instalar pdfplumber (agregalo a requirements.txt)')
+    filas, texto = [], []
+    with pdfplumber.open(buf) as pdf:
+        for page in pdf.pages:
+            for tabla in page.extract_tables():
+                for r in tabla:
+                    if r and any((c or '').strip() for c in r):
+                        filas.append([(c or '').replace('\n', ' ').strip() for c in r])
+            texto.extend((page.extract_text() or '').splitlines())
+    if filas:
+        ancho = max(len(r) for r in filas)
+        filas = [r + [''] * (ancho - len(r)) for r in filas]
+        cols, vistos = [], {}
+        for i, c in enumerate(filas[0]):
+            c = c or f'col{i + 1}'
+            vistos[c] = vistos.get(c, 0) + 1
+            cols.append(c if vistos[c] == 1 else f'{c}_{vistos[c]}')
+        return pd.DataFrame(filas[1:], columns=cols)
+    # Sin tablas: busca líneas "descripción ... monto"
+    out = []
+    for l in texto:
+        m = re.match(r'^(.*?\D)\s+\$?\s*(-?[\d.,]+)$', l.strip())
+        if m and _a_numero(m.group(2)) is not None:
+            out.append({'Descripción': m.group(1).strip(' .:-'), 'Monto': m.group(2)})
+    if not out:
+        raise ValueError('no encontré tablas ni líneas con montos (el PDF debe tener texto seleccionable, no ser un escaneo)')
+    return pd.DataFrame(out)
+
+
+def _leer_archivo(f):
+    nombre, raw = f.name.lower(), f.getvalue()
+    if nombre.endswith(('.csv', '.txt')):
+        for enc in ('utf-8-sig', 'latin-1'):
+            try:
+                return pd.read_csv(io.BytesIO(raw), sep=None, engine='python', encoding=enc)
+            except UnicodeDecodeError:
+                continue
+    elif nombre.endswith(('.xlsx', '.xlsm', '.xls')):
+        return pd.read_excel(io.BytesIO(raw))
+    elif nombre.endswith('.pdf'):
+        return _leer_pdf(io.BytesIO(raw))
+    raise ValueError('formato no soportado')
+
+
+def _importador(tipo):
+    """tipo: 'compra' o 'gasto'. Lee CSV/Excel/PDF, deja mapear columnas, muestra
+    vista previa y registra una operación por fila."""
+    es_compra = tipo == 'compra'
+    n = st.session_state.get(f'pw_imp_n_{tipo}', 0)
+    with st.expander('📎 Importar desde CSV, Excel o PDF'):
+        archivo = st.file_uploader('Archivo', type=['csv', 'txt', 'xlsx', 'xlsm', 'xls', 'pdf'],
+                                   key=f'pw_imp_{tipo}_f{n}', label_visibility='collapsed')
+        if archivo is None:
+            st.caption('Compras: producto, cantidad y costo. Gastos: descripción y monto (y categoría si la tiene). '
+                       'Después elegís qué columna es cada dato.')
+            return
+        try:
+            df = _leer_archivo(archivo).dropna(how='all')
+            df.columns = [str(c) for c in df.columns]
+        except Exception as e:
+            st.error(f'No pude leer el archivo: {e}')
+            return
+        if df.empty:
+            st.warning('El archivo no tiene filas.')
+            return
+        cols = list(df.columns)
+        k = f'pw_imp_{tipo}_{archivo.name}_{archivo.size}'
+        st.caption(f'{len(df)} filas leídas. Indicá qué columna es cada dato:')
+        filas = []
+
+        if es_compra:
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                c_prod = _sel_col('Producto', cols, ['producto', 'artículo', 'articulo', 'descrip', 'detalle', 'nombre', 'item'], k + '_p')
+            with m2:
+                c_qty = _sel_col('Cantidad', cols, ['cant', 'unid', 'qty'], k + '_q', False)
+            with m3:
+                c_cos = _sel_col('Costo unitario', cols, ['costo', 'precio', 'unitario', 'importe'], k + '_c', False)
+            for _, r in df.iterrows():
+                nombre = str(r[c_prod]).strip()
+                if not nombre or nombre.lower() == 'nan':
+                    continue
+                qty = _a_numero(r[c_qty]) if c_qty != NINGUNA else 1
+                costo = _a_numero(r[c_cos]) if c_cos != NINGUNA else None
+                if not qty or int(round(qty)) <= 0:
+                    continue
+                filas.append({'Producto': nombre, 'Cantidad': int(round(qty)), 'Costo unitario': costo,
+                              'Situación': 'Existe' if _buscar_producto(nombre) else 'Nuevo'})
+        else:
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                c_desc = _sel_col('Descripción', cols, ['descrip', 'detalle', 'concepto', 'nombre'], k + '_d')
+            with m2:
+                c_monto = _sel_col('Monto', cols, ['monto', 'importe', 'total', 'valor'], k + '_m')
+            with m3:
+                c_cat = _sel_col('Categoría', cols, ['categ', 'rubro', 'tipo'], k + '_k', False)
+            cat_fija = st.selectbox('Categoría por defecto (si no hay columna o viene vacía)', CATEGORIAS_GASTO,
+                                    index=len(CATEGORIAS_GASTO) - 1, key=k + '_cf')
+            for _, r in df.iterrows():
+                monto = _a_numero(r[c_monto])
+                if not monto or monto <= 0:
+                    continue
+                desc = str(r[c_desc]).strip()
+                desc = '' if desc.lower() == 'nan' else desc
+                cat = str(r[c_cat]).strip() if c_cat != NINGUNA else ''
+                cat = cat if cat and cat.lower() != 'nan' else cat_fija
+                filas.append({'Categoría': cat, 'Descripción': desc, 'Monto': monto})
+
+        if not filas:
+            st.warning('No quedó ninguna fila válida con esas columnas. Revisá la selección.')
+            return
+        st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True,
+                     height=min(260, len(filas) * 36 + 42))
+
+        o1, o2, o3 = st.columns(3)
+        with o1:
+            medio = st.selectbox('Medio de pago', _medios_activos(), key=k + '_med')
+        with o2:
+            estado = st.radio('Estado', ['Pagado', 'Pendiente'], horizontal=True, key=k + '_est')
+        with o3:
+            vence = st.date_input('Vence (si queda pendiente)', value=date.today() + timedelta(days=15), key=k + '_ven')
+        crear = True
+        if es_compra:
+            crear = st.checkbox('Crear los productos que no existan', value=True, key=k + '_crear')
+
+        if st.button(f'📥 Importar {len(filas)} filas', key=k + '_go', type='primary', use_container_width=True):
+            est = 'PAID' if estado == 'Pagado' else 'PENDING'
+            hechas = salteadas = 0
+            for f in filas:
+                if es_compra:
+                    p = _buscar_producto(f['Producto'])
+                    if p is None:
+                        if not crear:
+                            salteadas += 1
+                            continue
+                        p = _crear_producto(f['Producto'], costo=f['Costo unitario'] or 0)
+                    costo = f['Costo unitario'] if f['Costo unitario'] is not None else p['unit_cost']
+                    ok, _m = _reg_compra(p['id'], f['Cantidad'], float(costo), medio, est, vence)
+                else:
+                    ok, _m = _reg_gasto(f['Categoría'], f['Descripción'], f['Monto'], medio, est, vence)
+                hechas += 1 if ok else 0
+            st.session_state[f'pw_imp_n_{tipo}'] = n + 1   # limpia el uploader
+            msg = f'Se importaron {hechas} {"compras" if es_compra else "gastos"}.'
+            if salteadas:
+                msg += f' {salteadas} saltadas (producto inexistente).'
+            _flash(msg)
+            st.rerun()
+
+
+# ---------- Compras (varios productos por operación) ----------
+
 def _form_compra():
     productos = _s('productos')
-    if not productos:
-        st.info('Primero creá un producto en Inventario.')
-        return
+    lineas = _compra_lineas()
+    NUEVO = '➕ Producto nuevo…'
     opciones = {f"{p['name']} (stock {p['current_stock']})": p['id'] for p in productos}
-    sel = st.selectbox('Producto', list(opciones), key='pw_c_prod')
-    pid = opciones[sel]
-    p = _producto(pid)
 
-    with st.form('pw_form_compra', clear_on_submit=True):
+    # ---------- 1) Agregar productos al detalle ----------
+    _titulo('➕ Agregar producto al detalle')
+    sel = st.selectbox('Producto', [NUEVO] + list(opciones), index=1 if opciones else 0, key='pw_c_prod')
+    es_nuevo = sel == NUEVO
+    p = None if es_nuevo else _producto(opciones[sel])
+    pid = None if es_nuevo else p['id']
+
+    with st.form('pw_form_compra_item', clear_on_submit=True):
+        nombre_nuevo, precio_nuevo, barcode_nuevo, minimo_nuevo = '', 0.0, '', 5
+        if es_nuevo:
+            n1, n2 = st.columns([3, 2])
+            with n1:
+                nombre_nuevo = st.text_input('Nombre del producto nuevo', key='pw_c_nuevo_nombre')
+            with n2:
+                precio_nuevo = st.number_input('Precio de venta (0 = sugerido)', min_value=0.0, step=100.0,
+                                               key='pw_c_nuevo_precio')
+            with st.expander('Más datos del producto (opcional)'):
+                o1, o2 = st.columns(2)
+                with o1:
+                    barcode_nuevo = st.text_input('Código de barras', key='pw_c_nuevo_barcode')
+                with o2:
+                    minimo_nuevo = st.number_input('Stock mínimo', min_value=0, step=1, value=5, key='pw_c_nuevo_min')
         c1, c2 = st.columns(2)
         with c1:
             cantidad = st.number_input('Cantidad', min_value=1, step=1, value=1, key='pw_c_qty')
         with c2:
             costo = st.number_input('Costo unitario', min_value=0.0, step=10.0,
-                                    value=float(p['unit_cost']), key=f'pw_c_costo_{pid}')
+                                    value=0.0 if es_nuevo else float(p['unit_cost']),
+                                    key=f'pw_c_costo_{pid or "nuevo"}')
+        agregar = st.form_submit_button('➕ Agregar al detalle', use_container_width=True)
+
+    if agregar:
+        if es_nuevo:
+            nombre = nombre_nuevo.strip()
+            bc = barcode_nuevo.strip()
+            existente = _buscar_producto(nombre) if nombre else None
+            if not nombre:
+                st.warning('Escribí el nombre del producto nuevo.')
+            elif existente:
+                # ya existe con ese nombre: se usa el existente
+                lineas.append({'pid': existente['id'], 'nombre': existente['name'],
+                               'qty': int(cantidad), 'costo': float(costo)})
+                st.rerun()
+            elif bc and any(x['barcode'] == bc for x in productos):
+                st.warning('Ya existe un producto con ese código de barras.')
+            else:
+                lineas.append({'pid': None, 'nombre': nombre, 'qty': int(cantidad), 'costo': float(costo),
+                               'precio': float(precio_nuevo), 'barcode': bc, 'minimo': int(minimo_nuevo)})
+                st.rerun()
+        else:
+            lineas.append({'pid': pid, 'nombre': p['name'], 'qty': int(cantidad), 'costo': float(costo)})
+            st.rerun()
+
+    # ---------- 2) Detalle de la compra ----------
+    _titulo('🧾 Detalle de la compra')
+    total = 0.0
+    if not lineas:
+        st.caption('Todavía no agregaste productos. Podés sumar todos los que quieras antes de confirmar.')
+    for i, l in enumerate(lineas):
+        sub = l['qty'] * l['costo']
+        total += sub
+        d1, d2 = st.columns([8, 1])
+        with d1:
+            tag = (f" <span style='color:{C_AMARILLO};font-size:11px;font-weight:700'>NUEVO</span>"
+                   if l['pid'] is None else '')
+            st.markdown(f"**{l['qty']}×** {_esc(l['nombre'])}{tag} "
+                        f"<span style='color:{C_GRIS}'>a {_fmt_money(l['costo'])}</span>"
+                        f"<span style='color:{C_GRIS};float:right'>{_fmt_money(sub)}</span>",
+                        unsafe_allow_html=True)
+        with d2:
+            st.button('✕', key=f'pw_cx_{i}', on_click=_compra_quitar, args=(i,))
+    if lineas:
+        st.markdown(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'border-top:1px solid #21262d;margin-top:6px;padding-top:8px">'
+            f'<span style="color:{C_GRIS};font-size:12px;text-transform:uppercase;letter-spacing:.6px">Total</span>'
+            f'<span style="font-size:26px;font-weight:800;color:#e6edf3">{_fmt_money(total)}</span></div>',
+            unsafe_allow_html=True)
+        st.button('🗑️ Vaciar detalle', key='pw_c_vaciar', on_click=_compra_vaciar)
+
+    # ---------- 3) Confirmar ----------
+    with st.form('pw_form_compra', clear_on_submit=True):
         c3, c4, c5 = st.columns(3)
         with c3:
             medio = st.selectbox('Medio de pago', _medios_activos(), key='pw_c_medio')
@@ -654,18 +1008,26 @@ def _form_compra():
             estado = st.radio('Estado', ['Pagado', 'Pendiente'], horizontal=True, key='pw_c_estado')
         with c5:
             vence = st.date_input('Vence (si queda pendiente)', value=date.today() + timedelta(days=15), key='pw_c_vence')
-        enviar = st.form_submit_button('📥 Registrar compra', type='primary', use_container_width=True)
-    st.caption('Suma stock y recalcula el costo del producto (promedio ponderado).')
+        nota = st.text_input('Proveedor / nota (opcional)', key='pw_c_nota')
+        enviar = st.form_submit_button(
+            f'📥 Registrar compra · {_fmt_money(total)}' if lineas else '📥 Registrar compra',
+            type='primary', use_container_width=True, disabled=not lineas)
+    st.caption('Suma stock de cada producto y recalcula su costo (promedio ponderado). '
+               'Los productos nuevos se crean al confirmar.')
 
     if enviar:
-        ok, msg = _reg_compra(pid, int(cantidad), float(costo), medio,
-                              'PAID' if estado == 'Pagado' else 'PENDING', vence)
-        _flash(msg)
+        ok, msg = _reg_compra_multiple(list(lineas), medio, 'PAID' if estado == 'Pagado' else 'PENDING',
+                                       vence, nota.strip())
+        if ok:
+            _compra_vaciar()
+        _flash(msg, 'success' if ok else 'warning')
         st.rerun()
+
+    _importador('compra')
 
 
 def _form_gasto():
-    categorias = ['Alquiler', 'Sueldos', 'Servicios', 'Impuestos', 'Marketing', 'Mantenimiento', 'Otros']
+    categorias = CATEGORIAS_GASTO
     with st.form('pw_form_gasto', clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
@@ -690,6 +1052,8 @@ def _form_gasto():
                                  'PAID' if estado == 'Pagado' else 'PENDING', vence)
             _flash(msg)
             st.rerun()
+
+    _importador('gasto')
 
 
 def _form_liquidacion(es_cobro):
@@ -1142,7 +1506,19 @@ def _modulo_d():
 # ==============================================================
 
 def _bloque_config():
-    with st.expander('⚙️ Configuración (saldos iniciales y medios de pago)'):
+    with st.expander('⚙️ Configuración (negocio, saldos iniciales y medios de pago)'):
+        st.markdown('**Nombre del negocio**')
+        nn1, nn2 = st.columns([4, 1])
+        with nn1:
+            nombre_neg = st.text_input('Nombre del negocio', value=get_nombre_negocio(), key='pw_cfg_negocio',
+                                       placeholder='Ej: Kiosco Don Pepe', label_visibility='collapsed')
+        with nn2:
+            if st.button('Guardar', key='pw_cfg_negocio_btn', use_container_width=True):
+                st.session_state[NEGOCIO_KEY] = nombre_neg.strip()
+                _flash('Nombre del negocio actualizado.')
+                st.rerun()
+        st.divider()
+
         st.markdown('**Saldos iniciales**')
         s1, s2, s3 = st.columns([2, 2, 1])
         with s1:
@@ -1191,7 +1567,8 @@ def _bloque_config():
                     st.rerun()
 
     with st.expander('🔄 Reiniciar datos de ejemplo (simulación)'):
-        st.caption('Vuelve a cargar los datos de ejemplo y descarta todo lo que hayas cargado en esta sesión.')
+        st.caption('Vuelve a cargar los datos de ejemplo y descarta todo lo que hayas cargado en esta sesión. '
+                   'El nombre del negocio se conserva.')
         if st.button('Reiniciar ahora', key='pw_reset_btn'):
             for k in list(st.session_state.keys()):
                 if k.startswith(SIM_PREFIX) or k.startswith(WIDGET_PREFIX):
@@ -1293,13 +1670,14 @@ def render_pyme(supabase, user_id, **kwargs):
     operaciones _reg_* / _anular / _bom_* / altas de productos e insumos."""
     _init_sim()
 
-    st.markdown("""
+    titulo_neg = _esc(get_nombre_negocio()) or 'Módulo PyMEs'
+    st.markdown(f"""
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d;border-top:2px solid #3a7bd5;border-radius:14px;
          padding:18px 26px;margin-bottom:16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
         <div>
-          <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:4px">🏢 Módulo PyMEs</div>
+          <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:4px">🏢 {titulo_neg}</div>
           <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
             Cada venta, compra o gasto impacta al instante en stock, caja y resultados.
           </div>
