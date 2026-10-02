@@ -49,7 +49,7 @@ from modulo_volatilidad_y_analisis_tecnico import (
 from modulo_pares_cointegracion import modulo_pares_cointegracion
 from modulo_cot import modulo_cot
 from modulo_tff import modulo_tff
-from modulo_pyme import render_pyme, render_nav_pyme
+from modulo_pyme import render_pyme, render_nav_pyme, get_nombre_negocio
 from modulo_agro import render_agro
 
 import re
@@ -9178,6 +9178,10 @@ titulos = {
     'admin_pagos': ('Panel de Aprobación de Pagos', '🛠️', 'Revisión y aprobación de solicitudes de pago manual'),
 }
 titulo_h, icono_h, subtitulo_h = titulos.get(MODULO, ('Analizador', '📡', ''))
+if MODULO == 'pyme':
+    titulo_h = escape_html(get_nombre_negocio()) or 'Módulo PyMEs'
+    icono_h = '🏢'
+    subtitulo_h = 'Registradora, inventario, historial y reportes de tu negocio'
 # st.caption(f'🔧 DEBUG — HORIZONTE={HORIZONTE} · MODULO={MODULO}')
 
 
