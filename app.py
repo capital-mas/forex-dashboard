@@ -8867,7 +8867,7 @@ with st.container(key='nav_pills_wrap'):
         _TRADING_MAP = {
             ('🔄 Rotación y Pares' if TIENE_ACCESO_PRO else '🔒 Rotación y Pares (Pro)'):
                                      ('pares', 'pares'),
-            ('🎯 Señales de Trading' if TIENE_ACCESO_PRO else '🎯 Señales de Trading (Básico: 1/día)'):
+            ('🎯 Señales de Trading' if TIENE_SENALES_PRO else '🎯 Señales de Trading (1 destacada)'):
                          ('senales', 'senales'),
             '🎲 Valuación de Opciones': ('opciones', 'opciones'),
             '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),
@@ -9003,7 +9003,7 @@ with st.container(key='nav_mobile_wrap'):
         '🎲 Opciones': 'opciones',
         ('🧲 GEX' if TIENE_ACCESO_PRO else '🔒 GEX (Pro)'): 'gex',
         '📐 Promediador': 'promediador',
-        ('🎯 Señales' if TIENE_ACCESO_PRO else '🎯 Señales (1/día)'): 'senales',
+        ('🎯 Señales' if TIENE_SENALES_PRO else '🎯 Señales (1 destacada)'): 'senales',
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
         ('📡 Salud Mercado' if TIENE_ACCESO_PRO else '🔒 Salud Mercado (Pro)'): 'breadth',
         ('📉 Renta Fija/Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija/Macro (Pro)'): 'renta_fija_macro',
@@ -9265,7 +9265,7 @@ elif MODULO == 'gex':
 
 elif MODULO == 'senales':
     render_senales_trading(supabase, USER_ID, st.session_state["usuario"].email,
-                           tiene_acceso_pro=TIENE_ACCESO_PRO)
+                           tiene_acceso_pro=TIENE_SENALES_PRO)
 
 elif MODULO == 'calendario':
        render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
