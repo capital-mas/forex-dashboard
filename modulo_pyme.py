@@ -985,7 +985,6 @@ def _form_compra():
             tag = (f" <span style='color:{C_AMARILLO};font-size:11px;font-weight:700'>NUEVO</span>"
                    if l['pid'] is None else '')
             st.markdown(f"**{l['qty']}×** {_esc(l['nombre'])}{tag} "
-                        f"<span style='color:{C_GRIS}'>a {_fmt_money(l['costo'])}</span>"
                         f"<span style='color:{C_GRIS};float:right'>{_fmt_money(sub)}</span>",
                         unsafe_allow_html=True)
         with d2:
