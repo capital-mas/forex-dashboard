@@ -29,7 +29,7 @@ import streamlit as st
 SERVICIOS = {
     'mercados': {
         'icono': '📈',
-        'nombre': 'Mercados & Finanzas',
+        'nombre': 'Mercados & Inversiones',
         'desc': 'Scoring cuantitativo, fundamental, optimizador de cartera, opciones y más.',
         'disponible': True,
         'badge': '📡 Análisis Cuantitativo de Mercados',
