@@ -579,6 +579,8 @@ def _contar_pagos_pendientes(_client):
 PLAN_USUARIO = _plan_cache(supabase, USER_ID)
 MODULOS_SOLO_PRO = {'optimizador', 'pares', 'ia_asistente', 'fscore', 'breadth', 'renta_fija_macro', 'cot', 'tff'}
 TIENE_ACCESO_PRO = ES_ADMIN or PLAN_USUARIO in ('trial', 'pro')
+# Señales: ilimitadas solo para admin y Pro pagado. La Prueba se comporta como Básico.
+TIENE_SENALES_PRO = ES_ADMIN or PLAN_USUARIO == 'pro'
 @st.cache_data(ttl=300, show_spinner=False)
 def _modulos_contratados_cache(_client, user_id):
     """Lee perfiles.modulos_contratados (jsonb array, ej ["mercados","pyme"]).
