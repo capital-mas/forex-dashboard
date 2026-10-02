@@ -1,109 +1,133 @@
 # ==============================================================
-#  MÓDULO PyMEs — v2 (MODO SIMULACIÓN, sin base de datos)
+#  MÓDULO PyMEs — v3 (DASHBOARD ÚNICO, MODO SIMULACIÓN, sin base de datos)
 #
-#  Todo el estado vive en st.session_state (prefijo "pyme_sim_").
-#  Nada se persiste entre sesiones todavía: es a propósito, para
-#  poder terminar de cerrar toda la parte visual/UX antes de
-#  conectar Supabase. Cuando esté todo aprobado, cada función
-#  _sim_agregar / _sim_eliminar / _sim_actualizar de más abajo se
-#  reemplaza por su equivalente real (insert/delete/update contra
-#  las tablas pyme_ventas, pyme_gastos, pyme_inventario, etc. — el
-#  esquema SQL de referencia queda comentado al final del archivo).
+#  Una sola pantalla, sin pestañas, con 4 módulos visibles a la vez:
 #
-#  Navegación: igual que la barra superior de la app (pills +
-#  popovers agrupados), para que la experiencia sea consistente:
+#     KPIs (arriba)  Caja chica · Bancos/Digital · Stock crítico · Resultado neto del mes
+#     A) Registradora exprés   Venta · Compra · Gasto · Cobro · Pago
+#     B) Inventario + Calculadora de costos (escandallo / BOM)
+#     C) Historial de transacciones (anular / editar)
+#     D) Reportes en tiempo real: Estado de Resultados (P&L) + Flujo de Caja
 #
-#     📝 Registros   → Registro de ventas / gastos / inventarios
-#     🧭 Gestión     → Clientes / Proveedores / Control de deudas
-#     📈 Análisis    → Estadísticas / Reportes / Variación de productos
+#  Todo el estado vive en st.session_state (prefijo "pyme_sim_" para los
+#  datos y "pw_" para los widgets). Nada se persiste entre sesiones: es a
+#  propósito, para cerrar primero la parte visual/UX y recién después
+#  conectar la base de datos.
+#
+#  Los nombres de campos de productos / transacciones / insumos ya son los
+#  del esquema SQL (ver comentario al final), así que el día que se conecte
+#  Supabase, solo hay que reemplazar _siguiente_id / _nueva_tx / los
+#  updates en memoria por insert/update contra las tablas.
+#
+#  Atajos de teclado: Enter confirma (formularios y buscador),
+#  F2 salta al buscador de productos.
 # ==============================================================
 
-import streamlit as st
-import pandas as pd
+import math
+from html import escape as _esc
 from datetime import date, datetime, timedelta
 
-SIM_PREFIX = 'pyme_sim_'
+import pandas as pd
+import streamlit as st
+import streamlit.components.v1 as components
+
+SIM_PREFIX = 'pyme_sim_'      # datos simulados
+WIDGET_PREFIX = 'pw_'         # keys de widgets (se limpian al reiniciar)
+
+TIPOS_MOV = {
+    'SALE':       ('🛒', 'Venta'),
+    'PURCHASE':   ('📥', 'Compra'),
+    'EXPENSE':    ('💸', 'Gasto'),
+    'COLLECTION': ('💰', 'Cobro'),
+    'PAYMENT':    ('🏦', 'Pago'),
+}
+INGRESOS = ('SALE', 'COLLECTION')   # tipos que suman al "monto" visual del historial
+
+C_VERDE, C_ROJO, C_AZUL, C_AMARILLO, C_NARANJA, C_VIOLETA, C_GRIS = (
+    '#3fb950', '#f85149', '#3a7bd5', '#e3b341', '#f0883e', '#bc8cff', '#6b7d9a')
 
 
 def _key(nombre):
     return f'{SIM_PREFIX}{nombre}'
 
 
+def _s(nombre):
+    return st.session_state[_key(nombre)]
+
+
 # ==============================================================
-#  ESTADO SIMULADO — inicialización con datos de ejemplo
+#  ESTADO SIMULADO — datos de ejemplo
 # ==============================================================
+
+def _siguiente_id(nombre):
+    k = _key(f'seq_{nombre}')
+    st.session_state[k] = st.session_state.get(k, 0) + 1
+    return st.session_state[k]
+
 
 def _seed_inicial():
-    """Datos de ejemplo para que el módulo se pueda demostrar y probar
-    sin tener que cargar todo a mano. Se puede reiniciar en cualquier
-    momento con el botón '🔄 Reiniciar datos de ejemplo'."""
+    """Carga datos de ejemplo (una cafetería/kiosco) para poder probar todo
+    sin cargar nada a mano. Se puede reiniciar desde el pie de la pantalla."""
+    ss = st.session_state
+    ss[_key('medios')] = [
+        {'id': 1, 'name': 'Efectivo',               'tipo': 'caja',    'is_active': True},
+        {'id': 2, 'name': 'Mercado Pago',           'tipo': 'banco',   'is_active': True},
+        {'id': 3, 'name': 'Transferencia Bancaria', 'tipo': 'banco',   'is_active': True},
+        {'id': 4, 'name': 'Fiado / Cta Corriente',  'tipo': 'credito', 'is_active': True},
+    ]
+    ss[_key('seq_medios')] = 4
+
+    ss[_key('insumos')] = [
+        {'id': 1, 'name': 'Café molido',    'cost_per_unit': 28000, 'unit_measure': 'kg'},
+        {'id': 2, 'name': 'Leche',          'cost_per_unit': 1400,  'unit_measure': 'lt'},
+        {'id': 3, 'name': 'Harina 000',     'cost_per_unit': 1100,  'unit_measure': 'kg'},
+        {'id': 4, 'name': 'Manteca',        'cost_per_unit': 9000,  'unit_measure': 'kg'},
+        {'id': 5, 'name': 'Jamón cocido',   'cost_per_unit': 12000, 'unit_measure': 'kg'},
+        {'id': 6, 'name': 'Queso',          'cost_per_unit': 11000, 'unit_measure': 'kg'},
+        {'id': 7, 'name': 'Pan de miga',    'cost_per_unit': 300,   'unit_measure': 'unidad'},
+    ]
+    ss[_key('seq_insumos')] = 7
+
+    def _p(id_, name, stock, minimo, costo, precio, barcode='', receta=None, mo=0.0, margen=40.0):
+        return {'id': id_, 'barcode': barcode, 'name': name, 'current_stock': stock,
+                'min_stock': minimo, 'unit_cost': float(costo), 'sale_price': float(precio),
+                'receta': receta or [], 'mano_obra': float(mo), 'margen': float(margen)}
+
+    productos = [
+        _p(1, 'Medialuna', 36, 12, 0, 900,
+           receta=[{'insumo_id': 3, 'qty': 0.03}, {'insumo_id': 4, 'qty': 0.01}], mo=120),
+        _p(2, 'Tostado J&Q', 15, 6, 0, 4200,
+           receta=[{'insumo_id': 7, 'qty': 2}, {'insumo_id': 5, 'qty': 0.05}, {'insumo_id': 6, 'qty': 0.06}], mo=300),
+        _p(3, 'Café con leche', 50, 15, 0, 2800,
+           receta=[{'insumo_id': 1, 'qty': 0.02}, {'insumo_id': 2, 'qty': 0.15}], mo=150),
+        _p(4, 'Alfajor', 30, 10, 700, 1300, barcode='7790001000011'),
+        _p(5, 'Gaseosa 500ml', 10, 12, 1100, 2000, barcode='7790001000028'),
+        _p(6, 'Agua mineral 500ml', 24, 12, 600, 1400, barcode='7790001000035'),
+    ]
+    for p in productos:
+        _recalcular_costo(p)
+    ss[_key('productos')] = productos
+    ss[_key('seq_productos')] = 6
+
+    ss[_key('transacciones')] = []
+    ss[_key('seq_transacciones')] = 0
+    ss[_key('carrito')] = {}
+    ss[_key('saldo_caja')] = 60000.0
+    ss[_key('saldo_banco')] = 600000.0
+    ss[_key('init')] = True
+
+    ahora = datetime.now()
     hoy = date.today()
-
-    inventario = [
-        {'id': 1, 'producto': 'Notebook 15" i5', 'categoria': 'Informática', 'stock_actual': 8,  'stock_minimo': 5, 'precio_costo': 450000, 'precio_venta': 620000},
-        {'id': 2, 'producto': 'Monitor 24" FHD',  'categoria': 'Informática', 'stock_actual': 3,  'stock_minimo': 4, 'precio_costo': 120000, 'precio_venta': 165000},
-        {'id': 3, 'producto': 'Mouse Inalámbrico','categoria': 'Accesorios', 'stock_actual': 25, 'stock_minimo': 10,'precio_costo': 6000,   'precio_venta': 11000},
-        {'id': 4, 'producto': 'Teclado Mecánico', 'categoria': 'Accesorios', 'stock_actual': 12, 'stock_minimo': 6, 'precio_costo': 18000,  'precio_venta': 32000},
-        {'id': 5, 'producto': 'Silla Ergonómica', 'categoria': 'Mobiliario','stock_actual': 2,  'stock_minimo': 3, 'precio_costo': 95000,  'precio_venta': 145000},
-    ]
-
-    clientes = [
-        {'id': 1, 'nombre': 'Comercial del Sur SRL', 'contacto': 'Marcos Díaz', 'telefono': '011-4555-1234', 'email': 'compras@comercialsur.com', 'condicion_pago': 'Cuenta corriente', 'limite_credito': 800000},
-        {'id': 2, 'nombre': 'Librería Central',        'contacto': 'Ana Gómez',  'telefono': '011-4777-5566', 'email': 'ana@libreriacentral.com', 'condicion_pago': 'Contado', 'limite_credito': 0},
-        {'id': 3, 'nombre': 'Estudio Contable Pérez',  'contacto': 'Juan Pérez', 'telefono': '011-4999-8877', 'email': 'juan@estudioperez.com', 'condicion_pago': 'Cuenta corriente', 'limite_credito': 500000},
-    ]
-
-    proveedores = [
-        {'id': 1, 'nombre': 'Distribuidora TecnoMax', 'contacto': 'Laura Fernández', 'telefono': '011-4333-2211', 'email': 'ventas@tecnomax.com', 'categoria': 'Informática', 'condiciones_pago': '30 días'},
-        {'id': 2, 'nombre': 'Muebles del Norte',        'contacto': 'Carlos Ruiz',    'telefono': '011-4222-1100', 'email': 'carlos@mueblesnorte.com', 'categoria': 'Mobiliario', 'condiciones_pago': 'Contado'},
-    ]
-
-    ventas = [
-        {'id': 1, 'fecha': str(hoy - timedelta(days=12)), 'cliente': 'Comercial del Sur SRL', 'producto': 'Notebook 15" i5', 'cantidad': 2, 'precio_unitario': 620000, 'total': 1240000, 'medio_pago': 'Cuenta corriente'},
-        {'id': 2, 'fecha': str(hoy - timedelta(days=9)),  'cliente': 'Librería Central',        'producto': 'Mouse Inalámbrico', 'cantidad': 6, 'precio_unitario': 11000,  'total': 66000,   'medio_pago': 'Efectivo'},
-        {'id': 3, 'fecha': str(hoy - timedelta(days=6)),  'cliente': 'Estudio Contable Pérez',  'producto': 'Monitor 24" FHD',   'cantidad': 3, 'precio_unitario': 165000, 'total': 495000,  'medio_pago': 'Cuenta corriente'},
-        {'id': 4, 'fecha': str(hoy - timedelta(days=3)),  'cliente': 'Librería Central',        'producto': 'Teclado Mecánico',  'cantidad': 4, 'precio_unitario': 32000,  'total': 128000,  'medio_pago': 'Transferencia'},
-        {'id': 5, 'fecha': str(hoy - timedelta(days=1)),  'cliente': 'Comercial del Sur SRL',   'producto': 'Silla Ergonómica',  'cantidad': 1, 'precio_unitario': 145000, 'total': 145000,  'medio_pago': 'Efectivo'},
-    ]
-
-    gastos = [
-        {'id': 1, 'fecha': str(hoy - timedelta(days=20)), 'categoria': 'Alquiler',  'proveedor': '',                    'monto': 350000, 'descripcion': 'Alquiler del local — mes'},
-        {'id': 2, 'fecha': str(hoy - timedelta(days=15)), 'categoria': 'Insumos',   'proveedor': 'Distribuidora TecnoMax', 'monto': 480000, 'descripcion': 'Compra de mercadería informática'},
-        {'id': 3, 'fecha': str(hoy - timedelta(days=10)), 'categoria': 'Servicios', 'proveedor': '',                    'monto': 65000,  'descripcion': 'Luz, agua, internet'},
-        {'id': 4, 'fecha': str(hoy - timedelta(days=4)),  'categoria': 'Sueldos',   'proveedor': '',                    'monto': 620000, 'descripcion': 'Sueldos del personal'},
-    ]
-
-    deudas = [
-        {'id': 1, 'tipo': 'A pagar', 'contraparte': 'Distribuidora TecnoMax', 'monto': 480000, 'fecha_emision': str(hoy - timedelta(days=15)), 'fecha_vencimiento': str(hoy + timedelta(days=15)), 'estado': 'Pendiente', 'notas': 'Factura #A-0021'},
-        {'id': 2, 'tipo': 'A cobrar', 'contraparte': 'Comercial del Sur SRL', 'monto': 1240000, 'fecha_emision': str(hoy - timedelta(days=12)), 'fecha_vencimiento': str(hoy + timedelta(days=18)), 'estado': 'Pendiente', 'notas': 'Factura #B-0104'},
-        {'id': 3, 'tipo': 'A cobrar', 'contraparte': 'Estudio Contable Pérez', 'monto': 495000, 'fecha_emision': str(hoy - timedelta(days=6)), 'fecha_vencimiento': str(hoy - timedelta(days=1)), 'estado': 'Pendiente', 'notas': 'Vencida — reclamar'},
-    ]
-
-    historial_precios = [
-        {'id': 1, 'fecha': str(hoy - timedelta(days=40)), 'producto': 'Notebook 15" i5', 'precio_anterior': 590000, 'precio_nuevo': 620000},
-        {'id': 2, 'fecha': str(hoy - timedelta(days=25)), 'producto': 'Monitor 24" FHD', 'precio_anterior': 150000, 'precio_nuevo': 165000},
-    ]
-
-    movimientos_stock = [
-        {'id': 1, 'fecha': str(hoy - timedelta(days=15)), 'producto': 'Notebook 15" i5', 'tipo': 'Entrada', 'cantidad': 10, 'nota': 'Reposición inicial'},
-        {'id': 2, 'fecha': str(hoy - timedelta(days=12)), 'producto': 'Notebook 15" i5', 'tipo': 'Salida',  'cantidad': 2,  'nota': 'Venta #1'},
-    ]
-
-    st.session_state[_key('ventas')] = ventas
-    st.session_state[_key('gastos')] = gastos
-    st.session_state[_key('inventario')] = inventario
-    st.session_state[_key('clientes')] = clientes
-    st.session_state[_key('proveedores')] = proveedores
-    st.session_state[_key('deudas')] = deudas
-    st.session_state[_key('historial_precios')] = historial_precios
-    st.session_state[_key('movimientos_stock')] = movimientos_stock
-
-    for nombre in ['ventas', 'gastos', 'inventario', 'clientes', 'proveedores',
-                   'deudas', 'historial_precios', 'movimientos_stock']:
-        ids = [r['id'] for r in st.session_state[_key(nombre)]]
-        st.session_state[_key(f'seq_{nombre}')] = max(ids) if ids else 0
-
-    st.session_state[_key('init')] = True
+    # Movimientos de ejemplo (pasan por las mismas funciones que usa la UI)
+    _reg_gasto('Alquiler', 'Alquiler del local', 350000, 'Transferencia Bancaria', 'PAID', None, ahora - timedelta(days=2))
+    _reg_compra(4, 24, 700, 'Fiado / Cta Corriente', 'PENDING', hoy + timedelta(days=10), ahora - timedelta(days=1))
+    _reg_venta({2: 5, 3: 5}, 'Fiado / Cta Corriente', 'PENDING', hoy - timedelta(days=1), 'Oficina García', ahora - timedelta(days=3))
+    _reg_venta({3: 2, 1: 4}, 'Efectivo', 'PAID', None, '', ahora - timedelta(days=1, hours=2))
+    _reg_venta({3: 1, 1: 2}, 'Efectivo', 'PAID', None, '', ahora - timedelta(hours=5))
+    _reg_venta({2: 2, 6: 2}, 'Mercado Pago', 'PAID', None, '', ahora - timedelta(hours=4))
+    _reg_venta({5: 3, 4: 3}, 'Efectivo', 'PAID', None, '', ahora - timedelta(hours=3))
+    _reg_venta({3: 4, 1: 6}, 'Fiado / Cta Corriente', 'PENDING', hoy + timedelta(days=7), 'Estudio Pérez', ahora - timedelta(hours=2))
+    _reg_gasto('Servicios', 'Luz y gas', 18500, 'Efectivo', 'PAID', None, ahora - timedelta(hours=1))
 
 
 def _init_sim():
@@ -111,40 +135,239 @@ def _init_sim():
         _seed_inicial()
 
 
-# ── Helpers CRUD (en memoria) ───────────────────────────────────────
+# ==============================================================
+#  LECTURA DE ENTIDADES
+# ==============================================================
 
-def _tabla(nombre):
-    return st.session_state[_key(nombre)]
-
-
-def _siguiente_id(nombre):
-    nueva = st.session_state.get(_key(f'seq_{nombre}'), 0) + 1
-    st.session_state[_key(f'seq_{nombre}')] = nueva
-    return nueva
+def _producto(pid):
+    return next((p for p in _s('productos') if p['id'] == pid), None)
 
 
-def _agregar(nombre, registro):
-    registro = dict(registro)
-    registro['id'] = _siguiente_id(nombre)
-    _tabla(nombre).append(registro)
-    return registro['id']
+def _insumo(iid):
+    return next((i for i in _s('insumos') if i['id'] == iid), None)
 
 
-def _eliminar(nombre, id_):
-    st.session_state[_key(nombre)] = [r for r in _tabla(nombre) if r['id'] != id_]
+def _tx(tx_id):
+    return next((t for t in _s('transacciones') if t['id'] == tx_id), None)
 
 
-def _actualizar(nombre, id_, cambios):
-    for r in _tabla(nombre):
-        if r['id'] == id_:
-            r.update(cambios)
-            return True
-    return False
+def _tipo_medio(nombre):
+    m = next((m for m in _s('medios') if m['name'] == nombre), None)
+    return m['tipo'] if m else 'banco'
 
 
-def _df(nombre):
-    datos = _tabla(nombre)
-    return pd.DataFrame(datos) if datos else pd.DataFrame()
+def _medios_activos(incluir_credito=True):
+    return [m['name'] for m in _s('medios')
+            if m['is_active'] and (incluir_credito or m['tipo'] != 'credito')]
+
+
+def _costo_receta(prod):
+    total = 0.0
+    for l in prod.get('receta', []):
+        ins = _insumo(l['insumo_id'])
+        if ins:
+            total += ins['cost_per_unit'] * l['qty']
+    return total + float(prod.get('mano_obra') or 0)
+
+
+def _recalcular_costo(prod):
+    """Si el producto tiene receta o mano de obra, su costo es el del escandallo."""
+    if prod.get('receta') or prod.get('mano_obra'):
+        prod['unit_cost'] = round(_costo_receta(prod), 2)
+
+
+# ==============================================================
+#  OPERACIONES (cada una es el equivalente de un insert/update futuro)
+# ==============================================================
+
+def _nueva_tx(tipo, descripcion, monto, medio, estado, vence=None, costo=0.0,
+              items=None, cuando=None, liquida_a=None):
+    tx = {
+        'id': _siguiente_id('transacciones'), 'type': tipo, 'description': descripcion,
+        'amount': float(monto), 'cost_amount': float(costo), 'payment_method': medio,
+        'status': estado, 'due_date': vence if estado == 'PENDING' else None,
+        'created_at': cuando or datetime.now(), 'items': items or [],
+        'anulada': False, 'liquidado_por': None, 'liquida_a': liquida_a,
+    }
+    _s('transacciones').append(tx)
+    return tx
+
+
+def _estado_efectivo(medio, estado):
+    """Un medio tipo 'crédito' (fiado) siempre deja el movimiento pendiente."""
+    return 'PENDING' if _tipo_medio(medio) == 'credito' else estado
+
+
+def _reg_venta(carrito, medio, estado, vence, nota='', cuando=None):
+    if not carrito:
+        return False, 'El ticket está vacío.'
+    for pid, qty in carrito.items():
+        p = _producto(pid)
+        if p is None:
+            return False, 'Un producto del ticket ya no existe.'
+        if p['current_stock'] < qty:
+            return False, f"Stock insuficiente de {p['name']} (hay {p['current_stock']})."
+    items, monto, costo = [], 0.0, 0.0
+    for pid, qty in carrito.items():
+        p = _producto(pid)
+        items.append({'product_id': pid, 'name': p['name'], 'quantity': int(qty),
+                      'unit_price': p['sale_price'], 'unit_cost': p['unit_cost']})
+        monto += qty * p['sale_price']
+        costo += qty * p['unit_cost']
+        p['current_stock'] -= int(qty)
+    desc = ', '.join(f"{i['quantity']}× {i['name']}" for i in items)
+    if nota:
+        desc += f' — {nota}'
+    estado = _estado_efectivo(medio, estado)
+    _nueva_tx('SALE', desc, monto, medio, estado, vence, costo, items, cuando)
+    return True, f'Venta registrada por {_fmt_money(monto)}.'
+
+
+def _reg_compra(pid, cantidad, costo_unit, medio, estado, vence, cuando=None):
+    p = _producto(pid)
+    if p is None:
+        return False, 'Producto inexistente.'
+    stock_prev = p['current_stock']
+    if not p.get('receta') and not p.get('mano_obra'):
+        # costo promedio ponderado (los productos con escandallo mantienen su costo de receta)
+        total_u = stock_prev + cantidad
+        p['unit_cost'] = round((stock_prev * p['unit_cost'] + cantidad * costo_unit) / total_u, 2) if total_u else costo_unit
+    p['current_stock'] = stock_prev + int(cantidad)
+    items = [{'product_id': pid, 'name': p['name'], 'quantity': int(cantidad),
+              'unit_price': 0.0, 'unit_cost': float(costo_unit)}]
+    estado = _estado_efectivo(medio, estado)
+    _nueva_tx('PURCHASE', f"{int(cantidad)}× {p['name']} (compra)", cantidad * costo_unit,
+              medio, estado, vence, 0.0, items, cuando)
+    return True, f'Compra registrada por {_fmt_money(cantidad * costo_unit)}.'
+
+
+def _reg_gasto(categoria, descripcion, monto, medio, estado, vence, cuando=None):
+    desc = f'{categoria}: {descripcion}' if descripcion else categoria
+    estado = _estado_efectivo(medio, estado)
+    _nueva_tx('EXPENSE', desc, monto, medio, estado, vence, 0.0, None, cuando)
+    return True, f'Gasto registrado por {_fmt_money(monto)}.'
+
+
+def _reg_liquidacion(tx_id, medio, cuando=None):
+    orig = _tx(tx_id)
+    if orig is None or orig['anulada'] or orig['status'] != 'PENDING':
+        return False, 'Esa cuenta ya no está pendiente.'
+    es_cobro = orig['type'] == 'SALE'
+    tipo = 'COLLECTION' if es_cobro else 'PAYMENT'
+    nueva = _nueva_tx(tipo, f"{'Cobro' if es_cobro else 'Pago'} de #{orig['id']} · {orig['description']}",
+                      orig['amount'], medio, 'PAID', None, 0.0, None, cuando, liquida_a=orig['id'])
+    orig['status'] = 'PAID'
+    orig['liquidado_por'] = nueva['id']
+    return True, f"{'Cobro' if es_cobro else 'Pago'} registrado por {_fmt_money(orig['amount'])}."
+
+
+def _anular(tx_id):
+    t = _tx(tx_id)
+    if t is None or t['anulada']:
+        return False, 'La operación no existe o ya está anulada.'
+    if t['liquidado_por']:
+        return False, f"Primero anulá el cobro/pago #{t['liquidado_por']} que la liquidó."
+    if t['type'] == 'SALE':
+        for it in t['items']:
+            p = _producto(it['product_id'])
+            if p:
+                p['current_stock'] += it['quantity']
+    elif t['type'] == 'PURCHASE':
+        for it in t['items']:
+            p = _producto(it['product_id'])
+            if p:
+                p['current_stock'] = max(0, p['current_stock'] - it['quantity'])
+    elif t['type'] in ('COLLECTION', 'PAYMENT'):
+        orig = _tx(t['liquida_a'])
+        if orig:
+            orig['status'] = 'PENDING'
+            orig['liquidado_por'] = None
+    t['anulada'] = True
+    return True, f"Operación #{tx_id} anulada. El stock y la caja se ajustaron."
+
+
+# ==============================================================
+#  CÁLCULOS: caja, cuentas, resultados
+# ==============================================================
+
+def _movimientos_caja():
+    """[(medio, monto con signo)] de todo lo que realmente movió plata."""
+    out = []
+    for t in _s('transacciones'):
+        if t['anulada']:
+            continue
+        tp, pagado, liq = t['type'], t['status'] == 'PAID', t['liquidado_por']
+        if tp == 'COLLECTION':
+            out.append((t['payment_method'], t['amount']))
+        elif tp == 'PAYMENT':
+            out.append((t['payment_method'], -t['amount']))
+        elif tp == 'SALE' and pagado and not liq:
+            out.append((t['payment_method'], t['amount']))
+        elif tp in ('PURCHASE', 'EXPENSE') and pagado and not liq:
+            out.append((t['payment_method'], -t['amount']))
+    return out
+
+
+def _saldos():
+    caja, banco = _s('saldo_caja'), _s('saldo_banco')
+    for medio, monto in _movimientos_caja():
+        tipo = _tipo_medio(medio)
+        if tipo == 'caja':
+            caja += monto
+        elif tipo == 'banco':
+            banco += monto
+    return caja, banco
+
+
+def _por_cobrar():
+    return [t for t in _s('transacciones') if t['type'] == 'SALE' and t['status'] == 'PENDING' and not t['anulada']]
+
+
+def _por_pagar():
+    return [t for t in _s('transacciones') if t['type'] in ('PURCHASE', 'EXPENSE') and t['status'] == 'PENDING' and not t['anulada']]
+
+
+def _vencida(t):
+    return bool(t['due_date']) and t['due_date'] < date.today()
+
+
+def _rango_periodo(opcion):
+    hoy = date.today()
+    return {
+        'Hoy': (hoy, hoy),
+        '7 días': (hoy - timedelta(days=6), hoy),
+        'Mes actual': (hoy.replace(day=1), hoy),
+        'Todo': (None, None),
+    }[opcion]
+
+
+def _en_periodo(t, desde, hasta):
+    d = t['created_at'].date()
+    return (desde is None or d >= desde) and (hasta is None or d <= hasta)
+
+
+def _pyl(desde, hasta):
+    """(ventas, costo de ventas, gastos operativos) — criterio devengado."""
+    ventas = cogs = gastos = 0.0
+    for t in _s('transacciones'):
+        if t['anulada'] or not _en_periodo(t, desde, hasta):
+            continue
+        if t['type'] == 'SALE':
+            ventas += t['amount']
+            cogs += t['cost_amount']
+        elif t['type'] == 'EXPENSE':
+            gastos += t['amount']
+    return ventas, cogs, gastos
+
+
+def _top_vendidos(n=8):
+    unidades = {}
+    for t in _s('transacciones'):
+        if t['type'] == 'SALE' and not t['anulada']:
+            for it in t['items']:
+                unidades[it['product_id']] = unidades.get(it['product_id'], 0) + it['quantity']
+    prods = sorted(_s('productos'), key=lambda p: (-unidades.get(p['id'], 0), p['name']))
+    return prods[:n]
 
 
 # ==============================================================
@@ -153,9 +376,15 @@ def _df(nombre):
 
 def _fmt_money(v):
     try:
-        return f'${float(v):,.0f}'.replace(',', '.')
+        v = float(v)
     except Exception:
         return '$0'
+    signo = '-' if v < 0 else ''
+    return f'{signo}${abs(v):,.0f}'.replace(',', '.')
+
+
+def _fmt_fecha(dt):
+    return dt.strftime('%d/%m %H:%M')
 
 
 def _kpi_row(items):
@@ -172,802 +401,827 @@ def _kpi_row(items):
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
 
-def _selector_o_texto(label, opciones, key, placeholder=''):
-    """Selectbox con las opciones existentes + una opción para escribir
-    un valor nuevo a mano (cliente/proveedor/producto que todavía no
-    está cargado en su gestión)."""
-    OTRO = '✏️ Otro (escribir)'
-    elegido = st.selectbox(label, [OTRO] + opciones, key=f'{key}_sel')
-    if elegido == OTRO:
-        return st.text_input(f'{label} (nuevo)', key=f'{key}_manual', placeholder=placeholder)
-    return elegido
+def _titulo(texto):
+    st.markdown(f'<div class="sec-title">{texto}</div>', unsafe_allow_html=True)
 
 
-def _tabla_con_borrado(nombre, columnas, titulo, formato_money_cols=None, key_sufijo=''):
-    """Renderiza la tabla de una entidad simulada + un expander para
-    borrar filas por selección."""
-    df = _df(nombre)
-    st.markdown(f'<div class="sec-title">{titulo}</div>', unsafe_allow_html=True)
-    if df.empty:
-        st.info('Todavía no hay registros cargados.')
-        return df
-
-    cols_mostrar = [c for c in columnas if c in df.columns]
-    df_show = df[cols_mostrar].copy()
-    if formato_money_cols:
-        for c in formato_money_cols:
-            if c in df_show.columns:
-                df_show[c] = df_show[c].apply(_fmt_money)
-
-    st.dataframe(df_show, use_container_width=True, hide_index=True,
-                 height=min(420, len(df_show) * 38 + 45))
-
-    with st.expander(f'🗑️ Eliminar un registro — {titulo.lower()}'):
-        etiqueta_col = cols_mostrar[1] if len(cols_mostrar) > 1 else cols_mostrar[0]
-        opciones = {f"#{r['id']} · {r.get(etiqueta_col, '')}": r['id'] for r in df.to_dict('records')}
-        if opciones:
-            sel = st.selectbox('Elegí el registro', list(opciones.keys()), key=f'{nombre}_del_sel_{key_sufijo}')
-            if st.button('Eliminar', key=f'{nombre}_del_btn_{key_sufijo}'):
-                _eliminar(nombre, opciones[sel])
-                st.success('Eliminado (esto es una simulación, no se guarda de forma permanente).')
-                st.rerun()
-    return df
+def _flash(msg, kind='success'):
+    st.session_state['pw_flash'] = (kind, msg)
 
 
-# ==============================================================
-#  📝 REGISTRO DE VENTAS
-# ==============================================================
-
-def _tab_ventas():
-    st.caption('🧪 Registro de ventas — simulación en memoria. Cada venta puede descontar stock automáticamente del inventario simulado.')
-
-    df_inv = _df('inventario')
-    df_cli = _df('clientes')
-    nombres_prod = df_inv['producto'].tolist() if not df_inv.empty else []
-    nombres_cli = df_cli['nombre'].tolist() if not df_cli.empty else []
-
-    with st.form('pyme_form_ventas', clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            fecha = st.date_input('Fecha', value=date.today(), key='v_fecha')
-        with c2:
-            cliente = _selector_o_texto('Cliente', nombres_cli, 'v_cliente', 'Nombre del cliente')
-        with c3:
-            medio_pago = st.selectbox('Medio de pago', ['Efectivo', 'Transferencia', 'Tarjeta', 'Cuenta corriente'], key='v_medio')
-
-        c4, c5, c6 = st.columns(3)
-        with c4:
-            producto = _selector_o_texto('Producto', nombres_prod, 'v_producto', 'Nombre del producto')
-        with c5:
-            cantidad = st.number_input('Cantidad', min_value=1, step=1, value=1, key='v_cant')
-        with c6:
-            precio_sugerido = 0.0
-            if not df_inv.empty and producto in df_inv['producto'].values:
-                precio_sugerido = float(df_inv.loc[df_inv['producto'] == producto, 'precio_venta'].iloc[0])
-            precio_unitario = st.number_input('Precio unitario', min_value=0.0, step=100.0,
-                                               value=precio_sugerido, key='v_precio')
-
-        descontar_stock = st.checkbox('Descontar del inventario simulado', value=True, key='v_descontar')
-
-        if st.form_submit_button('➕ Registrar venta', use_container_width=True, type='primary'):
-            if producto and cliente and precio_unitario > 0:
-                total = cantidad * precio_unitario
-                _agregar('ventas', {
-                    'fecha': str(fecha), 'cliente': cliente, 'producto': producto,
-                    'cantidad': int(cantidad), 'precio_unitario': precio_unitario,
-                    'total': total, 'medio_pago': medio_pago,
-                })
-                if descontar_stock and not df_inv.empty and producto in df_inv['producto'].values:
-                    row = df_inv.loc[df_inv['producto'] == producto].iloc[0]
-                    nuevo_stock = max(0, int(row['stock_actual']) - int(cantidad))
-                    _actualizar('inventario', int(row['id']), {'stock_actual': nuevo_stock})
-                    _agregar('movimientos_stock', {
-                        'fecha': str(fecha), 'producto': producto, 'tipo': 'Salida',
-                        'cantidad': int(cantidad), 'nota': 'Venta registrada',
-                    })
-                st.success('Venta registrada.')
-                st.rerun()
-            else:
-                st.warning('Completá cliente, producto y un precio mayor a 0.')
-
-    df = _df('ventas')
-    if df.empty:
-        st.info('Todavía no hay ventas cargadas.')
+def _mostrar_flash():
+    f = st.session_state.pop('pw_flash', None)
+    if not f:
         return
+    kind, msg = f
+    if kind == 'success':
+        st.toast(msg, icon='✅')
+    elif kind == 'warning':
+        st.warning(msg)
+    else:
+        st.error(msg)
 
-    df['total'] = pd.to_numeric(df['total'], errors='coerce').fillna(0)
-    total_vendido = df['total'].sum()
-    ticket_prom = df['total'].mean()
-    mejor_cliente = df.groupby('cliente')['total'].sum().idxmax() if not df.empty else '-'
+
+def _fila_html(label, valor, color='#e6edf3', fuerte=False, tenue=False, linea=False):
+    peso = 700 if fuerte else 500
+    col_label = C_GRIS if tenue else '#c9d1d9'
+    borde = 'border-top:1px solid #21262d;margin-top:4px;padding-top:8px;' if linea else ''
+    return (f'<div style="display:flex;justify-content:space-between;padding:4px 2px;{borde}">'
+            f'<span style="color:{col_label};font-size:13px;font-weight:{peso}">{label}</span>'
+            f'<span style="color:{color};font-size:{15 if fuerte else 13}px;font-weight:{peso}">{valor}</span></div>')
+
+
+def _etiqueta_pendiente(t):
+    venc = ''
+    if t['due_date']:
+        venc = f" · vence {t['due_date'].strftime('%d/%m')}" + (' ⚠️ VENCIDA' if _vencida(t) else '')
+    return f"#{t['id']} · {t['description'][:45]} · {_fmt_money(t['amount'])}{venc}"
+
+
+# ==============================================================
+#  CALLBACKS (se ejecutan antes del rerun)
+# ==============================================================
+
+def _cart_add(pid, n=1):
+    carrito = _s('carrito')
+    p = _producto(pid)
+    if not p:
+        return
+    if carrito.get(pid, 0) + n > p['current_stock']:
+        st.toast(f"Sin stock suficiente de {p['name']} (hay {p['current_stock']}).", icon='⚠️')
+        return
+    carrito[pid] = carrito.get(pid, 0) + n
+    if carrito[pid] <= 0:
+        carrito.pop(pid, None)
+
+
+def _cart_quitar(pid):
+    _s('carrito').pop(pid, None)
+
+
+def _cart_vaciar():
+    st.session_state[_key('carrito')] = {}
+
+
+def _on_busqueda():
+    """Enter en el buscador: código de barras exacto o única coincidencia → agrega al ticket."""
+    q = (st.session_state.get('pw_busq') or '').strip()
+    if not q:
+        return
+    prods = _s('productos')
+    hit = [p for p in prods if p['barcode'] and p['barcode'] == q]
+    if not hit:
+        coinc = [p for p in prods if q.lower() in p['name'].lower()]
+        if len(coinc) == 1:
+            hit = coinc
+    if hit:
+        _cart_add(hit[0]['id'])
+        st.session_state['pw_busq'] = ''
+
+
+def _bom_quitar(pid, idx):
+    p = _producto(pid)
+    if p and 0 <= idx < len(p['receta']):
+        p['receta'].pop(idx)
+        _recalcular_costo(p)
+
+
+def _bom_agregar(pid, key_ins, key_qty):
+    p = _producto(pid)
+    iid = st.session_state.get(key_ins)
+    qty = float(st.session_state.get(key_qty) or 0)
+    if not p or iid is None:
+        return
+    if qty <= 0:
+        st.toast('Ingresá una cantidad mayor a 0.', icon='⚠️')
+        return
+    for l in p['receta']:
+        if l['insumo_id'] == iid:
+            l['qty'] += qty
+            break
+    else:
+        p['receta'].append({'insumo_id': iid, 'qty': qty})
+    _recalcular_costo(p)
+
+
+# ==============================================================
+#  HEADER — KPIs
+# ==============================================================
+
+def _kpis_header():
+    caja, banco = _saldos()
+    productos = _s('productos')
+    bajos = [p for p in productos if p['current_stock'] < p['min_stock']]
+    sin_stock = [p for p in productos if p['current_stock'] <= 0]
+    hoy = date.today()
+    v, c, g = _pyl(hoy.replace(day=1), hoy)
+    neto = v - c - g
 
     _kpi_row([
-        ('Ventas totales', _fmt_money(total_vendido), f'{len(df)} ventas registradas', '#3fb950'),
-        ('Ticket promedio', _fmt_money(ticket_prom), 'Por venta', '#3a7bd5'),
-        ('Mejor cliente', mejor_cliente, 'Por monto total comprado', '#e3b341'),
-        ('Unidades vendidas', str(int(pd.to_numeric(df['cantidad'], errors='coerce').fillna(0).sum())), 'Total acumulado', '#bc8cff'),
+        ('💵 Caja chica', _fmt_money(caja), 'Efectivo disponible', C_VERDE if caja >= 0 else C_ROJO),
+        ('🏦 Bancos / Digital', _fmt_money(banco), 'Mercado Pago + transferencias', C_AZUL if banco >= 0 else C_ROJO),
+        ('📦 Stock crítico', str(len(bajos)), f'{len(sin_stock)} sin stock' if bajos else 'Todo en orden',
+         C_ROJO if bajos else C_GRIS),
+        ('📊 Resultado neto del mes', _fmt_money(neto), f"Ventas {_fmt_money(v)}", C_VERDE if neto >= 0 else C_ROJO),
     ])
 
-    df_ord = df.sort_values('fecha')
-    serie_diaria = df_ord.groupby('fecha')['total'].sum()
-    st.line_chart(serie_diaria, height=260)
-
-    _tabla_con_borrado('ventas', ['id', 'fecha', 'cliente', 'producto', 'cantidad', 'precio_unitario', 'total', 'medio_pago'],
-                        'Ventas registradas', formato_money_cols=['precio_unitario', 'total'])
-
 
 # ==============================================================
-#  📝 REGISTRO DE GASTOS
+#  MÓDULO A — REGISTRADORA EXPRÉS
 # ==============================================================
 
-def _tab_gastos():
-    st.caption('🧪 Registro de gastos — simulación en memoria.')
+def _form_venta():
+    productos = _s('productos')
+    carrito = _s('carrito')
 
-    df_prov = _df('proveedores')
-    nombres_prov = df_prov['nombre'].tolist() if not df_prov.empty else []
-    categorias_gasto = ['Alquiler', 'Sueldos', 'Servicios', 'Insumos', 'Impuestos', 'Marketing', 'Otros']
+    st.text_input('Buscar producto o código de barras (F2)', key='pw_busq',
+                  placeholder='Escaneá o escribí y presioná Enter', on_change=_on_busqueda)
+    q = (st.session_state.get('pw_busq') or '').strip().lower()
+    if q:
+        res = [p for p in productos if q in p['name'].lower() or (p['barcode'] and q in p['barcode'])][:6]
+        if res:
+            cols = st.columns(min(3, len(res)))
+            for i, p in enumerate(res):
+                with cols[i % len(cols)]:
+                    st.button(f"{p['name']} · {_fmt_money(p['sale_price'])}", key=f"pw_r_{p['id']}",
+                              use_container_width=True, disabled=p['current_stock'] <= 0,
+                              on_click=_cart_add, args=(p['id'],))
+        else:
+            st.caption('Sin coincidencias.')
 
-    with st.form('pyme_form_gastos', clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            fecha = st.date_input('Fecha', value=date.today(), key='g_fecha')
-        with c2:
-            categoria = st.selectbox('Categoría', categorias_gasto, key='g_categoria')
-        with c3:
-            monto = st.number_input('Monto', min_value=0.0, step=100.0, key='g_monto')
-        proveedor = _selector_o_texto('Proveedor (opcional)', nombres_prov, 'g_proveedor', 'Nombre del proveedor')
-        descripcion = st.text_input('Descripción', key='g_desc', placeholder='Ej: Compra de insumos de oficina')
+    st.caption('⚡ Venta rápida — 1 toque = 1 unidad')
+    top = _top_vendidos(9)
+    with st.container(key='pw_quick'):
+        cols = st.columns(3)
+        for i, p in enumerate(top):
+            with cols[i % 3]:
+                st.button(f"{p['name']} · {_fmt_money(p['sale_price'])}", key=f"pw_q_{p['id']}",
+                          use_container_width=True, disabled=p['current_stock'] <= 0,
+                          on_click=_cart_add, args=(p['id'],),
+                          help=f"Stock: {p['current_stock']}")
 
-        if st.form_submit_button('➕ Registrar gasto', use_container_width=True, type='primary'):
-            if monto > 0:
-                _agregar('gastos', {
-                    'fecha': str(fecha), 'categoria': categoria, 'proveedor': proveedor or '',
-                    'monto': monto, 'descripcion': descripcion,
-                })
-                st.success('Gasto registrado.')
-                st.rerun()
-            else:
-                st.warning('El monto debe ser mayor a 0.')
+    _titulo('🧾 Ticket actual')
+    if not carrito:
+        st.caption('Tocá un producto para agregarlo al ticket.')
+        total = 0.0
+    else:
+        total = 0.0
+        for pid, qty in list(carrito.items()):
+            p = _producto(pid)
+            if p is None:
+                continue
+            sub = qty * p['sale_price']
+            total += sub
+            c1, c2, c3, c4 = st.columns([5, 1, 1, 1])
+            with c1:
+                st.markdown(f"**{qty}×** {_esc(p['name'])} "
+                            f"<span style='color:{C_GRIS};float:right'>{_fmt_money(sub)}</span>",
+                            unsafe_allow_html=True)
+            with c2:
+                st.button('➖', key=f'pw_m_{pid}', on_click=_cart_add, args=(pid, -1))
+            with c3:
+                st.button('➕', key=f'pw_p_{pid}', on_click=_cart_add, args=(pid, 1))
+            with c4:
+                st.button('✕', key=f'pw_x_{pid}', on_click=_cart_quitar, args=(pid,))
+        st.markdown(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'border-top:1px solid #21262d;margin-top:6px;padding-top:8px">'
+            f'<span style="color:{C_GRIS};font-size:12px;text-transform:uppercase;letter-spacing:.6px">Total</span>'
+            f'<span style="font-size:26px;font-weight:800;color:#e6edf3">{_fmt_money(total)}</span></div>',
+            unsafe_allow_html=True)
+        st.button('🗑️ Vaciar ticket', key='pw_vaciar', on_click=_cart_vaciar)
 
-    df = _df('gastos')
-    if df.empty:
-        st.info('Todavía no hay gastos cargados.')
-        return
-
-    df['monto'] = pd.to_numeric(df['monto'], errors='coerce').fillna(0)
-    total_gastado = df['monto'].sum()
-    gasto_prom = df['monto'].mean()
-    cat_top = df.groupby('categoria')['monto'].sum().idxmax()
-
-    _kpi_row([
-        ('Gastos totales', _fmt_money(total_gastado), f'{len(df)} gastos registrados', '#f85149'),
-        ('Gasto promedio', _fmt_money(gasto_prom), 'Por registro', '#f0883e'),
-        ('Categoría principal', cat_top, 'Mayor gasto acumulado', '#e3b341'),
-        ('Proveedores con gasto', str(df.loc[df['proveedor'] != '', 'proveedor'].nunique()), 'Distintos', '#3a7bd5'),
-    ])
-
-    resumen_cat = df.groupby('categoria')['monto'].sum().sort_values(ascending=False)
-    st.bar_chart(resumen_cat, height=260)
-
-    _tabla_con_borrado('gastos', ['id', 'fecha', 'categoria', 'proveedor', 'monto', 'descripcion'],
-                        'Gastos registrados', formato_money_cols=['monto'])
-
-
-# ==============================================================
-#  📝 REGISTRO DE INVENTARIOS
-# ==============================================================
-
-def _tab_inventario():
-    st.caption('🧪 Registro de inventarios — simulación en memoria. Los cambios de precio y stock quedan reflejados en "Variación de productos".')
-
-    with st.form('pyme_form_inventario', clear_on_submit=True):
+    with st.form('pw_form_venta', clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
-            producto = st.text_input('Producto', key='i_producto', placeholder='Ej: Notebook 15" i5')
+            medio = st.selectbox('Medio de pago', _medios_activos(), key='pw_v_medio')
         with c2:
-            categoria = st.text_input('Categoría', key='i_categoria', placeholder='Ej: Informática')
-        c3, c4, c5, c6 = st.columns(4)
+            estado = st.radio('Estado', ['Pagado', 'Pendiente'], horizontal=True, key='pw_v_estado')
+        c3, c4 = st.columns(2)
         with c3:
-            stock_actual = st.number_input('Stock actual', min_value=0, step=1, key='i_stock')
+            nota = st.text_input('Cliente / nota (opcional)', key='pw_v_nota')
         with c4:
-            stock_minimo = st.number_input('Stock mínimo', min_value=0, step=1, key='i_stockmin')
-        with c5:
-            precio_costo = st.number_input('Precio costo', min_value=0.0, step=100.0, key='i_costo')
-        with c6:
-            precio_venta = st.number_input('Precio venta', min_value=0.0, step=100.0, key='i_venta')
+            vence = st.date_input('Vence (si queda pendiente)', value=date.today() + timedelta(days=15), key='pw_v_vence')
+        enviar = st.form_submit_button(
+            f'✅ Confirmar venta · {_fmt_money(total)}' if carrito else '✅ Confirmar venta',
+            type='primary', use_container_width=True, disabled=not carrito)
 
-        if st.form_submit_button('➕ Agregar producto', use_container_width=True, type='primary'):
-            if producto:
-                _agregar('inventario', {
-                    'producto': producto, 'categoria': categoria,
-                    'stock_actual': int(stock_actual), 'stock_minimo': int(stock_minimo),
-                    'precio_costo': precio_costo, 'precio_venta': precio_venta,
-                })
-                st.success('Producto agregado.')
-                st.rerun()
-            else:
-                st.warning('El nombre del producto es obligatorio.')
+    if enviar:
+        ok, msg = _reg_venta(dict(carrito), medio, 'PAID' if estado == 'Pagado' else 'PENDING', vence, nota.strip())
+        if ok:
+            st.session_state[_key('carrito')] = {}
+            if _tipo_medio(medio) == 'credito' or estado == 'Pendiente':
+                msg += ' Quedó pendiente de cobro.'
+            _flash(msg)
+            st.rerun()
+        else:
+            st.error(msg)
 
-    df = _df('inventario')
-    if df.empty:
-        st.info('Todavía no hay productos cargados.')
+
+def _form_compra():
+    productos = _s('productos')
+    if not productos:
+        st.info('Primero creá un producto en Inventario.')
         return
+    opciones = {f"{p['name']} (stock {p['current_stock']})": p['id'] for p in productos}
+    sel = st.selectbox('Producto', list(opciones), key='pw_c_prod')
+    pid = opciones[sel]
+    p = _producto(pid)
 
-    for c in ['stock_actual', 'stock_minimo', 'precio_costo', 'precio_venta']:
-        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+    with st.form('pw_form_compra', clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            cantidad = st.number_input('Cantidad', min_value=1, step=1, value=1, key='pw_c_qty')
+        with c2:
+            costo = st.number_input('Costo unitario', min_value=0.0, step=10.0,
+                                    value=float(p['unit_cost']), key=f'pw_c_costo_{pid}')
+        c3, c4, c5 = st.columns(3)
+        with c3:
+            medio = st.selectbox('Medio de pago', _medios_activos(), key='pw_c_medio')
+        with c4:
+            estado = st.radio('Estado', ['Pagado', 'Pendiente'], horizontal=True, key='pw_c_estado')
+        with c5:
+            vence = st.date_input('Vence (si queda pendiente)', value=date.today() + timedelta(days=15), key='pw_c_vence')
+        enviar = st.form_submit_button('📥 Registrar compra', type='primary', use_container_width=True)
+    st.caption('Suma stock y recalcula el costo del producto (promedio ponderado).')
 
-    valor_costo = (df['stock_actual'] * df['precio_costo']).sum()
-    valor_venta = (df['stock_actual'] * df['precio_venta']).sum()
-    n_bajo_stock = int((df['stock_actual'] <= df['stock_minimo']).sum())
+    if enviar:
+        ok, msg = _reg_compra(pid, int(cantidad), float(costo), medio,
+                              'PAID' if estado == 'Pagado' else 'PENDING', vence)
+        _flash(msg)
+        st.rerun()
 
-    _kpi_row([
-        ('Productos', str(len(df)), 'Total en catálogo', '#3a7bd5'),
-        ('Valor a costo', _fmt_money(valor_costo), 'Inventario valorizado', '#e3b341'),
-        ('Valor a venta', _fmt_money(valor_venta), 'Potencial de venta', '#3fb950'),
-        ('Bajo stock mínimo', str(n_bajo_stock), 'Requieren reposición', '#f85149' if n_bajo_stock else '#6b7d9a'),
-    ])
 
-    if n_bajo_stock:
-        st.warning(f'⚠️ Hay {n_bajo_stock} producto(s) en o por debajo del stock mínimo.')
+def _form_gasto():
+    categorias = ['Alquiler', 'Sueldos', 'Servicios', 'Impuestos', 'Marketing', 'Mantenimiento', 'Otros']
+    with st.form('pw_form_gasto', clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            categoria = st.selectbox('Categoría', categorias, key='pw_g_cat')
+        with c2:
+            monto = st.number_input('Monto', min_value=0.0, step=100.0, key='pw_g_monto')
+        descripcion = st.text_input('Descripción', key='pw_g_desc', placeholder='Ej: Factura de luz')
+        c3, c4, c5 = st.columns(3)
+        with c3:
+            medio = st.selectbox('Medio de pago', _medios_activos(), key='pw_g_medio')
+        with c4:
+            estado = st.radio('Estado', ['Pagado', 'Pendiente'], horizontal=True, key='pw_g_estado')
+        with c5:
+            vence = st.date_input('Vence (si queda pendiente)', value=date.today() + timedelta(days=15), key='pw_g_vence')
+        enviar = st.form_submit_button('💸 Registrar gasto', type='primary', use_container_width=True)
 
-    def _color_stock(row):
-        if row['stock_actual'] <= row['stock_minimo']:
+    if enviar:
+        if monto <= 0:
+            st.warning('El monto debe ser mayor a 0.')
+        else:
+            ok, msg = _reg_gasto(categoria, descripcion.strip(), float(monto), medio,
+                                 'PAID' if estado == 'Pagado' else 'PENDING', vence)
+            _flash(msg)
+            st.rerun()
+
+
+def _form_liquidacion(es_cobro):
+    pend = _por_cobrar() if es_cobro else _por_pagar()
+    sufijo = 'cobro' if es_cobro else 'pago'
+    if not pend:
+        st.info('No hay cuentas por cobrar pendientes. 🎉' if es_cobro else 'No hay cuentas por pagar pendientes. 🎉')
+        return
+    pend = sorted(pend, key=lambda t: (t['due_date'] is None, t['due_date'] or date.max))
+    opciones = {_etiqueta_pendiente(t): t['id'] for t in pend}
+    sel = st.selectbox('Cuenta por cobrar' if es_cobro else 'Cuenta por pagar', list(opciones), key=f'pw_l_sel_{sufijo}')
+    tx_id = opciones[sel]
+    with st.form(f'pw_form_liq_{sufijo}', clear_on_submit=True):
+        medio = st.selectbox('Medio de cobro' if es_cobro else 'Medio de pago',
+                             _medios_activos(incluir_credito=False), key=f'pw_l_medio_{sufijo}')
+        enviar = st.form_submit_button('💰 Registrar cobro' if es_cobro else '🏦 Registrar pago',
+                                       type='primary', use_container_width=True)
+    if enviar:
+        ok, msg = _reg_liquidacion(tx_id, medio)
+        _flash(msg, 'success' if ok else 'warning')
+        st.rerun()
+
+
+def _modulo_a():
+    with st.container(border=True):
+        _titulo('⚡ A · Registradora exprés')
+        tipo = st.radio('Tipo de movimiento', list(TIPOS_MOV), key='pw_tipo_mov', horizontal=True,
+                        format_func=lambda k: f'{TIPOS_MOV[k][0]} {TIPOS_MOV[k][1]}',
+                        label_visibility='collapsed')
+        if tipo == 'SALE':
+            _form_venta()
+        elif tipo == 'PURCHASE':
+            _form_compra()
+        elif tipo == 'EXPENSE':
+            _form_gasto()
+        elif tipo == 'COLLECTION':
+            _form_liquidacion(True)
+        else:
+            _form_liquidacion(False)
+
+
+# ==============================================================
+#  MÓDULO B — INVENTARIO + CALCULADORA DE COSTOS
+# ==============================================================
+
+def _bloque_catalogo():
+    productos = _s('productos')
+    filtro = st.text_input('Filtrar catálogo', key='pw_inv_filtro', placeholder='Nombre o código…',
+                           label_visibility='collapsed')
+    f = filtro.strip().lower()
+    vistos = [p for p in productos if not f or f in p['name'].lower() or (p['barcode'] and f in p['barcode'])]
+    if not vistos:
+        st.info('Todavía no hay productos.' if not productos else 'Sin resultados para ese filtro.')
+        return
+    filas = []
+    for p in vistos:
+        margen = (p['sale_price'] - p['unit_cost']) / p['sale_price'] * 100 if p['sale_price'] else 0
+        filas.append({'Código': p['barcode'] or '—', 'Producto': p['name'], 'Stock': p['current_stock'],
+                      'Mínimo': p['min_stock'], 'Costo': p['unit_cost'], 'Precio': p['sale_price'],
+                      'Margen': margen})
+    df = pd.DataFrame(filas)
+
+    def _rojo(row):
+        if row['Stock'] < row['Mínimo']:
             return ['background-color:#2a0a0a;color:#f85149;font-weight:600'] * len(row)
         return [''] * len(row)
 
-    df_show = df[['id', 'producto', 'categoria', 'stock_actual', 'stock_minimo', 'precio_costo', 'precio_venta']].copy()
-    styled = (df_show.drop(columns=['id']).style
-              .apply(_color_stock, axis=1)
-              .format({'precio_costo': _fmt_money, 'precio_venta': _fmt_money}))
-    st.markdown('<div class="sec-title">Catálogo de productos</div>', unsafe_allow_html=True)
-    st.dataframe(styled, use_container_width=True, hide_index=True, height=min(420, len(df_show) * 38 + 45))
-
-    with st.expander('✏️ Ajustar stock o precio de un producto'):
-        opciones = {f"#{r['id']} · {r['producto']}": r['id'] for r in df.to_dict('records')}
-        if opciones:
-            sel = st.selectbox('Producto', list(opciones.keys()), key='inv_ajuste_sel')
-            row_id = opciones[sel]
-            row = df.loc[df['id'] == row_id].iloc[0]
-
-            ca1, ca2 = st.columns(2)
-            with ca1:
-                st.markdown('##### 📦 Ajustar stock')
-                tipo_mov = st.selectbox('Tipo de movimiento', ['Entrada', 'Salida'], key='inv_tipo_mov')
-                cantidad_mov = st.number_input('Cantidad', min_value=1, step=1, value=1, key='inv_cant_mov')
-                if st.button('Aplicar movimiento de stock', key='inv_aplicar_stock'):
-                    delta = cantidad_mov if tipo_mov == 'Entrada' else -cantidad_mov
-                    nuevo_stock = max(0, int(row['stock_actual']) + delta)
-                    _actualizar('inventario', row_id, {'stock_actual': nuevo_stock})
-                    _agregar('movimientos_stock', {
-                        'fecha': str(date.today()), 'producto': row['producto'],
-                        'tipo': tipo_mov, 'cantidad': int(cantidad_mov), 'nota': 'Ajuste manual',
-                    })
-                    st.success('Stock actualizado.')
-                    st.rerun()
-
-            with ca2:
-                st.markdown('##### 💲 Ajustar precio de venta')
-                nuevo_precio = st.number_input('Nuevo precio de venta', min_value=0.0, step=100.0,
-                                                value=float(row['precio_venta']), key='inv_nuevo_precio')
-                if st.button('Aplicar nuevo precio', key='inv_aplicar_precio'):
-                    if nuevo_precio != row['precio_venta']:
-                        _agregar('historial_precios', {
-                            'fecha': str(date.today()), 'producto': row['producto'],
-                            'precio_anterior': float(row['precio_venta']), 'precio_nuevo': float(nuevo_precio),
-                        })
-                        _actualizar('inventario', row_id, {'precio_venta': nuevo_precio})
-                        st.success('Precio actualizado. Se registró la variación.')
-                        st.rerun()
-                    else:
-                        st.info('El precio nuevo es igual al actual.')
-
-    with st.expander('🗑️ Eliminar un producto del catálogo'):
-        opciones = {f"#{r['id']} · {r['producto']}": r['id'] for r in df.to_dict('records')}
-        if opciones:
-            sel = st.selectbox('Producto a eliminar', list(opciones.keys()), key='inv_del_sel')
-            if st.button('Eliminar producto', key='inv_del_btn'):
-                _eliminar('inventario', opciones[sel])
-                st.success('Producto eliminado.')
-                st.rerun()
+    styled = (df.style.apply(_rojo, axis=1)
+              .format({'Costo': _fmt_money, 'Precio': _fmt_money, 'Margen': '{:.0f}%'}))
+    st.dataframe(styled, use_container_width=True, hide_index=True, height=min(320, len(df) * 36 + 42))
+    n = sum(1 for p in productos if p['current_stock'] < p['min_stock'])
+    if n:
+        st.caption(f'🔴 {n} producto(s) por debajo del stock mínimo.')
 
 
-# ==============================================================
-#  🧭 GESTIÓN DE CLIENTES
-# ==============================================================
-
-def _tab_clientes():
-    st.caption('🧪 Gestión de clientes — simulación en memoria.')
-
-    with st.form('pyme_form_clientes', clear_on_submit=True):
-        c1, c2 = st.columns(2)
+def _bloque_nuevo_producto():
+    with st.form('pw_form_prod', clear_on_submit=True):
+        c1, c2 = st.columns([3, 2])
         with c1:
-            nombre = st.text_input('Nombre / Razón social', key='cl_nombre')
+            nombre = st.text_input('Nombre del producto', key='pw_p_nombre')
         with c2:
-            contacto = st.text_input('Persona de contacto', key='cl_contacto')
-        c3, c4, c5 = st.columns(3)
-        with c3:
-            telefono = st.text_input('Teléfono', key='cl_tel')
-        with c4:
-            email = st.text_input('Email', key='cl_email')
-        with c5:
-            condicion = st.selectbox('Condición de pago', ['Contado', 'Cuenta corriente'], key='cl_cond')
-        limite = st.number_input('Límite de crédito (si aplica)', min_value=0.0, step=1000.0, key='cl_limite')
+            precio = st.number_input('Precio de venta', min_value=0.0, step=100.0, key='pw_p_precio')
+        with st.expander('Más datos (opcional)'):
+            o1, o2 = st.columns(2)
+            with o1:
+                barcode = st.text_input('Código de barras', key='pw_p_barcode')
+                stock = st.number_input('Stock inicial', min_value=0, step=1, key='pw_p_stock')
+            with o2:
+                minimo = st.number_input('Stock mínimo', min_value=0, step=1, value=5, key='pw_p_min')
+                costo = st.number_input('Costo (si no usás escandallo)', min_value=0.0, step=10.0, key='pw_p_costo')
+        enviar = st.form_submit_button('➕ Crear producto', type='primary', use_container_width=True)
+    st.caption('Solo pide nombre y precio. El costo se calcula solo con el escandallo o con las compras.')
 
-        if st.form_submit_button('➕ Agregar cliente', use_container_width=True, type='primary'):
-            if nombre:
-                _agregar('clientes', {
-                    'nombre': nombre, 'contacto': contacto, 'telefono': telefono,
-                    'email': email, 'condicion_pago': condicion, 'limite_credito': limite,
-                })
-                st.success('Cliente agregado.')
+    if enviar:
+        barcode = barcode.strip()
+        if not nombre.strip() or precio <= 0:
+            st.warning('Completá el nombre y un precio de venta mayor a 0.')
+        elif barcode and any(p['barcode'] == barcode for p in _s('productos')):
+            st.warning('Ya existe un producto con ese código de barras.')
+        else:
+            _s('productos').append({
+                'id': _siguiente_id('productos'), 'barcode': barcode, 'name': nombre.strip(),
+                'current_stock': int(stock), 'min_stock': int(minimo), 'unit_cost': float(costo),
+                'sale_price': float(precio), 'receta': [], 'mano_obra': 0.0, 'margen': 40.0,
+            })
+            _flash(f'Producto «{nombre.strip()}» creado.')
+            st.rerun()
+
+
+def _bloque_ajustes():
+    productos = _s('productos')
+    if not productos:
+        return
+    with st.expander('✏️ Ajustar stock / precio / eliminar'):
+        opciones = {p['name']: p['id'] for p in productos}
+        sel = st.selectbox('Producto', list(opciones), key='pw_adj_sel')
+        pid = opciones[sel]
+        p = _producto(pid)
+        a1, a2 = st.columns(2)
+        with a1:
+            st.markdown('##### 📦 Stock')
+            st.caption(f"Actual: {p['current_stock']} · no mueve la caja")
+            mov = st.radio('Movimiento', ['Entrada', 'Salida'], horizontal=True, key='pw_adj_tipo')
+            cant = st.number_input('Cantidad', min_value=1, step=1, value=1, key='pw_adj_cant')
+            if st.button('Aplicar stock', key='pw_adj_stock_btn'):
+                delta = cant if mov == 'Entrada' else -cant
+                p['current_stock'] = max(0, p['current_stock'] + int(delta))
+                _flash('Stock actualizado.')
                 st.rerun()
-            else:
-                st.warning('El nombre es obligatorio.')
-
-    df = _df('clientes')
-    if df.empty:
-        st.info('Todavía no hay clientes cargados.')
-        return
-
-    df_ventas = _df('ventas')
-    if not df_ventas.empty:
-        df_ventas['total'] = pd.to_numeric(df_ventas['total'], errors='coerce').fillna(0)
-        compras_por_cliente = df_ventas.groupby('cliente')['total'].sum()
-    else:
-        compras_por_cliente = pd.Series(dtype=float)
-
-    df['total_comprado'] = df['nombre'].map(compras_por_cliente).fillna(0)
-
-    _kpi_row([
-        ('Clientes activos', str(len(df)), 'Total cargados', '#3a7bd5'),
-        ('Cuenta corriente', str(int((df['condicion_pago'] == 'Cuenta corriente').sum())), 'De este tipo', '#e3b341'),
-        ('Compras totales', _fmt_money(df['total_comprado'].sum()), 'Histórico simulado', '#3fb950'),
-        ('Mejor cliente', df.loc[df['total_comprado'].idxmax(), 'nombre'] if df['total_comprado'].max() > 0 else '-',
-         'Por monto comprado', '#bc8cff'),
-    ])
-
-    df_show = df[['id', 'nombre', 'contacto', 'telefono', 'email', 'condicion_pago', 'limite_credito', 'total_comprado']].copy()
-    df_show['limite_credito'] = df_show['limite_credito'].apply(_fmt_money)
-    df_show['total_comprado'] = df_show['total_comprado'].apply(_fmt_money)
-    st.markdown('<div class="sec-title">Clientes registrados</div>', unsafe_allow_html=True)
-    st.dataframe(df_show.drop(columns=['id']), use_container_width=True, hide_index=True,
-                 height=min(420, len(df_show) * 38 + 45))
-
-    with st.expander('🗑️ Eliminar un cliente'):
-        opciones = {f"#{r['id']} · {r['nombre']}": r['id'] for r in df.to_dict('records')}
-        if opciones:
-            sel = st.selectbox('Cliente', list(opciones.keys()), key='cl_del_sel')
-            if st.button('Eliminar', key='cl_del_btn'):
-                _eliminar('clientes', opciones[sel])
-                st.success('Eliminado.')
+        with a2:
+            st.markdown('##### 💲 Precio y mínimo')
+            nuevo_precio = st.number_input('Precio de venta', min_value=0.0, step=100.0,
+                                           value=float(p['sale_price']), key=f'pw_adj_precio_{pid}')
+            nuevo_min = st.number_input('Stock mínimo', min_value=0, step=1,
+                                        value=int(p['min_stock']), key=f'pw_adj_min_{pid}')
+            if st.button('Guardar', key='pw_adj_precio_btn'):
+                p['sale_price'] = float(nuevo_precio)
+                p['min_stock'] = int(nuevo_min)
+                _flash('Producto actualizado.')
                 st.rerun()
+        if st.button('🗑️ Eliminar este producto', key='pw_adj_del_btn'):
+            st.session_state[_key('productos')] = [x for x in productos if x['id'] != pid]
+            _s('carrito').pop(pid, None)
+            _flash('Producto eliminado (el historial conserva su nombre).')
+            st.rerun()
 
 
-# ==============================================================
-#  🧭 GESTIÓN DE PROVEEDORES
-# ==============================================================
+def _bloque_escandallo():
+    productos = _s('productos')
+    insumos = _s('insumos')
+    with st.expander('🧮 Calculadora de costos (escandallo / BOM)'):
+        if not productos:
+            st.info('Creá un producto primero.')
+            return
+        opciones = {p['name']: p['id'] for p in productos}
+        sel = st.selectbox('Producto', list(opciones), key='pw_bom_prod')
+        pid = opciones[sel]
+        p = _producto(pid)
 
-def _tab_proveedores():
-    st.caption('🧪 Gestión de proveedores — simulación en memoria.')
+        st.markdown('**Insumos de la receta**')
+        if p['receta']:
+            for i, l in enumerate(list(p['receta'])):
+                ins = _insumo(l['insumo_id'])
+                if not ins:
+                    continue
+                c1, c2 = st.columns([8, 1])
+                with c1:
+                    st.markdown(f"{l['qty']:g} {ins['unit_measure']} de **{_esc(ins['name'])}** "
+                                f"<span style='color:{C_GRIS};float:right'>{_fmt_money(ins['cost_per_unit'] * l['qty'])}</span>",
+                                unsafe_allow_html=True)
+                with c2:
+                    st.button('✕', key=f'pw_bom_del_{pid}_{i}', on_click=_bom_quitar, args=(pid, i))
+        else:
+            st.caption('Este producto todavía no tiene insumos cargados.')
 
-    with st.form('pyme_form_proveedores', clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        with c1:
-            nombre = st.text_input('Nombre / Razón social', key='pr_nombre')
-        with c2:
-            contacto = st.text_input('Persona de contacto', key='pr_contacto')
-        c3, c4, c5 = st.columns(3)
-        with c3:
-            telefono = st.text_input('Teléfono', key='pr_tel')
-        with c4:
-            email = st.text_input('Email', key='pr_email')
-        with c5:
-            categoria = st.text_input('Categoría / Rubro', key='pr_categoria')
-        condiciones = st.selectbox('Condiciones de pago', ['Contado', '15 días', '30 días', '60 días'], key='pr_cond')
+        if insumos:
+            k_ins, k_qty = f'pw_bom_ins_{pid}', f'pw_bom_qty_{pid}'
+            a1, a2, a3 = st.columns([3, 2, 1])
+            with a1:
+                etiq_ins = {i['id']: f"{i['name']} ({i['unit_measure']})" for i in insumos}
+                st.selectbox('Insumo', list(etiq_ins), key=k_ins, format_func=etiq_ins.get)
+            with a2:
+                st.number_input('Cantidad por unidad', min_value=0.0, step=0.01, format='%.3f', key=k_qty)
+            with a3:
+                st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+                st.button('➕', key=f'pw_bom_add_{pid}', on_click=_bom_agregar, args=(pid, k_ins, k_qty))
+        else:
+            st.caption('Cargá insumos en el bloque «Insumos» de más abajo.')
 
-        if st.form_submit_button('➕ Agregar proveedor', use_container_width=True, type='primary'):
-            if nombre:
-                _agregar('proveedores', {
-                    'nombre': nombre, 'contacto': contacto, 'telefono': telefono,
-                    'email': email, 'categoria': categoria, 'condiciones_pago': condiciones,
-                })
-                st.success('Proveedor agregado.')
-                st.rerun()
-            else:
-                st.warning('El nombre es obligatorio.')
+        m1, m2 = st.columns(2)
+        with m1:
+            mo = st.number_input('Mano de obra por unidad ($)', min_value=0.0, step=10.0,
+                                 value=float(p['mano_obra']), key=f'pw_bom_mo_{pid}')
+        with m2:
+            mg = st.number_input('Margen deseado sobre el precio (%)', min_value=0.0, max_value=95.0, step=1.0,
+                                 value=float(p['margen']), key=f'pw_bom_mg_{pid}')
 
-    df = _df('proveedores')
-    if df.empty:
-        st.info('Todavía no hay proveedores cargados.')
-        return
-
-    df_gastos = _df('gastos')
-    if not df_gastos.empty:
-        df_gastos['monto'] = pd.to_numeric(df_gastos['monto'], errors='coerce').fillna(0)
-        gastos_por_prov = df_gastos.groupby('proveedor')['monto'].sum()
-    else:
-        gastos_por_prov = pd.Series(dtype=float)
-
-    df['total_comprado'] = df['nombre'].map(gastos_por_prov).fillna(0)
-
-    _kpi_row([
-        ('Proveedores activos', str(len(df)), 'Total cargados', '#3a7bd5'),
-        ('Gasto total con proveedores', _fmt_money(df['total_comprado'].sum()), 'Histórico simulado', '#f85149'),
-        ('Categorías distintas', str(df['categoria'].nunique()), 'Rubros', '#e3b341'),
-        ('Proveedor principal', df.loc[df['total_comprado'].idxmax(), 'nombre'] if df['total_comprado'].max() > 0 else '-',
-         'Por monto comprado', '#bc8cff'),
-    ])
-
-    df_show = df[['id', 'nombre', 'contacto', 'telefono', 'email', 'categoria', 'condiciones_pago', 'total_comprado']].copy()
-    df_show['total_comprado'] = df_show['total_comprado'].apply(_fmt_money)
-    st.markdown('<div class="sec-title">Proveedores registrados</div>', unsafe_allow_html=True)
-    st.dataframe(df_show.drop(columns=['id']), use_container_width=True, hide_index=True,
-                 height=min(420, len(df_show) * 38 + 45))
-
-    with st.expander('🗑️ Eliminar un proveedor'):
-        opciones = {f"#{r['id']} · {r['nombre']}": r['id'] for r in df.to_dict('records')}
-        if opciones:
-            sel = st.selectbox('Proveedor', list(opciones.keys()), key='pr_del_sel')
-            if st.button('Eliminar', key='pr_del_btn'):
-                _eliminar('proveedores', opciones[sel])
-                st.success('Eliminado.')
-                st.rerun()
-
-
-# ==============================================================
-#  🧭 CONTROL DE DEUDAS
-# ==============================================================
-
-def _tab_deudas():
-    st.caption('🧪 Control de deudas — cuentas a cobrar (clientes) y a pagar (proveedores). Simulación en memoria.')
-
-    df_cli = _df('clientes')
-    df_prov = _df('proveedores')
-
-    with st.form('pyme_form_deudas', clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            tipo = st.selectbox('Tipo', ['A cobrar', 'A pagar'], key='d_tipo')
-        with c2:
-            opciones_contraparte = (df_cli['nombre'].tolist() if tipo == 'A cobrar' and not df_cli.empty
-                                     else df_prov['nombre'].tolist() if not df_prov.empty else [])
-            contraparte = _selector_o_texto('Contraparte', opciones_contraparte, 'd_contra', 'Nombre')
-        with c3:
-            monto = st.number_input('Monto', min_value=0.0, step=1000.0, key='d_monto')
-        c4, c5, c6 = st.columns(3)
-        with c4:
-            f_emi = st.date_input('Fecha emisión', value=date.today(), key='d_femi')
-        with c5:
-            f_ven = st.date_input('Fecha vencimiento', value=date.today() + timedelta(days=30), key='d_fven')
-        with c6:
-            estado = st.selectbox('Estado', ['Pendiente', 'Saldado'], key='d_estado')
-        notas = st.text_input('Notas (opcional)', key='d_notas')
-
-        if st.form_submit_button('➕ Registrar deuda', use_container_width=True, type='primary'):
-            if contraparte and monto > 0:
-                _agregar('deudas', {
-                    'tipo': tipo, 'contraparte': contraparte, 'monto': monto,
-                    'fecha_emision': str(f_emi), 'fecha_vencimiento': str(f_ven),
-                    'estado': estado, 'notas': notas,
-                })
-                st.success('Deuda registrada.')
-                st.rerun()
-            else:
-                st.warning('Completá contraparte y un monto mayor a 0.')
-
-    df = _df('deudas')
-    if df.empty:
-        st.info('Todavía no hay cuentas por cobrar/pagar cargadas.')
-        return
-
-    df['monto'] = pd.to_numeric(df['monto'], errors='coerce').fillna(0)
-    df['fecha_vencimiento_dt'] = pd.to_datetime(df['fecha_vencimiento'], errors='coerce')
-    hoy_ts = pd.Timestamp(date.today())
-    vencidas = (df['estado'] == 'Pendiente') & (df['fecha_vencimiento_dt'] < hoy_ts)
-
-    cobrar_pend = df.loc[(df['tipo'] == 'A cobrar') & (df['estado'] == 'Pendiente'), 'monto'].sum()
-    pagar_pend = df.loc[(df['tipo'] == 'A pagar') & (df['estado'] == 'Pendiente'), 'monto'].sum()
-
-    _kpi_row([
-        ('Por cobrar', _fmt_money(cobrar_pend), 'Clientes', '#3fb950'),
-        ('Por pagar', _fmt_money(pagar_pend), 'Proveedores', '#f85149'),
-        ('Posición neta', _fmt_money(cobrar_pend - pagar_pend), 'Cobrar - Pagar', '#3a7bd5'),
-        ('Vencidas sin saldar', str(int(vencidas.sum())), 'Requieren atención', '#f0883e' if vencidas.sum() else '#6b7d9a'),
-    ])
-    if vencidas.sum():
-        st.warning(f'⚠️ Hay {int(vencidas.sum())} cuenta(s) vencida(s) sin saldar.')
-
-    f1, f2 = st.columns(2)
-    with f1:
-        f_tipo = st.selectbox('Filtrar por tipo', ['Todas', 'A cobrar', 'A pagar'], key='d_f_tipo')
-    with f2:
-        f_estado = st.selectbox('Filtrar por estado', ['Todos', 'Pendiente', 'Saldado'], key='d_f_estado')
-
-    df_f = df.copy()
-    if f_tipo != 'Todas':
-        df_f = df_f[df_f['tipo'] == f_tipo]
-    if f_estado != 'Todos':
-        df_f = df_f[df_f['estado'] == f_estado]
-
-    st.markdown('<div class="sec-title">Cuentas registradas</div>', unsafe_allow_html=True)
-    cols_show = ['id', 'tipo', 'contraparte', 'monto', 'fecha_emision', 'fecha_vencimiento', 'estado', 'notas']
-    df_show = df_f[cols_show].copy()
-    df_show['monto'] = df_show['monto'].apply(_fmt_money)
-    st.dataframe(df_show.drop(columns=['id']), use_container_width=True, hide_index=True,
-                 height=min(420, len(df_show) * 38 + 45))
-
-    with st.expander('✏️ Marcar como saldada / eliminar'):
-        opciones = {f"#{r['id']} · {r['tipo']} · {r['contraparte']} · {_fmt_money(r['monto'])}": r['id']
-                    for r in df_f.to_dict('records')}
-        if opciones:
-            sel = st.selectbox('Cuenta', list(opciones.keys()), key='d_edit_sel')
-            row_id = opciones[sel]
-            ce1, ce2 = st.columns(2)
-            with ce1:
-                if st.button('✅ Marcar como Saldado', key='d_saldar_btn'):
-                    _actualizar('deudas', row_id, {'estado': 'Saldado'})
-                    st.success('Actualizado.')
-                    st.rerun()
-            with ce2:
-                if st.button('🗑️ Eliminar', key='d_del_btn'):
-                    _eliminar('deudas', row_id)
-                    st.success('Eliminado.')
-                    st.rerun()
-
-
-# ==============================================================
-#  📈 MÓDULO DE ESTADÍSTICAS
-# ==============================================================
-
-def _tab_estadisticas():
-    st.caption('🧪 Estadísticas consolidadas a partir de los datos simulados de ventas, gastos e inventario.')
-
-    df_v = _df('ventas')
-    df_g = _df('gastos')
-    df_i = _df('inventario')
-
-    if df_v.empty and df_g.empty:
-        st.info('Cargá ventas y/o gastos para ver estadísticas.')
-        return
-
-    if not df_v.empty:
-        df_v['total'] = pd.to_numeric(df_v['total'], errors='coerce').fillna(0)
-        df_v['fecha_dt'] = pd.to_datetime(df_v['fecha'], errors='coerce')
-    if not df_g.empty:
-        df_g['monto'] = pd.to_numeric(df_g['monto'], errors='coerce').fillna(0)
-        df_g['fecha_dt'] = pd.to_datetime(df_g['fecha'], errors='coerce')
-
-    total_ventas = df_v['total'].sum() if not df_v.empty else 0
-    total_gastos = df_g['monto'].sum() if not df_g.empty else 0
-    margen = total_ventas - total_gastos
-    producto_top = (df_v.groupby('producto')['cantidad'].sum().idxmax()
-                     if not df_v.empty and 'cantidad' in df_v.columns else '-')
-
-    _kpi_row([
-        ('Ventas totales', _fmt_money(total_ventas), 'Acumulado simulado', '#3fb950'),
-        ('Gastos totales', _fmt_money(total_gastos), 'Acumulado simulado', '#f85149'),
-        ('Margen bruto', _fmt_money(margen), 'Ventas - Gastos', '#3fb950' if margen >= 0 else '#f85149'),
-        ('Producto más vendido', str(producto_top), 'Por unidades', '#e3b341'),
-    ])
-
-    st.markdown('<div class="sec-title">Ventas vs. Gastos por mes</div>', unsafe_allow_html=True)
-    piezas = []
-    if not df_v.empty:
-        mensual_v = df_v.groupby(df_v['fecha_dt'].dt.to_period('M'))['total'].sum()
-        piezas.append(mensual_v.rename('Ventas'))
-    if not df_g.empty:
-        mensual_g = df_g.groupby(df_g['fecha_dt'].dt.to_period('M'))['monto'].sum()
-        piezas.append(mensual_g.rename('Gastos'))
-    if piezas:
-        df_mensual = pd.concat(piezas, axis=1).fillna(0)
-        df_mensual.index = df_mensual.index.astype(str)
-        st.bar_chart(df_mensual, height=300)
-
-    if not df_v.empty and 'cantidad' in df_v.columns:
-        st.markdown('<div class="sec-title">Top 5 productos por unidades vendidas</div>', unsafe_allow_html=True)
-        top5 = df_v.groupby('producto')['cantidad'].sum().sort_values(ascending=False).head(5)
-        st.bar_chart(top5, height=260)
-
-    if not df_i.empty:
-        st.markdown('<div class="sec-title">Valor de inventario por categoría</div>', unsafe_allow_html=True)
-        df_i['valor'] = pd.to_numeric(df_i['stock_actual'], errors='coerce').fillna(0) * pd.to_numeric(df_i['precio_venta'], errors='coerce').fillna(0)
-        valor_cat = df_i.groupby('categoria')['valor'].sum().sort_values(ascending=False)
-        st.bar_chart(valor_cat, height=260)
-
-
-# ==============================================================
-#  📈 REPORTES
-# ==============================================================
-
-def _tab_reportes():
-    st.caption('🧪 Reportes filtrados por rango de fechas. En esta etapa de simulación se muestran en pantalla; '
-               'la exportación a Excel/PDF se agrega cuando se conecte la base de datos.')
-
-    tipo_reporte = st.selectbox('Tipo de reporte', ['Ventas', 'Gastos', 'Cuentas por cobrar/pagar'], key='rep_tipo')
-
-    c1, c2 = st.columns(2)
-    with c1:
-        f_desde = st.date_input('Desde', value=date.today() - timedelta(days=30), key='rep_desde')
-    with c2:
-        f_hasta = st.date_input('Hasta', value=date.today(), key='rep_hasta')
-
-    if tipo_reporte == 'Ventas':
-        df = _df('ventas')
-        col_fecha = 'fecha'
-        col_monto = 'total'
-    elif tipo_reporte == 'Gastos':
-        df = _df('gastos')
-        col_fecha = 'fecha'
-        col_monto = 'monto'
-    else:
-        df = _df('deudas')
-        col_fecha = 'fecha_emision'
-        col_monto = 'monto'
-
-    if df.empty:
-        st.info('No hay datos cargados para este reporte todavía.')
-        return
-
-    df[col_monto] = pd.to_numeric(df[col_monto], errors='coerce').fillna(0)
-    df['_f'] = pd.to_datetime(df[col_fecha], errors='coerce')
-    df_f = df[(df['_f'] >= pd.Timestamp(f_desde)) & (df['_f'] <= pd.Timestamp(f_hasta))].drop(columns=['_f'])
-
-    _kpi_row([
-        ('Período', f'{f_desde.strftime("%d/%m")} → {f_hasta.strftime("%d/%m")}', tipo_reporte, '#3a7bd5'),
-        ('Registros', str(len(df_f)), 'En el período', '#e3b341'),
-        ('Total', _fmt_money(df_f[col_monto].sum()), 'Suma del período', '#3fb950'),
-        ('Promedio', _fmt_money(df_f[col_monto].mean() if len(df_f) else 0), 'Por registro', '#bc8cff'),
-    ])
-
-    df_show = df_f.copy()
-    df_show[col_monto] = df_show[col_monto].apply(_fmt_money)
-    st.markdown(f'<div class="sec-title">Detalle — {tipo_reporte}</div>', unsafe_allow_html=True)
-    st.dataframe(df_show.drop(columns=['id']) if 'id' in df_show.columns else df_show,
-                 use_container_width=True, hide_index=True, height=min(450, len(df_show) * 38 + 45))
-
-
-# ==============================================================
-#  📈 VARIACIÓN DE PRODUCTOS
-# ==============================================================
-
-def _tab_variacion():
-    st.caption('🧪 Variación de precios y movimientos de stock. Se completa a medida que ajustás precios o stock desde "Registro de inventarios".')
-
-    df_hist = _df('historial_precios')
-    df_mov = _df('movimientos_stock')
-
-    if df_hist.empty and df_mov.empty:
-        st.info('Todavía no hay variaciones registradas. Probá ajustar el precio o el stock de un producto en "Registro de inventarios".')
-        return
-
-    if not df_hist.empty:
-        df_hist['precio_anterior'] = pd.to_numeric(df_hist['precio_anterior'], errors='coerce').fillna(0)
-        df_hist['precio_nuevo'] = pd.to_numeric(df_hist['precio_nuevo'], errors='coerce').fillna(0)
-        df_hist['variacion_%'] = ((df_hist['precio_nuevo'] - df_hist['precio_anterior']) /
-                                   df_hist['precio_anterior'].replace(0, pd.NA) * 100).fillna(0).round(2)
+        suma_insumos = sum((_insumo(l['insumo_id'])['cost_per_unit'] * l['qty'])
+                           for l in p['receta'] if _insumo(l['insumo_id']))
+        usa_bom = bool(p['receta']) or mo > 0
+        costo = suma_insumos + mo if usa_bom else p['unit_cost']
+        sugerido = math.ceil(costo / (1 - mg / 100) / 10) * 10 if costo > 0 else 0
+        margen_actual = (p['sale_price'] - costo) / p['sale_price'] * 100 if p['sale_price'] else 0
 
         _kpi_row([
-            ('Cambios de precio', str(len(df_hist)), 'Registrados', '#3a7bd5'),
-            ('Mayor suba %', f"{df_hist['variacion_%'].max():+.1f}%" if not df_hist.empty else '-', 'Variación puntual', '#f0883e'),
-            ('Mayor baja %', f"{df_hist['variacion_%'].min():+.1f}%" if not df_hist.empty else '-', 'Variación puntual', '#3fb950'),
-            ('Productos con cambios', str(df_hist['producto'].nunique()), 'Distintos', '#bc8cff'),
+            ('Costo unitario', _fmt_money(costo), 'Insumos + mano de obra' if usa_bom else 'Costo actual', C_AMARILLO),
+            ('Precio sugerido', _fmt_money(sugerido), f'Para {mg:.0f}% de margen', C_VERDE),
+            ('Precio actual', _fmt_money(p['sale_price']), f'Margen actual {margen_actual:.0f}%',
+             C_AZUL if margen_actual >= mg else C_NARANJA),
         ])
+        b1, b2 = st.columns(2)
+        with b1:
+            if st.button('💾 Guardar costo y receta', key=f'pw_bom_save_{pid}', use_container_width=True):
+                p['mano_obra'], p['margen'] = float(mo), float(mg)
+                _recalcular_costo(p)
+                _flash('Costo del producto actualizado.')
+                st.rerun()
+        with b2:
+            if st.button('💲 Usar precio sugerido', key=f'pw_bom_price_{pid}', use_container_width=True,
+                         disabled=sugerido <= 0):
+                p['mano_obra'], p['margen'] = float(mo), float(mg)
+                _recalcular_costo(p)
+                p['sale_price'] = float(sugerido)
+                _flash(f'Precio de venta actualizado a {_fmt_money(sugerido)}.')
+                st.rerun()
+        st.caption('Margen calculado sobre el precio de venta: precio = costo ÷ (1 − margen).')
 
-        st.markdown('<div class="sec-title">Historial de cambios de precio</div>', unsafe_allow_html=True)
-        df_show = df_hist[['id', 'fecha', 'producto', 'precio_anterior', 'precio_nuevo', 'variacion_%']].copy()
-        df_show['precio_anterior'] = df_show['precio_anterior'].apply(_fmt_money)
-        df_show['precio_nuevo'] = df_show['precio_nuevo'].apply(_fmt_money)
 
-        def _color_var(val):
-            try:
-                v = float(str(val).replace('%', ''))
-                return f'color:{"#3fb950" if v >= 0 else "#f85149"};font-weight:700'
-            except Exception:
-                return ''
+def _bloque_insumos():
+    insumos = _s('insumos')
+    with st.expander('🥣 Insumos (materias primas)'):
+        if insumos:
+            df = pd.DataFrame([{'Insumo': i['name'], 'Unidad': i['unit_measure'],
+                                'Costo por unidad': _fmt_money(i['cost_per_unit'])} for i in insumos])
+            st.dataframe(df, use_container_width=True, hide_index=True, height=min(260, len(df) * 36 + 42))
 
-        styled = (df_show.drop(columns=['id']).style
-                  .format({'variacion_%': '{:+.2f}%'})
-                  .applymap(_color_var, subset=['variacion_%'])
-                  if hasattr(df_show.style, 'applymap')
-                  else df_show.drop(columns=['id']).style.format({'variacion_%': '{:+.2f}%'}))
-        st.dataframe(styled, use_container_width=True, hide_index=True, height=min(400, len(df_show) * 38 + 45))
+            st.markdown('**Actualizar costo de un insumo**')
+            u1, u2, u3 = st.columns([3, 2, 2])
+            with u1:
+                etiq_upd = {i['id']: i['name'] for i in insumos}
+                iid = st.selectbox('Insumo', list(etiq_upd), key='pw_ins_upd_sel',
+                                   format_func=etiq_upd.get, label_visibility='collapsed')
+            with u2:
+                nuevo = st.number_input('Nuevo costo', min_value=0.0, step=50.0,
+                                        value=float(_insumo(iid)['cost_per_unit']), key=f'pw_ins_upd_{iid}',
+                                        label_visibility='collapsed')
+            with u3:
+                if st.button('Actualizar', key='pw_ins_upd_btn', use_container_width=True):
+                    _insumo(iid)['cost_per_unit'] = float(nuevo)
+                    for p in _s('productos'):
+                        if any(l['insumo_id'] == iid for l in p['receta']):
+                            _recalcular_costo(p)
+                    _flash('Costo actualizado. Se recalcularon los productos que lo usan.')
+                    st.rerun()
 
-        productos_con_hist = df_hist['producto'].unique().tolist()
-        if productos_con_hist:
-            prod_sel = st.selectbox('Ver evolución de precio de un producto', productos_con_hist, key='var_prod_sel')
-            serie = df_hist[df_hist['producto'] == prod_sel].sort_values('fecha')
-            if not serie.empty:
-                serie_chart = serie.set_index('fecha')['precio_nuevo']
-                st.line_chart(serie_chart, height=260)
+        with st.form('pw_form_insumo', clear_on_submit=True):
+            n1, n2, n3 = st.columns([3, 2, 2])
+            with n1:
+                nombre = st.text_input('Nuevo insumo', key='pw_ins_nombre')
+            with n2:
+                unidad = st.selectbox('Unidad', ['kg', 'gr', 'lt', 'ml', 'unidad'], key='pw_ins_unidad')
+            with n3:
+                costo = st.number_input('Costo por unidad', min_value=0.0, step=50.0, key='pw_ins_costo')
+            if st.form_submit_button('➕ Agregar insumo', use_container_width=True):
+                if nombre.strip() and costo > 0:
+                    insumos.append({'id': _siguiente_id('insumos'), 'name': nombre.strip(),
+                                    'cost_per_unit': float(costo), 'unit_measure': unidad})
+                    _flash('Insumo agregado.')
+                    st.rerun()
+                else:
+                    st.warning('Completá el nombre y un costo mayor a 0.')
 
-    if not df_mov.empty:
-        st.markdown('<div class="sec-title">Movimientos de stock</div>', unsafe_allow_html=True)
-        df_mov_show = df_mov[['id', 'fecha', 'producto', 'tipo', 'cantidad', 'nota']].sort_values('fecha', ascending=False)
-        st.dataframe(df_mov_show.drop(columns=['id']), use_container_width=True, hide_index=True,
-                     height=min(350, len(df_mov_show) * 38 + 45))
+
+def _modulo_b():
+    with st.container(border=True):
+        _titulo('📦 B · Inventario y costos')
+        _bloque_catalogo()
+        _bloque_nuevo_producto()
+        _bloque_ajustes()
+        _bloque_escandallo()
+        _bloque_insumos()
 
 
 # ==============================================================
-#  NAVEGACIÓN — pills agrupadas en popovers (mismo criterio visual
-#  que la barra superior de la app)
+#  MÓDULO C — HISTORIAL DE TRANSACCIONES
 # ==============================================================
 
-GRUPOS_NAV = {
-    '📝 Registros': {
-        'Registro de ventas': 'ventas',
-        'Registro de gastos': 'gastos',
-        'Registro de inventarios': 'inventario',
-    },
-    '🧭 Gestión': {
-        'Gestión de clientes': 'clientes',
-        'Gestión de proveedores': 'proveedores',
-        'Control de deudas': 'deudas',
-    },
-    '📈 Análisis': {
-        'Módulo de estadísticas': 'estadisticas',
-        'Reportes': 'reportes',
-        'Variación de productos': 'variacion',
-    },
-}
+def _estado_txt(t):
+    if t['anulada']:
+        return '❌ Anulada'
+    if t['status'] == 'PAID':
+        return '✅ Pagado'
+    return '⚠️ Pendiente (vencida)' if _vencida(t) else '⏳ Pendiente'
 
-# clave interna -> (label completo, grupo al que pertenece)
-_SECCION_A_LABEL = {}
-_SECCION_A_GRUPO = {}
-for _grupo, _items in GRUPOS_NAV.items():
-    for _label, _clave in _items.items():
-        _SECCION_A_LABEL[_clave] = _label
-        _SECCION_A_GRUPO[_clave] = _grupo
 
-RENDER_SECCION = {
-    'ventas': _tab_ventas,
-    'gastos': _tab_gastos,
-    'inventario': _tab_inventario,
-    'clientes': _tab_clientes,
-    'proveedores': _tab_proveedores,
-    'deudas': _tab_deudas,
-    'estadisticas': _tab_estadisticas,
-    'reportes': _tab_reportes,
-    'variacion': _tab_variacion,
-}
+def _modulo_c():
+    with st.container(border=True):
+        _titulo('🧾 C · Historial de transacciones')
+        alcance = st.radio('Mostrar', ['Hoy', 'Últimas 50'], horizontal=True, key='pw_hist_alcance',
+                           label_visibility='collapsed')
+        todas = sorted(_s('transacciones'), key=lambda t: (t['created_at'], t['id']), reverse=True)
+        if alcance == 'Hoy':
+            hoy = date.today()
+            lista = [t for t in todas if t['created_at'].date() == hoy]
+        else:
+            lista = todas[:50]
 
+        if not lista:
+            st.info('No hay operaciones para mostrar.')
+            return
+
+        filas = []
+        for t in lista:
+            signo = '+' if t['type'] in INGRESOS else '−'
+            emoji, nombre = TIPOS_MOV[t['type']]
+            filas.append({'#': t['id'], 'Fecha': _fmt_fecha(t['created_at']), 'Tipo': f'{emoji} {nombre}',
+                          'Detalle': t['description'], 'Medio': t['payment_method'],
+                          'Estado': _estado_txt(t), 'Monto': f"{signo}{_fmt_money(t['amount'])}"})
+        st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True,
+                     height=min(360, len(filas) * 36 + 42))
+
+        activas = [t for t in lista if not t['anulada']]
+        with st.expander('✏️ Editar o anular una operación'):
+            if not activas:
+                st.caption('No hay operaciones activas en esta vista.')
+                return
+            opciones = {f"#{t['id']} · {TIPOS_MOV[t['type']][0]} {t['description'][:40]} · {_fmt_money(t['amount'])}": t['id']
+                        for t in activas}
+            sel = st.selectbox('Operación', list(opciones), key='pw_hist_sel')
+            tx_id = opciones[sel]
+            t = _tx(tx_id)
+
+            solo_no_credito = t['status'] == 'PAID' and not t['liquidado_por'] or t['type'] in ('COLLECTION', 'PAYMENT')
+            medios = _medios_activos(incluir_credito=not solo_no_credito)
+            if t['payment_method'] not in medios:
+                medios = [t['payment_method']] + medios
+
+            with st.form('pw_form_edit_tx'):
+                desc = st.text_input('Descripción', value=t['description'], key=f'pw_e_desc_{tx_id}')
+                e1, e2 = st.columns(2)
+                with e1:
+                    medio = st.selectbox('Medio', medios, index=medios.index(t['payment_method']), key=f'pw_e_medio_{tx_id}')
+                with e2:
+                    if t['status'] == 'PENDING':
+                        vence = st.date_input('Vencimiento', value=t['due_date'] or date.today(), key=f'pw_e_vence_{tx_id}')
+                    else:
+                        vence = t['due_date']
+                        st.caption('Sin vencimiento (ya está pagado).')
+                guardar = st.form_submit_button('💾 Guardar cambios', use_container_width=True)
+            if guardar:
+                t['description'] = desc.strip() or t['description']
+                t['payment_method'] = medio
+                if t['status'] == 'PENDING':
+                    t['due_date'] = vence
+                _flash('Operación actualizada.')
+                st.rerun()
+            st.caption('El monto y los productos no se editan: anulá la operación y volvé a registrarla.')
+
+            if st.button('❌ Anular esta operación', key='pw_hist_anular'):
+                ok, msg = _anular(tx_id)
+                _flash(msg, 'success' if ok else 'warning')
+                st.rerun()
+
+
+# ==============================================================
+#  MÓDULO D — REPORTES FINANCIEROS EN TIEMPO REAL
+# ==============================================================
+
+def _modulo_d():
+    with st.container(border=True):
+        _titulo('📊 D · Reportes financieros')
+        periodo = st.radio('Período', ['Hoy', '7 días', 'Mes actual', 'Todo'], horizontal=True,
+                           index=2, key='pw_periodo', label_visibility='collapsed')
+        desde, hasta = _rango_periodo(periodo)
+
+        # ---- Estado de Resultados (P&L)
+        ventas, cogs, gastos = _pyl(desde, hasta)
+        bruta = ventas - cogs
+        neta = bruta - gastos
+        margen_neto = (neta / ventas * 100) if ventas else 0
+        st.markdown('**Estado de Resultados (P&L)**')
+        st.markdown(
+            _fila_html('Ventas totales', _fmt_money(ventas), C_VERDE)
+            + _fila_html('(−) Costo de ventas (COGS)', _fmt_money(cogs), C_ROJO, tenue=True)
+            + _fila_html('= Utilidad bruta', _fmt_money(bruta), '#e6edf3', fuerte=True, linea=True)
+            + _fila_html('(−) Gastos operativos', _fmt_money(gastos), C_ROJO, tenue=True)
+            + _fila_html('= Utilidad / Pérdida neta', _fmt_money(neta), C_VERDE if neta >= 0 else C_ROJO,
+                         fuerte=True, linea=True)
+            + _fila_html('Margen neto', f'{margen_neto:.1f}%', C_GRIS, tenue=True),
+            unsafe_allow_html=True)
+
+        # ---- Flujo de caja
+        caja, banco = _saldos()
+        cobrar, pagar = _por_cobrar(), _por_pagar()
+        t_cobrar, t_pagar = sum(t['amount'] for t in cobrar), sum(t['amount'] for t in pagar)
+        disponible = caja + banco
+        proyectado = disponible + t_cobrar - t_pagar
+        st.markdown('<div style="height:10px"></div>**Flujo de Caja** (a hoy)', unsafe_allow_html=True)
+        st.markdown(
+            _fila_html('Caja chica', _fmt_money(caja), tenue=True)
+            + _fila_html('Bancos / Digital', _fmt_money(banco), tenue=True)
+            + _fila_html('= Dinero disponible', _fmt_money(disponible), C_AZUL, fuerte=True, linea=True)
+            + _fila_html(f'(+) Cuentas por cobrar ({len(cobrar)})', _fmt_money(t_cobrar), C_VERDE, tenue=True)
+            + _fila_html(f'(−) Cuentas por pagar ({len(pagar)})', _fmt_money(t_pagar), C_ROJO, tenue=True)
+            + _fila_html('= Posición proyectada', _fmt_money(proyectado), C_VERDE if proyectado >= 0 else C_ROJO,
+                         fuerte=True, linea=True),
+            unsafe_allow_html=True)
+
+        venc = [t for t in cobrar + pagar if _vencida(t)]
+        if venc:
+            st.warning(f'⚠️ Hay {len(venc)} cuenta(s) vencida(s) sin saldar.')
+
+        # ---- Próximos vencimientos
+        pend = sorted(cobrar + pagar, key=lambda t: (t['due_date'] is None, t['due_date'] or date.max))[:6]
+        if pend:
+            st.markdown('<div style="height:6px"></div>**Próximos vencimientos**', unsafe_allow_html=True)
+            df = pd.DataFrame([{
+                '': '⚠️' if _vencida(t) else '',
+                'Tipo': 'Por cobrar' if t['type'] == 'SALE' else 'Por pagar',
+                'Detalle': t['description'][:45],
+                'Vence': t['due_date'].strftime('%d/%m') if t['due_date'] else '—',
+                'Monto': _fmt_money(t['amount']),
+            } for t in pend])
+            st.dataframe(df, use_container_width=True, hide_index=True, height=min(260, len(df) * 36 + 42))
+
+        # ---- Evolución diaria
+        if periodo != 'Hoy':
+            v_d, g_d = {}, {}
+            for t in _s('transacciones'):
+                if t['anulada'] or not _en_periodo(t, desde, hasta):
+                    continue
+                d = t['created_at'].date().isoformat()
+                if t['type'] == 'SALE':
+                    v_d[d] = v_d.get(d, 0) + t['amount']
+                elif t['type'] == 'EXPENSE':
+                    g_d[d] = g_d.get(d, 0) + t['amount']
+            if v_d or g_d:
+                st.markdown('<div style="height:6px"></div>**Ventas vs. gastos por día**', unsafe_allow_html=True)
+                df = pd.DataFrame({'Ventas': pd.Series(v_d, dtype=float), 'Gastos': pd.Series(g_d, dtype=float)}).fillna(0).sort_index()
+                st.bar_chart(df, height=220)
+
+
+# ==============================================================
+#  CONFIGURACIÓN Y REINICIO
+# ==============================================================
+
+def _bloque_config():
+    with st.expander('⚙️ Configuración (saldos iniciales y medios de pago)'):
+        st.markdown('**Saldos iniciales**')
+        s1, s2, s3 = st.columns([2, 2, 1])
+        with s1:
+            caja0 = st.number_input('Caja chica inicial', min_value=0.0, step=1000.0,
+                                    value=float(_s('saldo_caja')), key='pw_cfg_caja')
+        with s2:
+            banco0 = st.number_input('Bancos / Digital inicial', min_value=0.0, step=1000.0,
+                                     value=float(_s('saldo_banco')), key='pw_cfg_banco')
+        with s3:
+            st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+            if st.button('Guardar', key='pw_cfg_saldos_btn', use_container_width=True):
+                st.session_state[_key('saldo_caja')] = float(caja0)
+                st.session_state[_key('saldo_banco')] = float(banco0)
+                _flash('Saldos iniciales actualizados.')
+                st.rerun()
+
+        st.markdown('**Medios de pago**')
+        etiquetas_tipo = {'caja': 'Caja (efectivo)', 'banco': 'Banco / Digital', 'credito': 'Crédito (fiado: queda pendiente)'}
+        for m in _s('medios'):
+            st.checkbox(f"{m['name']} — {etiquetas_tipo[m['tipo']]}", value=m['is_active'], key=f"pw_cfg_act_{m['id']}")
+        if st.button('Guardar medios activos', key='pw_cfg_medios_btn'):
+            nuevos = {m['id']: st.session_state.get(f"pw_cfg_act_{m['id']}", m['is_active']) for m in _s('medios')}
+            if not any(act for mid, act in nuevos.items() if next(x for x in _s('medios') if x['id'] == mid)['tipo'] != 'credito'):
+                st.warning('Dejá activo al menos un medio que no sea de crédito.')
+            else:
+                for m in _s('medios'):
+                    m['is_active'] = nuevos[m['id']]
+                _flash('Medios de pago actualizados.')
+                st.rerun()
+
+        with st.form('pw_form_medio', clear_on_submit=True):
+            n1, n2 = st.columns(2)
+            with n1:
+                nombre = st.text_input('Nuevo medio de pago', key='pw_cfg_nuevo_nombre', placeholder='Ej: Tarjeta de débito')
+            with n2:
+                tipo = st.selectbox('Se acredita en', list(etiquetas_tipo), format_func=etiquetas_tipo.get, index=1,
+                                    key='pw_cfg_nuevo_tipo')
+            if st.form_submit_button('➕ Agregar medio', use_container_width=True):
+                if not nombre.strip():
+                    st.warning('Escribí un nombre.')
+                elif any(m['name'].lower() == nombre.strip().lower() for m in _s('medios')):
+                    st.warning('Ya existe un medio con ese nombre.')
+                else:
+                    _s('medios').append({'id': _siguiente_id('medios'), 'name': nombre.strip(), 'tipo': tipo, 'is_active': True})
+                    _flash('Medio de pago agregado.')
+                    st.rerun()
+
+    with st.expander('🔄 Reiniciar datos de ejemplo (simulación)'):
+        st.caption('Vuelve a cargar los datos de ejemplo y descarta todo lo que hayas cargado en esta sesión.')
+        if st.button('Reiniciar ahora', key='pw_reset_btn'):
+            for k in list(st.session_state.keys()):
+                if k.startswith(SIM_PREFIX) or k.startswith(WIDGET_PREFIX):
+                    st.session_state.pop(k, None)
+            _init_sim()
+            _flash('Datos de ejemplo reiniciados.')
+            st.rerun()
+
+
+# ==============================================================
+#  ATAJOS DE TECLADO + ESTILO TÁCTIL
+# ==============================================================
+
+def _inyectar_extras():
+    st.markdown("""
+    <style>
+    .st-key-pw_quick button { min-height: 58px; font-weight: 600; }
+    div[class*="st-key-pw_"] [data-testid="stRadio"] label { padding: 4px 6px; }
+    </style>
+    """, unsafe_allow_html=True)
+    # F2 → foco en el buscador. Se registra una sola vez sobre el documento padre.
+    components.html("""
+    <script>
+    try {
+      const doc = window.parent.document;
+      if (!doc.__pymeF2) {
+        doc.__pymeF2 = true;
+        doc.addEventListener('keydown', function (e) {
+          if (e.key === 'F2') {
+            const el = doc.querySelector('input[aria-label*="Buscar producto"]');
+            if (el) { e.preventDefault(); el.focus(); el.select(); }
+          }
+        });
+      }
+    } catch (err) {}
+    </script>
+    """, height=0)
+
+
+# ==============================================================
+#  COMPATIBILIDAD CON app.py
+# ==============================================================
 
 def render_nav_pyme(columnas=None):
-    """Pills de navegación del módulo PyMEs (Registros / Gestión / Análisis).
-    Si no se le pasan columnas, se crea las suyas propias; si se le pasan
-    3 columnas ya creadas desde afuera (ej: desde la barra superior de
-    app.py), las usa a esas — para que quede al lado del selector de
-    módulo ("PyMEs ▾") en vez de más abajo, dentro del contenido."""
-    seccion_activa = st.session_state.get('pyme_seccion_activa', 'ventas')
-    grupo_activo = _SECCION_A_GRUPO.get(seccion_activa)
-
-    cols = columnas if columnas is not None else st.columns(len(GRUPOS_NAV))
-    for col, (nombre_grupo, items) in zip(cols, GRUPOS_NAV.items()):
-        with col:
-            cont_key = f'navcont_pyme_{nombre_grupo}'
-            es_grupo_activo = (nombre_grupo == grupo_activo)
-            label_boton = (f'{nombre_grupo} ▾' if not es_grupo_activo
-                            else f'{nombre_grupo}: {_SECCION_A_LABEL[seccion_activa].split(" ", 1)[-1]} ▾')
-            with st.container(key=cont_key):
-                with st.popover(label_boton, use_container_width=True):
-                    st.markdown(
-                        f'<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">{nombre_grupo}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    for label, clave in items.items():
-                        if st.button(label, use_container_width=True, key=f'pyme_nav_{clave}'):
-                            st.session_state['pyme_seccion_activa'] = clave
-                            st.rerun()
-            if es_grupo_activo:
-                st.markdown(f"""
-                <style>
-                .st-key-{cont_key} button {{
-                    background: #0d1117 !important;
-                    color: var(--verde-monster) !important;
-                    border: 1.5px solid var(--verde-monster) !important;
-                    font-weight: 700 !important;
-                    box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
-                }}
-                </style>
-                """, unsafe_allow_html=True)
+    """Ya no hay navegación por pestañas/pills: el módulo es un dashboard único.
+    Se deja esta función vacía para que app.py no se rompa si todavía la llama."""
+    return None
 
 
 # ==============================================================
@@ -979,23 +1233,20 @@ def render_pyme(supabase, user_id, **kwargs):
         from modulo_pyme import render_pyme
         render_pyme(supabase, USER_ID)
 
-    NOTA — modo simulación: por ahora `supabase` y `user_id` no se usan
-    para leer/escribir nada; todo el estado vive en st.session_state.
-    Cuando se apruebe la parte visual, cada función _agregar/_eliminar/
-    _actualizar de este archivo pasa a hablar con Supabase (ver el
-    esquema SQL de referencia al final del archivo, comentado)."""
+    NOTA — modo simulación: `supabase` y `user_id` todavía no se usan; todo
+    vive en st.session_state. Al conectar la base, se reemplazan las
+    operaciones _reg_* / _anular / _bom_* / altas de productos e insumos."""
     _init_sim()
 
     st.markdown("""
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d;border-top:2px solid #3a7bd5;border-radius:14px;
-         padding:22px 28px;margin-bottom:18px;">
+         padding:18px 26px;margin-bottom:16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:4px">🏢 Módulo PyMEs</div>
           <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
-            Ventas, gastos, inventario, clientes, proveedores, deudas, estadísticas, reportes y
-            variación de productos — todo en un solo lugar.
+            Cada venta, compra o gasto impacta al instante en stock, caja y resultados.
           </div>
         </div>
         <div style="padding:5px 12px;border-radius:20px;font-size:10px;font-weight:700;
@@ -1007,103 +1258,83 @@ def render_pyme(supabase, user_id, **kwargs):
     </div>
     """, unsafe_allow_html=True)
 
+    _mostrar_flash()
+    _kpis_header()
 
-    seccion_activa = st.session_state.get('pyme_seccion_activa', 'ventas')
-    label_activo = _SECCION_A_LABEL.get(seccion_activa, '')
-    grupo_activo = _SECCION_A_GRUPO.get(seccion_activa, '')
+    col_a, col_b = st.columns([1, 1], gap='medium')
+    with col_a:
+        _modulo_a()
+    with col_b:
+        _modulo_b()
 
-    st.markdown(
-        f'<div style="font-size:12px;color:#6b7d9a;margin:6px 0 14px 0">'
-        f'{grupo_activo} <span style="color:#3a4a5f">›</span> '
-        f'<span style="color:#e6edf3;font-weight:700">{label_activo}</span></div>',
-        unsafe_allow_html=True,
-    )
+    col_c, col_d = st.columns([1, 1], gap='medium')
+    with col_c:
+        _modulo_c()
+    with col_d:
+        _modulo_d()
 
-    with st.expander('🔄 Reiniciar datos de ejemplo (simulación)'):
-        st.caption('Vuelve a cargar los datos de ejemplo iniciales y descarta todo lo que hayas cargado en esta sesión.')
-        if st.button('Reiniciar ahora', key='pyme_reset_btn'):
-            for k in list(st.session_state.keys()):
-                if k.startswith(SIM_PREFIX):
-                    st.session_state.pop(k, None)
-            _init_sim()
-            st.success('Datos de ejemplo reiniciados.')
-            st.rerun()
-
-    RENDER_SECCION[seccion_activa]()
+    _bloque_config()
+    _inyectar_extras()
 
 
 # ==============================================================
 #  ESQUEMA SQL DE REFERENCIA — para cuando se conecte Supabase.
-#  No se ejecuta desde acá; queda documentado para esa etapa.
+#  No se ejecuta desde acá. Es el esquema del prompt original, con los
+#  campos extra que usa la simulación (marcados con ★) y user_id + RLS.
 # ==============================================================
 #
-# create table if not exists pyme_ventas (
-#     id bigint generated always as identity primary key,
-#     user_id uuid not null,
-#     fecha date not null default current_date,
-#     cliente text, producto text, cantidad int, precio_unitario numeric,
-#     total numeric, medio_pago text, creado_en timestamptz default now()
+# create table payment_methods (
+#     id serial primary key, user_id uuid not null,
+#     name varchar(50) not null, is_active boolean default true,
+#     tipo text not null default 'banco'        -- ★ 'caja' | 'banco' | 'credito'
 # );
 #
-# create table if not exists pyme_gastos (
-#     id bigint generated always as identity primary key,
-#     user_id uuid not null,
-#     fecha date not null default current_date,
-#     categoria text, proveedor text, monto numeric, descripcion text,
-#     creado_en timestamptz default now()
+# create table products (
+#     id serial primary key, user_id uuid not null,
+#     barcode varchar(50), name varchar(100) not null,
+#     current_stock int default 0, min_stock int default 5,
+#     unit_cost numeric(12,2) default 0, sale_price numeric(12,2) not null,
+#     mano_obra numeric(12,2) default 0,        -- ★ mano de obra por unidad (escandallo)
+#     margen numeric(5,2) default 40,           -- ★ margen deseado sobre precio
+#     created_at timestamp default now(),
+#     unique (user_id, barcode)
 # );
 #
-# create table if not exists pyme_inventario (
-#     id bigint generated always as identity primary key,
-#     user_id uuid not null,
-#     producto text not null, categoria text,
-#     stock_actual int default 0, stock_minimo int default 0,
-#     precio_costo numeric, precio_venta numeric,
-#     creado_en timestamptz default now()
+# create table raw_materials (
+#     id serial primary key, user_id uuid not null,
+#     name varchar(100) not null, cost_per_unit numeric(12,2) not null, unit_measure varchar(20) not null
 # );
 #
-# create table if not exists pyme_clientes (
-#     id bigint generated always as identity primary key,
-#     user_id uuid not null,
-#     nombre text not null, contacto text, telefono text, email text,
-#     condicion_pago text, limite_credito numeric,
-#     creado_en timestamptz default now()
+# create table product_ingredients (
+#     id serial primary key,
+#     product_id int references products(id) on delete cascade,
+#     raw_material_id int references raw_materials(id) on delete cascade,
+#     quantity_required numeric(10,3) not null
 # );
 #
-# create table if not exists pyme_proveedores (
-#     id bigint generated always as identity primary key,
-#     user_id uuid not null,
-#     nombre text not null, contacto text, telefono text, email text,
-#     categoria text, condiciones_pago text,
-#     creado_en timestamptz default now()
+# create type transaction_type as enum ('SALE','PURCHASE','EXPENSE','COLLECTION','PAYMENT');
+# create type transaction_status as enum ('PAID','PENDING');
+#
+# create table transactions (
+#     id serial primary key, user_id uuid not null,
+#     type transaction_type not null, description varchar(255),
+#     amount numeric(12,2) not null, cost_amount numeric(12,2) default 0,
+#     payment_method_id int references payment_methods(id),
+#     status transaction_status default 'PAID', due_date date,
+#     anulada boolean default false,                          -- ★ anulación lógica
+#     liquidado_por int references transactions(id),          -- ★ cobro/pago que saldó esta cuenta
+#     liquida_a int references transactions(id),              -- ★ cuenta que salda este cobro/pago
+#     created_at timestamp default now()
 # );
 #
-# create table if not exists pyme_deudas (
-#     id bigint generated always as identity primary key,
-#     user_id uuid not null,
-#     tipo text not null,           -- 'A cobrar' | 'A pagar'
-#     contraparte text, monto numeric,
-#     fecha_emision date, fecha_vencimiento date,
-#     estado text default 'Pendiente', notas text,
-#     creado_en timestamptz default now()
+# create table transaction_items (
+#     id serial primary key,
+#     transaction_id int references transactions(id) on delete cascade,
+#     product_id int references products(id),
+#     product_name varchar(100),                              -- ★ conserva el nombre si se borra el producto
+#     quantity int not null, unit_price numeric(12,2) not null, unit_cost numeric(12,2) not null
 # );
 #
-# create table if not exists pyme_historial_precios (
-#     id bigint generated always as identity primary key,
-#     user_id uuid not null,
-#     fecha date not null default current_date,
-#     producto text, precio_anterior numeric, precio_nuevo numeric,
-#     creado_en timestamptz default now()
-# );
-#
-# create table if not exists pyme_movimientos_stock (
-#     id bigint generated always as identity primary key,
-#     user_id uuid not null,
-#     fecha date not null default current_date,
-#     producto text, tipo text, cantidad int, nota text,
-#     creado_en timestamptz default now()
-# );
-#
-# -- Row Level Security: la misma política en las 7 tablas
-# -- alter table pyme_x enable row level security;
-# -- create policy "usuario ve lo suyo" on pyme_x for all using (auth.uid() = user_id);
+# -- Row Level Security: la misma política en todas las tablas con user_id
+# -- alter table <tabla> enable row level security;
+# -- create policy "usuario ve lo suyo" on <tabla> for all using (auth.uid() = user_id);
