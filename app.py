@@ -497,10 +497,26 @@ if "usuario" not in st.session_state:
     
 USER_ID = st.session_state["usuario"].id
 
-# ── GATE: si no tiene trial activo ni plan pro, mostrar pantalla de pago ──
-tiene_acceso = pantalla_suscripcion_modulo(supabase, USER_ID, st.session_state["usuario"].email, 'mercados')
-if not tiene_acceso:
-    st.stop()
+# ── Servicio elegido en la landing: solo define el workspace donde entra la 1ª vez ──
+SERVICIOS_PUBLICOS = {'mercados'}   # sumá 'pyme' / 'agro' cuando los abras al público
+
+_meta = getattr(st.session_state["usuario"], "user_metadata", None) or {}
+_servicio = st.session_state.get("servicio_elegido") or _meta.get("servicio_elegido") or "mercados"
+
+if "nav_horizonte" not in st.session_state and _servicio in ("pyme", "agro"):
+    if _servicio in SERVICIOS_PUBLICOS or es_admin_usuario(supabase, USER_ID):
+        st.session_state["nav_horizonte"] = _servicio
+        st.session_state["nav_modulo"] = _servicio
+
+# ── GATE de Mercados: solo si está parado en Mercados ──
+# PyMEs/Agro tienen su propio gate adentro de su rama (más abajo), así el
+# paywall de uno no le tapa la navegación hacia el otro.
+if st.session_state.get("nav_horizonte") not in ("pyme", "agro"):
+    tiene_acceso = pantalla_suscripcion_modulo(
+        supabase, USER_ID, st.session_state["usuario"].email, 'mercados'
+    )
+    if not tiene_acceso:
+        st.stop()
 
 from streamlit_autorefresh import st_autorefresh
 
@@ -9337,7 +9353,7 @@ elif MODULO == 'admin_pagos':
         st.warning('No tenés permisos de administrador.')
 
 elif MODULO == 'pyme':
-    if 'pyme' in MODULOS_OCULTOS:
+    if 'pyme' in MODULOS_OCULTOS or not (ES_ADMIN or 'pyme' in SERVICIOS_PUBLICOS):
         _mostrar_no_disponible('PyMEs', 'Todavía estamos terminando de probar Mercados antes de habilitarlo.')
     elif pantalla_suscripcion_modulo(supabase, USER_ID, st.session_state["usuario"].email, 'pyme'):
         render_pyme(supabase, USER_ID)
