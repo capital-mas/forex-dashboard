@@ -1,7 +1,7 @@
 # ==============================================================
-#  MÓDULO LECTURA DE VELAS DIARIAS
+#  MÓDULO LECTURA DE VELAS + MONTE CARLO
 #  Portado del script Colab (GGAL) a Streamlit + Plotly.
-#  Uso en la app principal:
+#  Uso en la app principal (sin cambios respecto de antes):
 #      from modulo_velas import modulo_velas
 #      modulo_velas(
 #          descargar_datos=descargar_datos,
@@ -10,6 +10,12 @@
 #          fmt_precio=fmt_precio,
 #          PLOTLY_CONFIG=PLOTLY_CONFIG,
 #      )
+#
+#  NOVEDAD: pestaña "🎲 Monte Carlo". El usuario elige por separado:
+#     - la temporalidad de las VELAS (1D o 1H), arriba, y
+#     - el horizonte del MONTE CARLO (próxima 1 hora o próximo 1 día),
+#       dentro de la pestaña. Son selectores independientes, así que
+#       podés combinar, por ejemplo, velas de 1H con Monte Carlo a 1 día.
 # ==============================================================
 
 import numpy as np
@@ -33,6 +39,13 @@ _LAYOUT_BASE = dict(
     font=dict(color='#b0bcd0', family='Inter, sans-serif'),
     dragmode=False,
 )
+
+# --- Parámetros Monte Carlo ---
+MC_HORIZONTES = {'1h': 'Próxima 1 hora', '1d': 'Próximo 1 día'}
+MC_VENTANA_RET = {'1h': 150, '1d': 40}      # cantidad de retornos usados para estimar σ
+MC_PASOS_PATH = 24                           # subpasos de cada trayectoria (solo afecta el gráfico/toque)
+MC_MIN_RETORNOS = 20
+MC_SEED = 42
 
 
 # ==============================================================
@@ -412,6 +425,216 @@ def _render_historial(d, n=15, intradia=False):
 
 
 # ==============================================================
+#  MONTE CARLO  (horizonte: 1 hora o 1 día)
+# ==============================================================
+
+def _datos_mc(ticker, horizonte, descargar_datos):
+    """Serie de precios con la frecuencia que corresponde al horizonte elegido:
+    1h -> velas de 1 hora (últimos 3 meses) | 1d -> velas diarias (último año).
+    Así σ se estima con retornos de la misma escala que se quiere proyectar."""
+    if horizonte == '1h':
+        df = _descargar_velas_intradia(ticker, '3mo', '1h')
+        if df is None or df.empty:
+            return None
+        return _preparar_intradia(df, excluir_formacion=True)
+    return descargar_datos(ticker, '1y')
+
+
+def _retornos_mc(df, horizonte):
+    """Retornos logarítmicos por barra. En 1h se descartan los retornos que cruzan de una
+    rueda a la siguiente (gap nocturno), porque inflarían la volatilidad horaria."""
+    close = pd.to_numeric(df['Close'], errors='coerce').dropna()
+    r = np.log(close / close.shift(1))
+    if horizonte == '1h':
+        dias = pd.Series(close.index.normalize(), index=close.index)
+        r = r[dias.eq(dias.shift(1))]
+    r = r.replace([np.inf, -np.inf], np.nan).dropna()
+    return r.tail(MC_VENTANA_RET[horizonte])
+
+
+def _simular_mc(S0, mu_log, sigma, n_sims, pasos=MC_PASOS_PATH, seed=MC_SEED):
+    """GBM en unidades de 'un horizonte'. mu_log y sigma son por horizonte (no anualizados).
+    El horizonte se subdivide en `pasos`; la distribución final no depende de ese número."""
+    rng = np.random.default_rng(seed)
+    dt_ = 1.0 / pasos
+    Z = rng.standard_normal((pasos, n_sims))
+    inc = mu_log * dt_ + sigma * np.sqrt(dt_) * Z
+    log_paths = np.vstack([np.zeros(n_sims), np.cumsum(inc, axis=0)])
+    return S0 * np.exp(log_paths)
+
+
+def _fig_mc_abanico(paths, S0, horizonte, objetivo):
+    n_pasos = paths.shape[0] - 1
+    x = (np.linspace(0, 60, n_pasos + 1) if horizonte == '1h'
+         else np.linspace(0, 100, n_pasos + 1))
+    x_title = 'Minutos desde ahora' if horizonte == '1h' else 'Avance del día (%)'
+
+    p5, p25, p50, p75, p95 = np.percentile(paths, [5, 25, 50, 75, 95], axis=1)
+    fig = go.Figure()
+
+    # Muestra de trayectorias individuales
+    for i in range(min(paths.shape[1], 80)):
+        fig.add_trace(go.Scatter(x=x, y=paths[:, i], mode='lines', showlegend=False,
+                                 line=dict(width=0.6, color='rgba(58,123,213,0.18)'),
+                                 hoverinfo='skip'))
+
+    # Bandas de percentiles
+    fig.add_trace(go.Scatter(x=x, y=p5, mode='lines', line=dict(width=0), showlegend=False,
+                             hoverinfo='skip'))
+    fig.add_trace(go.Scatter(x=x, y=p95, mode='lines', line=dict(width=0), fill='tonexty',
+                             fillcolor='rgba(227,179,65,0.12)', name='Banda 5–95%'))
+    fig.add_trace(go.Scatter(x=x, y=p25, mode='lines', line=dict(width=0), showlegend=False,
+                             hoverinfo='skip'))
+    fig.add_trace(go.Scatter(x=x, y=p75, mode='lines', line=dict(width=0), fill='tonexty',
+                             fillcolor='rgba(227,179,65,0.25)', name='Banda 25–75%'))
+    fig.add_trace(go.Scatter(x=x, y=p50, mode='lines', name='Mediana',
+                             line=dict(color=C_YELL, width=2)))
+
+    fig.add_hline(y=S0, line_dash='dash', line_color='#8b949e', annotation_text='Precio actual',
+                  annotation_position='bottom right')
+    if objetivo:
+        fig.add_hline(y=objetivo, line_dash='dot', line_color=C_ACENT,
+                      annotation_text='Nivel objetivo', annotation_position='top right')
+
+    fig.update_xaxes(gridcolor=C_GRID, title=x_title)
+    fig.update_yaxes(gridcolor=C_GRID, title='Precio')
+    fig.update_layout(
+        **_LAYOUT_BASE,
+        title=dict(text=f'Trayectorias simuladas — {MC_HORIZONTES[horizonte].lower()}',
+                   font=dict(color=C_TEXT, size=14), x=0.01, xanchor='left'),
+        height=420, hovermode='x', margin=dict(l=10, r=10, t=60, b=10),
+        legend=dict(orientation='h', y=1.12, x=0, font=dict(size=9)),
+    )
+    return fig
+
+
+def _fig_mc_hist(finales, S0, p5, p95, objetivo, fmt):
+    fig = go.Figure(go.Histogram(x=finales, nbinsx=50, marker_color=C_ACENT, opacity=0.75,
+                                 name='Precio final'))
+    fig.add_vline(x=S0, line_dash='dash', line_color='#8b949e', annotation_text='Actual')
+    fig.add_vline(x=p5, line_dash='dot', line_color=C_RED, annotation_text=f'P5 {fmt(p5)}')
+    fig.add_vline(x=p95, line_dash='dot', line_color=C_GREEN, annotation_text=f'P95 {fmt(p95)}')
+    if objetivo:
+        fig.add_vline(x=objetivo, line_color=C_YELL, annotation_text='Objetivo')
+    fig.update_xaxes(gridcolor=C_GRID, title='Precio al final del horizonte')
+    fig.update_yaxes(gridcolor=C_GRID, title='Frecuencia')
+    fig.update_layout(
+        **_LAYOUT_BASE,
+        title=dict(text='Distribución del precio final', font=dict(color=C_TEXT, size=14),
+                   x=0.01, xanchor='left'),
+        height=340, margin=dict(l=10, r=10, t=60, b=10), showlegend=False,
+    )
+    return fig
+
+
+def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
+                       senal_vela, tf_velas_txt):
+    st.caption('El Monte Carlo es independiente de la temporalidad de las velas: '
+               'podés mirar velas de 1H y proyectar a 1 día, o al revés.')
+
+    c1, c2, c3, c4 = st.columns([1.6, 1, 1, 1.2])
+    with c1:
+        horizonte = st.radio('Horizonte de la simulación', list(MC_HORIZONTES.keys()),
+                             format_func=lambda k: MC_HORIZONTES[k], horizontal=True,
+                             key='velas_mc_horizonte')
+    with c2:
+        n_sims = st.selectbox('Simulaciones', [1000, 5000, 10000], index=1, key='velas_mc_nsims')
+    with c3:
+        usar_drift = st.checkbox('Incluir drift histórico', value=False, key='velas_mc_drift',
+                                 help='Si está apagado, la simulación no tiene sesgo direccional '
+                                      '(solo expande el rango según la volatilidad). Con drift '
+                                      'encendido se usa la media reciente de retornos, que es muy ruidosa.')
+    with c4:
+        objetivo = st.number_input('Nivel objetivo (0 = ninguno)', min_value=0.0, value=0.0,
+                                   step=0.5, format='%.2f', key='velas_mc_obj')
+
+    with st.spinner('Descargando datos y simulando...'):
+        df = _datos_mc(ticker, horizonte, descargar_datos)
+
+    if df is None or len(df) == 0 or 'Close' not in df.columns:
+        st.error('No se pudieron obtener datos para la simulación.')
+        return
+
+    ret = _retornos_mc(df, horizonte)
+    if len(ret) < MC_MIN_RETORNOS:
+        st.warning(f'Hay muy pocos retornos ({len(ret)}) para estimar la volatilidad. '
+                   f'Se necesitan al menos {MC_MIN_RETORNOS}.')
+        return
+
+    S0 = float(pd.to_numeric(df['Close'], errors='coerce').dropna().iloc[-1])
+    sigma = float(ret.std(ddof=1))
+    mu_log = float(ret.mean()) if usar_drift else -0.5 * sigma ** 2
+
+    paths = _simular_mc(S0, mu_log, sigma, n_sims)
+    finales = paths[-1]
+    p5, p25, p50, p75, p95 = np.percentile(finales, [5, 25, 50, 75, 95])
+    prob_sube = float(np.mean(finales > S0) * 100)
+    prob_baja = 100 - prob_sube
+    unidad = 'hora' if horizonte == '1h' else 'día'
+
+    kpi_cards_4([
+        (f'Precio actual', fmt(S0), 'Último cierre de la serie', C_ACENT, ''),
+        (f'Volatilidad por {unidad}', f'{sigma * 100:.2f}%',
+         f'Desvío de {len(ret)} retornos {"horarios" if horizonte == "1h" else "diarios"}', C_YELL, ''),
+        ('Prob. de subir', f'{prob_sube:.1f}%', f'Terminar por encima de {fmt(S0)}', C_GREEN, ''),
+        ('Prob. de bajar', f'{prob_baja:.1f}%', f'Terminar por debajo de {fmt(S0)}', C_RED, ''),
+    ])
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    with m1: st.metric('P5 (escenario bajo)', fmt(p5), f'{(p5 / S0 - 1) * 100:+.2f}%')
+    with m2: st.metric('P25', fmt(p25), f'{(p25 / S0 - 1) * 100:+.2f}%')
+    with m3: st.metric('Mediana', fmt(p50), f'{(p50 / S0 - 1) * 100:+.2f}%')
+    with m4: st.metric('P75', fmt(p75), f'{(p75 / S0 - 1) * 100:+.2f}%')
+    with m5: st.metric('P95 (escenario alto)', fmt(p95), f'{(p95 / S0 - 1) * 100:+.2f}%')
+
+    if objetivo > 0:
+        arriba = objetivo > S0
+        p_final = float(np.mean(finales >= objetivo) * 100) if arriba else float(np.mean(finales <= objetivo) * 100)
+        p_toque = float(np.mean(paths.max(axis=0) >= objetivo) * 100) if arriba \
+            else float(np.mean(paths.min(axis=0) <= objetivo) * 100)
+        lado = 'por encima' if arriba else 'por debajo'
+        t1, t2 = st.columns(2)
+        with t1: st.metric(f'Terminar {lado} de {fmt(objetivo)}', f'{p_final:.1f}%')
+        with t2: st.metric(f'Tocar {fmt(objetivo)} en el camino (aprox.)', f'{p_toque:.1f}%',
+                           help=f'Calculado con {MC_PASOS_PATH} subpasos; subestima levemente el toque real.')
+
+    st.plotly_chart(_fig_mc_abanico(paths, S0, horizonte, objetivo if objetivo > 0 else None),
+                    use_container_width=True, config=PLOTLY_CONFIG,
+                    key=f'velas_mc_fan_{ticker}_{horizonte}')
+    st.plotly_chart(_fig_mc_hist(finales, S0, p5, p95, objetivo if objetivo > 0 else None, fmt),
+                    use_container_width=True, config=PLOTLY_CONFIG,
+                    key=f'velas_mc_hist_{ticker}_{horizonte}')
+
+    # Lectura combinada con la señal de las velas
+    sesgo_mc = 'alcista' if prob_sube >= 55 else ('bajista' if prob_sube <= 45 else 'neutral')
+    sesgo_vela = ('alcista' if 'CAIDA' in senal_vela else
+                  'bajista' if 'SUBA' in senal_vela else 'neutral')
+    if not usar_drift:
+        lectura = ('Sin drift, el Monte Carlo no tiene sesgo direccional: su aporte es el '
+                   '<b>rango probable</b> de precios, no la dirección.')
+    elif sesgo_mc == sesgo_vela and sesgo_mc != 'neutral':
+        lectura = f'La señal de las velas ({tf_velas_txt}) y el drift histórico apuntan en el mismo sentido ({sesgo_mc}).'
+    elif sesgo_mc != 'neutral' and sesgo_vela != 'neutral':
+        lectura = f'Señales contradictorias: velas {sesgo_vela} vs. Monte Carlo {sesgo_mc}.'
+    else:
+        lectura = 'Al menos una de las dos lecturas es neutral; no hay confirmación direccional clara.'
+
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">🎲 Lectura del Monte Carlo · {ticker}</div>
+      En {MC_HORIZONTES[horizonte].lower()}, el 90% de los escenarios simulados termina entre
+      <b>{fmt(p5)}</b> y <b>{fmt(p95)}</b>; la mitad central (25–75%) entre
+      <b>{fmt(p25)}</b> y <b>{fmt(p75)}</b>.<br><br>
+      Señal de las velas ({tf_velas_txt}): <b>{senal_vela}</b>. {lectura}
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.caption('Modelo: movimiento browniano geométrico con volatilidad constante, estimada con los '
+               'retornos recientes. No contempla gaps, saltos ni cambios de régimen, y las colas '
+               'reales suelen ser más gordas que las simuladas.')
+
+
+# ==============================================================
 #  MÓDULO PRINCIPAL
 # ==============================================================
 
@@ -421,12 +644,14 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d; border-top:2px solid #e3b341;
          border-radius:14px; padding:28px 32px; margin-bottom:24px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🕯️ Lectura de Velas</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🕯️ Lectura de Velas + Monte Carlo</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
         Detecta patrones de velas japonesas (martillo, estrella fugaz, envolventes, rechazos, doji),
         los combina con RSI, volumen y contexto de las últimas 5 velas, y arma un score de
         <b style="color:#3fb950">freno de caída</b> / <b style="color:#f85149">freno de suba</b>
-        con niveles de confirmación e invalidación. Disponible en velas <b>diarias</b> y de <b>1 hora</b>.
+        con niveles de confirmación e invalidación. Velas <b>diarias</b> o de <b>1 hora</b>.
+        Además incluye una simulación <b>Monte Carlo</b> a <b>1 hora</b> o <b>1 día</b>,
+        que se elige por separado de la temporalidad de las velas.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -435,7 +660,7 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     with c_inp:
         ticker = selector_ticker_autocomplete('velas_ticker', st.session_state.get('ticker_from_table', ''))
     with c_tf:
-        tf = st.selectbox('Temporalidad', ['1d', '1h'], key='velas_tf',
+        tf = st.selectbox('Temporalidad velas', ['1d', '1h'], key='velas_tf',
                           format_func=lambda x: {'1d': 'Diaria (1D)', '1h': '1 hora (1H)'}[x])
     intradia = (tf == '1h')
     with c_per:
@@ -469,7 +694,7 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
           <div style="font-size:44px;margin-bottom:14px;opacity:.6">🕯️</div>
           <div style="color:#6b7d9a;font-size:13px;line-height:1.8">
             Elegí el activo y la temporalidad, y presioná <b style="color:#e6edf3">Analizar</b>
-            para leer sus velas.
+            para leer sus velas y simular escenarios.
           </div>
         </div>
         """, unsafe_allow_html=True)
@@ -499,7 +724,8 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
         st.caption('🕐 Horario Argentina · SMA20/SMA50 y RSI calculados sobre velas de 1 hora · '
                    '"Movimiento previo" mide las últimas 5 horas (umbral 1%).')
 
-    tab_graf, tab_hist = st.tabs(['📈 Gráfico y conclusión', '🗂️ Historial de señales'])
+    tab_graf, tab_hist, tab_mc = st.tabs(['📈 Gráfico y conclusión', '🗂️ Historial de señales',
+                                          '🎲 Monte Carlo'])
     with tab_graf:
         st.plotly_chart(_fig_velas(d.tail(ruedas), ticker_ok, intradia), use_container_width=True,
                         config=PLOTLY_CONFIG, key=f'velas_fig_{ticker_ok}_{tf}')
@@ -507,8 +733,13 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     with tab_hist:
         st.caption('Últimas 15 velas con alguna señal distinta de "Sin señal clara".')
         _render_historial(d, 15, intradia)
+    with tab_mc:
+        _render_montecarlo(ticker_ok, fmt_precio, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
+                           senal_vela=d.iloc[-1]['SEÑAL_VELA'],
+                           tf_velas_txt='1H' if intradia else '1D')
 
     st.markdown(
-        '<div style="font-size:11px;color:#6b7d9a;margin-top:12px">Las velas son una herramienta de '
-        'lectura de corto plazo: ningún patrón garantiza resultados. No es asesoramiento financiero.</div>',
+        '<div style="font-size:11px;color:#6b7d9a;margin-top:12px">Las velas y las simulaciones son '
+        'herramientas de lectura de corto plazo: ningún patrón ni modelo garantiza resultados. '
+        'No es asesoramiento financiero.</div>',
         unsafe_allow_html=True)
