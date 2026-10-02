@@ -8748,10 +8748,13 @@ with st.container(key='nav_pills_wrap'):
     #  LAYOUT REDUCIDO — Workspaces de negocio (PyMEs / Agro)
     # ══════════════════════════════════════════════════════════════
     if HORIZONTE == 'pyme':
-        _c = st.columns([0.7, 1, 1, 1, 1, 0.15, 1])
-        _render_app_switcher(_c[1])
-        render_nav_pyme([_c[2], _c[3], _c[4]])
-        _render_actualizar(_c[6])
+        # Fila 1: 4 botones del módulo (izquierda) + selector "PyMEs ▾" (derecha)
+        _c = st.columns([1.4, 1.4, 1.4, 1.4, 0.2, 1.3])
+        render_nav_pyme([_c[0], _c[1], _c[2], _c[3]])
+        _render_app_switcher(_c[5])
+        # Fila 2: "↺ Actualizar" debajo del selector, igual que en Mercados
+        _c2 = st.columns([1.4, 1.4, 1.4, 1.4, 0.2, 1.3])
+        _render_actualizar(_c2[5])
     elif HORIZONTE == 'agro':
         _c = st.columns([2.5, 1, 0.15, 1])
         _render_app_switcher(_c[1])
