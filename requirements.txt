@@ -13,3 +13,5 @@ deep-translator
 hurst
 hmmlearn
 xlsxwriter
+openpyxl
+pdfplumber
