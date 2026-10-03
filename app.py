@@ -593,7 +593,7 @@ def _contar_pagos_pendientes(_client):
         return 0
 
 PLAN_USUARIO = _plan_cache(supabase, USER_ID)
-MODULOS_SOLO_PRO = {'optimizador', 'pares', 'ia_asistente', 'fscore', 'breadth', 'renta_fija_macro', 'cot', 'tff'}
+MODULOS_SOLO_PRO = {'optimizador', 'pares', 'ia_asistente', 'fscore', 'breadth', 'renta_fija_macro', 'cot', 'tff', 'valuacion'}
 TIENE_ACCESO_PRO = ES_ADMIN or PLAN_USUARIO in ('trial', 'pro')
 # Señales: ilimitadas solo para admin y Pro pagado. La Prueba se comporta como Básico.
 TIENE_SENALES_PRO = ES_ADMIN or PLAN_USUARIO == 'pro'
@@ -8557,8 +8557,8 @@ for key, default in [
 
 
 _now_str = ahora_ar().strftime('%H:%M')
-_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'gex': '#bc8cff', 'renta_fija_macro': '#00838f', 'ia_asistente': '#bc8cff', 'senales': '#ff6ec7', 'finanzas': '#6CC24A', 'velas': '#e3b341', 'pyme': '#3a7bd5'}
-_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'gex': 'GEX', 'renta_fija_macro': 'Renta Fija', 'ia_asistente': 'Asistente IA', 'senales': 'Señales', 'finanzas': 'Finanzas', 'velas': 'Velas', 'pyme': 'PyMEs'}
+_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'gex': '#bc8cff', 'renta_fija_macro': '#00838f', 'ia_asistente': '#bc8cff', 'senales': '#ff6ec7', 'finanzas': '#6CC24A', 'velas': '#e3b341', 'pyme': '#3a7bd5', 'valuacion': '#6CC24A'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'gex': 'GEX', 'renta_fija_macro': 'Renta Fija', 'ia_asistente': 'Asistente IA', 'senales': 'Señales', 'finanzas': 'Finanzas', 'velas': 'Velas', 'pyme': 'PyMEs', 'valuacion': 'Valuación'}
 
 HORIZONTE = st.session_state['nav_horizonte']
 MODULO    = st.session_state['nav_modulo']
@@ -8843,6 +8843,8 @@ with st.container(key='nav_pills_wrap'):
             ('🧮 Optimizar cartera' if TIENE_ACCESO_PRO else '🔒 Optimizar cartera (Pro)'):
                                      ('optimizador', 'optimizador'),
             '📐 Promediador + Stop Loss': ('promediador', 'promediador'),
+            ('🏦 Simulador de Valuación' if TIENE_ACCESO_PRO else '🔒 Simulador de Valuación (Pro)'):
+                                 ('valuacion', 'valuacion'),
             ('📊 F-Score (Piotroski)' if TIENE_ACCESO_PRO else '🔒 F-Score (Piotroski) (Pro)'):
                                      ('fscore', 'fscore'),
             ('📡 Salud del Mercado' if TIENE_ACCESO_PRO else '🔒 Salud del Mercado (Pro)'):
@@ -8850,7 +8852,7 @@ with st.container(key='nav_pills_wrap'):
             ('📉 Renta Fija y Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija y Macro (Pro)'):
                                      ('renta_fija_macro', 'renta_fija_macro'),
         }
-        _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth', 'renta_fija_macro'}
+        _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth', 'renta_fija_macro', 'valuacion'}
         _herr_activo = HORIZONTE in _herr_horizontes
         _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
         _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
@@ -9023,6 +9025,7 @@ with st.container(key='nav_mobile_wrap'):
         ('🧲 GEX' if TIENE_ACCESO_PRO else '🔒 GEX (Pro)'): 'gex',
         '📐 Promediador': 'promediador',
         ('🎯 Señales' if TIENE_SENALES_PRO else '🎯 Señales (1 destacada)'): 'senales',
+        ('🏦 Valuación' if TIENE_ACCESO_PRO else '🔒 Valuación (Pro)'): 'valuacion',
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
         ('📡 Salud Mercado' if TIENE_ACCESO_PRO else '🔒 Salud Mercado (Pro)'): 'breadth',
         ('📉 Renta Fija/Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija/Macro (Pro)'): 'renta_fija_macro',
@@ -9166,6 +9169,7 @@ titulos = {
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
     'gex': ('GEX — Gamma Exposure', '🧲', 'Exposición gamma, punto de cambio de gamma y paredes de Calls/Puts · datos CBOE'),
     'velas': ('Lectura de Velas Diarias', '🕯️', 'Patrones de velas japonesas · freno de caída / freno de suba'),
+    'valuacion': ('Simulador de Valuación', '🏦', 'DCF · Múltiplos · Sensibilidad WACC × g · Ingeniería inversa'),
     'renta_fija_macro': ('Renta Fija, Salud del Mercado y Macro', '📉','Bonos, tasas del Tesoro, crédito corporativo y 12 ratios macro estratégicos'),
     'senales': ('Señales de Trading', '🎯', 'Publicación de señales y simulador de capital'),
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
@@ -9196,6 +9200,7 @@ badge_map = {
     'opciones': ('#bc5cff', 'rgba(188,92,255,0.12)', 'OPCIONES'),
     'gex': ('#bc8cff', 'rgba(188,140,255,0.12)', 'GEX'),
     'velas': ('#e3b341', 'rgba(227,179,65,0.12)', 'VELAS'),
+    'valuacion': ('#6CC24A', 'rgba(108,194,74,0.12)', 'VALUACIÓN'),
     'senales': ('#ff6ec7', 'rgba(255,110,199,0.12)', 'SEÑALES'),
     'finanzas': ('#6CC24A', 'rgba(108,194,74,0.12)', 'FINANZAS'),
     'promediador': ('#6CC24A', 'rgba(108,194,74,0.12)', 'PROMEDIADOR'),
@@ -9341,6 +9346,18 @@ elif MODULO == 'renta_fija_macro':
         )
     else:
         _mostrar_bloqueo_pro('Renta Fija y Macro')
+
+elif MODULO == 'valuacion':
+    if TIENE_ACCESO_PRO:
+        modulo_valuacion(
+            selector_ticker_autocomplete=selector_ticker_autocomplete,
+            kpi_cards_4=kpi_cards_4,
+            fmt_precio=fmt_precio,
+            PLOTLY_CONFIG=PLOTLY_CONFIG,
+            validar_ticker=validar_ticker,
+        )
+    else:
+        _mostrar_bloqueo_pro('Simulador de Valuación')
 
 elif MODULO == 'velas':
     if ES_ADMIN:
