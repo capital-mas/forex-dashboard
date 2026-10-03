@@ -5827,22 +5827,28 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
     st.markdown('#### 2️⃣ Ajustes manuales adicionales (se suman al escenario base)')
     with st.expander('➕ Agregar o ajustar shocks macro encima del escenario base',
                       expanded=modo_escenario.startswith('⚪')):
+        st.caption('Escribí cualquier valor (positivo o negativo). Se suma al escenario base elegido arriba.')
         ca1, ca2, ca3 = st.columns(3)
         with ca1:
-            sp_extra = st.selectbox('📉 S&P 500 — extra', list(OPCIONES_SP500.keys()), key='crisis_sp_extra')
-            oil_extra = st.selectbox('🛢️ Petróleo — extra', list(OPCIONES_PETROLEO.keys()), key='crisis_oil_extra')
+            sp_extra = st.number_input('📉 S&P 500 — extra (%)', min_value=-100.0, max_value=500.0,
+                                        value=0.0, step=1.0, format='%.1f', key='crisis_sp_extra')
+            oil_extra = st.number_input('🛢️ Petróleo — extra (%)', min_value=-100.0, max_value=500.0,
+                                         value=0.0, step=1.0, format='%.1f', key='crisis_oil_extra')
         with ca2:
-            usd_extra = st.selectbox('💵 Dólar — extra', list(OPCIONES_DOLAR.keys()), key='crisis_usd_extra')
-            tasas_extra = st.selectbox('🏦 Tasas — extra', list(OPCIONES_TASAS.keys()), key='crisis_tasas_extra')
+            usd_extra = st.number_input('💵 Dólar — extra (%)', min_value=-100.0, max_value=500.0,
+                                         value=0.0, step=1.0, format='%.1f', key='crisis_usd_extra')
+            tasas_extra = st.number_input('🏦 Tasas — extra (puntos básicos)', min_value=-2000.0, max_value=5000.0,
+                                           value=0.0, step=25.0, format='%.0f', key='crisis_tasas_extra')
         with ca3:
-            vix_extra = st.selectbox('📊 VIX — extra', list(OPCIONES_VIX.keys()), key='crisis_vix_extra')
+            vix_extra = st.number_input('📊 VIX — extra (%)', min_value=-100.0, max_value=1000.0,
+                                         value=0.0, step=5.0, format='%.1f', key='crisis_vix_extra')
 
     preset = dict(
-        sp500=preset_base['sp500'] + OPCIONES_SP500[sp_extra],
-        oil=preset_base['oil'] + OPCIONES_PETROLEO[oil_extra],
-        usd=preset_base['usd'] + OPCIONES_DOLAR[usd_extra],
-        tasas_bp=preset_base['tasas_bp'] + OPCIONES_TASAS[tasas_extra],
-        vix=preset_base['vix'] + OPCIONES_VIX[vix_extra],
+        sp500=preset_base['sp500'] + sp_extra,
+        oil=preset_base['oil'] + oil_extra,
+        usd=preset_base['usd'] + usd_extra,
+        tasas_bp=preset_base['tasas_bp'] + tasas_extra,
+        vix=preset_base['vix'] + vix_extra,
     )
     tasa_resultante = tasa_base + preset['tasas_bp'] / 100
     shocks_macro = _opt_shocks_desde_preset(preset)
@@ -6151,18 +6157,26 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
 #  AJUSTE POR INFLACIÓN (multi-país, carga manual) — Optimizador
 # ==============================================================
 
-def _opt_paises_default():
-    return pd.DataFrame({
-        'País': ['Estados Unidos', 'Argentina', 'Brasil', 'Europa (Zona Euro)'],
-        'Inflación anual %': [3.0, 120.0, 4.5, 2.5],
-    })
+INFLACION_HISTORICA_PAISES = {
+    'Estados Unidos': {2019: 1.8, 2020: 1.2, 2021: 4.7, 2022: 8.0, 2023: 4.1, 2024: 2.9, 2025: 2.6},
+    'Argentina':      {2019: 53.8, 2020: 36.1, 2021: 50.9, 2022: 94.8, 2023: 211.4, 2024: 117.8, 2025: 31.5},
+    'Brasil':         {2019: 4.31, 2020: 4.52, 2021: 10.06, 2022: 5.78, 2023: 4.62, 2024: 4.83, 2025: 4.26},
+    'Europa (Zona Euro)': {2019: 1.2, 2020: 0.3, 2021: 2.6, 2022: 8.4, 2023: 5.4, 2024: 2.3, 2025: 2.1},
+}
 
 def _opt_paises_default_por_anio(anios):
-    paises_base = ['Estados Unidos', 'Argentina', 'Brasil', 'Europa (Zona Euro)']
-    tasas_base  = {'Estados Unidos': 3.0, 'Argentina': 120.0, 'Brasil': 4.5, 'Europa (Zona Euro)': 2.5}
-    data = {'País': paises_base}
+    """Tabla de inflación anual por país y año, precargada con datos históricos.
+    Si el período incluye un año sin dato (ej. 2018 o 2026), usa el año más cercano disponible."""
+    data = {'País': list(INFLACION_HISTORICA_PAISES.keys())}
     for a in anios:
-        data[str(a)] = [tasas_base[p] for p in paises_base]
+        col = []
+        for pais, serie in INFLACION_HISTORICA_PAISES.items():
+            if a in serie:
+                col.append(serie[a])
+            else:
+                cercano = min(serie.keys(), key=lambda y: abs(y - a))
+                col.append(serie[cercano])
+        data[str(a)] = col
     return pd.DataFrame(data)
 
 
