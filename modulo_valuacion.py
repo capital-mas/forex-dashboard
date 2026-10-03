@@ -19,7 +19,6 @@
 #    Valor estimado hoy = Precio objetivo / (1+Ke)^N      (N = 5 años)
 # ==============================================================
 
-import json
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -29,11 +28,21 @@ N_ANIOS = 5
 PER_MIN, PER_MAX = 5.0, 80.0
 
 ESC_CLAVES = ['Bajista', 'Base', 'Alcista']
-ESC_JSON = {'Bajista': 'bajista', 'Base': 'base', 'Alcista': 'alcista'}
-ESC_ETIQUETA = {'Bajista': '🔴 Bajista', 'Base': '🎯 Base (Mercado)', 'Alcista': '🟢 Alcista'}
 OPC_RADIO = ['Bajista', 'Base', 'Alcista', 'Personalizado']
 ETQ_RADIO = {'Bajista': '🔴 Bajista', 'Base': '🎯 Base', 'Alcista': '🟢 Alcista',
              'Personalizado': '⚙️ Personalizado'}
+
+# Riesgo país por defecto (puntos básicos) según país de la empresa
+RIESGO_PAIS = {
+    'United States': ('US', 0), 'USA': ('US', 0),
+    'Germany': ('DE', 0), 'Japan': ('JP', 0),
+    'South Korea': ('KR', 60), 'Korea, Republic of': ('KR', 60),
+    'Brazil': ('BR', 220), 'Mexico': ('MX', 300), 'Argentina': ('AR', 655),
+}
+RF_DEF, ERP_DEF = 4.20, 5.50      # % por defecto
+MEGA_CAP = 500e9                   # USD
+CRECIMIENTO_ALTO = 0.15
+ESCALA_MAX_ALCISTA = 2.5           # valor alcista / precio
 
 DISCLAIMER_VAL = ("Las valoraciones resultantes son estimaciones teóricas basadas en modelos financieros e "
                   "hipótesis asumidas. No constituyen recomendaciones financieras ni predicciones seguras del mercado.")
@@ -247,19 +256,44 @@ def _calibrar_base(d, ke):
     return None, ['No se pudo calibrar: el resultado neto proyectado es ≤ 0.']
 
 
-def _generar_presets(d, base):
-    """Bajista / Base / Alcista a partir de volatilidad histórica, consensus y fundamentales."""
+def _riesgo_pais(nombre):
+    """(código, puntos) para el país detectado; (None, 0) si no está mapeado."""
+    return RIESGO_PAIS.get((nombre or '').strip(), (None, 0))
+
+
+def _calc_ke(rf_pct, beta, erp_pct, rp_pts):
+    """Ke = Rf + β × ERP + Riesgo país (puntos / 100). Devuelve decimal."""
+    return (rf_pct + beta * erp_pct + rp_pts / 100.0) / 100.0
+
+
+def _generar_presets(d, base, ke):
+    """Bajista / Base / Alcista normalizados para cualquier empresa global."""
     sg = float(np.clip(d['vol_g'] if d['vol_g'] is not None else 0.04, 0.02, 0.06))
     g, m, bb, per = base['g'], base['m'], base['bb'], base['per']
 
-    # Alcista: aceleración de ventas (al menos el consensus de analistas, si es mayor)
     g_bull = g + sg
     if d['g_analistas'] is not None and np.isfinite(d['g_analistas']):
         g_bull = max(g_bull, float(np.clip(d['g_analistas'], -0.05, 0.40)))
+    g_bear = g - sg
 
-    bear = dict(g=g - sg, m=max(0.005, m * 0.90), bb=bb * 0.5, per=max(PER_MIN, per * 0.80))
+    if g > CRECIMIENTO_ALTO:                         # alto crecimiento
+        g_bull = min(g_bull, g * 1.30)
+        g_bear = max(g_bear, g * 0.50)
+    elif d['mcap'] > MEGA_CAP:                       # mega-cap / madura
+        g_bull = min(g_bull, g + 0.035)
+        g_bear = max(g_bear, -0.035)                 # piso de contracción (entre -2% y -5%)
+
+    bear = dict(g=g_bear, m=max(0.005, m * 0.90), bb=bb * 0.5, per=max(PER_MIN, per * 0.80))
     bull = dict(g=g_bull, m=min(0.85, m * 1.08), bb=max(bb * 1.30, bb + 0.005),
                 per=min(PER_MAX * 1.5, per * 1.15))
+
+    # Control visual de escala: el alcista no puede superar 2.5x el precio
+    f = lambda p: _valor(p['g'], p['m'], p['bb'], p['per'], d['rev0'], d['acciones'], ke)
+    tope = ESCALA_MAX_ALCISTA * d['precio']
+    if f(bull) > tope:
+        mezcla = lambda t: {k: base[k] + t * (bull[k] - base[k]) for k in ('g', 'm', 'bb', 'per')}
+        t = _bisec(lambda x: f(mezcla(x)), 0.0, 1.0, tope)
+        bull = mezcla(t if t is not None else 0.0)
     return {'Bajista': bear, 'Base': dict(base), 'Alcista': bull}
 
 
@@ -345,6 +379,7 @@ def _fig_heatmap(p, d, ke, base_layout):
 
 def _claves(tk):
     return dict(g=f'v_g_{tk}', m=f'v_m_{tk}', bb=f'v_b_{tk}', per=f'v_p_{tk}',
+                rf=f'v_rf_{tk}', beta=f'v_beta_{tk}', erp=f'v_erp_{tk}', rp=f'v_rp_{tk}',
                 esc=f'v_esc_{tk}', presets=f'v_presets_{tk}', sig=f'v_sig_{tk}')
 
 
@@ -443,32 +478,68 @@ def modulo_valuacion(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, PLOT
                 f"Margen neto actual: "
                 f"{(d['margen']*100 if d['margen'] is not None else float('nan')):.1f}%")
 
-    # ── Tasa de descuento (parámetro global, fuera de los 4 motores) ──
     K = _claves(ticker)
-    beta = d['beta'] if d['beta'] else 1.0
-    ke_def = float(np.clip(0.042 + beta * 0.055, 0.07, 0.15))
-    with st.expander('⚙️ Tasa de descuento (Ke)', expanded=False):
-        ke = st.number_input('Retorno exigido Ke % (por defecto CAPM: 4.2% + β × 5.5%)', 3.0, 30.0,
-                             round(ke_def * 100, 2), 0.25, key=f'val_ke_{ticker}') / 100
-        st.caption(f'El valor estimado = precio objetivo a {N_ANIOS} años (EPS × PER) descontado a Ke. '
-                   'Si cambiás Ke, se recalibra el escenario Base y se recargan los presets.')
 
-    # ── Calibración + presets (se recalculan si cambia ticker o Ke) ──
-    sig = (ticker, round(ke, 4), round(d['precio'], 2))
+    # ── Inicialización por ticker: Ke por defecto, calibración y presets ──
+    sig = (ticker, round(d['precio'], 2))
     if st.session_state.get(K['sig']) != sig:
-        base, avisos = _calibrar_base(d, ke)
+        beta0 = round(float(np.clip(d['beta'] if d['beta'] else 1.0, 0.0, 4.0)), 2)
+        cod_pais, rp0 = _riesgo_pais(d['pais'])
+        defs = dict(rf=RF_DEF, beta=beta0, erp=ERP_DEF, rp=int(rp0), pais=cod_pais)
+        st.session_state[f'v_kedef_{ticker}'] = defs
+        st.session_state[K['rf']] = defs['rf']
+        st.session_state[K['beta']] = defs['beta']
+        st.session_state[K['erp']] = defs['erp']
+        st.session_state[K['rp']] = defs['rp']
+        ke0 = _calc_ke(defs['rf'], beta0, defs['erp'], rp0)
+        st.session_state[f'v_ke0_{ticker}'] = ke0
+        base, avisos = _calibrar_base(d, ke0)
         if base is None:
             st.error(' '.join(avisos))
             return
-        presets = _generar_presets(d, base)
+        presets = _generar_presets(d, base, ke0)
         st.session_state[K['presets']] = presets
         st.session_state[f'v_avisos_{ticker}'] = avisos
         st.session_state[K['esc']] = 'Base'
         _volcar_preset(ticker, presets['Base'])
         st.session_state[K['sig']] = sig
 
+    defs = st.session_state[f'v_kedef_{ticker}']
     presets = st.session_state[K['presets']]
     base = presets['Base']
+
+    # ── Ke multimercado (en vivo) ──
+    _sec('🌎 Tasa de descuento Ke (multimercado)')
+    r1, r2, r3, r4, r5 = st.columns([1, 1, 1, 1.2, 1.2])
+    with r1:
+        st.number_input('Tasa libre de riesgo Rf %', 0.0, 20.0, value=None, step=0.1, format='%.2f',
+                        key=K['rf'], placeholder=f"{defs['rf']:.2f}")
+    with r2:
+        st.number_input('Beta β', 0.0, 4.0, value=None, step=0.05, format='%.2f',
+                        key=K['beta'], placeholder=f"{defs['beta']:.2f}")
+    with r3:
+        st.number_input('Prima de riesgo ERP %', 0.0, 20.0, value=None, step=0.1, format='%.2f',
+                        key=K['erp'], placeholder=f"{defs['erp']:.2f}")
+    with r4:
+        st.number_input('Riesgo país (puntos)', 0, 10000, value=None, step=5, format='%d',
+                        key=K['rp'], placeholder=f"{defs['rp']}",
+                        help='Se ingresa en puntos básicos (ej. 1200 o 220) y se divide por 100: '
+                             '1200 pts → 12.00%. Se autocompleta según el país de la empresa.')
+    rf, _ = _leer(ticker, 'rf', defs['rf'])
+    beta, _ = _leer(ticker, 'beta', defs['beta'])
+    erp, _ = _leer(ticker, 'erp', defs['erp'])
+    rp, _ = _leer(ticker, 'rp', float(defs['rp']))
+    rp = int(round(rp))
+    ke = max(_calc_ke(rf, beta, erp, rp), 0.01)
+    with r5:
+        st.metric('Ke', f'{ke*100:.2f}%')
+    pais_txt = (f"País detectado: {d['pais']} ({defs['pais']})" if defs['pais']
+                else f"País detectado: {d['pais'] or 'N/D'} (sin riesgo país predefinido: 0 pts)")
+    st.caption(f"{pais_txt} · Riesgo país {rp} pts → {rp/100:.2f}% · "
+               f"Ke = Rf + β × ERP + Riesgo país = {rf:.2f}% + {beta:.2f} × {erp:.2f}% + {rp/100:.2f}% "
+               f"= **{ke*100:.2f}%**. El escenario Base se calibró con el Ke inicial "
+               f"({st.session_state[f'v_ke0_{ticker}']*100:.2f}%); si lo modificás, todos los valores se "
+               f"actualizan en vivo y el upside del Base puede dejar de ser 0%.")
     for a in st.session_state.get(f'v_avisos_{ticker}', []):
         st.info('ℹ️ ' + a)
 
@@ -539,7 +610,7 @@ def modulo_valuacion(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, PLOT
         ('Diagnóstico', diag, 'según escala de upside', _color_diag(act['up'])),
     ])
 
-    tab_esc, tab_sens, tab_json = st.tabs(['📊 Escenarios', '🔥 Sensibilidad', '🧾 JSON'])
+    tab_esc, tab_sens = st.tabs(['📊 Escenarios', '🔥 Sensibilidad'])
 
     with tab_esc:
         filas = []
@@ -586,45 +657,5 @@ def modulo_valuacion(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, PLOT
         st.caption('Valor por acción para el escenario activo variando crecimiento y PER. '
                    'Verde = por encima del precio de mercado, rojo = por debajo.')
 
-    # ── JSON de salida ──
-    salida = {
-        'ticker': ticker,
-        'precio_mercado': _n(d['precio']),
-        'escenario_activo': esc_activo,
-        'escenarios_presets': {
-            ESC_JSON[nm]: {
-                'etiqueta': ESC_ETIQUETA[nm],
-                'crecimiento_ingresos_pct': _n(res[nm]['p']['g'] * 100),
-                'margen_neto_pct': _n(res[nm]['p']['m'] * 100),
-                'recompra_acciones_pct': _n(res[nm]['p']['bb'] * 100),
-                'per_objetivo': _n(res[nm]['p']['per']),
-                'valor_estimado': _n(res[nm]['v']),
-                'upside_pct': _n(res[nm]['up']),
-                'diagnostico': _diagnostico(res[nm]['up']),
-            } for nm in ESC_CLAVES
-        },
-    }
-    if esc_activo == 'Personalizado':
-        r = res['Personalizado']
-        salida['escenario_personalizado'] = {
-            'etiqueta': '⚙️ Personalizado',
-            'crecimiento_ingresos_pct': _n(r['p']['g'] * 100),
-            'margen_neto_pct': _n(r['p']['m'] * 100),
-            'recompra_acciones_pct': _n(r['p']['bb'] * 100),
-            'per_objetivo': _n(r['p']['per']),
-            'valor_estimado': _n(r['v']),
-            'upside_pct': _n(r['up']),
-            'diagnostico': _diagnostico(r['up']),
-        }
-    txt_json = json.dumps(salida, ensure_ascii=False, indent=2)
-
-    with tab_json:
-        st.code(txt_json, language='json')
-
     st.markdown('---')
-    cj1, cj2 = st.columns([3, 1])
-    with cj1:
-        st.caption('⚠️ ' + DISCLAIMER_VAL)
-    with cj2:
-        st.download_button('⬇️ Descargar JSON', txt_json, file_name=f'valuacion_{ticker}.json',
-                           mime='application/json', use_container_width=True, key='val_dl_json')
+    st.caption('⚠️ ' + DISCLAIMER_VAL)
