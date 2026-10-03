@@ -335,7 +335,10 @@ def _fig_heatmap(waccs, gs, M, precio, base_layout):
 # ──────────────────────────────────────────────────────────────
 
 def _pct_input(label, key, valor, minv=-50.0, maxv=100.0, step=0.5, help=None):
-    return st.number_input(label, min_value=minv, max_value=maxv, value=float(round(valor * 100, 2)),
+    minv, maxv, step = float(minv), float(maxv), float(step)
+    v = float(round(valor * 100, 2))
+    v = min(max(v, minv), maxv)          # evita que un valor por defecto quede fuera de rango
+    return st.number_input(label, min_value=minv, max_value=maxv, value=v,
                            step=step, key=key, format='%.2f', help=help) / 100
 
 
@@ -403,8 +406,8 @@ def modulo_valuacion(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, PLOT
             rf = _pct_input('Tasa libre de riesgo Rf %', f'val_rf_{k}', 0.042, 0, 20)
             erp = _pct_input('Prima de riesgo (Rm − Rf) %', f'val_erp_{k}', 0.055, 0, 20)
         with a2:
-            beta = st.number_input('Beta', 0.0, 4.0, float(round(d['beta'] if d['beta'] else 1.0, 2)),
-                                   0.05, key=f'val_beta_{k}')
+            beta_def = float(min(max(d['beta'] if d['beta'] else 1.0, 0.0), 4.0))
+            beta = st.number_input('Beta', 0.0, 4.0, round(beta_def, 2), 0.05, key=f'val_beta_{k}')
             tax = _pct_input('Tasa impositiva %', f'val_tax_{k}', 0.25, 0, 60)
         with a3:
             kd_def = (d['interes'] / d['deuda']) if d['interes'] and d['deuda'] > 0 else 0.055
@@ -432,7 +435,8 @@ def modulo_valuacion(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, PLOT
                                  float(np.clip(d['nwc_pct'], -0.1, 0.4)) if d['nwc_pct'] is not None else 0.10,
                                  -20, 60, help='Cada $ de crecimiento de ventas inmoviliza este % en capital de trabajo.')
             mult_def = d['mult_ev_ebitda'] if d['mult_ev_ebitda'] and d['mult_ev_ebitda'] > 0 else 12.0
-            mult = st.number_input('EV/EBITDA objetivo (x)', 1.0, 80.0, float(round(min(mult_def, 80), 1)),
+            mult_def = float(min(max(mult_def, 1.0), 80.0))
+            mult = st.number_input('EV/EBITDA objetivo (x)', 1.0, 80.0, round(mult_def, 1),
                                    0.5, key=f'val_mult_{k}')
 
     # WACC (CAPM)
