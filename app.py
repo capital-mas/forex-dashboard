@@ -33,6 +33,7 @@ from modulo_senales_trading import render_senales_trading
 from modulo_fscore import modulo_fscore
 from modulo_market_breadth import render_market_breadth
 from modulo_velas import modulo_velas
+from modulo_valuacion import modulo_valuacion
 from modulo_renta_fija_macro import modulo_renta_fija_macro
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
