@@ -6321,7 +6321,7 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
     anios_disponibles = sorted(set(retornos_opt.index.year))
 
     st.markdown('#### 1️⃣ Inflación anual por país y por año')
-    firma_anios = tuple(anios_disponibles)
+    firma_anios = ('v2_historico',) + tuple(anios_disponibles)
     if ('infl_tabla_paises' not in st.session_state
             or st.session_state.get('infl_tabla_paises_firma') != firma_anios):
         st.session_state['infl_tabla_paises'] = _opt_paises_default_por_anio(anios_disponibles)
@@ -6330,12 +6330,12 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
     col_config_paises = {'País': st.column_config.TextColumn(required=True)}
     for a in anios_disponibles:
         col_config_paises[str(a)] = st.column_config.NumberColumn(
-            f'Infl. {a} %', min_value=-20.0, step=0.5, format='%.1f'
+            f'Infl. {a} %', min_value=-20.0, step=0.5, format='%.2f'
         )
 
     df_paises_edit = st.data_editor(
         st.session_state['infl_tabla_paises'],
-        key='infl_paises_editor', use_container_width=True, num_rows='dynamic', hide_index=True,
+        key='infl_paises_editor_v2', use_container_width=True, num_rows='dynamic', hide_index=True,
         column_config=col_config_paises,
     )
     st.session_state['infl_tabla_paises'] = df_paises_edit
