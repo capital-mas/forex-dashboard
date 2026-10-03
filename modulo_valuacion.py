@@ -355,20 +355,36 @@ def _fig_escenarios(vals, precio, base_layout):
 
 
 def _fig_heatmap(p, d, ke, base_layout):
+    # Eje horizontal: crecimiento centrado en el del escenario activo (pasos de ±2pp)
     dg = [-0.04, -0.02, 0.0, 0.02, 0.04]
-    fp = [0.70, 0.85, 1.0, 1.15, 1.30]
     gs = [p['g'] + x for x in dg]
-    pers = [p['per'] * f for f in fp]
+
+    # Eje vertical: el PER activo es la fila central; escalones simétricos de paso fijo
+    per_c = p['per']
+    paso = max(0.5, round(per_c * 0.10 * 2) / 2)      # ~10% del PER, redondeado a 0.5x
+    paso = min(paso, per_c / 2.5)                      # evita PER <= 0 en el extremo inferior
+    pers = [per_c + k * paso for k in (-2, -1, 0, 1, 2)]
+
     z = [[_valor(g, p['m'], p['bb'], pe, d['rev0'], d['acciones'], ke) for g in gs] for pe in pers]
+
+    x_lbl = [f'{g*100:.1f}%' for g in gs]
+    y_lbl = [f'{pe:.1f}x' for pe in pers]
     fig = go.Figure(go.Heatmap(
-        z=z, x=[f'{g*100:.1f}%' for g in gs], y=[f'{pe:.1f}x' for pe in pers],
+        z=z, x=x_lbl, y=y_lbl,
         colorscale='RdYlGn', zmid=d['precio'],
         text=np.round(z, 2), texttemplate='%{text}', colorbar=dict(title='Valor/acc.')))
+
+    # Marca la celda central (supuestos del escenario activo)
+    fig.add_shape(type='rect', xref='x', yref='y',
+                  x0=-0.5 + 2, x1=0.5 + 2, y0=-0.5 + 2, y1=0.5 + 2,
+                  line=dict(color='#e6edf3', width=2))
+
     fig.update_layout(**base_layout, height=380,
                       title=dict(text='Sensibilidad — PER (vertical) × crecimiento de ingresos (horizontal)',
                                  font=dict(size=14, color='#e6edf3')),
                       xaxis=dict(title='Crecimiento anual de ingresos'),
-                      yaxis=dict(title='PER objetivo', autorange='reversed'),
+                      yaxis=dict(title=f'PER objetivo (centro = {per_c:.1f}x, paso {paso:.1f}x)',
+                                 autorange='reversed'),
                       margin=dict(l=10, r=10, t=55, b=10))
     return fig
 
