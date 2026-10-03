@@ -51,26 +51,71 @@ def _prom_ratio(num, den):
     return float(np.mean(r)) if r else None
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def _val_cargar(ticker):
-    try:
-        import yfinance as yf
-        s = yf.Ticker(ticker)
-        info = s.info or {}
-        inc, bal, cf = s.financials, s.balance_sheet, s.cashflow
-    except Exception:
-        return None
+    """Descarga cruda. NO usar directo: usar _val_cargar_seguro().
+    Levanta ValueError con el motivo si faltan datos (así el fallo NO se cachea)."""
+    import time
+    import yfinance as yf
+    s = yf.Ticker(ticker)
 
+    info = {}
+    for _ in range(3):                      # reintenta: Yahoo a veces devuelve {} por rate limit
+        try:
+            info = s.info or {}
+        except Exception:
+            info = {}
+        if info:
+            break
+        time.sleep(1.5)
+
+    def _fin(attr):
+        try:
+            df = getattr(s, attr)
+            return df if df is not None else pd.DataFrame()
+        except Exception:
+            return pd.DataFrame()
+
+    inc, bal, cf = _fin('financials'), _fin('balance_sheet'), _fin('cashflow')
+
+    # ── Precio: info → fast_info → historial ──
     price = info.get('currentPrice') or info.get('regularMarketPrice')
+    fi = None
+    try:
+        fi = s.fast_info
+    except Exception:
+        pass
+    if not price and fi is not None:
+        price = getattr(fi, 'last_price', None)
+    if not price:
+        try:
+            h = s.history(period='5d')
+            if h is not None and not h.empty:
+                price = float(h['Close'].dropna().iloc[-1])
+        except Exception:
+            pass
+
+    # ── Acciones: info → fast_info → mcap/precio → balance ──
     shares = info.get('sharesOutstanding')
     mcap = info.get('marketCap')
+    if not shares and fi is not None:
+        shares = getattr(fi, 'shares', None)
+    if not mcap and fi is not None:
+        mcap = getattr(fi, 'market_cap', None)
     if not shares and mcap and price:
         shares = mcap / price
+    if not shares:
+        sh_l = _serie(bal, ['Ordinary Shares Number', 'Share Issued'], 1)
+        shares = sh_l[0] if sh_l else None
 
+    # ── Ventas: info → estados contables ──
     rev_l = _serie(inc, ['Total Revenue', 'Revenue'])
     rev0 = info.get('totalRevenue') or (rev_l[0] if rev_l else None)
-    if not (price and shares and rev0):
-        return None
+
+    faltan = [n for n, v in [('precio', price), ('acciones en circulación', shares),
+                             ('ventas', rev0)] if not v]
+    if faltan:
+        raise ValueError('Yahoo no devolvió: ' + ', '.join(faltan)
+                         + (' (respuesta vacía, probable rate limit)' if not info else ''))
 
     ebitda_l = _serie(inc, ['EBITDA', 'Normalized EBITDA'])
     ebitda = info.get('ebitda') or (ebitda_l[0] if ebitda_l else None)
@@ -129,6 +174,20 @@ def _val_cargar(ticker):
 # ──────────────────────────────────────────────────────────────
 #  2) MOTOR DE CÁLCULO
 # ──────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _val_cargar_ok(ticker):
+    # Si _val_cargar levanta excepción, Streamlit NO cachea el resultado.
+    return _val_cargar(ticker)
+
+
+def _val_cargar_seguro(ticker):
+    """Devuelve (datos, error). Los errores no quedan cacheados."""
+    try:
+        return _val_cargar_ok(ticker), None
+    except Exception as e:
+        return None, str(e) or e.__class__.__name__
+
 
 def _proyectar(p):
     """Proyecta 5 años y devuelve FCFF, EBITDA y NOPAT por año.
@@ -312,10 +371,13 @@ def modulo_valuacion(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, PLOT
         return
 
     with st.spinner(f'Descargando datos fundamentales de {ticker}...'):
-        d = _val_cargar(ticker)
+        d, err = _val_cargar_seguro(ticker)
     if d is None:
-        st.error(f'No hay datos suficientes de Yahoo Finance para {ticker} (precio, acciones o ventas). '
-                 'Probá con otra empresa o esperá unos minutos (rate limit).')
+        st.error(f'No se pudieron cargar los datos de {ticker}. Motivo: {err}')
+        if st.button('🔄 Reintentar', key=f'val_retry_{ticker}'):
+            st.rerun()
+        st.caption('Si dice "rate limit", esperá 1-2 minutos y reintentá. Con tickers no-USA o sin estados '
+                   'financieros en Yahoo (cripto, forex, commodities) el módulo no puede valuar.')
         return
 
     # ── Advertencias de calidad del modelo ──
