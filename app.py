@@ -535,11 +535,16 @@ from streamlit_autorefresh import st_autorefresh
 _nav_h_actual = st.session_state.get('nav_horizonte', 'inicio')
 _nav_m_actual = st.session_state.get('nav_modulo', 'inicio')
 
+_chat_abierto = st.session_state.get('ia_chat_abierto', False)
+
 _autorefresh_activo = (
-    _nav_m_actual == 'inicio'
-    or _nav_h_actual == 'corto'
-    or (_nav_h_actual == 'largo' and _nav_m_actual in ('tdc', 'reversion'))
-    or _nav_h_actual in ('renta_fija_macro', 'breadth')
+    (
+        _nav_m_actual == 'inicio'
+        or _nav_h_actual == 'corto'
+        or (_nav_h_actual == 'largo' and _nav_m_actual in ('tdc', 'reversion'))
+        or _nav_h_actual in ('renta_fija_macro', 'breadth')
+    )
+    and not _chat_abierto      # ← con el chat abierto no se refresca
 )
 
 if _autorefresh_activo:
