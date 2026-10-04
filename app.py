@@ -9275,7 +9275,35 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
+def panel_reset_password(supabase_admin):
+    st.markdown("### 🔑 Resetear contraseña de un usuario")
+    st.caption("Verificá la identidad de la persona por otro medio antes de resetear.")
+    email = st.text_input("Email del usuario", key="adm_reset_email").strip().lower()
+    nueva = st.text_input("Contraseña temporal", type="password", key="adm_reset_pass")
 
+    if st.button("Resetear contraseña", key="adm_reset_btn"):
+        if not email or len(nueva) < 6:
+            st.error("Completá el email y una contraseña de al menos 6 caracteres.")
+            return
+        try:
+            uid, page = None, 1
+            while uid is None:
+                usuarios = supabase_admin.auth.admin.list_users(page=page, per_page=200)
+                if not usuarios:
+                    break
+                for u in usuarios:
+                    if (u.email or "").lower() == email:
+                        uid = u.id
+                        break
+                page += 1
+            if uid is None:
+                st.error("No existe ningún usuario con ese email.")
+            else:
+                supabase_admin.auth.admin.update_user_by_id(uid, {"password": nueva})
+                st.success(f"Contraseña actualizada para {email}. Pasásela y pedile que la cambie.")
+        except Exception as e:
+            st.error(f"Error: {e}")
+            
 # ==============================================================
 #  RENDERIZADO DE MÓDULOS
 # ==============================================================
@@ -9415,6 +9443,8 @@ elif MODULO == 'admin_pagos':
     if ES_ADMIN:
         panel_admin_pagos(supabase, USER_ID)
         panel_gestion_cuentas(supabase, USER_ID)
+        st.markdown('---')
+        panel_reset_password(supabase)   # ← nuevo
     else:
         st.warning('No tenés permisos de administrador.')
 
