@@ -1170,6 +1170,7 @@ def _respuesta_ayuda():
 - **💱 Forex, ETFs e índices** — *"analizame EUR/USD"*, *"cómo está el nasdaq"*, *"analizame SPY"*, *"qué pares de forex hay"*
 - **⚖️ Comparaciones** — *"comparar YPF vs GGAL"*
 - **🎯 Oportunidades** — *"qué sectores están baratos"*, *"dame ideas en tecnología"*
+- **🗓️ Perfil de un país (calendario económico)** — *"Estados Unidos"*, *"cómo está Japón"*: te muestro los datos más recientes con previsto, anterior y real, su lectura y el impacto en cada activo
 - **📐 Top-Down Cuantitativo** — *"score de mediano plazo de AAPL"*
 - **🧮 F-Score (Piotroski)** — *"F-Score de KO"*
 - **📡 Salud del mercado** — *"cómo está la amplitud del mercado"*
