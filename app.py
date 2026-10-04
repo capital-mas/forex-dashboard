@@ -38,6 +38,7 @@ from modulo_renta_fija_macro import modulo_renta_fija_macro
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
 from modulo_ia_asistente import modulo_ia_asistente
+from modulo_ia_resumenes import crear_resumenes
 from modulo_pago_manual import (
     pantalla_suscripcion_modulo, panel_admin_pagos, panel_gestion_cuentas,
     es_admin_usuario, estado_modulo, mostrar_selector_planes, PRODUCTOS,
@@ -8526,6 +8527,11 @@ UNIVERSO_TICKERS_VALIDOS = (
     | set(v[0] for v in SECTORES.values())
 )
 
+# ── Resúmenes GEX / COT / Velas / Opciones para el asistente ──
+RES_IA = crear_resumenes(supabase, descargar_datos)
+if not ES_ADMIN:
+    RES_IA.pop('velas_resumen', None)
+
 CTX_IA = dict(
     validar_ticker=validar_ticker, descargar_datos=descargar_datos,
     get_close_series=get_close_series, calcular_atr=calcular_atr,
@@ -8544,13 +8550,14 @@ CTX_IA = dict(
     ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA,
     fd=fd, supabase=supabase, user_id=USER_ID,
     tiene_acceso_pro=TIENE_ACCESO_PRO,
-    # ── NUEVAS (las 4 que faltaban) ──
+    # ── las 4 que faltaban ──
     calcular_rsi=calcular_rsi,
     calcular_regimen_hmm=calcular_regimen_hmm,
     obtener_perfil_empresa=obtener_perfil_empresa,
     resumen_visual_fundamental=_resumen_visual_fundamental,
+    # ── resúmenes de GEX / COT / Velas / Opciones ──
+    **RES_IA,
 )
-
 # ==============================================================
 #  ESTADO DE NAVEGACIÓN
 # ==============================================================
