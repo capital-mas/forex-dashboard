@@ -2117,6 +2117,7 @@ def cargar_resultados_largo(industrias_sel):
 #  DATOS INICIO — precios del día en bulk
 # ==============================================================
 
+@st.cache_data(ttl=300, show_spinner=False)
 def cargar_precios_inicio_base():
     tks_paises   = [tk for tk, _ in PAISES.values()]
     tks_etfs     = [tk for tk, _cat, _c in ETFS.values()]
@@ -2146,7 +2147,7 @@ def cargar_precios_inicio_base():
             continue
     return resultados
 
-
+@st.cache_data(ttl=300, show_spinner=False)
 def cargar_precios_acciones_inicio(industrias_tuple):
     """Descarga precios del día para acciones de las industrias seleccionadas."""
     tickers = sorted(set(t for ind in industrias_tuple
