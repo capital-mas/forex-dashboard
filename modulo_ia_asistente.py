@@ -973,12 +973,15 @@ def responder(texto_usuario, ctx):
     # ── 0) ¿El asistente le preguntó qué ticker analizar? ──
     if st.session_state.pop('ia_esperando_ticker', False):
         tks = extraer_tickers(texto_usuario, universo, ctx['validar_ticker'], ctx)
-        if not tks:
+        paises_0 = _detectar_paises_calendario(texto_usuario)
+        if not tks and not paises_0:
             v = ctx['validar_ticker'](texto_usuario.strip())
             tks = [v] if v else []
         if tks:
             st.session_state['ia_ultimo_ticker'] = tks[0]
-            return _responder_analizar(tks[0], ctx)
+            return _unir_perfil_pais(_responder_analizar(tks[0], ctx), paises_0, ctx)
+        if paises_0:
+            return _responder_perfil_pais(paises_0, ctx)
         if len(texto_usuario.split()) <= 2:
             return "No reconocí ese símbolo. Probá con algo como *NVDA*, *GGAL*, *BTC-USD* o *oro*."
         # si escribió una frase larga, seguimos como mensaje normal
