@@ -203,12 +203,12 @@ def extraer_monto(texto):
 
 def extraer_periodo(texto):
     t = texto.lower()
-    if 'mes' in t: return '1mo'
     if '3 mes' in t or 'trimestre' in t: return '3mo'
     if '6 mes' in t or 'semestre' in t: return '6mo'
     if '2 a' in t or 'dos a' in t: return '2y'
     if '5 a' in t or 'cinco a' in t: return '5y'
     if re.search(r'\ba[ñn]o\b', t): return '1y'
+    if 'mes' in t: return '1mo'
     return '1y'
 
 
