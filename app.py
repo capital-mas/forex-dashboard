@@ -8548,7 +8548,7 @@ CTX_IA = dict(
     scores_corto=scores_corto, señal_accion_corto=señal_accion_corto,
     analizar_largo=analizar_largo, interpretar_largo=interpretar_largo,
     analizar_fundamental=analizar_fundamental, _es_activo_sin_fundamentals=_es_activo_sin_fundamentals,
-    TICKER_INDUSTRY=TICKER_INDUSTRY, GLOSARIO=GLOSARIO,
+    TICKER_INDUSTRY=TICKER_INDUSTRY, GLOSARIO=GLOSARIO,       # ← queda solo acá
     cargar_sectores_corto=cargar_sectores_corto, cargar_paises_corto=cargar_paises_corto,
     cargar_acciones_corto=cargar_acciones_corto,
     cargar_mercados_corto=cargar_mercados_corto,
@@ -8557,7 +8557,6 @@ CTX_IA = dict(
     _tdc_texto_interpretacion=_tdc_texto_interpretacion,
     fmt_precio=fmt_precio,
     ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA,
-    TICKER_INDUSTRY=TICKER_INDUSTRY,
     MERCADOS_REALES=MERCADOS_REALES,
     FOREX=FOREX,
     PAISES=PAISES,
@@ -8566,12 +8565,10 @@ CTX_IA = dict(
     UNIVERSO_TICKERS_VALIDOS=UNIVERSO_TICKERS_VALIDOS,
     fd=fd, supabase=supabase, user_id=USER_ID,
     tiene_acceso_pro=TIENE_ACCESO_PRO,
-    # ── las 4 que faltaban ──
     calcular_rsi=calcular_rsi,
     calcular_regimen_hmm=calcular_regimen_hmm,
     obtener_perfil_empresa=obtener_perfil_empresa,
     resumen_visual_fundamental=_resumen_visual_fundamental,
-    # ── resúmenes de GEX / COT / Velas / Opciones ──
     **RES_IA,
 )
 # ==============================================================
