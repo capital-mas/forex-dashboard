@@ -1076,7 +1076,8 @@ def responder(texto_usuario, ctx):
 
     # Fallback al último ticker: solo en mensajes de más de una palabra
     # (si escribís una sola palabra que no reconoce, mejor decir que no la encontró).
-    if (not tickers and not industria_detectada and st.session_state.get('ia_ultimo_ticker')
+    if (not tickers and not industria_detectada and not paises_cal
+            and st.session_state.get('ia_ultimo_ticker')
             and len(texto_usuario.split()) > 1
             and intencion in ('analizar_ticker', 'simular', 'tdc', 'fscore')):
         tickers = [st.session_state['ia_ultimo_ticker']]
@@ -1136,7 +1137,7 @@ def responder(texto_usuario, ctx):
         return _responder_mercados(texto_usuario, ctx)
 
     if industria_detectada and not tickers:
-        return _responder_industria(industria_detectada, ctx)
+        return _unir_perfil_pais(_responder_industria(industria_detectada, ctx), paises_cal, ctx)
 
     if intencion == 'oportunidades':
         return _responder_oportunidades(texto_usuario, ctx)
@@ -1149,12 +1150,14 @@ def responder(texto_usuario, ctx):
         return _responder_simular(tickers[0], monto, periodo, ctx)
 
     if not tickers:
+        if paises_cal:
+            return _responder_perfil_pais(paises_cal, ctx)
         return ("No detecté ningún ticker en tu mensaje. Probá algo como *'analizame NVDA'*, "
                 "*'compará YPF y GGAL'*, *'semiconductores'*, *'analizame el oro'*, *'EUR/USD'*, *'cómo están los granos'*, "
                 "*'F-Score de KO'*, *'armame una cartera con semiconductores y bancos'*, "
                 "*'anotá que gasté 5000 en comida'*, o *'qué significa el Sharpe'*. "
                 "Escribí *ayuda* para ver todo lo que puedo hacer.")
-    return _responder_analizar(tickers[0], ctx)
+    return _unir_perfil_pais(_responder_analizar(tickers[0], ctx), paises_cal, ctx)
 
 
 def _respuesta_ayuda():
