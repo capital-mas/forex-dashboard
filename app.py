@@ -8531,6 +8531,10 @@ UNIVERSO_TICKERS_VALIDOS = (
     | set(v[0] for v in FOREX.values())
     | set(v[0] for v in PAISES.values())
     | set(v[0] for v in SECTORES.values())
+    | {v[0] for v in MERCADOS_REALES.values()}
+    | {v[0] for v in ETFS.values()}
+    | {v[0] for v in SECTORES_TOTAL.values()}
+    | {v[0] for v in PAISES.values()}
 )
 
 # ── Resúmenes GEX / COT / Velas / Opciones para el asistente ──
@@ -8552,6 +8556,9 @@ CTX_IA = dict(
     HORIZONTES_TDC=HORIZONTES_TDC,
     _tdc_texto_interpretacion=_tdc_texto_interpretacion,
     fmt_precio=fmt_precio,
+    MERCADOS_REALES=MERCADOS_REALES,
+    ETFS=ETFS,
+    SECTORES_TOTAL=SECTORES_TOTAL,
     UNIVERSO_TICKERS_VALIDOS=UNIVERSO_TICKERS_VALIDOS,
     ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA,
     fd=fd, supabase=supabase, user_id=USER_ID,
