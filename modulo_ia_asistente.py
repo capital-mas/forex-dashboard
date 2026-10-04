@@ -1070,6 +1070,8 @@ def responder(texto_usuario, ctx):
 
     intencion = detectar_intencion(texto_usuario)
     tickers = extraer_tickers(texto_usuario, universo, ctx['validar_ticker'], ctx)
+    paises_cal = (_detectar_paises_calendario(texto_usuario)
+                  if intencion in ('analizar_ticker', 'ayuda') else [])
 
     industrias_validas = set(ctx.get('TICKER_INDUSTRY', {}).values())
     industria_detectada = _detectar_industria(texto_usuario, industrias_validas) if not tickers else None
