@@ -20,14 +20,14 @@ _SIN_OPCIONES = ('=X', '=F', '-USD')   # forex, futuros y cripto no tienen caden
 # ──────────────────────────────────────────────────────────────
 #  GEX
 # ──────────────────────────────────────────────────────────────
-def _gex_resumen(tk, n_vtos=6, rango=0.20, r=0.045, q=0.0, mult=100):
+def _gex_calc(tk, n_vtos=6, rango=0.20, r=0.045, q=0.0, mult=100):
     import modulo_gex as G
     t = tk.upper()
     if t.endswith(_SIN_OPCIONES):
         return None
 
     cboe, simbolo, _ = G.resolver_simbolo(t)
-    datos = G._gex_descargar(cboe)            # cacheado 5 min; lanza excepción si CBOE no tiene el símbolo
+    datos = G._gex_descargar(cboe)            # cacheado 5 min
     S = datos['spot']
     df, _ = G.preparar_cadena(datos['df'], n_vtos)
     if df is None:
@@ -44,7 +44,14 @@ def _gex_resumen(tk, n_vtos=6, rango=0.20, r=0.045, q=0.0, mult=100):
     _, tot_pc = G.calcular_put_call(G._subset_vtos(datos['df'], n_vtos))
     res_v, _ = G.calcular_gex_por_vto(df, S, r, q, mult, rango)
     sq = G.calcular_squeeze_score(piv, piv_d, tot_pc, z, S, res_v)
+    return dict(S=S, z=z, sq=sq, pc=tot_pc.get('P/C OI'), simbolo=simbolo)
 
+
+def _gex_resumen(tk):
+    d = _gex_calc(tk)
+    if not d:
+        return None
+    z, sq, S = d['z'], d['sq'], d['S']
     partes = [f"gamma {z['regimen']}"]
     if z['flip']:
         partes.append(f"punto de cambio {z['flip']:,.2f} ({(S / z['flip'] - 1) * 100:+.1f}% vs precio)")
@@ -52,15 +59,25 @@ def _gex_resumen(tk, n_vtos=6, rango=0.20, r=0.045, q=0.0, mult=100):
         partes.append(f"pared de Calls {z['call_wall']:,.2f}")
     if z['put_wall']:
         partes.append(f"pared de Puts {z['put_wall']:,.2f}")
-    pc = tot_pc.get('P/C OI')
+    pc = d['pc']
     if pc is not None and not pd.isna(pc):
         partes.append(f"P/C {pc:.2f}")
     txt = f"Squeeze Score {sq['score']:.0f}/100 ({sq['nivel']})"
     if sq['inminente']:
         txt = "🚨 " + txt
     partes.append(txt)
-    return " · ".join(partes) + f" · fuente {simbolo} (CBOE)"
+    return " · ".join(partes) + f" · fuente {d['simbolo']} (CBOE)"
 
+
+def _gex_niveles(tk):
+    """Versión numérica para que el asistente arme la conclusión."""
+    d = _gex_calc(tk)
+    if not d:
+        return None
+    z, sq = d['z'], d['sq']
+    return dict(spot=d['S'], flip=z['flip'], call_wall=z['call_wall'], put_wall=z['put_wall'],
+                regimen=z['regimen'], squeeze_score=sq['score'], squeeze_nivel=sq['nivel'],
+                inminente=sq['inminente'])
 
 # ──────────────────────────────────────────────────────────────
 #  COT  (los commodities son texto libre en tu tabla, ver mapeo)
@@ -205,6 +222,7 @@ def _opciones_resumen(tk):
 def crear_resumenes(supabase, descargar_datos):
     return {
         'gex_resumen': _gex_resumen,
+        'gex_niveles': _gex_niveles,          # ← nueva
         'cot_resumen': lambda tk: _cot_resumen(tk, supabase),
         'velas_resumen': lambda tk: _velas_resumen(tk, descargar_datos),
         'opciones_resumen': _opciones_resumen,
