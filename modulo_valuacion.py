@@ -39,7 +39,7 @@ RIESGO_PAIS = {
     'South Korea': ('KR', 60), 'Korea, Republic of': ('KR', 60),
     'Brazil': ('BR', 220), 'Mexico': ('MX', 300), 'Argentina': ('AR', 655),
 }
-RF_DEF, ERP_DEF = 4.20, 5.50      # % por defecto
+RF_DEF, ERP_DEF = 4.00, 5.50      # % por defecto
 MEGA_CAP = 500e9                   # USD
 CRECIMIENTO_ALTO = 0.15
 ESCALA_MAX_ALCISTA = 2.5           # valor alcista / precio
@@ -355,14 +355,14 @@ def _fig_escenarios(vals, precio, base_layout):
 
 
 def _fig_heatmap(p, d, ke, base_layout):
-    # Eje horizontal: crecimiento centrado en el del escenario activo (pasos de ±2pp)
+    # Eje horizontal: crecimiento centrado en el del escenario activo (±2pp)
     dg = [-0.04, -0.02, 0.0, 0.02, 0.04]
     gs = [p['g'] + x for x in dg]
 
-    # Eje vertical: el PER activo es la fila central; escalones simétricos de paso fijo
+    # Eje vertical: el PER activo es la fila central, escalones simétricos
     per_c = p['per']
-    paso = max(0.5, round(per_c * 0.10 * 2) / 2)      # ~10% del PER, redondeado a 0.5x
-    paso = min(paso, per_c / 2.5)                      # evita PER <= 0 en el extremo inferior
+    paso = max(0.5, round(per_c * 0.10 * 2) / 2)
+    paso = min(paso, per_c / 2.5)
     pers = [per_c + k * paso for k in (-2, -1, 0, 1, 2)]
 
     z = [[_valor(g, p['m'], p['bb'], pe, d['rev0'], d['acciones'], ke) for g in gs] for pe in pers]
@@ -374,17 +374,17 @@ def _fig_heatmap(p, d, ke, base_layout):
         colorscale='RdYlGn', zmid=d['precio'],
         text=np.round(z, 2), texttemplate='%{text}', colorbar=dict(title='Valor/acc.')))
 
-    # Marca la celda central (supuestos del escenario activo)
+    # Recuadro de la celda central (índice 2 de 0 a 4 -> 1.5 a 2.5)
     fig.add_shape(type='rect', xref='x', yref='y',
-                  x0=-0.5 + 2, x1=0.5 + 2, y0=-0.5 + 2, y1=0.5 + 2,
-                  line=dict(color='#e6edf3', width=2))
+                  x0=1.5, x1=2.5, y0=1.5, y1=2.5,
+                  line=dict(color='#e6edf3', width=3), fillcolor='rgba(0,0,0,0)')
 
     fig.update_layout(**base_layout, height=380,
                       title=dict(text='Sensibilidad — PER (vertical) × crecimiento de ingresos (horizontal)',
                                  font=dict(size=14, color='#e6edf3')),
-                      xaxis=dict(title='Crecimiento anual de ingresos'),
+                      xaxis=dict(title='Crecimiento anual de ingresos', type='category'),
                       yaxis=dict(title=f'PER objetivo (centro = {per_c:.1f}x, paso {paso:.1f}x)',
-                                 autorange='reversed'),
+                                 type='category', autorange='reversed'),
                       margin=dict(l=10, r=10, t=55, b=10))
     return fig
 
