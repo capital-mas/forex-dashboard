@@ -1224,6 +1224,7 @@ def _responder_analizar(tk, ctx):
 
     peso_total = sum(p for _, _, p in señales) or 1
     compuesto = sum(s * p for _, s, p in señales) / peso_total
+    gex = _a_safe(ctx['gex_niveles'], tk) if ctx.get('gex_niveles') else None
 
     # ══ Armado de la respuesta ═══════════════════════════════
     L = []
@@ -1244,6 +1245,9 @@ def _responder_analizar(tk, ctx):
         L.append("\n**✅ A favor**\n" + "\n".join(f"- {p}" for p in pros[:5]))
     if contras:
         L.append("\n**⚠️ En contra / riesgos**\n" + "\n".join(f"- {c}" for c in contras[:5]))
+    concl = _a_safe(_generar_conclusion, nombre, precio, compuesto, resumen_f, r_largo, r_corto, gex)
+    if concl:
+        L.append("\n### 🧭 Conclusión\n" + concl)
 
     # ── Detalle ──
     L.append("\n---\n### 🔎 Detalle por módulo")
@@ -1297,8 +1301,8 @@ def _responder_analizar(tk, ctx):
                  f"D/E {_n(res_f.get('debt_equity'))}x · Net Debt/EBITDA {_n(res_f.get('net_debt_ebitda'))}x · "
                  f"Beta {_n(res_f.get('beta'))} · Div. yield {_pf(res_f.get('div_yield'))}")
         if resumen_f:
-            L.append(f"- Scores 0-10: Calidad {_n(resumen_f.get('calidad'), 1)} · Valoración {_n(resumen_f.get('valoracion'), 1)} · "
-                     f"Crecimiento {_n(resumen_f.get('crecimiento'), 1)} · Riesgo {_n(resumen_f.get('riesgo'), 1)} "
+            L.append(f"- Scores: Calidad {_s10(resumen_f.get('calidad'))} · Valoración {_s10(resumen_f.get('valoracion'))} · "
+                     f"Crecimiento {_s10(resumen_f.get('crecimiento'))} · Riesgo {_s10(resumen_f.get('riesgo'))} "
                      f"→ {resumen_f.get('v_emoji', '')} {resumen_f.get('veredicto', '')}")
     elif not sin_fund:
         L.append("\n**📊 Fundamental:** sin datos disponibles en Yahoo Finance para este activo.")
