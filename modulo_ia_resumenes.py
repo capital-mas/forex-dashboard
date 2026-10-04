@@ -153,7 +153,8 @@ def _velas_resumen(tk, descargar_datos):
     if pats:
         txt += f" · patrones: {', '.join(pats)}"
 
-    # Monte Carlo a 1 día (mismo método que el módulo: sin drift)
+    # Monte Carlo a 1 día (mismo método que el módulo: sin drift).
+    # Los precios van con decimales completos (V.fmt_px_mc), igual que en la pestaña Monte Carlo.
     try:
         df1 = descargar_datos(tk, '1y')
         ret = V._retornos_mc(df1, '1d')
@@ -162,7 +163,8 @@ def _velas_resumen(tk, descargar_datos):
             sigma = float(ret.std(ddof=1))
             fin = V._simular_mc(S0, -0.5 * sigma ** 2, sigma, 2000)[-1]
             p5, p95 = np.percentile(fin, [5, 95])
-            txt += f" · Monte Carlo 1 día: 90% entre {p5:,.2f} y {p95:,.2f} (σ diaria {sigma * 100:.2f}%)"
+            txt += (f" · Monte Carlo 1 día: 90% entre {V.fmt_px_mc(p5)} y {V.fmt_px_mc(p95)} "
+                    f"(σ diaria {sigma * 100:.2f}%)")
     except Exception:
         pass
     return txt
