@@ -17,8 +17,18 @@
 #    EPS_N = Resultado neto_N / Acciones_N
 #    Precio objetivo en N = EPS_N × PER
 #    Valor estimado hoy = Precio objetivo / (1+Ke)^N      (N = 5 años)
+#
+#  Actualización de datos (100% automática, sin botón manual):
+#    - PRECIO: caché global corto (TTL_PRECIO). Si cambia, se recalibran los
+#      presets; si el escenario activo es "Personalizado", tus supuestos NO se pisan.
+#    - FUNDAMENTALES: caché global largo (TTL_FUND). Si Yahoo publica datos nuevos
+#      (ventas, resultado neto o acciones), se recalibra todo desde cero.
+#    - El caché es compartido entre usuarios: Yahoo recibe como máximo 1 consulta
+#      de precio por minuto y 1 de fundamentales por hora por ticker.
+#    - Refresco de la página: pip install streamlit-autorefresh
 # ==============================================================
 
+import time
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -44,12 +54,17 @@ MEGA_CAP = 500e9                   # USD
 CRECIMIENTO_ALTO = 0.15
 ESCALA_MAX_ALCISTA = 2.5           # valor alcista / precio
 
+# Refresco de datos (todo automático, sin botón manual)
+TTL_PRECIO = 60          # segundos: el precio se consulta como máximo 1 vez por minuto
+TTL_FUND = 3600          # segundos: los fundamentales se consultan como máximo 1 vez por hora
+AUTOREFRESH_SEG = 300    # la página de cada usuario se refresca sola cada 5 min (0 = desactivado)
+
 DISCLAIMER_VAL = ("Las valoraciones resultantes son estimaciones teóricas basadas en modelos financieros e "
                   "hipótesis asumidas. No constituyen recomendaciones financieras ni predicciones seguras del mercado.")
 
 
 # ──────────────────────────────────────────────────────────────
-#  1) DATOS (Yahoo Finance)
+#  1) DATOS (Yahoo Finance) — fundamentales y precio por separado
 # ──────────────────────────────────────────────────────────────
 
 def _serie(df, nombres, n=5):
@@ -67,9 +82,16 @@ def _serie(df, nombres, n=5):
     return []
 
 
-def _val_cargar(ticker):
-    """Descarga cruda. Levanta ValueError si faltan datos (así el fallo NO se cachea)."""
-    import time
+def _hora(ts):
+    try:
+        return time.strftime('%H:%M:%S', time.localtime(ts))
+    except Exception:
+        return 'N/D'
+
+
+def _cargar_fundamentales(ticker):
+    """Descarga fundamentales (info + estados contables). Levanta ValueError si faltan
+    datos esenciales (así el fallo NO se cachea)."""
     import yfinance as yf
     s = yf.Ticker(ticker)
 
@@ -92,32 +114,25 @@ def _val_cargar(ticker):
 
     inc, bal = _fin('financials'), _fin('balance_sheet')
 
-    # Precio: info → fast_info → historial
-    price = info.get('currentPrice') or info.get('regularMarketPrice')
+    # Precio de respaldo (solo si falla la consulta de precio en vivo)
+    precio_info = info.get('currentPrice') or info.get('regularMarketPrice')
+
+    # Acciones
     fi = None
     try:
         fi = s.fast_info
     except Exception:
         pass
-    if not price and fi is not None:
-        price = getattr(fi, 'last_price', None)
-    if not price:
-        try:
-            h = s.history(period='5d')
-            if h is not None and not h.empty:
-                price = float(h['Close'].dropna().iloc[-1])
-        except Exception:
-            pass
-
-    # Acciones
     shares = info.get('sharesOutstanding')
     mcap = info.get('marketCap')
     if not shares and fi is not None:
         shares = getattr(fi, 'shares', None)
     if not mcap and fi is not None:
         mcap = getattr(fi, 'market_cap', None)
-    if not shares and mcap and price:
-        shares = mcap / price
+    if not precio_info and fi is not None:
+        precio_info = getattr(fi, 'last_price', None)
+    if not shares and mcap and precio_info:
+        shares = mcap / precio_info
     if not shares:
         sh_l = _serie(bal, ['Ordinary Shares Number', 'Share Issued'], 1)
         shares = sh_l[0] if sh_l else None
@@ -128,8 +143,7 @@ def _val_cargar(ticker):
     ni_l = _serie(inc, ['Net Income Common Stockholders', 'Net Income'])
     ni0 = info.get('netIncomeToCommon') or (ni_l[0] if ni_l else None)
 
-    faltan = [n for n, v in [('precio', price), ('acciones en circulación', shares),
-                             ('ventas', rev0)] if not v]
+    faltan = [n for n, v in [('acciones en circulación', shares), ('ventas', rev0)] if not v]
     if faltan:
         raise ValueError('Yahoo no devolvió: ' + ', '.join(faltan)
                          + (' (respuesta vacía, probable rate limit)' if not info else ''))
@@ -153,14 +167,14 @@ def _val_cargar(ticker):
         bb_hist = 1 - (sh_h[0] / sh_h[-1]) ** (1 / (len(sh_h) - 1))
     bb_hist = float(min(max(bb_hist, 0.0), 0.10))
 
-    # Consensus de analistas
     per_info = info.get('trailingPE') or info.get('forwardPE')
 
     return dict(
         ticker=ticker, nombre=info.get('longName') or ticker,
         sector=info.get('sector'), pais=info.get('country'),
         moneda=info.get('currency'), moneda_fin=info.get('financialCurrency'),
-        precio=float(price), acciones=float(shares), mcap=float(mcap or price * shares),
+        precio_info=float(precio_info) if precio_info else None,
+        acciones=float(shares),
         rev0=float(rev0), ni0=float(ni0) if ni0 is not None else None, margen=margen,
         cagr=cagr, vol_g=vol_g, bb_hist=bb_hist, per_info=per_info,
         beta=info.get('beta'),
@@ -168,19 +182,63 @@ def _val_cargar(ticker):
         target_analistas=info.get('targetMeanPrice'),
         n_analistas=info.get('numberOfAnalystOpinions'),
         recomendacion=info.get('recommendationKey'),
+        ts=time.time(),
     )
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _val_cargar_ok(ticker):
-    return _val_cargar(ticker)
+def _cargar_precio(ticker):
+    """Descarga solo el precio actual (liviano). Levanta ValueError si no hay precio."""
+    import yfinance as yf
+    s = yf.Ticker(ticker)
+    price = None
+    try:
+        price = getattr(s.fast_info, 'last_price', None)
+    except Exception:
+        pass
+    if not price:
+        try:
+            h = s.history(period='5d')
+            if h is not None and not h.empty:
+                price = float(h['Close'].dropna().iloc[-1])
+        except Exception:
+            pass
+    if not price:
+        raise ValueError('Yahoo no devolvió precio')
+    return dict(precio=float(price), ts=time.time())
+
+
+@st.cache_data(ttl=TTL_FUND, show_spinner=False)
+def _fund_cache(ticker):
+    return _cargar_fundamentales(ticker)
+
+
+@st.cache_data(ttl=TTL_PRECIO, show_spinner=False)
+def _precio_cache(ticker):
+    return _cargar_precio(ticker)
 
 
 def _val_cargar_seguro(ticker):
+    """Combina fundamentales (caché largo) + precio (caché corto)."""
     try:
-        return _val_cargar_ok(ticker), None
+        d = dict(_fund_cache(ticker))
     except Exception as e:
         return None, str(e) or e.__class__.__name__
+
+    precio, ts_p = None, None
+    try:
+        p = _precio_cache(ticker)
+        precio, ts_p = p['precio'], p['ts']
+    except Exception:
+        pass
+    if not precio:                       # respaldo: precio que vino con info
+        precio, ts_p = d.get('precio_info'), d['ts']
+    if not precio:
+        return None, 'Yahoo no devolvió precio'
+
+    d['precio'] = float(precio)
+    d['ts_precio'] = ts_p
+    d['mcap'] = d['precio'] * d['acciones']      # siempre con el precio vivo
+    return d, None
 
 
 # ──────────────────────────────────────────────────────────────
@@ -359,7 +417,7 @@ def _fig_heatmap(p, d, ke, base_layout):
     dg = [-0.04, -0.02, 0.0, 0.02, 0.04]
     gs = [p['g'] + x for x in dg]
 
-    # Eje vertical: el PER activo es la fila central, escalones simétricos
+    # Eje vertical: el PER activo es la fila central; escalones simétricos
     per_c = p['per']
     paso = max(0.5, round(per_c * 0.10 * 2) / 2)
     paso = min(paso, per_c / 2.5)
@@ -396,7 +454,8 @@ def _fig_heatmap(p, d, ke, base_layout):
 def _claves(tk):
     return dict(g=f'v_g_{tk}', m=f'v_m_{tk}', bb=f'v_b_{tk}', per=f'v_p_{tk}',
                 rf=f'v_rf_{tk}', beta=f'v_beta_{tk}', erp=f'v_erp_{tk}', rp=f'v_rp_{tk}',
-                esc=f'v_esc_{tk}', presets=f'v_presets_{tk}', sig=f'v_sig_{tk}')
+                esc=f'v_esc_{tk}', presets=f'v_presets_{tk}',
+                sig_f=f'v_sigf_{tk}', sig_p=f'v_sigp_{tk}')
 
 
 def _volcar_preset(tk, p):
@@ -437,6 +496,12 @@ def _sec(titulo):
                 f'letter-spacing:.6px;text-transform:uppercase">{titulo}</div>', unsafe_allow_html=True)
 
 
+def _firma_fund(d, ticker):
+    """Firma de los fundamentales: si cambia, hay datos nuevos en Yahoo -> recalibrar todo."""
+    return (ticker, round(d['rev0'] / 1e3), round((d['ni0'] or 0) / 1e3),
+            round(d['acciones'] / 1e3), RF_DEF, ERP_DEF)
+
+
 # ──────────────────────────────────────────────────────────────
 #  6) UI
 # ──────────────────────────────────────────────────────────────
@@ -472,15 +537,27 @@ def modulo_valuacion(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, PLOT
         st.info('Elegí un ticker y presioná "Valuar".')
         return
 
-    with st.spinner(f'Descargando datos fundamentales de {ticker}...'):
+    # Refresco automático de la página (opcional, requiere streamlit-autorefresh)
+    if AUTOREFRESH_SEG:
+        try:
+            from streamlit_autorefresh import st_autorefresh
+            st_autorefresh(interval=AUTOREFRESH_SEG * 1000, key='val_autorefresh')
+        except ImportError:
+            pass
+
+    with st.spinner(f'Descargando datos de {ticker}...'):
         d, err = _val_cargar_seguro(ticker)
     if d is None:
         st.error(f'No se pudieron cargar los datos de {ticker}. Motivo: {err}')
-        if st.button('🔄 Reintentar', key=f'val_retry_{ticker}'):
-            st.rerun()
-        st.caption('Si dice "rate limit", esperá 1-2 minutos y reintentá. Con tickers sin estados '
-                   'financieros en Yahoo (cripto, forex, commodities) el módulo no puede valuar.')
+        st.caption('Si dice "rate limit", la app lo reintentará sola en el próximo refresco. Con tickers sin '
+                   'estados financieros en Yahoo (cripto, forex, commodities) el módulo no puede valuar.')
         return
+
+    K = _claves(ticker)
+
+    # ── Hora de los datos (solo informativo, sin botones) ──
+    st.caption(f"🕒 Fundamentales: {_hora(d['ts'])} · Precio: {_hora(d['ts_precio'])} "
+               f"· Se actualizan solos (precio cada {TTL_PRECIO} s, fundamentales cada {TTL_FUND//60} min).")
 
     if d['sector'] == 'Financial Services':
         st.warning('⚠️ Empresa financiera: el modelo por resultado neto/PER funciona razonablemente, pero '
@@ -494,11 +571,16 @@ def modulo_valuacion(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, PLOT
                 f"Margen neto actual: "
                 f"{(d['margen']*100 if d['margen'] is not None else float('nan')):.1f}%")
 
-    K = _claves(ticker)
+    # ── Inicialización / recalibración ──
+    #   · Cambian fundamentales (o RF/ERP por defecto) -> reinicio TOTAL (Ke, Base, presets, inputs)
+    #   · Cambia solo el precio -> se recalculan presets; los inputs se pisan solo si el
+    #     escenario activo es un preset (no si es Personalizado)
+    sig_f = _firma_fund(d, ticker)
+    sig_p = round(d['precio'], 2)
+    reset_total = st.session_state.get(K['sig_f']) != sig_f
+    reset_precio = (not reset_total) and st.session_state.get(K['sig_p']) != sig_p
 
-    # ── Inicialización por ticker: Ke por defecto, calibración y presets ──
-    sig = (ticker, round(d['precio'], 2))
-    if st.session_state.get(K['sig']) != sig:
+    if reset_total:
         beta0 = round(float(np.clip(d['beta'] if d['beta'] else 1.0, 0.0, 4.0)), 2)
         cod_pais, rp0 = _riesgo_pais(d['pais'])
         defs = dict(rf=RF_DEF, beta=beta0, erp=ERP_DEF, rp=int(rp0), pais=cod_pais)
@@ -518,7 +600,22 @@ def modulo_valuacion(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, PLOT
         st.session_state[f'v_avisos_{ticker}'] = avisos
         st.session_state[K['esc']] = 'Base'
         _volcar_preset(ticker, presets['Base'])
-        st.session_state[K['sig']] = sig
+        st.session_state[K['sig_f']] = sig_f
+        st.session_state[K['sig_p']] = sig_p
+
+    elif reset_precio:
+        ke0 = st.session_state[f'v_ke0_{ticker}']
+        base, avisos = _calibrar_base(d, ke0)
+        if base is None:
+            st.error(' '.join(avisos))
+            return
+        presets = _generar_presets(d, base, ke0)
+        st.session_state[K['presets']] = presets
+        st.session_state[f'v_avisos_{ticker}'] = avisos
+        esc_now = st.session_state.get(K['esc'], 'Base')
+        if esc_now in ESC_CLAVES:                    # Personalizado: no se tocan los inputs
+            _volcar_preset(ticker, presets[esc_now])
+        st.session_state[K['sig_p']] = sig_p
 
     defs = st.session_state[f'v_kedef_{ticker}']
     presets = st.session_state[K['presets']]
@@ -613,7 +710,6 @@ def modulo_valuacion(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, PLOT
         res['Personalizado'] = dict(p=activo, v=v, up=up)
         act = res['Personalizado']
     else:
-        # si hay escenario preset activo, el valor mostrado sale de los inputs vigentes (== preset)
         v, up = _eval(activo)
         act = dict(p=activo, v=v, up=up)
 
