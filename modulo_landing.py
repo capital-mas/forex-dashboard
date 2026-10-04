@@ -266,24 +266,30 @@ def pantalla_landing(auth_client, cookies, data_client=None):
         tab_login, tab_registro = st.tabs(["Iniciar sesión", "Crear cuenta gratis"])
 
         with tab_login:
-            st.markdown('<div class="landing-auth-sub">Bienvenido de nuevo</div>', unsafe_allow_html=True)
-            email = st.text_input("Email", key="landing_login_email")
-            password = st.text_input("Contraseña", type="password", key="landing_login_pass")
-            if st.button("Entrar", use_container_width=True, key="landing_btn_login", type="primary"):
-                if not email or not password:
-                    st.error("Completá email y contraseña.")
-                else:
-                    try:
-                        res = auth_client.auth.sign_in_with_password({"email": email, "password": password})
-                        st.session_state["usuario"] = res.user
-                        cookies.set("sb_refresh_token", res.session.refresh_token)
-                        # Si el usuario ya se había registrado con un servicio, lo respetamos;
-                        # si no, usamos el que eligió ahora en la landing.
-                        meta = getattr(res.user, "user_metadata", None) or {}
-                        st.session_state["servicio_elegido"] = meta.get("servicio_elegido") or servicio
-                        st.rerun()
-                    except Exception:
-                        st.error("Email o contraseña incorrectos.")
+            if st.session_state.get("rec_paso"):
+                _render_recuperar_password()
+            else:
+                if st.session_state.pop("rec_exito", False):
+                    st.success("Contraseña actualizada. Ya podés iniciar sesión.")
+                st.markdown('<div class="landing-auth-sub">Bienvenido de nuevo</div>', unsafe_allow_html=True)
+                email = st.text_input("Email", key="landing_login_email")
+                password = st.text_input("Contraseña", type="password", key="landing_login_pass")
+                if st.button("Entrar", use_container_width=True, key="landing_btn_login", type="primary"):
+                    if not email or not password:
+                        st.error("Completá email y contraseña.")
+                    else:
+                        try:
+                            res = auth_client.auth.sign_in_with_password({"email": email, "password": password})
+                            st.session_state["usuario"] = res.user
+                            cookies.set("sb_refresh_token", res.session.refresh_token)
+                            meta = getattr(res.user, "user_metadata", None) or {}
+                            st.session_state["servicio_elegido"] = meta.get("servicio_elegido") or servicio
+                            st.rerun()
+                        except Exception:
+                            st.error("Email o contraseña incorrectos.")
+                if st.button("¿Olvidaste tu contraseña?", key="landing_btn_olvide"):
+                    st.session_state["rec_paso"] = 1
+                    st.rerun()
 
         with tab_registro:
             st.markdown(
