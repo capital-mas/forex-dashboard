@@ -24,6 +24,8 @@
 #     - Opción "Usar precio en vivo" (1H): las probabilidades parten del
 #       precio de la vela en formación; el historial muestra la fila ⏳
 #       con la proyección vigente.
+#     - Todos los precios del Monte Carlo salen con sus decimales completos
+#       (forex 1.12062, acciones 152.347, etc.) vía fmt_px_mc().
 # ==============================================================
 
 import numpy as np
@@ -57,6 +59,23 @@ MC_SEED = 42
 MC_MULT_SIGMA = [-2.0, -1.5, -1.0, -0.5, 0.5, 1.0, 1.5, 2.0]   # niveles automáticos (en σ)
 MC_HIST_N = 15                               # velas del historial Monte Carlo
 MC_HIST_SIMS = 2000                          # simulaciones por vela en el historial
+
+
+def fmt_px_mc(p):
+    """Precio con decimales completos según su magnitud (para el Monte Carlo):
+    forex 1.12062 · 10-100 -> 4 dec · 100-1000 -> 3 dec · >=1000 -> 2 dec.
+    Es pública a propósito: se puede importar desde la app principal para armar
+    la línea '🕯️ Velas' del Asistente IA con los mismos decimales."""
+    p = float(p)
+    if p >= 1000: d = 2
+    elif p >= 100: d = 3
+    elif p >= 10: d = 4
+    elif p >= 1: d = 5
+    else: d = 6
+    return f"{p:,.{d}f}"
+
+
+_fmt_px_mc = fmt_px_mc
 
 
 # ==============================================================
@@ -711,7 +730,8 @@ def _fig_mc_abanico(paths, S0, horizonte, objetivo=None):
                       annotation_text='Nivel objetivo', annotation_position='top right')
 
     fig.update_xaxes(gridcolor=C_GRID, title=x_title)
-    fig.update_yaxes(gridcolor=C_GRID, title='Precio')
+    # Eje Y con decimales completos (si no, Plotly redondea y en forex todo se ve igual)
+    fig.update_yaxes(gridcolor=C_GRID, title='Precio', tickformat='.5~f' if S0 < 10 else None)
     fig.update_layout(
         **_LAYOUT_BASE,
         title=dict(text=f'Trayectorias simuladas — {MC_HORIZONTES[horizonte].lower()}',
@@ -730,7 +750,8 @@ def _fig_mc_hist(finales, S0, p5, p95, objetivo, fmt):
     fig.add_vline(x=p95, line_dash='dot', line_color=C_GREEN, annotation_text=f'P95 {fmt(p95)}')
     if objetivo:
         fig.add_vline(x=objetivo, line_color=C_YELL, annotation_text='Objetivo')
-    fig.update_xaxes(gridcolor=C_GRID, title='Precio al final del horizonte')
+    fig.update_xaxes(gridcolor=C_GRID, title='Precio al final del horizonte',
+                     tickformat='.5~f' if S0 < 10 else None)
     fig.update_yaxes(gridcolor=C_GRID, title='Frecuencia')
     fig.update_layout(
         **_LAYOUT_BASE,
@@ -743,6 +764,10 @@ def _fig_mc_hist(finales, S0, p5, p95, objetivo, fmt):
 
 def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
                        senal_vela, tf_velas_txt, ref_niveles=None):
+    # En toda la pestaña Monte Carlo los precios van con sus decimales completos
+    # (el fmt_precio de la app los recortaba a 2 decimales).
+    fmt = fmt_px_mc
+
     st.caption('El Monte Carlo es independiente de la temporalidad de las velas: '
                'podés mirar velas de 1H y proyectar a 1 día, o al revés.')
 
@@ -851,12 +876,13 @@ def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
     else:
         lectura = 'Al menos una de las dos lecturas es neutral; no hay confirmación direccional clara.'
 
+    # &#36; = "$" como entidad HTML, así Streamlit no lo toma como inicio de fórmula LaTeX
     st.markdown(f"""
     <div class="interp-card">
       <div class="interp-header">🎲 Lectura del Monte Carlo · {ticker}</div>
       En {MC_HORIZONTES[horizonte].lower()}, el 90% de los escenarios simulados termina entre
-      <b>{fmt(p5)}</b> y <b>{fmt(p95)}</b>; la mitad central (25–75%) entre
-      <b>{fmt(p25)}</b> y <b>{fmt(p75)}</b>.<br><br>
+      <b>&#36;{fmt(p5)}</b> y <b>&#36;{fmt(p95)}</b>; la mitad central (25–75%) entre
+      <b>&#36;{fmt(p25)}</b> y <b>&#36;{fmt(p75)}</b>.<br><br>
       Señal de las velas ({tf_velas_txt}): <b>{senal_vela}</b>. {lectura}
     </div>
     """, unsafe_allow_html=True)
