@@ -1,13 +1,14 @@
 # modulo_ia_asistente.py
 # ==============================================================
-#  ASISTENTE IA — v3
-#  Cubre: análisis de ticker, comparador, oportunidades (sectores/
-#  países/mercados/subsectores), simulador, glosario, finanzas
-#  personales (lectura + REGISTRO de movimientos con confirmación
-#  y botones rápidos), Top-Down Cuantitativo, F-Score, Salud del
-#  Mercado, Renta Fija/Macro, Opciones, Rotación/Pares, Optimizador
-#  de Cartera, y un NUEVO pipeline de armado de cartera end-to-end
-#  (F-Score + TDC corto/largo + Optimizador Monte Carlo).
+#  ASISTENTE IA — v4
+#  Cubre: análisis COMPLETO de ticker (todos los módulos + resumen
+#  compuesto), comparador, oportunidades (sectores/países/mercados/
+#  subsectores), simulador, glosario, finanzas personales (lectura +
+#  REGISTRO de movimientos con confirmación y botones rápidos),
+#  Top-Down Cuantitativo, F-Score, Salud del Mercado, Renta Fija/
+#  Macro, Opciones, Rotación/Pares, Optimizador de Cartera, y el
+#  pipeline de armado de cartera end-to-end (F-Score + TDC corto/
+#  largo + Optimizador Monte Carlo).
 #
 #  Todo lo que el asistente puede "computar" directamente depende
 #  de qué funciones le pasás en `ctx` (ver diccionario CTX_IA en el
@@ -15,9 +16,11 @@
 #  degrada con gracia: explica el módulo y te dice dónde encontrarlo
 #  en la app en vez de fallar.
 #
-#  ⚠️ Para el pipeline de armado de cartera, `ctx` necesita además
-#  la clave 'ACCIONES_POR_INDUSTRIA' (dict industria -> lista de
-#  tickers). Ver el snippet de integración al final del archivo.
+#  ⚠️ CTX_IA necesita (además de lo que ya tenías):
+#      ACCIONES_POR_INDUSTRIA, calcular_rsi, calcular_regimen_hmm,
+#      obtener_perfil_empresa, resumen_visual_fundamental
+#  Opcionales (una línea de texto por ticker, o None):
+#      gex_resumen, cot_resumen, velas_resumen, opciones_resumen
 # ==============================================================
 
 import re
@@ -60,7 +63,7 @@ _PATRONES_INTENCION = [
                   r'\bpayoff\b', r'\bstrike\b']),
     ('pares', [r'\brotaci[oó]n\b', r'\bpares?\b(?!.*\bde\s+un)', r'\bmean\s+reversion\b', r'\bz[\s\-]?score\s+de\s+ratio\b',
                r'\bcointegraci[oó]n\b']),
-    # ── NUEVO: pipeline de armado de cartera (F-Score + TDC + Optimizador) ──
+    # Pipeline de armado de cartera (F-Score + TDC + Optimizador).
     # Va ANTES de 'optimizador' a propósito: "armame una cartera con X" debe
     # disparar el pipeline completo, no la explicación genérica del módulo.
     ('armar_cartera_ia', [
@@ -607,9 +610,6 @@ def _guardar_registro(ctx, tipo, datos):
 # ==============================================================
 #  ADAPTADOR DE ESCRITURA — Finanzas Personales (flujo rápido de
 #  una sola frase para Ingreso/Gasto: "anotá que gasté 5000 en comida")
-#  ⚠️ AJUSTAR: el nombre/firma exacto de la función depende de tu
-#  finanzas_data.py. Se prueban varios nombres/firmas comunes; si
-#  ninguno coincide, decilo y actualizamos esta función una sola vez.
 # ==============================================================
 
 def _registrar_movimiento_fd(ctx, tipo, monto, categoria, subcategoria, cuenta, descripcion, fecha):
@@ -644,15 +644,25 @@ def _registrar_movimiento_fd(ctx, tipo, monto, categoria, subcategoria, cuenta, 
 #  RESPUESTAS
 # ==============================================================
 
-_APERTURAS_TICKER = [
-    "Mirando {tk} ahora mismo:",
-    "Che, esto es lo que muestra {tk}:",
-    "Te tiro el panorama de {tk}:",
-    "Esto encontré sobre {tk}:",
-]
-
-
 def responder(texto_usuario, ctx):
+    # ── 0) ¿El asistente le preguntó qué ticker analizar? ──
+    if st.session_state.pop('ia_esperando_ticker', False):
+        tks = extraer_tickers(texto_usuario, ctx['UNIVERSO_TICKERS_VALIDOS'], ctx['validar_ticker'])
+        if not tks:
+            v = ctx['validar_ticker'](texto_usuario.strip())
+            tks = [v] if v else []
+        if tks:
+            st.session_state['ia_ultimo_ticker'] = tks[0]
+            return _responder_analizar(tks[0], ctx)
+        if len(texto_usuario.split()) <= 2:
+            return "No reconocí ese símbolo. Probá con algo como *NVDA*, *GGAL* o *BTC-USD*."
+        # si escribió una frase larga, seguimos como mensaje normal
+
+    # chip "📊 Analizar Acción": pregunta el ticker en vez de fallar
+    if texto_usuario.strip().lower() in ('analizar acción', 'analizar accion', '📊 analizar acción'):
+        st.session_state['ia_esperando_ticker'] = True
+        return "¿Qué activo querés analizar? Escribime el ticker (ej: *NVDA*, *GGAL*, *BTC-USD*)."
+
     # ── 1) ¿Hay una confirmación pendiente de un movimiento a registrar? ──
     pendiente = st.session_state.get('ia_pendiente_mov')
     if pendiente:
@@ -815,7 +825,7 @@ def responder(texto_usuario, ctx):
 def _respuesta_ayuda():
     return """¡Hola! 👋 Soy el asistente de Capital+. Puedo ayudarte con:
 
-- **📊 Análisis de un activo** — *"analizame NVDA"*, *"cómo está el Bitcoin"*
+- **📊 Análisis COMPLETO de un activo** — *"analizame NVDA"*, *"cómo está el Bitcoin"*: junto corto plazo, largo plazo, Top-Down, fundamental, F-Score, régimen HMM y perfil de la empresa, y te dejo un resumen con un score compuesto
 - **⚖️ Comparaciones** — *"comparar YPF vs GGAL"*
 - **🎯 Oportunidades** — *"qué sectores están baratos"*, *"dame ideas en tecnología"*
 - **📐 Top-Down Cuantitativo** — *"score de mediano plazo de AAPL"*
@@ -825,7 +835,7 @@ def _respuesta_ayuda():
 - **🎲 Opciones** — *"explicame griegas"*, *"opciones de TSLA"*
 - **🔄 Rotación y Pares** — *"scanner de pares"*
 - **🧮 Optimizador de cartera** — *"optimizame una cartera con NVDA, AAPL y KO"*
-- **🧩 Armar cartera automática (NUEVO)** — *"armame una cartera con semiconductores y bancos"*: corro F-Score (con el mínimo/máximo que me digas), filtro por score cuantitativo de corto y largo plazo, y termino con el optimizador Monte Carlo — te doy las 5 carteras candidatas
+- **🧩 Armar cartera automática** — *"armame una cartera con semiconductores y bancos"*: corro F-Score (con el mínimo/máximo que me digas), filtro por score cuantitativo de corto y largo plazo, y termino con el optimizador Monte Carlo — te doy las 5 carteras candidatas
 - **💰 Tus finanzas** — *"cómo está mi presupuesto"*, *"cuánto debo"*
 - **✍️ Registrar movimientos** — *"anotá que gasté 5000 en comida"*, *"registrá un ingreso de 200000 por sueldo"*, o simplemente escribí *"registrar"* para elegir entre Ingreso, Gasto, Deuda, Inversión Corto/Largo Plazo, Trading u Objetivo y te voy pidiendo los datos uno por uno (con botones para elegir opciones)
 - **📐 Simulaciones** — *"si invierto 1000 en AAPL en el último año"*
@@ -859,9 +869,7 @@ def _iniciar_registro_movimiento(texto, ctx):
 
     tipo = detectar_tipo_movimiento(texto)
 
-    # Antes esto caía silenciosamente en 'gasto' cuando no se detectaba nada,
-    # lo cual cargaba ingresos como gastos. Ahora, si es ambiguo, preguntamos
-    # en vez de adivinar mal.
+    # Si es ambiguo, preguntamos en vez de adivinar mal.
     if tipo is None:
         st.session_state['ia_pendiente_tipo'] = dict(texto=texto, monto=monto)
         return (f"Detecté un monto de **${monto:,.2f}** pero no me quedó claro qué tipo de movimiento es. "
@@ -952,52 +960,264 @@ def _responder_finanzas(ctx):
     return "\n".join(partes)
 
 
-# ── Análisis de ticker (corto + largo + fundamental) ─────────────
+# ── Análisis COMPLETO de ticker (todos los módulos + resumen) ────
+
+def _a_safe(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        return None
+
+
+def _n(v, d=2, suf=''):
+    try:
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return 'N/D'
+        return f'{float(v):,.{d}f}{suf}'
+    except Exception:
+        return 'N/D'
+
+
+def _pf(v, d=1):
+    """Fracción (0.25) -> '25.0%'."""
+    return 'N/D' if v is None else _n(float(v) * 100, d, '%')
+
+
+def _big(v):
+    if v is None:
+        return 'N/D'
+    av = abs(v)
+    for lim, suf in ((1e12, 'T'), (1e9, 'B'), (1e6, 'M')):
+        if av >= lim:
+            return f'{v / lim:.2f}{suf}'
+    return f'{v:,.0f}'
+
+
+def _veredicto_compuesto(score):
+    if score >= 70: return '🟢 PERFIL FAVORABLE'
+    if score >= 55: return '🟢 MODERADAMENTE FAVORABLE'
+    if score >= 45: return '🟡 NEUTRAL / MIXTO'
+    if score >= 30: return '🟠 PERFIL DÉBIL'
+    return '🔴 PERFIL DESFAVORABLE'
+
 
 def _responder_analizar(tk, ctx):
-    r_corto, r_largo, r_fund = None, None, None
+    fmt = ctx.get('fmt_precio') or (lambda p: f'{p:,.2f}')
+    sin_fund = ctx['_es_activo_sin_fundamentals'](tk)
+    industria = ctx['TICKER_INDUSTRY'].get(tk, 'Sin Clasificar')
 
-    df_v = ctx['descargar_datos'](tk, '3mo'); df_m = ctx['descargar_datos'](tk, '1mo')
-    if df_v is not None and df_m is not None:
-        cl_v = ctx['get_close_series'](df_v); cl_m = ctx['get_close_series'](df_m)
-        if cl_v is not None and cl_m is not None and len(cl_v.dropna()) >= 15:
-            atr = ctx['calcular_atr'](df_m)
-            sa, sn, ss = ctx['scores_corto'](cl_v, cl_m, atr)
-            r_corto = dict(sa=sa, sn=sn, ss=ss, señal=ctx['señal_accion_corto'](sa, sn, ss),
-                           precio=float(cl_m.iloc[-1]))
+    señales = []          # (nombre, score 0-100, peso)
+    pros, contras = [], []
+    perfil = r_corto = r_largo = res_f = hmm = fscore = None
+    tdc = {}
 
-    df_l = ctx['descargar_datos'](tk, '2y')
-    cl_l = ctx['get_close_series'](df_l) if df_l is not None else None
-    if cl_l is not None and len(cl_l) >= 150:
-        r_largo = ctx['analizar_largo'](tk, cl_l)
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        # F-Score en paralelo (solo usa yfinance, no toca Streamlit)
+        fut_fs = None if sin_fund else ex.submit(_car_calcular_fscore, tk)
 
-    if not ctx['_es_activo_sin_fundamentals'](tk):
-        industria = ctx['TICKER_INDUSTRY'].get(tk, 'Sin Clasificar')
-        r_fund = ctx['analizar_fundamental'](tk, industria)
+        # ── Perfil ───────────────────────────────────────────
+        if not sin_fund and ctx.get('obtener_perfil_empresa'):
+            perfil = _a_safe(ctx['obtener_perfil_empresa'], tk)
+
+        # ── Corto plazo ──────────────────────────────────────
+        df_v = _a_safe(ctx['descargar_datos'], tk, '3mo')
+        df_m = _a_safe(ctx['descargar_datos'], tk, '1mo')
+        if df_v is not None and df_m is not None:
+            cl_v = ctx['get_close_series'](df_v)
+            cl_m = ctx['get_close_series'](df_m)
+            if cl_v is not None and cl_m is not None and len(cl_v.dropna()) >= 15:
+                atr = ctx['calcular_atr'](df_m)
+                sa, sn, ss = ctx['scores_corto'](cl_v, cl_m, atr)
+                rsi = None
+                if ctx.get('calcular_rsi'):
+                    rsi = _a_safe(lambda: float(ctx['calcular_rsi'](cl_m, p=7).iloc[-1]))
+                r_corto = dict(
+                    sa=sa, sn=sn, ss=ss, sf=sa * 0.45 + sn * 0.35 + ss * 0.20,
+                    señal=ctx['señal_accion_corto'](sa, sn, ss), precio=float(cl_m.iloc[-1]), rsi=rsi,
+                    ret5=float(cl_m.pct_change(5).iloc[-1] * 100) if len(cl_m) >= 6 else None,
+                    ret10=float(cl_m.pct_change(10).iloc[-1] * 100) if len(cl_m) >= 11 else None,
+                )
+
+        # ── Régimen HMM ──────────────────────────────────────
+        if ctx.get('calcular_regimen_hmm'):
+            df_6 = _a_safe(ctx['descargar_datos'], tk, '6mo')
+            cl_6 = ctx['get_close_series'](df_6) if df_6 is not None else None
+            if cl_6 is not None:
+                hmm = _a_safe(ctx['calcular_regimen_hmm'], cl_6)
+
+        # ── Largo plazo ──────────────────────────────────────
+        df_l = _a_safe(ctx['descargar_datos'], tk, '2y')
+        cl_l = ctx['get_close_series'](df_l) if df_l is not None else None
+        if cl_l is not None and len(cl_l) >= 150:
+            r_largo = _a_safe(ctx['analizar_largo'], tk, cl_l)
+
+        # ── Top-Down Cuantitativo (MP / LP) ──────────────────
+        fn_tdc, hz_cfg = ctx.get('_tdc_analizar_ticker'), ctx.get('HORIZONTES_TDC')
+        if fn_tdc and hz_cfg:
+            for hz in ('MP', 'LP'):
+                if hz in hz_cfg:
+                    d = _a_safe(fn_tdc, tk, hz_cfg[hz])
+                    if d:
+                        tdc[hz] = d
+
+        # ── Fundamental ──────────────────────────────────────
+        if not sin_fund:
+            res_f = _a_safe(ctx['analizar_fundamental'], tk, industria)
+
+        fscore = _a_safe(fut_fs.result) if fut_fs else None
 
     if not r_corto and not r_largo:
         return f"No pude encontrar datos suficientes para **{tk}**. Verificá que el símbolo sea correcto."
 
-    partes = [random.choice(_APERTURAS_TICKER).format(tk=tk)]
+    precio = (r_corto or {}).get('precio') or (r_largo or {}).get('precio')
 
+    # ══ Señales para el score compuesto + pros/contras ═══════
     if r_corto:
-        partes.append(f"\n**Corto plazo** ({r_corto['precio']:.2f} USD): Score Acumulación {r_corto['sa']:.0f}/100, "
-                       f"Anticipación {r_corto['sn']:.0f}/100 → señal **{r_corto['señal']}**.")
+        señales.append(('Corto plazo', r_corto['sf'], 0.15))
+        if r_corto['sa'] >= 62: pros.append(f"Precio en zona de acumulación de corto plazo (Acum {r_corto['sa']:.0f}/100)")
+        elif r_corto['sa'] <= 38: contras.append(f"Caro dentro de su rango reciente (Acum {r_corto['sa']:.0f}/100)")
+        if r_corto['sn'] >= 60: pros.append(f"Momentum/compresión favorable (Antic {r_corto['sn']:.0f}/100)")
+        elif r_corto['sn'] <= 35: contras.append(f"Momentum de corto plazo débil (Antic {r_corto['sn']:.0f}/100)")
 
     if r_largo:
-        partes.append(f"\n**Largo plazo**: Global Score {int(r_largo['global_score'])}/100 ({r_largo['sesgo']}), "
-                       f"Sharpe {r_largo['sharpe']:.2f}, retorno anual {r_largo['ret_anual']:+.1f}%, "
-                       f"máxima caída histórica {r_largo['max_dd']:.1f}%.")
-        partes.append(f"\n{ctx['interpretar_largo'](r_largo)}")
+        señales.append(('Largo plazo', r_largo['global_score'], 0.20))
+        if r_largo['golden_cross']: pros.append("Golden Cross activo (MA50 > MA200)")
+        else: contras.append("Sin Golden Cross (MA50 < MA200)")
+        if r_largo['macd_bull']: pros.append("MACD alcista")
+        else: contras.append("MACD bajista")
+        if r_largo['sharpe'] >= 1: pros.append(f"Buen retorno ajustado por riesgo (Sharpe {r_largo['sharpe']:.2f})")
+        elif r_largo['sharpe'] < 0: contras.append(f"Sharpe negativo ({r_largo['sharpe']:.2f})")
+        if r_largo['max_dd'] <= -35: contras.append(f"Drawdown histórico severo ({r_largo['max_dd']:.1f}%)")
+        if r_largo['vol_anual'] >= 45: contras.append(f"Volatilidad muy alta ({r_largo['vol_anual']:.1f}% anual)")
+        if r_largo['reversion_signal']: pros.append(f"Señal de sobreventa estadística ({r_largo['reversion_reasons']})")
 
-    if r_fund:
-        roe_txt = f"{r_fund.get('roe')*100:.1f}%" if r_fund.get('roe') else 'N/D'
-        partes.append(f"\n**Fundamental**: señal **{r_fund['senal_final']}** "
-                       f"(PER {r_fund.get('per','N/D')}, ROE {roe_txt}). "
-                       f"Recomendación de analistas: {r_fund.get('recommendation') or 'N/D'}.")
+    if tdc:
+        señales.append(('Top-Down Cuant.', float(np.mean([d['sf'] for d in tdc.values()])), 0.15))
+        if 'LP' in tdc and tdc['LP']['sa'] >= 62: pros.append(f"Barato en perspectiva de 1-2 años (TDC Acum {tdc['LP']['sa']:.0f})")
+        if 'LP' in tdc and tdc['LP']['sa'] <= 38: contras.append(f"Caro en perspectiva de 1-2 años (TDC Acum {tdc['LP']['sa']:.0f})")
 
-    partes.append("\n\n*¿Querés que lo compare con otro activo, vea su F-Score, o su Top-Down Cuantitativo?*")
-    return "\n".join(partes)
+    resumen_f = None
+    if res_f:
+        if ctx.get('resumen_visual_fundamental'):
+            resumen_f = _a_safe(ctx['resumen_visual_fundamental'], res_f)
+        if resumen_f and resumen_f.get('conclusion') is not None:
+            señales.append(('Fundamental', resumen_f['conclusion'] * 10, 0.25))
+        else:
+            señales.append(('Fundamental', {'COMPRA FUERTE': 80, 'MANTENER': 55}.get(res_f['senal_final'], 30), 0.25))
+        for t, m in res_f.get('senales', []):
+            if t == 'OK' and len(pros) < 9: pros.append(m)
+        for t, m in res_f.get('senales', []):
+            if t == 'ALT' and len(contras) < 9: contras.append(m)
+
+    if fscore is not None:
+        señales.append(('F-Score', fscore / 9 * 100, 0.15))
+        if fscore >= 7: pros.append(f"Calidad financiera alta (F-Score {fscore:.1f}/9)")
+        elif fscore <= 3: contras.append(f"Calidad financiera baja (F-Score {fscore:.1f}/9)")
+
+    if hmm:
+        mapa_h = {'ALCISTA': 75, 'NEUTRAL': 50, 'BAJISTA': 25}
+        señales.append(('Régimen HMM', mapa_h.get(hmm['regimen'], 50), 0.10))
+        txt_hmm = f"Régimen {hmm['regimen'].lower()} ({hmm['prob']}% de confianza, {hmm['duracion']} ruedas)"
+        if hmm['regimen'] == 'ALCISTA': pros.append(txt_hmm)
+        elif hmm['regimen'] == 'BAJISTA': contras.append(txt_hmm)
+
+    peso_total = sum(p for _, _, p in señales) or 1
+    compuesto = sum(s * p for _, s, p in señales) / peso_total
+
+    # ══ Armado de la respuesta ═══════════════════════════════
+    L = []
+    nombre = (perfil or {}).get('nombre') or tk
+    L.append(f"## 📊 {nombre} ({tk}) — {fmt(precio) if precio else ''}")
+    L.append(f"_{industria}_" + (f" · {perfil['sector']}" if perfil and perfil.get('sector') else ''))
+
+    # ── RESUMEN (arriba de todo) ──
+    L.append(f"\n### 🎯 Resumen\n**{_veredicto_compuesto(compuesto)}** — score compuesto **{compuesto:.0f}/100** "
+             f"(sobre {len(señales)} módulos con datos).")
+    L.append("\n".join(f"- {n}: **{s:.0f}/100**" for n, s, _ in señales))
+    if len(señales) >= 2:
+        mx, mn = max(señales, key=lambda x: x[1]), min(señales, key=lambda x: x[1])
+        if mx[1] - mn[1] >= 35:
+            L.append(f"\n⚠️ **Señales divergentes:** {mx[0]} ({mx[1]:.0f}) vs {mn[0]} ({mn[1]:.0f}). "
+                     f"El veredicto promedia visiones distintas — mirá el detalle antes de concluir.")
+    if pros:
+        L.append("\n**✅ A favor**\n" + "\n".join(f"- {p}" for p in pros[:5]))
+    if contras:
+        L.append("\n**⚠️ En contra / riesgos**\n" + "\n".join(f"- {c}" for c in contras[:5]))
+
+    # ── Detalle ──
+    L.append("\n---\n### 🔎 Detalle por módulo")
+
+    if perfil:
+        extra = []
+        if perfil.get('market_cap'): extra.append(f"Market Cap {_big(perfil['market_cap'])}")
+        if perfil.get('pct_desde_max52') is not None: extra.append(f"{perfil['pct_desde_max52']:+.1f}% vs máx. 52 sem.")
+        if perfil.get('pct_desde_min52') is not None: extra.append(f"{perfil['pct_desde_min52']:+.1f}% vs mín. 52 sem.")
+        if perfil.get('pct_institucional') is not None: extra.append(f"Institucional {_pf(perfil['pct_institucional'], 0)}")
+        if extra:
+            L.append("**🏢 Perfil:** " + " · ".join(extra))
+        desc = (perfil.get('descripcion') or '')
+        if desc and desc != 'Descripción no disponible.':
+            L.append(f"_{desc[:260].rstrip()}…_")
+
+    if r_corto:
+        r = r_corto
+        L.append(f"\n**⚡ Corto plazo:** Acum {r['sa']:.0f} · Antic {r['sn']:.0f} · Sent {r['ss']:.0f} → **{r['señal']}**"
+                 f"\nRSI(7) {_n(r['rsi'], 1)} · Ret 5d {_n(r['ret5'], 2, '%')} · Ret 10d {_n(r['ret10'], 2, '%')}")
+
+    if hmm:
+        L.append(f"\n**🌀 Régimen HMM:** {hmm['regimen']} ({hmm['prob']}% prob.) · retorno anual del régimen "
+                 f"{hmm['ret_anual_regimen']:+.1f}% · vol {hmm['vol_regimen']:.1f}%")
+
+    if r_largo:
+        r = r_largo
+        L.append(f"\n**📈 Largo plazo (2 años):** Global **{int(r['global_score'])}/100** ({r['sesgo']}) — "
+                 f"Trend {int(r['trend_score'])} · MR {int(r['mr_score'])} · Risk {int(r['risk_score'])}"
+                 f"\nRet. anual {r['ret_anual']:+.1f}% · Vol {r['vol_anual']:.1f}% · Sharpe {r['sharpe']:.2f} · "
+                 f"Sortino {_n(r['sortino'])} · Max DD {r['max_dd']:.1f}%"
+                 f"\nRSI {r['rsi']:.1f} · Z-Score {r['zscore']:+.2f} · Hurst {r['hurst']:.2f}")
+
+    for hz, d in tdc.items():
+        cfg = ctx['HORIZONTES_TDC'][hz]
+        L.append(f"\n**📐 Top-Down {cfg['nombre'].title()}:** Acum {d['sa']:.0f} · Antic {d['sn']:.0f} · "
+                 f"Sent {d['ss']:.0f} → {d['accion']}")
+
+    if res_f:
+        upside = None
+        if res_f.get('target_price') and res_f.get('precio'):
+            upside = (res_f['target_price'] / res_f['precio'] - 1) * 100
+        L.append(f"\n**📊 Fundamental:** señal **{res_f['senal_final']}** "
+                 f"({res_f['n_ok']} positivas · {res_f['n_alt']} alertas) · analistas: {res_f.get('recommendation') or 'N/D'}"
+                 + (f" · precio objetivo {fmt(res_f['target_price'])} ({upside:+.1f}%)" if upside is not None else ''))
+        L.append(f"- Valuación: PER {_n(res_f.get('per'))}x · P/B {_n(res_f.get('pb'))}x · "
+                 f"EV/EBITDA {_n(res_f.get('ev_ebitda'))}x · P/FCF {_n(res_f.get('p_fcf'))}x · PEG {_n(res_f.get('peg'))}")
+        L.append(f"- Rentabilidad: ROE {_pf(res_f.get('roe'))} · ROIC {_pf(res_f.get('roic'))} · "
+                 f"Mg. bruto {_pf(res_f.get('gross_margin'))} · Mg. neto {_pf(res_f.get('profit_margin'))}")
+        L.append(f"- Crecimiento y solvencia: Ingresos {_pf(res_f.get('revenue_growth'))} · "
+                 f"D/E {_n(res_f.get('debt_equity'))}x · Net Debt/EBITDA {_n(res_f.get('net_debt_ebitda'))}x · "
+                 f"Beta {_n(res_f.get('beta'))} · Div. yield {_pf(res_f.get('div_yield'))}")
+        if resumen_f:
+            L.append(f"- Scores 0-10: Calidad {_n(resumen_f.get('calidad'), 1)} · Valoración {_n(resumen_f.get('valoracion'), 1)} · "
+                     f"Crecimiento {_n(resumen_f.get('crecimiento'), 1)} · Riesgo {_n(resumen_f.get('riesgo'), 1)} "
+                     f"→ {resumen_f.get('v_emoji', '')} {resumen_f.get('veredicto', '')}")
+    elif not sin_fund:
+        L.append("\n**📊 Fundamental:** sin datos disponibles en Yahoo Finance para este activo.")
+    else:
+        L.append("\n_(Cripto/forex/commodity: no tiene balance, por eso no hay Fundamental ni F-Score.)_")
+
+    if fscore is not None:
+        L.append(f"\n**🧮 F-Score (Piotroski):** {fscore:.1f}/9")
+
+    # ── Módulos opcionales (GEX, COT, Velas, Opciones) — se muestran si los conectás ──
+    for etiqueta, clave in (('🧲 GEX', 'gex_resumen'), ('📑 COT', 'cot_resumen'),
+                            ('🕯️ Velas', 'velas_resumen'), ('🎲 Opciones', 'opciones_resumen')):
+        if ctx.get(clave):
+            txt = _a_safe(ctx[clave], tk)
+            if txt:
+                L.append(f"\n**{etiqueta}:** {txt}")
+
+    L.append(f"\n---\n*Cálculo cuantitativo sobre datos históricos de Yahoo Finance — no es asesoramiento financiero. "
+             f"Decime «comparalo con X» o «armame una cartera con {tk}» para seguir.*")
+    return "\n".join(L)
 
 
 def _responder_comparar(tickers, ctx):
@@ -1088,7 +1308,7 @@ def _responder_glosario(texto, ctx):
     return f"**{match}**: {ctx['GLOSARIO'][match]}"
 
 
-# ── Nuevos módulos ────────────────────────────────────────────────
+# ── Otros módulos ────────────────────────────────────────────────
 
 def _responder_tdc(tk, ctx):
     fn = ctx.get('_tdc_analizar_ticker')
@@ -1195,9 +1415,7 @@ def _responder_optimizador(tickers, ctx):
 #  Con eso corre TODO el pipeline y devuelve las 5 carteras candidatas.
 #
 #  ⚠️ Requiere que ctx tenga 'ACCIONES_POR_INDUSTRIA' (dict industria ->
-#  lista de tickers). El resto de las funciones usadas (descargar_datos,
-#  get_close_series, calcular_atr, scores_corto, analizar_largo,
-#  validar_ticker) ya están en el ctx que arma app.py.
+#  lista de tickers).
 # ==============================================================
 
 _CAR_MAX_UNIVERSO = 25   # tope de tickers a evaluar con F-Score (evita timeouts)
@@ -1479,11 +1697,12 @@ def _responder_armar_cartera(datos, ctx):
     aprobados = [tk for tk, sc in fscores.items() if fscore_min <= sc <= fscore_max]
     if len(aprobados) < 2:
         detalle = ', '.join(f'{tk} ({sc:.1f})' for tk, sc in sorted(fscores.items(), key=lambda x: -x[1])[:12])
+        sin_datos = ('ninguno disponible (puede que sean cripto/forex/commodities '
+                     'sin estados financieros, o poco líquidos en Yahoo Finance)')
         return (f"Con F-Score entre **{fscore_min:.1f}** y **{fscore_max:.1f}** quedaron solo "
                 f"**{len(aprobados)}** activo(s) de los {len(tickers_universo)} analizados "
                 f"({len(fscores)} con F-Score calculable) — necesito al menos 2 para armar una cartera.\n\n"
-                f"F-Scores calculados: {detalle or 'ninguno disponible (puede que sean cripto/forex/commodities '
-                'sin estados financieros, o poco líquidos en Yahoo Finance)'}.\n\n"
+                f"F-Scores calculados: {detalle or sin_datos}.\n\n"
                 f"Probá ampliar el rango de F-Score o sumar más sectores/tickers.")
 
     # ── 2) Top-Down Cuantitativo: corto plazo (scores_corto) + largo plazo (Global Score) ──
@@ -1636,10 +1855,11 @@ def _render_botones_rapidos(pares, turno):
 #  UI DE CHAT
 # ==============================================================
 
+# Labels cortos para que no se corten con "..." en el panel flotante
 _SUGERENCIAS_RAPIDAS = [
-    "📉 Sectores más baratos",
-    "📊 Analizar una acción",
-    "🧩 Armar cartera",
+    "📉 Sectores Baratos",
+    "📊 Analizar Acción",
+    "🧩 Armar Cartera",
     "✍️ Registrar",
 ]
 
@@ -1647,6 +1867,60 @@ MESES_ES = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ]
+
+_CSS_CHIPS_IA = """
+<style>
+/* Chips de sugerencia: texto completo, sin puntos suspensivos */
+html body div[class*="st-key-ia_sug_"] .stButton > button {
+    padding: 6px 6px !important;
+    min-height: 36px !important;
+    white-space: nowrap !important;
+}
+html body div[class*="st-key-ia_sug_"] .stButton > button p,
+html body div[class*="st-key-ia_sug_"] .stButton > button div {
+    font-size: 11.5px !important;
+    white-space: nowrap !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+}
+.ia-badge {
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:11px; color:#7ee787;
+    background:rgba(63,185,80,0.10); border:1px solid rgba(63,185,80,0.35);
+    border-radius:999px; padding:3px 10px; margin:2px 0 8px 0;
+}
+.ia-badge-dot { width:7px; height:7px; border-radius:50%; background:#3fb950;
+                box-shadow:0 0 6px #3fb950; display:inline-block; }
+</style>
+"""
+
+# (nombre, claves de ctx que deben existir). Los que tienen [] son propios del asistente.
+_MODULOS_IA = [
+    ('Corto Plazo', ['scores_corto']),
+    ('Largo Plazo', ['analizar_largo']),
+    ('Fundamental', ['analizar_fundamental']),
+    ('Top-Down Cuant.', ['_tdc_analizar_ticker']),
+    ('Régimen HMM', ['calcular_regimen_hmm']),
+    ('Perfil de empresa', ['obtener_perfil_empresa']),
+    ('Sectores / Países / Mercados', ['cargar_sectores_corto', 'cargar_paises_corto']),
+    ('Finanzas Personales', ['fd', 'supabase']),
+    ('Glosario', ['GLOSARIO']),
+    ('F-Score', []),
+    ('Optimizador Monte Carlo', []),
+    ('GEX', ['gex_resumen']),
+    ('COT', ['cot_resumen']),
+    ('Velas', ['velas_resumen']),
+    ('Opciones', ['opciones_resumen']),
+]
+
+
+def _render_badge_modulos(ctx):
+    activos = [n for n, claves in _MODULOS_IA if all(ctx.get(c) is not None for c in claves)]
+    st.markdown(
+        f'<div class="ia-badge" title="{" · ".join(activos)}">'
+        f'<span class="ia-badge-dot"></span>Conectado a {len(activos)} módulos en vivo</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def modulo_ia_asistente(ctx, compacto=False):
@@ -1679,6 +1953,9 @@ def modulo_ia_asistente(ctx, compacto=False):
     if 'ia_mensajes' not in st.session_state:
         st.session_state['ia_mensajes'] = []
 
+    st.markdown(_CSS_CHIPS_IA, unsafe_allow_html=True)
+    _render_badge_modulos(ctx)
+
     pares_botones = _opciones_pendientes_botones(ctx)
 
     sugerencia_click = None
@@ -1687,9 +1964,9 @@ def modulo_ia_asistente(ctx, compacto=False):
         for i in range(0, len(_SUGERENCIAS_RAPIDAS), n_cols_sug):
             fila = _SUGERENCIAS_RAPIDAS[i:i + n_cols_sug]
             cols_sug = st.columns(len(fila))
-            for col, sug in zip(cols_sug, fila):
+            for j, (col, sug) in enumerate(zip(cols_sug, fila)):
                 with col:
-                    if st.button(sug, use_container_width=True, key=f'ia_sug_{sug}'):
+                    if st.button(sug, use_container_width=True, key=f'ia_sug_{i + j}'):
                         sugerencia_click = sug
 
     # Caja con scroll fija en modo flotante; normal en pantalla completa
@@ -1728,22 +2005,23 @@ def modulo_ia_asistente(ctx, compacto=False):
         st.session_state['ia_wizard'] = None
         st.session_state['ia_cartera_wizard'] = None
         st.session_state['ia_registro_menu_pendiente'] = False
+        st.session_state['ia_esperando_ticker'] = False
         st.rerun()
 
 # ==============================================================
 #  SNIPPET DE INTEGRACIÓN EN app.py (referencia, no se ejecuta)
 # ==============================================================
 #
-# Al diccionario CTX_IA que ya tenés en app.py, agregarle UNA línea
-# para que el pipeline de armado de cartera pueda traducir sectores
-# a listas de tickers:
+# Al diccionario CTX_IA de app.py agregarle estas claves:
 #
 #   CTX_IA = dict(
 #       ...,
-#       ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA,   # ← agregar esta línea
+#       ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA,
+#       calcular_rsi=calcular_rsi,
+#       calcular_regimen_hmm=calcular_regimen_hmm,
+#       obtener_perfil_empresa=obtener_perfil_empresa,
+#       resumen_visual_fundamental=_resumen_visual_fundamental,
+#       # Opcionales (reciben el ticker y devuelven UNA línea de texto o None):
+#       # gex_resumen=..., cot_resumen=..., velas_resumen=..., opciones_resumen=...,
 #   )
-#
-# No hace falta ningún otro cambio en app.py: el resto de las claves
-# que usa el pipeline (descargar_datos, get_close_series, calcular_atr,
-# scores_corto, analizar_largo, validar_ticker) ya están en tu CTX_IA.
 # ==============================================================
