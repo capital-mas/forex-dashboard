@@ -1,14 +1,22 @@
 # modulo_ia_asistente.py
 # ==============================================================
-#  ASISTENTE IA — v4
+#  ASISTENTE IA — v5 (optimizado)
 #  Cubre: análisis COMPLETO de ticker (todos los módulos + resumen
-#  compuesto), comparador, oportunidades (sectores/países/mercados/
-#  subsectores), simulador, glosario, finanzas personales (lectura +
-#  REGISTRO de movimientos con confirmación y botones rápidos),
-#  Top-Down Cuantitativo, F-Score, Salud del Mercado, Renta Fija/
-#  Macro, Opciones, Rotación/Pares, Optimizador de Cartera, y el
-#  pipeline de armado de cartera end-to-end (F-Score + TDC corto/
-#  largo + Optimizador Monte Carlo).
+#  compuesto + conclusión), comparador, oportunidades (sectores/
+#  países/mercados/subsectores), simulador, glosario, finanzas
+#  personales (lectura + REGISTRO de movimientos con confirmación y
+#  botones rápidos), Top-Down Cuantitativo, F-Score, Salud del
+#  Mercado, Renta Fija/Macro, Opciones, Rotación/Pares, Optimizador
+#  de Cartera, y el pipeline de armado de cartera end-to-end
+#  (F-Score + TDC corto/largo + Optimizador Monte Carlo).
+#
+#  Novedades v5 (velocidad):
+#    - El chat corre como @st.fragment: escribir un mensaje ya no
+#      re-ejecuta toda la página de fondo.
+#    - _responder_analizar paraleliza descargas y cálculos (pool con
+#      contexto de Streamlit) y cachea el resultado 10 min por ticker.
+#    - F-Score cacheado 6 h (st.cache_data).
+#    - Armado de cartera: ranking y descargas de precios en paralelo.
 #
 #  Todo lo que el asistente puede "computar" directamente depende
 #  de qué funciones le pasás en `ctx` (ver diccionario CTX_IA en el
@@ -21,16 +29,29 @@
 #      obtener_perfil_empresa, resumen_visual_fundamental
 #  Opcionales (una línea de texto por ticker, o None):
 #      gex_resumen, cot_resumen, velas_resumen, opciones_resumen
+#  Opcional para la Conclusión con niveles de GEX:
+#      gex_niveles -> dict(spot, call_wall, put_wall, flip,
+#                          regimen, squeeze_score, inminente)
+#
+#  Requiere Streamlit >= 1.37 (st.fragment / st.rerun(scope=...)).
 # ==============================================================
 
 import re
+import time
 import random
 import difflib
+import threading
 from datetime import datetime, date
 import numpy as np
 import pandas as pd
 import streamlit as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+try:
+    from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+except Exception:  # versiones viejas de Streamlit
+    add_script_run_ctx = None
+    get_script_run_ctx = None
 
 # ==============================================================
 #  INTENCIONES
@@ -960,7 +981,23 @@ def _responder_finanzas(ctx):
     return "\n".join(partes)
 
 
-# ── Análisis COMPLETO de ticker (todos los módulos + resumen) ────
+# ==============================================================
+#  HELPERS DE VELOCIDAD — pool con contexto de Streamlit, F-Score
+#  cacheado y cálculos por módulo (para correr en paralelo)
+# ==============================================================
+
+def _pool_con_ctx(max_workers):
+    """ThreadPool cuyos hilos conservan el contexto de Streamlit
+    (necesario para st.cache_data / st.session_state dentro de los hilos)."""
+    if add_script_run_ctx is None or get_script_run_ctx is None:
+        return ThreadPoolExecutor(max_workers=max_workers)
+    ctx_st = get_script_run_ctx()
+
+    def _init():
+        add_script_run_ctx(threading.current_thread(), ctx_st)
+
+    return ThreadPoolExecutor(max_workers=max_workers, initializer=_init)
+
 
 def _a_safe(fn, *args, **kwargs):
     try:
@@ -968,6 +1005,46 @@ def _a_safe(fn, *args, **kwargs):
     except Exception:
         return None
 
+
+def _calc_corto(tk, ctx):
+    df_v = ctx['descargar_datos'](tk, '3mo')
+    df_m = ctx['descargar_datos'](tk, '1mo')
+    if df_v is None or df_m is None:
+        return None
+    cl_v = ctx['get_close_series'](df_v)
+    cl_m = ctx['get_close_series'](df_m)
+    if cl_v is None or cl_m is None or len(cl_v.dropna()) < 15:
+        return None
+    atr = ctx['calcular_atr'](df_m)
+    sa, sn, ss = ctx['scores_corto'](cl_v, cl_m, atr)
+    rsi = None
+    if ctx.get('calcular_rsi'):
+        rsi = _a_safe(lambda: float(ctx['calcular_rsi'](cl_m, p=7).iloc[-1]))
+    return dict(
+        sa=sa, sn=sn, ss=ss, sf=sa * 0.45 + sn * 0.35 + ss * 0.20,
+        señal=ctx['señal_accion_corto'](sa, sn, ss), precio=float(cl_m.iloc[-1]), rsi=rsi,
+        ret5=float(cl_m.pct_change(5).iloc[-1] * 100) if len(cl_m) >= 6 else None,
+        ret10=float(cl_m.pct_change(10).iloc[-1] * 100) if len(cl_m) >= 11 else None,
+    )
+
+
+def _calc_hmm(tk, ctx):
+    if not ctx.get('calcular_regimen_hmm'):
+        return None
+    df_6 = ctx['descargar_datos'](tk, '6mo')
+    cl_6 = ctx['get_close_series'](df_6) if df_6 is not None else None
+    return ctx['calcular_regimen_hmm'](cl_6) if cl_6 is not None else None
+
+
+def _calc_largo(tk, ctx):
+    df_l = ctx['descargar_datos'](tk, '2y')
+    cl_l = ctx['get_close_series'](df_l) if df_l is not None else None
+    if cl_l is not None and len(cl_l) >= 150:
+        return ctx['analizar_largo'](tk, cl_l)
+    return None
+
+
+# ── Análisis COMPLETO de ticker (todos los módulos + resumen) ────
 
 def _n(v, d=2, suf=''):
     try:
@@ -999,6 +1076,7 @@ def _veredicto_compuesto(score):
     if score >= 45: return '🟡 NEUTRAL / MIXTO'
     if score >= 30: return '🟠 PERFIL DÉBIL'
     return '🔴 PERFIL DESFAVORABLE'
+
 
 def _s10(v):
     """Score 0-10 -> entero 'N/10'."""
@@ -1101,71 +1179,62 @@ def _generar_conclusion(nombre, precio, compuesto, resumen_f, r_largo, r_corto, 
         s3 += f" 🚨 Además el Squeeze Score marca zona inminente ({gex['squeeze_score']:.0f}/100)."
 
     return f"{s1} {s2}\n\n{s3}"
-    
+
+
 def _responder_analizar(tk, ctx):
+    """Wrapper con caché de sesión de 10 minutos: pedir el mismo ticker
+    otra vez es instantáneo."""
+    cache = st.session_state.setdefault('ia_cache_analisis', {})
+    hit = cache.get(tk)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    texto = _responder_analizar_sin_cache(tk, ctx)
+    if 'No pude encontrar datos suficientes' not in texto:
+        cache[tk] = (time.time(), texto)
+    return texto
+
+
+def _responder_analizar_sin_cache(tk, ctx):
     fmt = ctx.get('fmt_precio') or (lambda p: f'{p:,.2f}')
     sin_fund = ctx['_es_activo_sin_fundamentals'](tk)
     industria = ctx['TICKER_INDUSTRY'].get(tk, 'Sin Clasificar')
 
     señales = []          # (nombre, score 0-100, peso)
     pros, contras = [], []
-    perfil = r_corto = r_largo = res_f = hmm = fscore = None
     tdc = {}
+    fn_tdc, hz_cfg = ctx.get('_tdc_analizar_ticker'), ctx.get('HORIZONTES_TDC')
 
-    with ThreadPoolExecutor(max_workers=1) as ex:
-        # F-Score en paralelo (solo usa yfinance, no toca Streamlit)
-        fut_fs = None if sin_fund else ex.submit(_car_calcular_fscore, tk)
+    with _pool_con_ctx(12) as ex:
+        # 1) lo que no depende de precios arranca ya
+        f_perfil = (ex.submit(_a_safe, ctx['obtener_perfil_empresa'], tk)
+                    if (not sin_fund and ctx.get('obtener_perfil_empresa')) else None)
+        f_fund = None if sin_fund else ex.submit(_a_safe, ctx['analizar_fundamental'], tk, industria)
+        f_fs = None if sin_fund else ex.submit(_car_fscore_rapido, tk)
+        f_gex = ex.submit(_a_safe, ctx['gex_niveles'], tk) if ctx.get('gex_niveles') else None
 
-        # ── Perfil ───────────────────────────────────────────
-        if not sin_fund and ctx.get('obtener_perfil_empresa'):
-            perfil = _a_safe(ctx['obtener_perfil_empresa'], tk)
+        # 2) precalentar cada período de precios UNA sola vez, en paralelo
+        periodos = ['3mo', '1mo', '6mo', '2y'] + (['10y'] if fn_tdc else [])
+        for f in [ex.submit(_a_safe, ctx['descargar_datos'], tk, p) for p in periodos]:
+            f.result()
 
-        # ── Corto plazo ──────────────────────────────────────
-        df_v = _a_safe(ctx['descargar_datos'], tk, '3mo')
-        df_m = _a_safe(ctx['descargar_datos'], tk, '1mo')
-        if df_v is not None and df_m is not None:
-            cl_v = ctx['get_close_series'](df_v)
-            cl_m = ctx['get_close_series'](df_m)
-            if cl_v is not None and cl_m is not None and len(cl_v.dropna()) >= 15:
-                atr = ctx['calcular_atr'](df_m)
-                sa, sn, ss = ctx['scores_corto'](cl_v, cl_m, atr)
-                rsi = None
-                if ctx.get('calcular_rsi'):
-                    rsi = _a_safe(lambda: float(ctx['calcular_rsi'](cl_m, p=7).iloc[-1]))
-                r_corto = dict(
-                    sa=sa, sn=sn, ss=ss, sf=sa * 0.45 + sn * 0.35 + ss * 0.20,
-                    señal=ctx['señal_accion_corto'](sa, sn, ss), precio=float(cl_m.iloc[-1]), rsi=rsi,
-                    ret5=float(cl_m.pct_change(5).iloc[-1] * 100) if len(cl_m) >= 6 else None,
-                    ret10=float(cl_m.pct_change(10).iloc[-1] * 100) if len(cl_m) >= 11 else None,
-                )
+        # 3) cálculos (ya con los precios en caché)
+        f_corto = ex.submit(_a_safe, _calc_corto, tk, ctx)
+        f_hmm = ex.submit(_a_safe, _calc_hmm, tk, ctx)
+        f_largo = ex.submit(_a_safe, _calc_largo, tk, ctx)
+        f_tdc = {hz: ex.submit(_a_safe, fn_tdc, tk, hz_cfg[hz])
+                 for hz in ('MP', 'LP') if fn_tdc and hz_cfg and hz in hz_cfg}
 
-        # ── Régimen HMM ──────────────────────────────────────
-        if ctx.get('calcular_regimen_hmm'):
-            df_6 = _a_safe(ctx['descargar_datos'], tk, '6mo')
-            cl_6 = ctx['get_close_series'](df_6) if df_6 is not None else None
-            if cl_6 is not None:
-                hmm = _a_safe(ctx['calcular_regimen_hmm'], cl_6)
-
-        # ── Largo plazo ──────────────────────────────────────
-        df_l = _a_safe(ctx['descargar_datos'], tk, '2y')
-        cl_l = ctx['get_close_series'](df_l) if df_l is not None else None
-        if cl_l is not None and len(cl_l) >= 150:
-            r_largo = _a_safe(ctx['analizar_largo'], tk, cl_l)
-
-        # ── Top-Down Cuantitativo (MP / LP) ──────────────────
-        fn_tdc, hz_cfg = ctx.get('_tdc_analizar_ticker'), ctx.get('HORIZONTES_TDC')
-        if fn_tdc and hz_cfg:
-            for hz in ('MP', 'LP'):
-                if hz in hz_cfg:
-                    d = _a_safe(fn_tdc, tk, hz_cfg[hz])
-                    if d:
-                        tdc[hz] = d
-
-        # ── Fundamental ──────────────────────────────────────
-        if not sin_fund:
-            res_f = _a_safe(ctx['analizar_fundamental'], tk, industria)
-
-        fscore = _a_safe(fut_fs.result) if fut_fs else None
+    perfil = f_perfil.result() if f_perfil else None
+    res_f = f_fund.result() if f_fund else None
+    fscore = f_fs.result() if f_fs else None
+    gex = f_gex.result() if f_gex else None
+    r_corto = f_corto.result()
+    hmm = f_hmm.result()
+    r_largo = f_largo.result()
+    for hz, f in f_tdc.items():
+        d = f.result()
+        if d:
+            tdc[hz] = d
 
     if not r_corto and not r_largo:
         return f"No pude encontrar datos suficientes para **{tk}**. Verificá que el símbolo sea correcto."
@@ -1224,7 +1293,6 @@ def _responder_analizar(tk, ctx):
 
     peso_total = sum(p for _, _, p in señales) or 1
     compuesto = sum(s * p for _, s, p in señales) / peso_total
-    gex = _a_safe(ctx['gex_niveles'], tk) if ctx.get('gex_niveles') else None
 
     # ══ Armado de la respuesta ═══════════════════════════════
     L = []
@@ -1447,7 +1515,7 @@ def _responder_fscore(tk, ctx):
         # Fallback: calculamos nosotros mismos el F-Score (misma lógica que el
         # pipeline de armado de cartera), así funciona aunque la app principal
         # no haya conectado 'calcular_fscore' en el ctx.
-        r = _car_calcular_fscore(tk)
+        r = _car_fscore_rapido(tk)
     if r is None:
         return (f"No pude calcular el F-Score de {tk} (puede no tener suficientes estados financieros "
                 f"disponibles, o ser cripto/forex/commodity sin balance sheet). También lo encontrás en "
@@ -1558,8 +1626,8 @@ def _car_get_alias(df, canonical_key, col_idx):
 
 
 def _car_calcular_fscore(ticker):
-    """F-Score de Piotroski (0-9) para UN ticker, calculado on-demand (sin
-    caché de Streamlit), pensado para correr dentro de un ThreadPoolExecutor.
+    """F-Score de Piotroski (0-9) para UN ticker, calculado on-demand,
+    pensado para correr dentro de un ThreadPoolExecutor.
     Misma lógica financiera que modulo_fscore.py, con umbral algo más laxo
     (5 criterios evaluables en vez de 6) porque acá se corre sobre universos
     más chicos elegidos por el usuario."""
@@ -1620,6 +1688,22 @@ def _car_calcular_fscore(ticker):
         return None
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _car_fscore_cached_ok(ticker):
+    r = _car_calcular_fscore(ticker)
+    if r is None:
+        raise ValueError('sin fscore')   # así no se cachean los fallos
+    return r
+
+
+def _car_fscore_rapido(ticker):
+    """F-Score con caché de 6 horas (los fallos no se cachean)."""
+    try:
+        return _car_fscore_cached_ok(ticker)
+    except Exception:
+        return None
+
+
 def _car_construir_universo(texto, ctx):
     """Convierte texto libre ('Semiconductores, Bancos y NVDA') en una lista
     de tickers, combinando industrias conocidas (ctx['ACCIONES_POR_INDUSTRIA'])
@@ -1647,16 +1731,20 @@ def _car_construir_universo(texto, ctx):
 
 
 def _car_simular_cartera(tickers, ctx, simulaciones=4000, periodo='2y', rf=0.0):
-    """Descarga precios (reutilizando ctx['descargar_datos']/['get_close_series'])
-    y corre una simulación Monte Carlo simplificada. Devuelve (dict de 5
-    carteras candidatas, lista de tickers realmente usados) o (None, None)
-    si no hay suficiente historial en común."""
-    precios = {}
-    for tk in tickers:
+    """Descarga precios en paralelo (reutilizando ctx['descargar_datos']/
+    ['get_close_series']) y corre una simulación Monte Carlo simplificada.
+    Devuelve (dict de 5 carteras candidatas, lista de tickers realmente
+    usados) o (None, None) si no hay suficiente historial en común."""
+    def _bajar(tk):
         df = ctx['descargar_datos'](tk, periodo)
         cl = ctx['get_close_series'](df) if df is not None else None
-        if cl is not None and len(cl.dropna()) > 100:
-            precios[tk] = cl.dropna()
+        return tk, cl
+
+    precios = {}
+    with _pool_con_ctx(8) as ex:
+        for tk, cl in ex.map(_bajar, tickers):
+            if cl is not None and len(cl.dropna()) > 100:
+                precios[tk] = cl.dropna()
 
     if len(precios) < 2:
         return None, None
@@ -1789,10 +1877,10 @@ def _responder_armar_cartera(datos, ctx):
     if truncado:
         tickers_universo = tickers_universo[:_CAR_MAX_UNIVERSO]
 
-    # ── 1) F-Score (en paralelo) ──────────────────────────────────────
+    # ── 1) F-Score (en paralelo, con caché de 6 h) ────────────────────
     fscores = {}
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        futuros = {ex.submit(_car_calcular_fscore, tk): tk for tk in tickers_universo}
+    with _pool_con_ctx(8) as ex:
+        futuros = {ex.submit(_car_fscore_rapido, tk): tk for tk in tickers_universo}
         for fut in as_completed(futuros):
             tk = futuros[fut]
             r = fut.result()
@@ -1811,8 +1899,7 @@ def _responder_armar_cartera(datos, ctx):
                 f"Probá ampliar el rango de F-Score o sumar más sectores/tickers.")
 
     # ── 2) Top-Down Cuantitativo: corto plazo (scores_corto) + largo plazo (Global Score) ──
-    ranking = []
-    for tk in aprobados:
+    def _rank_uno(tk):
         sa = None
         df_v = ctx['descargar_datos'](tk, '3mo')
         df_m = ctx['descargar_datos'](tk, '1mo')
@@ -1821,7 +1908,7 @@ def _responder_armar_cartera(datos, ctx):
             cl_m = ctx['get_close_series'](df_m)
             if cl_v is not None and cl_m is not None and len(cl_v.dropna()) >= 15:
                 atr = ctx['calcular_atr'](df_m)
-                sa, sn, ss = ctx['scores_corto'](cl_v, cl_m, atr)
+                sa, _sn, _ss = ctx['scores_corto'](cl_v, cl_m, atr)
 
         global_score = None
         df_l = ctx['descargar_datos'](tk, '2y')
@@ -1832,10 +1919,16 @@ def _responder_armar_cartera(datos, ctx):
                 global_score = r_l['global_score']
 
         if sa is None and global_score is None:
-            continue
+            return None
         valores_validos = [v for v in (sa, global_score) if v is not None]
         combinado = float(np.mean(valores_validos)) if valores_validos else 0.0
-        ranking.append(dict(tk=tk, fscore=fscores[tk], sa=sa, global_score=global_score, combinado=combinado))
+        return dict(tk=tk, fscore=fscores[tk], sa=sa, global_score=global_score, combinado=combinado)
+
+    ranking = []
+    with _pool_con_ctx(8) as ex:
+        for r in ex.map(lambda t: _a_safe(_rank_uno, t), aprobados):
+            if r:
+                ranking.append(r)
 
     if len(ranking) < 2:
         return ("Los activos pasaron el filtro de F-Score, pero no pude calcular scores de corto/largo plazo "
@@ -2028,6 +2121,9 @@ def _render_badge_modulos(ctx):
     )
 
 
+# El chat corre como fragmento: escribir un mensaje o tocar un botón solo
+# re-ejecuta este bloque y no toda la página de fondo (mucho más rápido).
+@st.fragment
 def modulo_ia_asistente(ctx, compacto=False):
     if not ctx.get('tiene_acceso_pro'):
         st.markdown("""
@@ -2100,7 +2196,7 @@ def modulo_ia_asistente(ctx, compacto=False):
                     resp = responder(prompt, ctx)
                 st.markdown(resp)
         st.session_state['ia_mensajes'].append({"role": "assistant", "content": resp})
-        st.rerun()
+        st.rerun(scope="fragment")
 
     if st.button('🗑️ Limpiar conversación', key='ia_clear', use_container_width=True):
         st.session_state['ia_mensajes'] = []
@@ -2111,7 +2207,8 @@ def modulo_ia_asistente(ctx, compacto=False):
         st.session_state['ia_cartera_wizard'] = None
         st.session_state['ia_registro_menu_pendiente'] = False
         st.session_state['ia_esperando_ticker'] = False
-        st.rerun()
+        st.session_state['ia_cache_analisis'] = {}
+        st.rerun(scope="fragment")
 
 # ==============================================================
 #  SNIPPET DE INTEGRACIÓN EN app.py (referencia, no se ejecuta)
@@ -2128,5 +2225,12 @@ def modulo_ia_asistente(ctx, compacto=False):
 #       resumen_visual_fundamental=_resumen_visual_fundamental,
 #       # Opcionales (reciben el ticker y devuelven UNA línea de texto o None):
 #       # gex_resumen=..., cot_resumen=..., velas_resumen=..., opciones_resumen=...,
+#       # gex_niveles=...  (dict con spot, call_wall, put_wall, flip, regimen,
+#       #                   squeeze_score, inminente) para la Conclusión con GEX
 #   )
+#
+# En app.py también:
+#   - pausar st_autorefresh cuando st.session_state['ia_chat_abierto'] sea True
+#   - cachear cargar_precios_inicio_base / cargar_precios_acciones_inicio
+#     con @st.cache_data(ttl=300, show_spinner=False)
 # ==============================================================
