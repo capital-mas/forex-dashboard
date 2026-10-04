@@ -19,6 +19,7 @@
 # ==============================================================
 
 import streamlit as st
+from supabase import create_client
 
 
 # ──────────────────────────────────────────────────────────────
@@ -99,6 +100,76 @@ def _render_selector_servicio():
         st.markdown(f'<style>{css_extra}</style>', unsafe_allow_html=True)
     return actual
 
+def _cliente_auth_nuevo():
+    """Cliente NUEVO por operación (no cacheado), así la sesión temporal de
+    recuperación no se mezcla con la de otros usuarios."""
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+
+
+def _cancelar_recuperacion():
+    for k in ("rec_paso", "rec_email"):
+        st.session_state.pop(k, None)
+
+
+def _render_recuperar_password():
+    st.markdown('<div class="landing-auth-sub">Recuperar contraseña</div>', unsafe_allow_html=True)
+    paso = st.session_state.get("rec_paso", 1)
+
+    if paso == 1:
+        email = st.text_input("Email de tu cuenta", key="rec_email_input")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Enviarme el código", use_container_width=True, key="rec_btn_enviar", type="primary"):
+                if not email.strip():
+                    st.error("Ingresá tu email.")
+                else:
+                    try:
+                        _cliente_auth_nuevo().auth.reset_password_for_email(email.strip())
+                        st.session_state["rec_email"] = email.strip()
+                        st.session_state["rec_paso"] = 2
+                        st.rerun()
+                    except Exception:
+                        st.error("No pudimos enviar el código. Esperá un minuto y probá de nuevo.")
+        with c2:
+            if st.button("← Volver", use_container_width=True, key="rec_btn_volver1"):
+                _cancelar_recuperacion()
+                st.rerun()
+    else:
+        st.info(f"Si el email {st.session_state.get('rec_email', '')} tiene una cuenta, te enviamos un código.")
+        codigo = st.text_input("Código recibido por mail", key="rec_codigo")
+        nueva = st.text_input("Nueva contraseña", type="password", key="rec_nueva")
+        nueva2 = st.text_input("Confirmar nueva contraseña", type="password", key="rec_nueva2")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Cambiar contraseña", use_container_width=True, key="rec_btn_cambiar", type="primary"):
+                if not codigo.strip():
+                    st.error("Ingresá el código.")
+                elif len(nueva) < 6:
+                    st.error("La contraseña debe tener al menos 6 caracteres.")
+                elif nueva != nueva2:
+                    st.error("Las contraseñas no coinciden.")
+                else:
+                    try:
+                        cli = _cliente_auth_nuevo()
+                        cli.auth.verify_otp({
+                            "email": st.session_state["rec_email"],
+                            "token": codigo.strip(),
+                            "type": "recovery",
+                        })
+                        cli.auth.update_user({"password": nueva})
+                        try:
+                            cli.auth.sign_out()
+                        except Exception:
+                            pass
+                        _cancelar_recuperacion()
+                        st.session_state["rec_exito"] = True
+                        st.rerun()
+                    except Exception:
+                        st.error("Código inválido o vencido.")
+        with c2:
+            if st.button("← Cancelar", use_container_width=True, key="rec_btn_volver2"):
+                _cancelar_recuperacion()
+                st.rerun()
 
 def pantalla_landing(auth_client, cookies, data_client=None):
     """data_client: cliente de Supabase con service_role (el mismo `supabase` del
