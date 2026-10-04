@@ -1000,7 +1000,108 @@ def _veredicto_compuesto(score):
     if score >= 30: return '🟠 PERFIL DÉBIL'
     return '🔴 PERFIL DESFAVORABLE'
 
+def _s10(v):
+    """Score 0-10 -> entero 'N/10'."""
+    return 'N/D' if v is None else f'{round(float(v))}/10'
 
+
+def _m(p):
+    """Precio con $ escapado (Streamlit interpreta $...$ como fórmula)."""
+    return f'\\${p:,.2f}'
+
+
+def _generar_conclusion(nombre, precio, compuesto, resumen_f, r_largo, r_corto, gex):
+    S = gex['spot'] if gex else precio
+    if not S:
+        return None
+    cal = (resumen_f or {}).get('calidad')
+    val = (resumen_f or {}).get('valoracion')
+
+    # ── 1) El negocio ──
+    if cal is not None:
+        if cal >= 8:     n = 'un negocio extraordinario a nivel fundamental'
+        elif cal >= 6.5: n = 'un buen negocio a nivel fundamental'
+        elif cal >= 5:   n = 'un negocio de calidad fundamental aceptable'
+        else:            n = 'un negocio con fundamentos débiles'
+        if val is not None and cal >= 5:
+            if val <= 4.5:   n += ', pero con una valuación exigente'
+            elif val >= 7:   n += ' y con una valuación atractiva'
+        buen_neg = cal >= 6.5
+        s1 = f"**{nombre}** es {n}."
+    else:
+        buen_neg = compuesto >= 55
+        s1 = f"**{nombre}** tiene un perfil compuesto de {compuesto:.0f}/100 (sin datos fundamentales)."
+
+    # ── 2) Técnico ──
+    rsi = r_largo['rsi'] if r_largo else None
+    lim_hi, lim_lo = 70, 30
+    if rsi is None and r_corto and r_corto.get('rsi') is not None:
+        rsi, lim_hi, lim_lo = r_corto['rsi'], 80, 20
+    sobrecompra = rsi is not None and rsi > lim_hi
+    sobreventa = rsi is not None and rsi < lim_lo
+
+    # ── 3) Niveles GEX ──
+    cw = gex.get('call_wall') if gex else None
+    pw = gex.get('put_wall') if gex else None
+    flip = gex.get('flip') if gex else None
+    d_cw = (cw / S - 1) * 100 if cw else None
+    d_pw = (S / pw - 1) * 100 if pw else None
+    cerca_techo = d_cw is not None and 0 <= d_cw <= 1.5
+    sobre_techo = cw is not None and S > cw
+    cerca_piso = d_pw is not None and 0 <= d_pw <= 1.5
+
+    partes = []
+    if cerca_techo:
+        partes.append(f"el precio actual ({_m(S)}) está comprimido contra la Pared de Calls ({_m(cw)})")
+    elif sobre_techo:
+        partes.append(f"el precio actual ({_m(S)}) ya superó la Pared de Calls ({_m(cw)})")
+    elif cw:
+        partes.append(f"el precio actual ({_m(S)}) tiene la Pared de Calls en {_m(cw)} ({d_cw:+.1f}%) como posible techo")
+    else:
+        partes.append(f"el precio actual es {_m(S)}")
+    if cerca_piso:
+        partes.append(f"está apoyado sobre la Pared de Puts ({_m(pw)})")
+    if sobrecompra:
+        partes.append(f"hay sobrecompra técnica (RSI {rsi:.0f})")
+    elif sobreventa:
+        partes.append(f"hay sobreventa técnica (RSI {rsi:.0f})")
+    s2 = ("En lo táctico, " if cal is None else ("" if 'exigente' in s1 else "En lo táctico, ")) + \
+         (", ".join(partes[:-1]) + " y " + partes[-1] if len(partes) > 1 else partes[0]) + "."
+    if 'exigente' in s1:
+        s2 = s2[0].upper() + s2[1:]
+
+    # ── 4) Sugerencia ──
+    abajo = []
+    if pw and pw < S:   abajo.append((pw, 'la Pared de Puts'))
+    if flip and flip < S: abajo.append((flip, 'el punto de inflexión Gamma'))
+    if not gex and r_largo and r_largo.get('ma20') and r_largo['ma20'] < S:
+        abajo.append((r_largo['ma20'], 'la media de 20 ruedas'))
+    abajo.sort(key=lambda x: -x[0])
+    txt_abajo = ' o '.join(f"{lbl} ({_m(v)})" for v, lbl in abajo)
+
+    if cal is not None and not buen_neg:
+        s3 = ("El modelo no ve respaldo fundamental suficiente: conviene evitarlo o limitarse a "
+              "operaciones tácticas de corto plazo.")
+    elif buen_neg and (sobrecompra or cerca_techo or sobre_techo):
+        s3 = ("La sugerencia del modelo es esperar un pullback o recorte"
+              + (f" hacia {txt_abajo}" if txt_abajo else "")
+              + " antes de armar nuevas posiciones.")
+    elif buen_neg and (sobreventa or cerca_piso):
+        s3 = ("Es una zona razonable para acumular de forma escalonada"
+              + (f"; perder {_m(pw)} (Pared de Puts) sería una señal de cautela." if pw and pw < S else "."))
+    elif buen_neg:
+        s3 = ("No hay una señal táctica extrema: se puede acumular de forma gradual"
+              + (f", priorizando entradas cerca de {txt_abajo}." if txt_abajo else "."))
+    else:
+        s3 = "Sin ventaja clara por ahora: conviene esperar confirmación antes de actuar."
+
+    if gex and gex.get('regimen') == 'negativo':
+        s3 += " Ojo: el régimen de gamma es negativo, así que los movimientos pueden amplificarse en ambos sentidos."
+    if gex and gex.get('inminente'):
+        s3 += f" 🚨 Además el Squeeze Score marca zona inminente ({gex['squeeze_score']:.0f}/100)."
+
+    return f"{s1} {s2}\n\n{s3}"
+    
 def _responder_analizar(tk, ctx):
     fmt = ctx.get('fmt_precio') or (lambda p: f'{p:,.2f}')
     sin_fund = ctx['_es_activo_sin_fundamentals'](tk)
