@@ -1,6 +1,6 @@
 # modulo_ia_asistente.py
 # ==============================================================
-#  ASISTENTE IA — v5 (optimizado)
+#  ASISTENTE IA — v6 (mercados reales + índices/ETFs)
 #  Cubre: análisis COMPLETO de ticker (todos los módulos + resumen
 #  compuesto + conclusión), comparador, oportunidades (sectores/
 #  países/mercados/subsectores), simulador, glosario, finanzas
@@ -10,23 +10,37 @@
 #  de Cartera, y el pipeline de armado de cartera end-to-end
 #  (F-Score + TDC corto/largo + Optimizador Monte Carlo).
 #
+#  Novedades v6:
+#    - Soporta TODO MERCADOS_REALES (energía, metales, mineras, agro,
+#      blandos, cripto, cripto ETF) por nombre o ticker, con alias
+#      con límites de palabra ("oro" ya no matchea dentro de "tesoro").
+#    - Alias de índices: nasdaq -> QQQ, s&p 500 -> SPY, dow -> DIA...
+#    - Futuros, cripto, índices y ETFs se tratan como "sin balance":
+#      no piden Fundamental/F-Score y quedan exentos del filtro de
+#      F-Score en el armado de cartera.
+#    - Tickers cortos en minúscula ("spy", "pbr") se aceptan en
+#      mensajes breves; un ticker que falló no se arrastra al
+#      siguiente mensaje.
+#    - Nueva intención 'mercados' ("cómo están los granos").
+#    - Armado de cartera acepta grupos: cripto, metales, granos,
+#      commodities, energía, blandos...
+#
 #  Novedades v5 (velocidad):
-#    - El chat corre como @st.fragment: escribir un mensaje ya no
-#      re-ejecuta toda la página de fondo.
-#    - _responder_analizar paraleliza descargas y cálculos (pool con
-#      contexto de Streamlit) y cachea el resultado 10 min por ticker.
+#    - El chat corre como @st.fragment.
+#    - _responder_analizar paraleliza descargas y cálculos y cachea
+#      el resultado 10 min por ticker.
 #    - F-Score cacheado 6 h (st.cache_data).
 #    - Armado de cartera: ranking y descargas de precios en paralelo.
 #
 #  Todo lo que el asistente puede "computar" directamente depende
 #  de qué funciones le pasás en `ctx` (ver diccionario CTX_IA en el
 #  script principal). Si una función no está en ctx, el asistente
-#  degrada con gracia: explica el módulo y te dice dónde encontrarlo
-#  en la app en vez de fallar.
+#  degrada con gracia.
 #
 #  ⚠️ CTX_IA necesita (además de lo que ya tenías):
 #      ACCIONES_POR_INDUSTRIA, calcular_rsi, calcular_regimen_hmm,
-#      obtener_perfil_empresa, resumen_visual_fundamental
+#      obtener_perfil_empresa, resumen_visual_fundamental,
+#      MERCADOS_REALES, ETFS, SECTORES_TOTAL, UNIVERSO_TICKERS_VALIDOS
 #  Opcionales (una línea de texto por ticker, o None):
 #      gex_resumen, cot_resumen, velas_resumen, opciones_resumen
 #  Opcional para la Conclusión con niveles de GEX:
@@ -41,6 +55,7 @@ import time
 import random
 import difflib
 import threading
+import unicodedata
 from datetime import datetime, date
 import numpy as np
 import pandas as pd
@@ -52,6 +67,44 @@ try:
 except Exception:  # versiones viejas de Streamlit
     add_script_run_ctx = None
     get_script_run_ctx = None
+
+
+# ==============================================================
+#  HELPERS DE MERCADOS / ACTIVOS SIN BALANCE
+# ==============================================================
+
+def _norm(s):
+    """Minúsculas y sin acentos."""
+    return ''.join(c for c in unicodedata.normalize('NFD', s.lower())
+                   if unicodedata.category(c) != 'Mn')
+
+
+_ETFS_SIN_BALANCE = {'URA', 'LIT', 'SLX', 'GDX', 'SIL', 'COPX'}
+
+
+def _tickers_etf(ctx):
+    out = set()
+    for d in (ctx.get('ETFS'), ctx.get('SECTORES_TOTAL')):
+        out |= {v[0] for v in (d or {}).values()}
+    return out
+
+
+def _es_sin_fundamentals(tk, ctx):
+    """Futuros, cripto, índices y ETFs no tienen balance."""
+    if (tk.endswith('=F') or tk.endswith('-USD') or tk.startswith('^')
+            or tk in _ETFS_SIN_BALANCE or tk in _tickers_etf(ctx)):
+        return True
+    fn = ctx.get('_es_activo_sin_fundamentals')
+    return bool(fn and fn(tk))
+
+
+def _info_mercado(tk, ctx):
+    """(nombre, grupo) si el ticker está en MERCADOS_REALES, si no None."""
+    for nombre, v in (ctx.get('MERCADOS_REALES') or {}).items():
+        if v[0] == tk:
+            return nombre, v[1]
+    return None
+
 
 # ==============================================================
 #  INTENCIONES
@@ -96,6 +149,11 @@ _PATRONES_INTENCION = [
     ]),
     ('optimizador', [r'\boptimiz', r'\bmonte\s+carlo\b', r'\bfrontera\s+eficiente\b', r'\brebalance',
                       r'\bmi\s+cartera\b']),
+    # Grupos de MERCADOS_REALES (commodities, metales, granos, cripto...)
+    ('mercados', [r'\bcommodit', r'\bmaterias\s+primas\b', r'\bgranos\b', r'\bcereales\b',
+                  r'\bblandos\b', r'\bsofts?\b', r'\bmetales\b', r'\bcriptos?\b',
+                  r'\bcriptomonedas?\b', r'\bcrypto', r'\benerg[eé]ticos\b',
+                  r'\bmercados\s+reales\b']),
     ('oportunidades', [r'\boportunidad', r'\brecomend', r'\bqu[eé]\s+me\s+recomend', r'\bideas?\s+de\s+inversi[oó]n\b',
                         r'\bd[oó]nde\s+invert', r'\bqu[eé]\s+comprar',
                         r'\bbarat', r'\b(m[aá]s|menos)\s+car[oa]s?\b', r'\bsectores?\s+(est[aá]n|con)\b',
@@ -112,9 +170,7 @@ def detectar_intencion(texto):
     t = texto.lower()
     # 'registrar_movimiento' solo dispara con verbos de acción explícitos
     # (anotá/registrá/cargá/agregá/sumá/metelo/ponelo), así que no hace falta
-    # una segunda pasada para distinguirlo de una pregunta: si el usuario
-    # escribió "anotá que gasté...", la palabra "que" no debe confundirse
-    # con una consulta tipo "¿en qué gasté más?".
+    # una segunda pasada para distinguirlo de una pregunta.
     for intencion, patrones in _PATRONES_INTENCION:
         if any(re.search(p, t) for p in patrones):
             return intencion
@@ -154,20 +210,57 @@ _ALIAS_ACTIVOS = {
     'ypf': 'YPF',
 }
 
+# Índices: nombre -> ETF que los replica (los índices crudos no siempre tienen datos)
+_ALIAS_ACTIVOS.update({
+    'nasdaq': 'QQQ', 'nasdaq 100': 'QQQ',
+    's&p 500': 'SPY', 's&p500': 'SPY', 'sp500': 'SPY', 's&p': 'SPY',
+    'dow jones': 'DIA', 'russell': 'IWM',
+})
 
-def _detectar_alias(texto):
-    t = texto.lower()
+# Alias extra de MERCADOS_REALES (los nombres exactos se generan solos desde el dict)
+_ALIAS_EXTRA_MERCADOS = {
+    'wti': 'CL=F', 'crudo': 'CL=F', 'brent': 'BZ=F', 'gasolina': 'RB=F',
+    'uranio': 'URA', 'litio': 'LIT', 'soya': 'ZS=F', 'maiz': 'ZC=F',
+    'cafe': 'KC=F', 'azucar': 'SB=F', 'algodon': 'CT=F',
+    'btc': 'BTC-USD', 'eth': 'ETH-USD', 'ripple': 'XRP-USD', 'doge': 'DOGE-USD',
+}
+# Nombres que existen como commodity Y como industria de acciones:
+# por defecto gana el commodity, salvo que el mensaje hable de acciones/empresas/industria.
+_AMBIGUOS = {'oro', 'plata', 'cobre', 'acero', 'gas natural', 'petroleo'}
+_RE_CTX_INDUSTRIA = re.compile(
+    r'\b(acciones|empresas|industria|sector|subsector|mineria|mineras|integrado)\b')
+
+
+def _alias_mercados(mercados):
+    out = {}
+    for nombre, v in (mercados or {}).items():
+        n = re.sub(r'\(.*?\)', '', _norm(nombre)).strip()
+        if n:
+            out[n] = v[0]
+    out.update(_ALIAS_EXTRA_MERCADOS)
+    return out
+
+
+def _detectar_alias(texto, mercados=None):
+    t = _norm(texto)
+    alias = {_norm(k): v for k, v in _ALIAS_ACTIVOS.items()}
+    alias.update(_alias_mercados(mercados))
+    hay_ctx_ind = bool(_RE_CTX_INDUSTRIA.search(t))
     encontrados = []
-    for alias, tk in _ALIAS_ACTIVOS.items():
-        if alias in t:
-            encontrados.append(tk)
-    palabras = re.findall(r'\b[a-záéíóúñ]{4,}\b', t)
-    claves = list(_ALIAS_ACTIVOS.keys())
-    for palabra in palabras:
-        match = difflib.get_close_matches(palabra, claves, n=1, cutoff=0.8)
+    # Más largos primero y se "consume" lo ya matcheado: "mineras oro" -> GDX, no GC=F
+    for a in sorted(alias, key=len, reverse=True):
+        if a in _AMBIGUOS and hay_ctx_ind:
+            continue
+        m = re.search(rf'\b{re.escape(a)}\b', t)
+        if m:
+            encontrados.append(alias[a])
+            t = t[:m.start()] + ' ' * (m.end() - m.start()) + t[m.end():]
+    claves = [a for a in alias if ' ' not in a and len(a) >= 5]
+    for palabra in re.findall(r'\b[a-z]{5,}\b', t):
+        match = difflib.get_close_matches(palabra, claves, n=1, cutoff=0.85)
         if match:
-            encontrados.append(_ALIAS_ACTIVOS[match[0]])
-    return encontrados
+            encontrados.append(alias[match[0]])
+    return list(dict.fromkeys(encontrados))
 
 
 def _detectar_industria(texto, industrias_validas):
@@ -178,16 +271,18 @@ def _detectar_industria(texto, industrias_validas):
     return None
 
 
-def extraer_tickers(texto, universo_valido, ctx_validar):
+def extraer_tickers(texto, universo_valido, ctx_validar, mercados=None):
     encontrados = []
-    encontrados.extend(_detectar_alias(texto))
+    encontrados.extend(_detectar_alias(texto, mercados))
     candidatos = re.findall(r'\b[A-Za-z]{1,6}(?:[.\-=\^][A-Za-z0-9]{1,4})?\b', texto)
+    # En mensajes cortos ("spy", "analizame pbr") aceptamos tickers en minúscula
+    corto = len(texto.split()) <= 3
     for c in candidatos:
         c_norm = c.upper()
         if c_norm in _STOPWORDS_TICKER:
             continue
         if c_norm in universo_valido:
-            if len(c_norm) <= 3 and not c.isupper():
+            if len(c_norm) <= 3 and not c.isupper() and not (corto and len(c_norm) >= 2):
                 continue
             encontrados.append(c_norm)
             continue
@@ -285,9 +380,7 @@ def detectar_tipo_movimiento(texto):
     t = texto.lower()
     if re.search(r'\bdeudas?\b|\bpr[eé]stamos?\b|\bdebo\b|\bcuotas?\b', t):
         return 'deuda'
-    # OJO: acá van tanto formas verbales (cobré, ingresé) como sustantivos
-    # (ingreso, cobro) — el bug original solo cubría el verbo y por eso
-    # "anotá un ingreso de 200000" caía siempre en 'gasto' por default.
+    # Formas verbales (cobré, ingresé) y sustantivos (ingreso, cobro).
     if re.search(
         r'\bcobr[eé]\b|\bcobros?\b|\bingres[eé]\b|\bingresos?\b|\bme\s+pagaron\b|'
         r'\bsueldo\b|\bsalario\b|\bfacturaci[oó]n\b|\brecib[ií]\b|\bgan[eé]\b',
@@ -666,9 +759,11 @@ def _registrar_movimiento_fd(ctx, tipo, monto, categoria, subcategoria, cuenta, 
 # ==============================================================
 
 def responder(texto_usuario, ctx):
+    mercados = ctx.get('MERCADOS_REALES')
+
     # ── 0) ¿El asistente le preguntó qué ticker analizar? ──
     if st.session_state.pop('ia_esperando_ticker', False):
-        tks = extraer_tickers(texto_usuario, ctx['UNIVERSO_TICKERS_VALIDOS'], ctx['validar_ticker'])
+        tks = extraer_tickers(texto_usuario, ctx['UNIVERSO_TICKERS_VALIDOS'], ctx['validar_ticker'], mercados)
         if not tks:
             v = ctx['validar_ticker'](texto_usuario.strip())
             tks = [v] if v else []
@@ -676,13 +771,13 @@ def responder(texto_usuario, ctx):
             st.session_state['ia_ultimo_ticker'] = tks[0]
             return _responder_analizar(tks[0], ctx)
         if len(texto_usuario.split()) <= 2:
-            return "No reconocí ese símbolo. Probá con algo como *NVDA*, *GGAL* o *BTC-USD*."
+            return "No reconocí ese símbolo. Probá con algo como *NVDA*, *GGAL*, *BTC-USD* o *oro*."
         # si escribió una frase larga, seguimos como mensaje normal
 
     # chip "📊 Analizar Acción": pregunta el ticker en vez de fallar
     if texto_usuario.strip().lower() in ('analizar acción', 'analizar accion', '📊 analizar acción'):
         st.session_state['ia_esperando_ticker'] = True
-        return "¿Qué activo querés analizar? Escribime el ticker (ej: *NVDA*, *GGAL*, *BTC-USD*)."
+        return "¿Qué activo querés analizar? Escribime el ticker o el nombre (ej: *NVDA*, *GGAL*, *BTC-USD*, *oro*, *nasdaq*)."
 
     # ── 1) ¿Hay una confirmación pendiente de un movimiento a registrar? ──
     pendiente = st.session_state.get('ia_pendiente_mov')
@@ -762,15 +857,19 @@ def responder(texto_usuario, ctx):
         return "No identifiqué esa opción. " + _texto_menu_registro()
 
     intencion = detectar_intencion(texto_usuario)
-    tickers = extraer_tickers(texto_usuario, ctx['UNIVERSO_TICKERS_VALIDOS'], ctx['validar_ticker'])
+    tickers = extraer_tickers(texto_usuario, ctx['UNIVERSO_TICKERS_VALIDOS'], ctx['validar_ticker'], mercados)
 
     industrias_validas = set(ctx.get('TICKER_INDUSTRY', {}).values())
     industria_detectada = _detectar_industria(texto_usuario, industrias_validas) if not tickers else None
 
+    # Fallback al último ticker: solo en mensajes de más de una palabra
+    # (si escribís una sola palabra que no reconoce, mejor decir que no la encontró).
     if (not tickers and not industria_detectada and st.session_state.get('ia_ultimo_ticker')
+            and len(texto_usuario.split()) > 1
             and intencion in ('analizar_ticker', 'simular', 'tdc', 'fscore')):
         tickers = [st.session_state['ia_ultimo_ticker']]
-    if tickers:
+    # "anotá que gasté 5000 en café" no debe fijar KC=F como último ticker
+    if tickers and intencion not in ('registrar_movimiento', 'finanzas'):
         st.session_state['ia_ultimo_ticker'] = tickers[0]
 
     if intencion == 'ayuda' and not tickers and not industria_detectada:
@@ -821,6 +920,9 @@ def responder(texto_usuario, ctx):
     if intencion == 'optimizador':
         return _responder_optimizador(tickers, ctx)
 
+    if intencion == 'mercados' and not tickers:
+        return _responder_mercados(texto_usuario, ctx)
+
     if industria_detectada and not tickers:
         return _responder_industria(industria_detectada, ctx)
 
@@ -836,8 +938,8 @@ def responder(texto_usuario, ctx):
 
     if not tickers:
         return ("No detecté ningún ticker en tu mensaje. Probá algo como *'analizame NVDA'*, "
-                "*'compará YPF y GGAL'*, *'semiconductores'*, *'F-Score de KO'*, "
-                "*'armame una cartera con semiconductores y bancos'*, "
+                "*'compará YPF y GGAL'*, *'semiconductores'*, *'analizame el oro'*, *'cómo están los granos'*, "
+                "*'F-Score de KO'*, *'armame una cartera con semiconductores y bancos'*, "
                 "*'anotá que gasté 5000 en comida'*, o *'qué significa el Sharpe'*. "
                 "Escribí *ayuda* para ver todo lo que puedo hacer.")
     return _responder_analizar(tickers[0], ctx)
@@ -847,6 +949,7 @@ def _respuesta_ayuda():
     return """¡Hola! 👋 Soy el asistente de Capital+. Puedo ayudarte con:
 
 - **📊 Análisis COMPLETO de un activo** — *"analizame NVDA"*, *"cómo está el Bitcoin"*: junto corto plazo, largo plazo, Top-Down, fundamental, F-Score, régimen HMM y perfil de la empresa, y te dejo un resumen con un score compuesto
+- **🛢️ Commodities y cripto** — *"cómo están los granos"*, *"qué metales están baratos"*, *"analizame el oro"*, *"armame una cartera con oro, cripto y semiconductores"*
 - **⚖️ Comparaciones** — *"comparar YPF vs GGAL"*
 - **🎯 Oportunidades** — *"qué sectores están baratos"*, *"dame ideas en tecnología"*
 - **📐 Top-Down Cuantitativo** — *"score de mediano plazo de AAPL"*
@@ -1183,21 +1286,26 @@ def _generar_conclusion(nombre, precio, compuesto, resumen_f, r_largo, r_corto, 
 
 def _responder_analizar(tk, ctx):
     """Wrapper con caché de sesión de 10 minutos: pedir el mismo ticker
-    otra vez es instantáneo."""
+    otra vez es instantáneo. Si el ticker falla, no se arrastra como
+    'último ticker' al siguiente mensaje."""
     cache = st.session_state.setdefault('ia_cache_analisis', {})
     hit = cache.get(tk)
     if hit and time.time() - hit[0] < 600:
         return hit[1]
     texto = _responder_analizar_sin_cache(tk, ctx)
-    if 'No pude encontrar datos suficientes' not in texto:
+    if 'No pude encontrar datos suficientes' in texto:
+        if st.session_state.get('ia_ultimo_ticker') == tk:
+            st.session_state['ia_ultimo_ticker'] = None
+    else:
         cache[tk] = (time.time(), texto)
     return texto
 
 
 def _responder_analizar_sin_cache(tk, ctx):
     fmt = ctx.get('fmt_precio') or (lambda p: f'{p:,.2f}')
-    sin_fund = ctx['_es_activo_sin_fundamentals'](tk)
-    industria = ctx['TICKER_INDUSTRY'].get(tk, 'Sin Clasificar')
+    sin_fund = _es_sin_fundamentals(tk, ctx)
+    info_m = _info_mercado(tk, ctx)
+    industria = ctx['TICKER_INDUSTRY'].get(tk) or (info_m[1] if info_m else 'Sin Clasificar')
 
     señales = []          # (nombre, score 0-100, peso)
     pros, contras = [], []
@@ -1296,7 +1404,7 @@ def _responder_analizar_sin_cache(tk, ctx):
 
     # ══ Armado de la respuesta ═══════════════════════════════
     L = []
-    nombre = (perfil or {}).get('nombre') or tk
+    nombre = (perfil or {}).get('nombre') or (info_m[0] if info_m else tk)
     L.append(f"## 📊 {nombre} ({tk}) — {fmt(precio) if precio else ''}")
     L.append(f"_{industria}_" + (f" · {perfil['sector']}" if perfil and perfil.get('sector') else ''))
 
@@ -1375,7 +1483,7 @@ def _responder_analizar_sin_cache(tk, ctx):
     elif not sin_fund:
         L.append("\n**📊 Fundamental:** sin datos disponibles en Yahoo Finance para este activo.")
     else:
-        L.append("\n_(Cripto/forex/commodity: no tiene balance, por eso no hay Fundamental ni F-Score.)_")
+        L.append("\n_(Futuro, cripto, forex, índice o ETF: no tiene balance, por eso no hay Fundamental ni F-Score.)_")
 
     if fscore is not None:
         L.append(f"\n**🧮 F-Score (Piotroski):** {fscore:.1f}/9")
@@ -1436,14 +1544,72 @@ def _responder_industria(industria_nombre, ctx):
     return "\n".join(lineas)
 
 
+# ── Mercados reales (commodities, metales, agro, blandos, cripto) ─────
+
+_GRUPOS_MERCADO = [  # (etiqueta, grupos de MERCADOS_REALES, regex sobre texto normalizado)
+    ('Cripto', ('Cripto', 'Cripto ETF'), r'cripto|crypto'),
+    ('Metales', ('Met. Prec.', 'Met. Ind.', 'Minería'), r'metales|mineras|mineria'),
+    ('Energía', ('Energía',), r'energeticos|combustibles|petroleo|brent|wti|uranio'),
+    ('Granos', ('Agro',), r'granos|cereales|agricola'),
+    ('Blandos', ('Blandos',), r'blandos|softs?'),
+]
+
+
+def _grupo_mercado(texto):
+    t = _norm(texto)
+    for etiqueta, grupos, pat in _GRUPOS_MERCADO:
+        if re.search(pat, t):
+            return etiqueta, grupos
+    return None
+
+
+def _responder_mercados(texto, ctx):
+    fn = ctx.get('cargar_mercados_corto')
+    mercados = ctx.get('MERCADOS_REALES') or {}
+    if not fn:
+        return "No tengo acceso a los datos de mercados desde acá. Mirá la sección 🌐 Mercados."
+    datos = fn()
+    if not datos:
+        return "No pude cargar los datos de mercados ahora mismo."
+    sel = _grupo_mercado(texto)
+    L = []
+    if sel:
+        etiqueta, grupos = sel
+        datos = {k: d for k, d in datos.items() if mercados.get(k, (None, None))[1] in grupos}
+        if not datos:
+            return f"No encontré datos de {etiqueta} en este momento."
+        ordenados = sorted(datos.items(), key=lambda x: x[1]['sa'], reverse=True)
+        L.append(f"**{etiqueta}** — mejores por Score de Acumulación:\n")
+        for n, d in ordenados[:5]:
+            L.append(f"- **{n}** ({mercados[n][0]}): Acum {d['sa']:.0f} · Antic {d['sn']:.0f} → {d.get('accion','')}")
+        if len(ordenados) > 8:
+            L.append("\n**Más extendidos (score más bajo):**")
+            for n, d in ordenados[-3:]:
+                L.append(f"- **{n}** ({mercados[n][0]}): Acum {d['sa']:.0f} → {d.get('accion','')}")
+    else:
+        L.append("**Mercados reales — los 2 mejores por grupo (Acumulación):**\n")
+        por_grupo = {}
+        for n, d in datos.items():
+            g = mercados.get(n, (None, 'Otros'))[1]
+            por_grupo.setdefault(g, []).append((n, d))
+        for g, items in por_grupo.items():
+            items.sort(key=lambda x: x[1]['sa'], reverse=True)
+            txt = " · ".join(f"{n} {d['sa']:.0f}" for n, d in items[:2])
+            L.append(f"- **{g}**: {txt}")
+        L.append("\nPedime un grupo puntual: *'cripto'*, *'metales'*, *'granos'*, *'blandos'*, *'energía'*.")
+    L.append("\n*Score alto = barato dentro de su propio rango reciente, no garantía de suba. "
+             "Decime 'analizame <nombre>' para el detalle.*")
+    return "\n".join(L)
+
+
 def _responder_oportunidades(texto, ctx):
     t = texto.lower()
     if 'sector' in t:
         datos = ctx['cargar_sectores_corto'](); etiqueta = 'sectores'
     elif re.search(r'\bpa[ií]s', t):
         datos = ctx['cargar_paises_corto'](); etiqueta = 'países'
-    elif ctx.get('cargar_mercados_corto') and re.search(r'commodit|cripto|oro|petr[oó]leo|metal', t):
-        datos = ctx['cargar_mercados_corto'](); etiqueta = 'mercados'
+    elif _grupo_mercado(t) or re.search(r'commodit|mercados|materias', t):
+        return _responder_mercados(texto, ctx)
     else:
         datos = ctx['cargar_sectores_corto'](); etiqueta = 'sectores'
 
@@ -1504,6 +1670,9 @@ def _responder_tdc(tk, ctx):
 
 
 def _responder_fscore(tk, ctx):
+    if _es_sin_fundamentals(tk, ctx):
+        return (f"**{tk}** es un futuro, cripto, índice o ETF: no tiene balance, así que no hay F-Score. "
+                f"Usá *'analizame {tk}'* para el análisis de corto/largo plazo, Top-Down y régimen HMM.")
     fn = ctx.get('calcular_fscore')
     r = None
     if fn:
@@ -1518,8 +1687,7 @@ def _responder_fscore(tk, ctx):
         r = _car_fscore_rapido(tk)
     if r is None:
         return (f"No pude calcular el F-Score de {tk} (puede no tener suficientes estados financieros "
-                f"disponibles, o ser cripto/forex/commodity sin balance sheet). También lo encontrás en "
-                f"🧰 Herramientas → F-Score (Piotroski).")
+                f"disponibles). También lo encontrás en 🧰 Herramientas → F-Score (Piotroski).")
     return f"**F-Score (Piotroski) de {tk}**: {r:.2f}/9"
 
 
@@ -1582,16 +1750,18 @@ def _responder_optimizador(tickers, ctx):
 #  (corto + largo plazo) → Optimizador de Cartera (Monte Carlo)
 #  ==============================================================
 #  Flujo conversacional (wizard, 3 pasos):
-#    1) Sectores y/o tickers de interés (texto libre)
+#    1) Sectores, tickers o grupos de mercado (texto libre)
 #    2) F-Score mínimo aceptable (0-9)
 #    3) F-Score máximo aceptable (0-9)
 #  Con eso corre TODO el pipeline y devuelve las 5 carteras candidatas.
+#  Los activos sin balance (futuros, cripto, índices, ETFs) quedan
+#  exentos del filtro de F-Score.
 #
 #  ⚠️ Requiere que ctx tenga 'ACCIONES_POR_INDUSTRIA' (dict industria ->
-#  lista de tickers).
+#  lista de tickers) y, para commodities/cripto, 'MERCADOS_REALES'.
 # ==============================================================
 
-_CAR_MAX_UNIVERSO = 25   # tope de tickers a evaluar con F-Score (evita timeouts)
+_CAR_MAX_UNIVERSO = 40   # tope de tickers a evaluar (evita timeouts)
 _CAR_TOP_N_RANKING = 10  # cuántos activos, tras filtrar por F-Score, pasan al optimizador
 
 
@@ -1704,25 +1874,49 @@ def _car_fscore_rapido(ticker):
         return None
 
 
+_COMMODITIES = ('Energía', 'Met. Prec.', 'Met. Ind.', 'Minería', 'Agro', 'Blandos')
+_GRUPOS_ALIAS_CARTERA = {
+    'commodities': _COMMODITIES, 'commodity': _COMMODITIES, 'materias primas': _COMMODITIES,
+    'energia': ('Energía',), 'energeticos': ('Energía',),
+    'metales': ('Met. Prec.', 'Met. Ind.', 'Minería'),
+    'metales preciosos': ('Met. Prec.',), 'metales industriales': ('Met. Ind.',),
+    'mineria': ('Minería',), 'agro': ('Agro',), 'granos': ('Agro',),
+    'blandos': ('Blandos',), 'softs': ('Blandos',),
+    'cripto': ('Cripto',), 'criptos': ('Cripto',), 'criptomonedas': ('Cripto',),
+    'crypto': ('Cripto',), 'cripto etf': ('Cripto ETF',),
+}
+
+
 def _car_construir_universo(texto, ctx):
-    """Convierte texto libre ('Semiconductores, Bancos y NVDA') en una lista
-    de tickers, combinando industrias conocidas (ctx['ACCIONES_POR_INDUSTRIA'])
-    y tickers sueltos validados."""
+    """Convierte texto libre ('Semiconductores, oro, cripto y NVDA') en una
+    lista de tickers, combinando: nombres de MERCADOS_REALES, grupos
+    (cripto, metales, granos...), industrias de acciones, alias y tickers
+    sueltos validados."""
     industrias = ctx.get('ACCIONES_POR_INDUSTRIA', {})
-    industrias_lower = {k.lower(): k for k in industrias.keys()}
+    industrias_lower = {k.lower(): k for k in industrias}
+    mercados = ctx.get('MERCADOS_REALES') or {}
+    por_nombre = {_norm(re.sub(r'\(.*?\)', '', n)).strip(): v[0] for n, v in mercados.items()}
     tickers = []
-    partes = re.split(r'[,;]|\by\b|\be\b', texto, flags=re.IGNORECASE)
-    for parte in partes:
+    for parte in re.split(r'[,;]|\by\b|\be\b', texto, flags=re.IGNORECASE):
         p = parte.strip(' .')
         if not p:
             continue
-        pl = p.lower()
-        match_ind = next(
-            (real for low, real in industrias_lower.items() if low == pl or low in pl or pl in low),
-            None,
-        )
+        pn, pl = _norm(p), p.lower()
+        if pn in por_nombre:
+            tickers.append(por_nombre[pn])
+            continue
+        if pn in _GRUPOS_ALIAS_CARTERA:
+            gs = _GRUPOS_ALIAS_CARTERA[pn]
+            tickers.extend(v[0] for v in mercados.values() if v[1] in gs)
+            continue
+        match_ind = next((real for low, real in industrias_lower.items()
+                          if low == pl or (len(pl) >= 3 and (low in pl or pl in low))), None)
         if match_ind:
             tickers.extend(industrias[match_ind])
+            continue
+        al = _detectar_alias(p, mercados)
+        if al:
+            tickers.extend(al)
             continue
         tk_val = ctx['validar_ticker'](p)
         if tk_val:
@@ -1810,10 +2004,12 @@ def _car_simular_cartera(tickers, ctx, simulaciones=4000, periodo='2y', rf=0.0):
 
 
 def _texto_pregunta_cartera_universo():
-    return ("Dale, armemos una cartera automática 🧩. Decime **sectores** (ej: *'Semiconductores, Bancos'*) "
-            "y/o **tickers puntuales** (ej: *'NVDA, AAPL, KO'*) — podés combinar ambos, separados por coma.\n\n"
+    return ("Dale, armemos una cartera automática 🧩. Decime **sectores** (ej: *'Semiconductores, Bancos'*), "
+            "**tickers puntuales** (ej: *'NVDA, AAPL, KO'*) o **grupos** como *'cripto'*, *'metales'*, "
+            "*'granos'*, *'commodities'*, *'oro'* — podés combinar todo, separado por coma.\n\n"
             "_(Voy a correr F-Score → Top-Down Cuantitativo corto/largo plazo → Optimizador Monte Carlo, "
-            "así que puede tardar un rato con universos grandes — hasta 25 tickers)_")
+            "así que puede tardar un rato con universos grandes — hasta 40 tickers. Futuros, cripto y ETFs "
+            "no tienen balance, así que quedan exentos del filtro de F-Score)_")
 
 
 def _texto_pregunta_cartera_fscore_min():
@@ -1869,29 +2065,35 @@ def _responder_armar_cartera(datos, ctx):
 
     tickers_universo = _car_construir_universo(universo_texto, ctx)
     if not tickers_universo:
-        return ("No pude identificar sectores ni tickers válidos en lo que escribiste. Probá con nombres de "
-                "industria tal cual aparecen en la app (ej: *'Semiconductores, Bancos'*) o tickers "
-                "(ej: *'NVDA, AAPL, KO'*).")
+        return ("No pude identificar sectores, grupos ni tickers válidos en lo que escribiste. Probá con nombres de "
+                "industria tal cual aparecen en la app (ej: *'Semiconductores, Bancos'*), grupos "
+                "(*'cripto'*, *'metales'*, *'granos'*) o tickers (ej: *'NVDA, AAPL, KO'*).")
 
     truncado = len(tickers_universo) > _CAR_MAX_UNIVERSO
     if truncado:
         tickers_universo = tickers_universo[:_CAR_MAX_UNIVERSO]
 
-    # ── 1) F-Score (en paralelo, con caché de 6 h) ────────────────────
+    # ── 1) F-Score (en paralelo, con caché de 6 h). Los activos sin balance
+    #       (futuros, cripto, índices, ETFs) se eximen del filtro. ─────────
+    exentos = [tk for tk in tickers_universo if _es_sin_fundamentals(tk, ctx)]
+    a_calcular = [tk for tk in tickers_universo if tk not in exentos]
+    txt_ex = (f" (+{len(exentos)} sin balance —commodities/cripto/ETFs— exentos del F-Score)"
+              if exentos else "")
+
     fscores = {}
     with _pool_con_ctx(8) as ex:
-        futuros = {ex.submit(_car_fscore_rapido, tk): tk for tk in tickers_universo}
+        futuros = {ex.submit(_car_fscore_rapido, tk): tk for tk in a_calcular}
         for fut in as_completed(futuros):
             tk = futuros[fut]
             r = fut.result()
             if r is not None:
                 fscores[tk] = r
 
-    aprobados = [tk for tk, sc in fscores.items() if fscore_min <= sc <= fscore_max]
+    aprobados = [tk for tk, sc in fscores.items() if fscore_min <= sc <= fscore_max] + exentos
     if len(aprobados) < 2:
         detalle = ', '.join(f'{tk} ({sc:.1f})' for tk, sc in sorted(fscores.items(), key=lambda x: -x[1])[:12])
-        sin_datos = ('ninguno disponible (puede que sean cripto/forex/commodities '
-                     'sin estados financieros, o poco líquidos en Yahoo Finance)')
+        sin_datos = ('ninguno disponible (puede que sean poco líquidos o sin estados financieros '
+                     'en Yahoo Finance)')
         return (f"Con F-Score entre **{fscore_min:.1f}** y **{fscore_max:.1f}** quedaron solo "
                 f"**{len(aprobados)}** activo(s) de los {len(tickers_universo)} analizados "
                 f"({len(fscores)} con F-Score calculable) — necesito al menos 2 para armar una cartera.\n\n"
@@ -1922,7 +2124,7 @@ def _responder_armar_cartera(datos, ctx):
             return None
         valores_validos = [v for v in (sa, global_score) if v is not None]
         combinado = float(np.mean(valores_validos)) if valores_validos else 0.0
-        return dict(tk=tk, fscore=fscores[tk], sa=sa, global_score=global_score, combinado=combinado)
+        return dict(tk=tk, fscore=fscores.get(tk), sa=sa, global_score=global_score, combinado=combinado)
 
     ranking = []
     with _pool_con_ctx(8) as ex:
@@ -1949,7 +2151,7 @@ def _responder_armar_cartera(datos, ctx):
     aviso_trunc = f" _(se truncó a los primeros {_CAR_MAX_UNIVERSO} para no demorar demasiado)_" if truncado else ""
     partes.append(
         f"**Pipeline ejecutado** 🧩 sobre {len(tickers_universo)} activos{aviso_trunc} → "
-        f"**{len(aprobados)}** pasaron el filtro F-Score ({fscore_min:.1f}–{fscore_max:.1f}) → "
+        f"**{len(aprobados)}** pasaron el filtro F-Score ({fscore_min:.1f}–{fscore_max:.1f}){txt_ex} → "
         f"top **{len(tickers_finales)}** por score cuantitativo → cartera optimizada con **{len(tickers_ok)}** activos "
         f"(los que tenían historial de precios en común)."
     )
@@ -1958,8 +2160,9 @@ def _responder_armar_cartera(datos, ctx):
     for r in ranking[:_CAR_TOP_N_RANKING]:
         sa_txt = f"{r['sa']:.0f}" if r['sa'] is not None else 'N/D'
         gl_txt = f"{r['global_score']:.0f}" if r['global_score'] is not None else 'N/D'
+        fs_txt = f"{r['fscore']:.1f}" if r['fscore'] is not None else 'n/a (sin balance)'
         marca = " ✅ (en cartera final)" if r['tk'] in tickers_ok else ""
-        partes.append(f"- **{r['tk']}**: F-Score {r['fscore']:.1f} · Corto {sa_txt}/100 · Largo {gl_txt}/100{marca}")
+        partes.append(f"- **{r['tk']}**: F-Score {fs_txt} · Corto {sa_txt}/100 · Largo {gl_txt}/100{marca}")
 
     partes.append("\n**Las 5 carteras candidatas (Monte Carlo, 2 años de historial):**")
     for nombre, cart in carteras.items():
@@ -2101,6 +2304,7 @@ _MODULOS_IA = [
     ('Régimen HMM', ['calcular_regimen_hmm']),
     ('Perfil de empresa', ['obtener_perfil_empresa']),
     ('Sectores / Países / Mercados', ['cargar_sectores_corto', 'cargar_paises_corto']),
+    ('Mercados reales', ['MERCADOS_REALES', 'cargar_mercados_corto']),
     ('Finanzas Personales', ['fd', 'supabase']),
     ('Glosario', ['GLOSARIO']),
     ('F-Score', []),
@@ -2207,6 +2411,7 @@ def modulo_ia_asistente(ctx, compacto=False):
         st.session_state['ia_cartera_wizard'] = None
         st.session_state['ia_registro_menu_pendiente'] = False
         st.session_state['ia_esperando_ticker'] = False
+        st.session_state['ia_ultimo_ticker'] = None
         st.session_state['ia_cache_analisis'] = {}
         st.rerun(scope="fragment")
 
@@ -2214,11 +2419,21 @@ def modulo_ia_asistente(ctx, compacto=False):
 #  SNIPPET DE INTEGRACIÓN EN app.py (referencia, no se ejecuta)
 # ==============================================================
 #
-# Al diccionario CTX_IA de app.py agregarle estas claves:
+#   UNIVERSO_TICKERS_VALIDOS = (
+#       set(ALL_TICKERS)
+#       | {v[0] for v in MERCADOS_REALES.values()}
+#       | {v[0] for v in ETFS.values()}
+#       | {v[0] for v in SECTORES_TOTAL.values()}
+#       | {v[0] for v in PAISES.values()}
+#   )
 #
 #   CTX_IA = dict(
 #       ...,
 #       ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA,
+#       MERCADOS_REALES=MERCADOS_REALES,
+#       ETFS=ETFS,
+#       SECTORES_TOTAL=SECTORES_TOTAL,
+#       UNIVERSO_TICKERS_VALIDOS=UNIVERSO_TICKERS_VALIDOS,
 #       calcular_rsi=calcular_rsi,
 #       calcular_regimen_hmm=calcular_regimen_hmm,
 #       obtener_perfil_empresa=obtener_perfil_empresa,
