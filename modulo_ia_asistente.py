@@ -1242,7 +1242,7 @@ def _respuesta_ayuda():
 - **🛢️ Commodities y cripto** — *"cómo están los granos"*, *"qué metales están baratos"*, *"analizame el oro"*, *"armame una cartera con oro, cripto y semiconductores"*
 - **💱 Forex, ETFs e índices** — *"analizame EUR/USD"*, *"cómo está el nasdaq"*, *"analizame SPY"*, *"qué pares de forex hay"*
 - **⚖️ Comparaciones** — *"comparar YPF vs GGAL"*
-- **🎯 Oportunidades** — *"qué sectores están baratos"*, *"dame ideas en tecnología"*
+- **🎯 Oportunidades** — *"qué sectores están baratos"* (sectores y subsectores, 5 para comprar y 5 para vender), *"analizar ETFs"* (los más caros y los más baratos), *"qué países están baratos"*
 - **🗓️ Perfil de un país (calendario económico)** — *"Estados Unidos"*, *"cómo está Japón"*: te muestro los datos más recientes con previsto, anterior y real, su lectura y el impacto en cada activo
 - **📐 Top-Down Cuantitativo** — *"score de mediano plazo de AAPL"*
 - **🧮 F-Score (Piotroski)** — *"F-Score de KO"*
