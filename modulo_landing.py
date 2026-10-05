@@ -4,9 +4,9 @@
 #  landing solo se edita este archivo, sin tocar el principal.
 #
 #  Uso desde el archivo principal:
-#      from modulo_landing import pantalla_landing
+#      from modulo_landing import pantalla_landing, buscar_uid_por_email
 #      ...
-#      pantalla_landing(auth_client, cookies)
+#      pantalla_landing(auth_client, cookies, supabase)
 #
 #  NOVEDAD: el usuario elige el servicio que quiere probar
 #  (Mercados / PyMEs). La elección:
@@ -16,9 +16,16 @@
 #    - se vuelve a leer al iniciar sesión
 #  El archivo principal usa ese valor para decidir a qué módulo
 #  mandarlo y de qué módulo darle la prueba gratis.
+#
+#  RECUPERAR CONTRASEÑA (manual, sin mails):
+#    1) El usuario pide el reseteo con su email  -> tabla solicitudes_reset (pendiente)
+#    2) El admin lo habilita desde el panel      -> se genera un código de 6 dígitos
+#    3) El usuario ingresa email + código + contraseña nueva
 # ==============================================================
 
 import streamlit as st
+import secrets
+from datetime import datetime, timezone
 
 
 # ──────────────────────────────────────────────────────────────
@@ -100,10 +107,101 @@ def _render_selector_servicio():
     return actual
 
 
+# ──────────────────────────────────────────────────────────────
+#  RECUPERAR CONTRASEÑA — flujo manual con aprobación del admin
+# ──────────────────────────────────────────────────────────────
+def buscar_uid_por_email(data_client, email):
+    """Devuelve el id del usuario de Auth con ese email, o None."""
+    email = (email or "").strip().lower()
+    page = 1
+    while True:
+        usuarios = data_client.auth.admin.list_users(page=page, per_page=200)
+        if not usuarios:
+            return None
+        for u in usuarios:
+            if (u.email or "").lower() == email:
+                return u.id
+        page += 1
+
+
+def _render_recuperar_contrasena(data_client):
+    """Recuperación manual: el usuario pide, el admin habilita y le pasa un código."""
+    if data_client is None:
+        st.caption("Para recuperar tu contraseña escribinos a **capitalmas88@gmail.com**.")
+        return
+
+    paso = st.radio("¿Qué necesitás?", ["Pedir reseteo", "Ya tengo mi código"],
+                    horizontal=True, key="rec_paso", label_visibility="collapsed")
+
+    if paso == "Pedir reseteo":
+        email_p = st.text_input("Tu email", key="rec_email_pedir")
+        if st.button("Solicitar reseteo", key="rec_btn_pedir", use_container_width=True):
+            email_p = email_p.strip().lower()
+            if not email_p:
+                st.error("Escribí tu email.")
+            else:
+                try:
+                    ya = (data_client.table("solicitudes_reset").select("id")
+                          .eq("email", email_p).eq("estado", "pendiente").limit(1).execute())
+                    if not ya.data:
+                        data_client.table("solicitudes_reset").insert({"email": email_p}).execute()
+                    st.success("Solicitud enviada. Te vamos a contactar para verificar tu identidad "
+                               "y pasarte un código. Con ese código volvé acá y elegí \"Ya tengo mi código\".")
+                except Exception:
+                    st.error("No pudimos registrar la solicitud. Escribinos a capitalmas88@gmail.com.")
+    else:
+        email_c = st.text_input("Tu email", key="rec_email_cod")
+        codigo = st.text_input("Código de 6 dígitos", key="rec_codigo", max_chars=6)
+        nueva = st.text_input("Contraseña nueva", type="password", key="rec_nueva")
+        nueva2 = st.text_input("Confirmar contraseña", type="password", key="rec_nueva2")
+        if st.button("Cambiar contraseña", key="rec_btn_cambiar", use_container_width=True, type="primary"):
+            email_c = email_c.strip().lower()
+            codigo = codigo.strip()
+            if not email_c or not codigo:
+                st.error("Completá email y código.")
+            elif len(nueva) < 6:
+                st.error("La contraseña debe tener al menos 6 caracteres.")
+            elif nueva != nueva2:
+                st.error("Las contraseñas no coinciden.")
+            else:
+                msg_generico = "Email o código incorrecto, o la solicitud venció. Pedí una nueva si hace falta."
+                try:
+                    res = (data_client.table("solicitudes_reset").select("*")
+                           .eq("email", email_c).eq("estado", "habilitada")
+                           .order("id", desc=True).limit(1).execute())
+                    sol = res.data[0] if res.data else None
+
+                    vencida = True
+                    if sol and sol.get("vence_en"):
+                        vence = datetime.fromisoformat(sol["vence_en"].replace("Z", "+00:00"))
+                        vencida = datetime.now(timezone.utc) > vence
+
+                    if sol is None or vencida:
+                        st.error(msg_generico)
+                    elif (sol.get("intentos") or 0) >= 5:
+                        st.error("Demasiados intentos. Pedí un reseteo nuevo.")
+                    elif not secrets.compare_digest(str(sol.get("codigo") or ""), codigo):
+                        (data_client.table("solicitudes_reset")
+                         .update({"intentos": (sol.get("intentos") or 0) + 1})
+                         .eq("id", sol["id"]).execute())
+                        st.error(msg_generico)
+                    else:
+                        uid = buscar_uid_por_email(data_client, email_c)
+                        if uid is None:
+                            st.error(msg_generico)
+                        else:
+                            data_client.auth.admin.update_user_by_id(uid, {"password": nueva})
+                            (data_client.table("solicitudes_reset")
+                             .update({"estado": "usada"}).eq("id", sol["id"]).execute())
+                            st.success("¡Listo! Contraseña actualizada. Ya podés iniciar sesión.")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+
 def pantalla_landing(auth_client, cookies, data_client=None):
     """data_client: cliente de Supabase con service_role (el mismo `supabase` del
-    principal). Si se pasa, al registrarse se guarda el servicio elegido en
-    perfiles.servicio_elegido, además de en el metadata de Auth."""
+    principal). Se usa para: guardar perfiles.servicio_elegido al registrarse y
+    para el flujo de recuperación de contraseña (tabla solicitudes_reset)."""
     st.markdown("""
     <style>
     .landing-hero-wrap { max-width:1100px; margin:40px auto 0 auto; padding:0 20px; }
@@ -211,8 +309,8 @@ def pantalla_landing(auth_client, cookies, data_client=None):
                         st.rerun()
                     except Exception:
                         st.error("Email o contraseña incorrectos.")
-            st.caption("¿Olvidaste tu contraseña? Escribinos a **capitalmas88@gmail.com** desde el email "
-                       "con el que te registraste y te la restablecemos.")
+            with st.expander("¿Olvidaste tu contraseña?"):
+                _render_recuperar_contrasena(data_client)
 
         with tab_registro:
             st.markdown(
