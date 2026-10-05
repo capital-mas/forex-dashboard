@@ -494,23 +494,76 @@ def _seccion_mercados():
     st.markdown('<div class="landing-section-sub">Dos niveles de acceso, pagando en criptomonedas</div>', unsafe_allow_html=True)
 
     st.markdown("""
-    <div class="pricing-grid" style="grid-template-columns:repeat(2,1fr);max-width:640px">
-      <div class="pricing-card">
-        <div class="pricing-name">Básico</div>
-        <div class="pricing-price">U$S14<br><small>/ mes</small></div>
-        <div class="pricing-permes">Anual U$S120</div>
-        <div class="pricing-sub">Acceso a los módulos esenciales</div>
-        <div class="pricing-trial">🎁 7 días gratis</div>
-        <div class="pricing-cancel">Pago en cripto</div>
-      </div>
-      <div class="pricing-card featured">
-        <div class="pricing-badge">Recomendado</div>
-        <div class="pricing-name">Pro</div>
-        <div class="pricing-price">U$S20<br><small>/ mes</small></div>
-        <div class="pricing-permes">Anual U$S160</div>
-        <div class="pricing-sub">Acceso completo: Optimizador, Opciones, Señales y más</div>
-        <div class="pricing-trial">🎁 7 días gratis</div>
-        <div class="pricing-cancel">Pago en cripto</div>
-      </div>
+    # ── Contenido de cada plan ──
+    BASICO_ITEMS = [
+        'Cotizaciones del día: índices, ETFs, sectores, forex y cripto',
+        'Corto Plazo: Forex, Países, Sectores, Sub-sectores, Mercados y Acciones',
+        'Largo Plazo: Ranking, Reversión, Industria y Ticker',
+        'Análisis Fundamental y Top-Down Cuantitativo',
+        'Buscador universal de activos',
+        'Comparador de activos',
+        'Promediador + Stop Loss',
+        'Valuación de Opciones (Black-Scholes / Binomial)',
+        'Señales de Trading (1 señal destacada)',
+        'Finanzas Personales',
+        'Calendario Económico y Noticias',
+    ]
+    PRO_EXTRA_ITEMS = [
+        'Optimizador de Cartera (Monte Carlo, VaR, simulador de crisis)',
+        'Rotación y Pares: análisis técnico, mean reversion, cointegración y VIX',
+        'Asistente IA: análisis, armado de cartera y registro de movimientos',
+        'F-Score (Piotroski)',
+        'Salud del Mercado (amplitud, avance/declive)',
+        'Renta Fija y Macro',
+        'Análisis COT y TFF',
+        'Simulador de Valuación (DCF y múltiplos)',
+        'GEX: exposición gamma y paredes de Calls/Puts',
+        'Lectura de Velas + Monte Carlo',
+        'Señales de Trading ilimitadas',
+    ]
+
+    def _li(items, icono='✓', color='#6CC24A'):
+        return ''.join(
+            f'<li><span style="color:{color};font-weight:800;margin-right:8px">{icono}</span>{t}</li>'
+            for t in items
+        )
+
+    html_planes = f"""
+<style>
+.plan-list {{ list-style:none; padding:0; margin:0 0 4px 0; text-align:left; }}
+.plan-list li {{ font-size:12.5px; color:#c9d1d9; line-height:1.5; padding:6px 0;
+                 border-bottom:1px solid #161b22; }}
+.plan-list li:last-child {{ border-bottom:none; }}
+.plan-sep {{ font-size:11px; font-weight:700; color:#6CC24A; text-transform:uppercase;
+             letter-spacing:.8px; margin:14px 0 4px 0; text-align:left; }}
+</style>
+<div class="pricing-grid" style="grid-template-columns:repeat(2,1fr);max-width:760px">
+  <div class="pricing-card">
+    <div class="pricing-name">Básico</div>
+    <div class="pricing-price">U$S14<br><small>/ mes</small></div>
+    <div class="pricing-permes">Anual U$S120</div>
+    <div class="pricing-sub" style="flex-grow:0">Los módulos esenciales para analizar el mercado</div>
+    <div class="pricing-trial">🎁 7 días gratis</div>
+    <div class="pricing-cancel" style="margin-bottom:14px">Pago en cripto</div>
+    <div class="plan-sep">Incluye</div>
+    <ul class="plan-list">{_li(BASICO_ITEMS)}</ul>
+  </div>
+  <div class="pricing-card featured">
+    <div class="pricing-badge">Recomendado</div>
+    <div class="pricing-name">Pro</div>
+    <div class="pricing-price">U$S20<br><small>/ mes</small></div>
+    <div class="pricing-permes">Anual U$S160</div>
+    <div class="pricing-sub" style="flex-grow:0">Acceso completo a todas las herramientas</div>
+    <div class="pricing-trial">🎁 7 días gratis</div>
+    <div class="pricing-cancel" style="margin-bottom:14px">Pago en cripto</div>
+    <div class="plan-sep">Todo lo del plan Básico</div>
+    <div style="font-size:12px;color:#8b949e;text-align:left;margin-bottom:4px">
+      Más las siguientes herramientas exclusivas:
     </div>
-    """, unsafe_allow_html=True)
+    <ul class="plan-list">{_li(PRO_EXTRA_ITEMS, icono='★', color='#e3b341')}</ul>
+  </div>
+</div>
+"""
+    # Sin líneas en blanco ni indentación de 4+ espacios dentro del HTML,
+    # para que el markdown de Streamlit no lo interprete como bloque de código.
+    st.markdown(html_planes, unsafe_allow_html=True)
