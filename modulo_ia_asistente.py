@@ -1482,6 +1482,159 @@ def _s10(v):
     """Score 0-10 -> entero 'N/10'."""
     return 'N/D' if v is None else f'{round(float(v))}/10'
 
+_REC_ES = {
+    'strong_buy': '🟢 Compra fuerte', 'buy': '🟢 Compra', 'hold': '🟡 Mantener',
+    'underperform': '🟠 Rendimiento inferior', 'sell': '🔴 Venta',
+    'strong_sell': '🔴 Venta fuerte', 'none': 'Sin cobertura',
+}
+
+
+def _rec_es(k):
+    if not k:
+        return 'N/D'
+    return _REC_ES.get(str(k).lower().replace(' ', '_'), str(k))
+
+
+def _nivel(v, cortes, etiquetas):
+    """etiquetas tiene un elemento más que cortes. Devuelve (emoji, texto) o None."""
+    if v is None:
+        return None
+    for c, e in zip(cortes, etiquetas):
+        if v < c:
+            return e
+    return etiquetas[-1]
+
+
+def _lm(nombre, valor_txt, nivel, explicacion):
+    nv = f" {nivel[0]} **{nivel[1]}**" if nivel else ''
+    return f"- **{nombre}: {valor_txt}**{nv} — {explicacion}"
+
+
+def _div_pct(v):
+    """Rendimiento por dividendo en %. Las versiones nuevas de yfinance devuelven
+    el valor ya en porcentaje (0.4 = 0.4%) y las viejas como fracción (0.004).
+    Una fracción mayor a 0.2 (20%) es poco creíble, así que se trata como porcentaje."""
+    if v is None:
+        return None
+    v = float(v)
+    return v if v > 0.2 else v * 100
+
+
+def _bloque_fundamental(res_f, resumen_f, fmt):
+    g = res_f.get
+    L = []
+
+    # ── Encabezado: señal + analistas ──
+    upside = None
+    if g('target_price') and g('precio'):
+        upside = (g('target_price') / g('precio') - 1) * 100
+    cab = (f"\n**📊 Fundamental:** señal **{res_f['senal_final']}** "
+           f"({res_f['n_ok']} positivas · {res_f['n_alt']} alertas) · "
+           f"analistas: {_rec_es(g('recommendation'))}")
+    if upside is not None:
+        cab += f" · precio objetivo {fmt(g('target_price'))} ({upside:+.1f}% vs. precio actual)"
+    L.append(cab)
+    L.append("_La señal cuenta cuántos criterios fundamentales se cumplen (positivas vs. alertas). "
+             "El veredicto de abajo pondera los scores 0-10 y puede diferir._")
+
+    # ── Valuación ──
+    L.append("\n**💰 Valuación — ¿está cara o barata?**")
+    per, pb, eve, pfcf, peg = g('per'), g('pb'), g('ev_ebitda'), g('p_fcf'), g('peg')
+    if per:
+        L.append(_lm('PER', f"{per:.1f}x",
+                     _nivel(per, [10, 15, 25, 40], [('🟢', 'Muy barato'), ('🟢', 'Barato'), ('🟡', 'Normal'),
+                                                    ('🟠', 'Exigente'), ('🔴', 'Muy exigente')]),
+                     f"pagás unos {per:.0f} años de ganancias actuales por cada acción. Más bajo = más barata."))
+    if pb:
+        L.append(_lm('P/B', f"{pb:.1f}x",
+                     _nivel(pb, [1, 2.5, 6], [('🟢', 'Bajo'), ('🟡', 'Razonable'), ('🟠', 'Elevado'), ('🔴', 'Muy elevado')]),
+                     "precio vs. patrimonio contable. Ojo: empresas que recompran muchas acciones "
+                     "muestran un P/B alto sin que sea necesariamente malo."))
+    if eve:
+        L.append(_lm('EV/EBITDA', f"{eve:.1f}x",
+                     _nivel(eve, [10, 15, 20], [('🟢', 'Atractivo'), ('🟡', 'Normal'), ('🟠', 'Elevado'), ('🔴', 'Muy elevado')]),
+                     "valor de la empresa completa (incluida la deuda) vs. su ganancia operativa. "
+                     "Sirve para comparar sin que influya cómo se financia."))
+    if pfcf:
+        L.append(_lm('P/FCF', f"{pfcf:.1f}x",
+                     _nivel(pfcf, [15, 25, 40], [('🟢', 'Atractivo'), ('🟡', 'Normal'), ('🟠', 'Elevado'), ('🔴', 'Muy elevado')]),
+                     "precio vs. la caja libre que genera el negocio. Es como el PER pero con plata real, no contable."))
+    if peg:
+        L.append(_lm('PEG', f"{peg:.2f}",
+                     _nivel(peg, [1, 2], [('🟢', 'Barato'), ('🟡', 'Razonable'), ('🔴', 'Caro')]),
+                     "PER ajustado por crecimiento. Menor a 1 = el crecimiento esperado está barato; mayor a 2 = caro."))
+
+    # ── Rentabilidad ──
+    L.append("\n**📈 Rentabilidad — ¿qué tan bien gana plata?**")
+    roe, roic, gm, pm = g('roe'), g('roic'), g('gross_margin'), g('profit_margin')
+    if roe is not None:
+        L.append(_lm('ROE', _pf(roe),
+                     _nivel(roe * 100, [8, 15, 25], [('🔴', 'Débil'), ('🟡', 'Aceptable'), ('🟢', 'Bueno'), ('🟢', 'Excepcional')]),
+                     "ganancia sobre el patrimonio de los accionistas. Si es altísimo (más de 100%) "
+                     "suele deberse a recompras de acciones que achican el patrimonio."))
+    if roic is not None:
+        L.append(_lm('ROIC', _pf(roic),
+                     _nivel(roic * 100, [5, 10, 15], [('🔴', 'Débil'), ('🟡', 'Aceptable'), ('🟢', 'Bueno'), ('🟢', 'Excepcional')]),
+                     "retorno sobre todo el capital invertido (propio y deuda). Mide si el negocio crea valor; "
+                     "más de 15% es muy bueno."))
+    if gm is not None:
+        L.append(_lm('Margen bruto', _pf(gm),
+                     _nivel(gm * 100, [20, 40, 60], [('🔴', 'Bajo'), ('🟡', 'Moderado'), ('🟢', 'Bueno'), ('🟢', 'Excelente')]),
+                     "lo que queda de cada venta después del costo de producir. Alto = poder de fijar precios."))
+    if pm is not None:
+        L.append(_lm('Margen neto', _pf(pm),
+                     _nivel(pm * 100, [5, 10, 20], [('🔴', 'Bajo'), ('🟡', 'Moderado'), ('🟢', 'Bueno'), ('🟢', 'Excelente')]),
+                     "ganancia final por cada 100 de ventas, ya descontados todos los costos e impuestos."))
+
+    # ── Crecimiento y solvencia ──
+    L.append("\n**🏗️ Crecimiento y solvencia — ¿crece y aguanta?**")
+    rg, de, nde, beta = g('revenue_growth'), g('debt_equity'), g('net_debt_ebitda'), g('beta')
+    if rg is not None:
+        L.append(_lm('Crecimiento de ingresos', _pf(rg),
+                     _nivel(rg * 100, [0, 10, 20], [('🔴', 'Contracción'), ('🟡', 'Moderado'), ('🟢', 'Bueno'), ('🟢', 'Excelente')]),
+                     "cuánto crecieron las ventas vs. el año anterior."))
+    if de is not None:
+        L.append(_lm('Deuda/Patrimonio (D/E)', f"{de:.2f}x",
+                     _nivel(de, [0.5, 1, 2], [('🟢', 'Conservador'), ('🟡', 'Moderado'), ('🟠', 'Elevado'), ('🔴', 'Muy elevado')]),
+                     "cuánta deuda usa por cada peso de capital propio. Más alto = más riesgo financiero."))
+    if nde is not None:
+        txt = ("tiene más caja que deuda." if nde < 0
+               else f"con su ganancia operativa tardaría ~{nde:.1f} años en pagar la deuda neta.")
+        L.append(_lm('Deuda neta/EBITDA', f"{nde:.2f}x",
+                     _nivel(nde, [1, 3], [('🟢', 'Bajo'), ('🟡', 'Moderado'), ('🔴', 'Alto')]), txt))
+    if beta is not None:
+        L.append(_lm('Beta', f"{beta:.2f}",
+                     _nivel(beta, [0.8, 1.2, 1.5], [('🟢', 'Defensiva'), ('🟡', 'Como el mercado'),
+                                                    ('🟠', 'Más volátil'), ('🔴', 'Muy volátil')]),
+                     "sensibilidad al mercado: con beta 1.2, si el mercado sube o baja 10% la acción tiende a moverse ~12%."))
+
+    # ── Dividendo ──
+    dy = _div_pct(g('div_yield'))
+    if dy is not None:
+        if dy == 0:
+            L.append("- **Dividendo:** no paga dividendos (reinvierte las ganancias).")
+        else:
+            L.append(_lm('Rendimiento por dividendo', f"{dy:.2f}%",
+                         _nivel(dy, [2, 4, 6], [('🟡', 'Bajo'), ('🟢', 'Moderado'), ('🟢', 'Atractivo'), ('🟠', 'Muy alto')]),
+                         "dividendo anual sobre el precio. Si supera el 6%, verificá que sea sostenible."))
+
+    # ── Scores 0-10 ──
+    if resumen_f:
+        L.append("\n**🎯 Scores (0 a 10):**")
+        L.append(f"- **Calidad {_s10(resumen_f.get('calidad'))}** — rentabilidad, márgenes, caja y deuda del negocio. Más alto = mejor negocio.")
+        L.append(f"- **Valoración {_s10(resumen_f.get('valoracion'))}** — qué tan barata está. 10 = muy barata, 0 = muy cara.")
+        L.append(f"- **Crecimiento {_s10(resumen_f.get('crecimiento'))}** — ritmo de ventas y ganancias.")
+        L.append(f"- **Riesgo {_s10(resumen_f.get('riesgo'))}** — volatilidad, deuda y liquidez. Acá más alto = MÁS riesgoso.")
+        L.append(f"- **Veredicto: {resumen_f.get('v_emoji', '')} {resumen_f.get('veredicto', '')}**")
+        cal, val = resumen_f.get('calidad'), resumen_f.get('valoracion')
+        if cal is not None and val is not None:
+            if cal >= 7 and val <= 3:
+                L.append("_Lectura: es un gran negocio, pero el precio ya lo refleja. El problema no es la empresa sino lo que pagás por ella._")
+            elif cal >= 7 and val >= 7:
+                L.append("_Lectura: buen negocio a un precio atractivo, la combinación más buscada._")
+            elif cal < 5 and val >= 7:
+                L.append("_Lectura: está barata, pero por algo: la calidad del negocio es floja (posible trampa de valor)._")
+    return L
 
 def _m(p):
     """Precio con $ escapado (Streamlit interpreta $...$ como fórmula)."""
