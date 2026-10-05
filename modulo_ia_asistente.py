@@ -1,6 +1,6 @@
 # modulo_ia_asistente.py
 # ==============================================================
-#  ASISTENTE IA — v6 (mercados reales + índices/ETFs)
+#  ASISTENTE IA — v7 (países completos + mercados reales + índices/ETFs)
 #  Cubre: análisis COMPLETO de ticker (todos los módulos + resumen
 #  compuesto + conclusión), comparador, oportunidades (sectores/
 #  países/mercados/subsectores), simulador, glosario, finanzas
@@ -9,6 +9,15 @@
 #  Mercado, Renta Fija/Macro, Opciones, Rotación/Pares, Optimizador
 #  de Cartera, y el pipeline de armado de cartera end-to-end
 #  (F-Score + TDC corto/largo + Optimizador Monte Carlo).
+#
+#  Novedades v7:
+#    - Países que además son industria (Argentina, Brasil, China,
+#      India): al nombrarlos devuelve el panorama COMPLETO: análisis
+#      del ETF, índice local, divisa, TODAS las acciones del país y
+#      el calendario económico. Se configura en _PAIS_COMPLETO.
+#    - _responder_industria acepta top=None para listar todas.
+#    - _detectar_industria ahora respeta límites de palabra
+#      ("india" ya no matchea dentro de otra palabra).
 #
 #  Novedades v6:
 #    - Soporta TODO MERCADOS_REALES (energía, metales, mineras, agro,
@@ -321,9 +330,11 @@ def _detectar_alias(texto, ctx=None):
 
 
 def _detectar_industria(texto, industrias_validas):
+    """Industria nombrada en el mensaje (más largas primero, con límites de
+    palabra para que 'india' no matchee dentro de otra palabra)."""
     t = texto.lower()
     for ind in sorted(industrias_validas, key=len, reverse=True):
-        if ind.lower() in t:
+        if re.search(rf'(?<!\w){re.escape(ind.lower())}(?!\w)', t):
             return ind
     return None
 
@@ -814,15 +825,17 @@ def _registrar_movimiento_fd(ctx, tipo, monto, categoria, subcategoria, cuenta, 
         return True, None
     return False, r.get("mensaje", "No se pudo guardar por un motivo desconocido.")
 
+
+# ==============================================================
 #  PERFIL DE PAÍS desde el CALENDARIO ECONÓMICO
 #  Se activa cuando el mensaje nombra un país. Usa solo los eventos
 #  COMPLETOS (previsto + anterior + real, sin None) con lectura,
 #  y toma los más recientes.
 # ==============================================================
- 
+
 _CAL_MAX_EVENTOS = 15      # cuántos datos completos recientes usa
 _CAL_VENTANA_CICLO_DIAS = 180
- 
+
 _PAISES_ALIAS_CAL = {
     'eeuu': 'Estados Unidos', 'ee uu': 'Estados Unidos', 'united states': 'Estados Unidos',
     'uk': 'Reino Unido', 'gran bretana': 'Reino Unido', 'inglaterra': 'Reino Unido',
@@ -830,13 +843,13 @@ _PAISES_ALIAS_CAL = {
     'holanda': 'Países Bajos', 'corea': 'Corea del Sur', 'republica checa': 'Chequia',
     'emiratos': 'Emiratos Árabes', 'arabia': 'Arabia Saudita',
 }
- 
- 
+
+
 def _limpiar_cal(s):
     s = re.sub(r'[^a-z0-9 ]', ' ', _norm(s))
     return re.sub(r'\s+', ' ', s).strip()
- 
- 
+
+
 def _detectar_paises_calendario(texto):
     """Países del calendario nombrados en el mensaje (sin acentos, con alias)."""
     try:
@@ -855,8 +868,8 @@ def _detectar_paises_calendario(texto):
     if re.search(r'\bUSA\b', texto) and 'Estados Unidos' not in encontrados:
         encontrados.append('Estados Unidos')            # "usa" en minúscula es el verbo
     return list(dict.fromkeys(encontrados))
- 
- 
+
+
 def _fmt_cal(v, unidad):
     try:
         x = float(v)
@@ -865,8 +878,8 @@ def _fmt_cal(v, unidad):
         return 'N/D'
     u = (unidad or '').strip()
     return f'{txt}{u}' if u in ('%', 'K', 'M', 'B') else (f'{txt} {u}' if u else txt)
- 
- 
+
+
 def _perfil_calendario_pais(pais, ctx):
     supabase = ctx.get('supabase')
     if supabase is None:
@@ -878,11 +891,11 @@ def _perfil_calendario_pais(pais, ctx):
         return f"⚠️ No pude leer el calendario económico: {e}"
     if df is None or df.empty:
         return "El calendario económico todavía no tiene eventos cargados."
- 
+
     d = df[df['pais'] == pais]
     if d.empty:
         return f"Todavía no hay eventos del calendario económico cargados para **{pais}**."
- 
+
     # Solo datos completos (sin None), con lectura de bueno/malo, y los más recientes
     completos = d.dropna(subset=['previsto', 'anterior', 'real', 'fecha_dt'])
     completos = completos[~completos['es_neutral']]
@@ -890,15 +903,15 @@ def _perfil_calendario_pais(pais, ctx):
     if completos.empty:
         return (f"**{pais}** tiene eventos cargados, pero ninguno con previsto, anterior y real "
                 f"completos y con lectura todavía.")
- 
+
     rec = (completos.sort_values(['fecha_dt', 'peso'], ascending=[False, False])
                     .head(_CAL_MAX_EVENTOS))
     ultima = rec['fecha_dt'].max()
- 
+
     L = [f"### 🗓️ Calendario económico — {pais}",
          f"_Perfil armado con los {len(rec)} datos completos más recientes "
          f"(previsto, anterior y real cargados), hasta el {ultima:%d/%m/%Y}._"]
- 
+
     # ── Tabla de eventos ──
     L.append("\n| Fecha | Evento | Previsto | Anterior | Real | Lectura |\n|---|---|---|---|---|---|")
     for _, r in rec.iterrows():
@@ -906,7 +919,7 @@ def _perfil_calendario_pais(pais, ctx):
         evento = str(r['evento']).replace('|', '/')
         L.append(f"| {r['fecha_dt']:%d/%m/%Y} | {evento} | {_fmt_cal(r['previsto'], u)} | "
                  f"{_fmt_cal(r['anterior'], u)} | {_fmt_cal(r['real'], u)} | {r['impacto_mercado']} |")
- 
+
     # ── Panorama por categoría ──
     L.append("\n**🧭 Panorama por categoría (sobre estos datos):**")
     filas_cat = []
@@ -917,7 +930,7 @@ def _perfil_calendario_pais(pais, ctx):
     for cat, prom, n in sorted(filas_cat, key=lambda x: x[1], reverse=True):
         emo, txt = mc._asset_verdict(prom)
         L.append(f"- **{cat}**: {emo} {txt} ({prom:+.2f}, {n} dato{'s' if n != 1 else ''})")
- 
+
     # ── Impacto en activos ──
     L.append("\n**💹 Impacto en activos financieros:**")
     activos = mc._resumen_activos_pais(rec)
@@ -925,7 +938,7 @@ def _perfil_calendario_pais(pais, ctx):
         score, n = activos.get(campo, (None, 0))
         emo, txt = mc._asset_verdict(score)
         L.append(f"- {nombre}: {emo} {txt}" + (f" ({score:+.2f})" if score is not None else ""))
- 
+
     # ── Fase del ciclo y tasas (ventana reciente) ──
     punt = d[~d['es_neutral']].dropna(subset=['fecha_dt'])
     ventana = punt[punt['fecha_dt'] >= ultima - pd.Timedelta(days=_CAL_VENTANA_CICLO_DIAS)]
@@ -944,7 +957,7 @@ def _perfil_calendario_pais(pais, ctx):
         txt = ("sesgo a tasas más altas / sin apuro para recortar" if s >= 0.15 else
                "sesgo a tasas más bajas" if s <= -0.15 else "balance mixto, sin sesgo claro")
         L.append(f"**🏦 Tasas a futuro:** {txt} ({s:+.2f}).")
- 
+
     # ── Lectura macro de los 3 datos más recientes ──
     L.append("\n**💬 Lectura de los datos más recientes:**")
     for _, r in rec.head(3).iterrows():
@@ -952,16 +965,69 @@ def _perfil_calendario_pais(pais, ctx):
         if lect:
             L.append(f"- *{r['evento']}* ({r['fecha_dt']:%d/%m}): {lect[:220]}")
     return "\n".join(L)
- 
- 
+
+
 def _responder_perfil_pais(paises, ctx):
     return "\n\n---\n\n".join(_perfil_calendario_pais(p, ctx) for p in paises[:2])
- 
- 
+
+
 def _unir_perfil_pais(resp, paises, ctx):
     if not paises:
         return resp
     return f"{resp}\n\n---\n\n{_responder_perfil_pais(paises, ctx)}"
+
+
+# ==============================================================
+#  PAÍS COMPLETO (países que además son industria de acciones):
+#  ETF + índice local + divisa + TODAS las acciones + calendario.
+#  Para sumar otro país que también sea industria, agregalo acá
+#  con su ETF, su índice y su par de divisa en Yahoo Finance.
+# ==============================================================
+
+_PAIS_COMPLETO = {
+    'Argentina': dict(etf='ARGT', indice='^MERV', fx='USDARS=X'),
+    'Brasil':    dict(etf='EWZ',  indice='^BVSP', fx='USDBRL=X'),
+    'China':     dict(etf='FXI',  indice='^HSI',  fx='USDCNY=X'),
+    'India':     dict(etf='INDA', indice='^NSEI', fx='USDINR=X'),
+}
+
+
+def _linea_corto(nombre, tk, ctx):
+    """Una línea con los scores de corto plazo de un ticker."""
+    r = _a_safe(_calc_corto, tk, ctx)
+    if not r:
+        return f"- **{nombre}** ({tk}): sin datos suficientes."
+    fmt = ctx.get('fmt_precio') or (lambda p: f'{p:,.2f}')
+    precio = fmt(r['precio']).replace('$', '\\$')   # Streamlit interpreta $...$ como fórmula
+    return (f"- **{nombre}** ({tk}) {precio}: Acum {r['sa']:.0f} · Antic {r['sn']:.0f} · "
+            f"Sent {r['ss']:.0f} → {r['señal']} · Ret 5d {_n(r['ret5'], 2, '%')} · "
+            f"Ret 10d {_n(r['ret10'], 2, '%')}")
+
+
+def _responder_pais_completo(pais, ctx):
+    cfg = _PAIS_COMPLETO[pais]
+    L = [f"# 🌎 {pais} — panorama completo"]
+
+    # 1) ETF: análisis completo, igual que los demás países
+    L.append(f"\n## 📦 ETF del país ({cfg['etf']})")
+    L.append(_responder_analizar(cfg['etf'], ctx))
+
+    # 2) Índice local + divisa
+    L.append("\n---\n## 📈 Índice local y divisa")
+    L.append(_linea_corto(f"Índice {pais}", cfg['indice'], ctx))
+    L.append(_linea_corto(f"USD/{cfg['fx'][3:6]}", cfg['fx'], ctx))
+
+    # 3) TODAS las acciones del país
+    L.append("\n---\n## 🏭 Acciones")
+    L.append(_responder_industria(pais, ctx, top=None))
+
+    # 4) Calendario económico
+    L.append("\n---")
+    cal = _detectar_paises_calendario(pais)
+    L.append(_responder_perfil_pais(cal, ctx) if cal
+             else f"No encontré **{pais}** en el calendario económico.")
+    return "\n".join(L)
+
 
 # ==============================================================
 #  RESPUESTAS
@@ -1138,6 +1204,12 @@ def responder(texto_usuario, ctx):
     if intencion == 'mercados' and not tickers:
         return _responder_mercados(texto_usuario, ctx)
 
+    # Países que también son industria (Argentina, Brasil, China, India):
+    # panorama completo en vez del top 6 de acciones.
+    if (industria_detectada in _PAIS_COMPLETO and not tickers
+            and intencion in ('analizar_ticker', 'ayuda')):
+        return _responder_pais_completo(industria_detectada, ctx)
+
     if industria_detectada and not tickers:
         return _unir_perfil_pais(_responder_industria(industria_detectada, ctx), paises_cal, ctx)
 
@@ -1166,6 +1238,7 @@ def _respuesta_ayuda():
     return """¡Hola! 👋 Soy el asistente de Capital+. Puedo ayudarte con:
 
 - **📊 Análisis COMPLETO de un activo** — *"analizame NVDA"*, *"cómo está el Bitcoin"*: junto corto plazo, largo plazo, Top-Down, fundamental, F-Score, régimen HMM y perfil de la empresa, y te dejo un resumen con un score compuesto
+- **🌎 Panorama completo de un país** — *"Argentina"*, *"Brasil"*, *"China"*, *"India"*: análisis del ETF, índice local, divisa, todas las acciones del país y su calendario económico
 - **🛢️ Commodities y cripto** — *"cómo están los granos"*, *"qué metales están baratos"*, *"analizame el oro"*, *"armame una cartera con oro, cripto y semiconductores"*
 - **💱 Forex, ETFs e índices** — *"analizame EUR/USD"*, *"cómo está el nasdaq"*, *"analizame SPY"*, *"qué pares de forex hay"*
 - **⚖️ Comparaciones** — *"comparar YPF vs GGAL"*
@@ -1743,7 +1816,9 @@ def _responder_comparar(tickers, ctx):
     return "\n".join(lineas)
 
 
-def _responder_industria(industria_nombre, ctx):
+def _responder_industria(industria_nombre, ctx, top=6):
+    """Acciones de una industria ordenadas por Score de Acumulación.
+    top=None lista TODAS las acciones de la industria."""
     cargar_acciones = ctx.get('cargar_acciones_corto')
     if not cargar_acciones:
         return (f"Detecté que preguntás por **{industria_nombre}**, pero no tengo acceso a esos datos "
@@ -1754,9 +1829,11 @@ def _responder_industria(industria_nombre, ctx):
     if not tickers_data:
         return f"No pude obtener datos de corto plazo para la industria **{industria_nombre}** en este momento."
 
-    top = sorted(tickers_data.items(), key=lambda x: x[1]['sa'], reverse=True)[:6]
-    lineas = [f"Esto es lo que muestra **{industria_nombre}** ahora mismo (top por Score de Acumulación):\n"]
-    for tk, d in top:
+    ordenados = sorted(tickers_data.items(), key=lambda x: x[1]['sa'], reverse=True)
+    top_items = ordenados if top is None else ordenados[:top]
+    titulo = "todas las acciones" if top is None else "top"
+    lineas = [f"Esto es lo que muestra **{industria_nombre}** ahora mismo ({titulo}, por Score de Acumulación):\n"]
+    for tk, d in top_items:
         lineas.append(f"- **{tk}**: Acum {d['sa']:.0f}/100, Antic {d['sn']:.0f}/100 → {d.get('accion','')}")
     lineas.append(f"\n*Hay {len(tickers_data)} activos en total en {industria_nombre} en la app. "
                    f"Decime 'analizame <ticker>' para ver el detalle completo de alguno de ellos.*")
