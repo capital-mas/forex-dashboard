@@ -179,6 +179,8 @@ _PATRONES_INTENCION = [
     ]),
     ('optimizador', [r'\boptimiz', r'\bmonte\s+carlo\b', r'\bfrontera\s+eficiente\b', r'\brebalance',
                       r'\bmi\s+cartera\b']),
+    # Ranking de ETFs (más caros / más baratos)
+    ('etfs', [r'\betfs\b', r'\banaliz\w*\s+(los\s+)?etfs?\b']),
     # Grupos de MERCADOS_REALES (commodities, metales, granos, cripto...)
     ('mercados', [r'\bcommodit', r'\bmaterias\s+primas\b', r'\bgranos\b', r'\bcereales\b',
                   r'\bblandos\b', r'\bsofts?\b', r'\bmetales\b', r'\bcriptos?\b',
@@ -1201,6 +1203,9 @@ def responder(texto_usuario, ctx):
     if intencion == 'optimizador':
         return _responder_optimizador(tickers, ctx)
 
+    if intencion == 'etfs' and not tickers:
+        return _responder_etfs(ctx)
+        
     if intencion == 'mercados' and not tickers:
         return _responder_mercados(texto_usuario, ctx)
 
@@ -1915,23 +1920,125 @@ def _responder_mercados(texto, ctx):
     return "\n".join(L)
 
 
+# ── Ranking Comprar / Vender (sectores, subsectores, países, ETFs) ──
+
+_TOP_COMPRA_VENTA = 5
+
+
+def _filas_desde_loader(datos, catalogo=None):
+    """Convierte la salida de cargar_*_corto() a filas uniformes.
+    Esos loaders ya traen tk, rsi, ret_5d y grupo/cat/region."""
+    tk_por_nombre = {n: v[0] for n, v in (catalogo or {}).items()}
+    return [dict(
+        nombre=n,
+        tk=d.get('tk') or tk_por_nombre.get(n, ''),
+        grupo=d.get('grupo') or d.get('cat') or d.get('region') or '',
+        sa=d['sa'], sn=d['sn'], accion=d.get('accion', ''),
+        rsi=d.get('rsi'), ret5=d.get('ret_5d'),
+    ) for n, d in (datos or {}).items()]
+
+
+def _linea_item(f):
+    info = ' · '.join(x for x in (f.get('tk'), f.get('grupo')) if x)
+    info = f" ({info})" if info else ''
+    extra = ''
+    if f.get('rsi') is not None:
+        extra += f" · RSI(7) {f['rsi']:.0f}"
+    if f.get('ret5') is not None:
+        extra += f" · Ret 5d {f['ret5']:+.1f}%"
+    return (f"- **{f['nombre']}**{info}: Acum {f['sa']:.0f} · Antic {f['sn']:.0f}{extra}"
+            + (f" → {f['accion']}" if f.get('accion') else ''))
+
+
+def _bloque_compra_venta(titulo, filas, top=_TOP_COMPRA_VENTA):
+    """5 para comprar (Acumulación más alta = más barato) y
+    5 para vender (Acumulación más baja = más caro/extendido)."""
+    if len(filas) < 2:
+        return f"**{titulo}**: sin datos suficientes en este momento."
+    orden = sorted(filas, key=lambda x: x['sa'], reverse=True)
+    n = min(top, len(orden) // 2)      # evita que un item salga en ambas listas
+    L = [f"### {titulo}",
+         f"**🟢 Para comprar (los {n} más baratos):**"]
+    L += [_linea_item(f) for f in orden[:n]]
+    L.append(f"\n**🔴 Para vender / evitar (los {n} más caros):**")
+    L += [_linea_item(f) for f in orden[::-1][:n]]
+    return "\n".join(L)
+
+
+def _responder_sectores_subsectores(ctx):
+    fn_sec, fn_sub = ctx.get('cargar_sectores_corto'), ctx.get('cargar_subsectores_corto')
+    datos_s = _a_safe(fn_sec) if fn_sec else None
+    datos_ss = _a_safe(fn_sub) if fn_sub else None
+    cat = ctx.get('SECTORES_TOTAL')
+    filas_s = _filas_desde_loader(datos_s, cat)
+    filas_ss = _filas_desde_loader(datos_ss, cat)
+
+    if not filas_s and not filas_ss:
+        return "No pude cargar datos de sectores ni subsectores en este momento."
+
+    partes = []
+    if filas_s:
+        partes.append(_bloque_compra_venta("🏷️ Sectores (GICS)", filas_s))
+    if filas_ss:
+        partes.append(_bloque_compra_venta("🔬 Subsectores", filas_ss))
+    partes.append("*Acumulación alta = barato dentro de su propio rango reciente; baja = caro/extendido. "
+                  "No es garantía de suba ni de baja, ni asesoramiento financiero.*")
+    return "\n\n---\n\n".join(partes)
+
+
+def _responder_etfs(ctx):
+    fn = ctx.get('cargar_etfs_corto')
+    if not fn:
+        return "No tengo conectado el análisis de ETFs desde acá. Mirá la sección 📦 ETFs y Bonos."
+    datos = _a_safe(fn)
+    if not datos:
+        return "No pude cargar los ETFs en este momento. Probá de nuevo en un rato."
+
+    # Las tasas del Tesoro (^IRX, ^TNX...) son rendimientos, no precios de un ETF:
+    # "barato/caro" no significa lo mismo, así que quedan fuera del ranking.
+    datos = {n: d for n, d in datos.items() if d.get('cat') != 'Tasas Tesoro'}
+    filas = _filas_desde_loader(datos, ctx.get('ETFS'))
+    if len(filas) < 4:
+        return "No hay suficientes ETFs con datos para armar el ranking."
+
+    orden = sorted(filas, key=lambda x: x['sa'], reverse=True)
+    n = min(_TOP_COMPRA_VENTA, len(orden) // 2)
+
+    L = [f"## 🏦 ETFs y Bonos — {len(filas)} analizados",
+         f"\n**🟢 Los {n} más baratos (Acumulación más alta):**"]
+    L += [_linea_item(f) for f in orden[:n]]
+    L.append(f"\n**🔴 Los {n} más caros (Acumulación más baja):**")
+    L += [_linea_item(f) for f in orden[::-1][:n]]
+
+    cats = {}
+    for f in filas:
+        if f['grupo']:
+            cats.setdefault(f['grupo'], []).append(f['sa'])
+    if len(cats) >= 2:
+        prom = sorted(((c, float(np.mean(v)), len(v)) for c, v in cats.items()),
+                      key=lambda x: x[1], reverse=True)
+        L.append("\n**📂 Por categoría (Acum. promedio):**")
+        L.append(f"- Más barata: **{prom[0][0]}** ({prom[0][1]:.0f}, {prom[0][2]} ETFs)")
+        L.append(f"- Más cara: **{prom[-1][0]}** ({prom[-1][1]:.0f}, {prom[-1][2]} ETFs)")
+
+    L.append("\n*Barato/caro es relativo al propio rango reciente de cada ETF. "
+             "Las tasas del Tesoro no entran al ranking. Decime 'analizame <ticker>' para el detalle.*")
+    return "\n".join(L)
+
+
 def _responder_oportunidades(texto, ctx):
     t = texto.lower()
-    if 'sector' in t:
-        datos = ctx['cargar_sectores_corto'](); etiqueta = 'sectores'
-    elif re.search(r'\bpa[ií]s', t):
-        datos = ctx['cargar_paises_corto'](); etiqueta = 'países'
-    elif _grupo_mercado(t) or re.search(r'commodit|mercados|materias', t):
+    if re.search(r'\betfs?\b', t):
+        return _responder_etfs(ctx)
+    if re.search(r'\bpa[ií]s', t):
+        datos = _a_safe(ctx['cargar_paises_corto'])
+        return (_bloque_compra_venta("🌎 Países / Índices", _filas_desde_loader(datos, ctx.get('PAISES')))
+                + "\n\n*Score alto = relativamente barato en su propio historial reciente, "
+                  "no es garantía de suba.*")
+    if _grupo_mercado(t) or re.search(r'commodit|mercados|materias', t):
         return _responder_mercados(texto, ctx)
-    else:
-        datos = ctx['cargar_sectores_corto'](); etiqueta = 'sectores'
-
-    top = sorted(datos.items(), key=lambda x: x[1]['sa'], reverse=True)[:5]
-    lineas = [f"Los {etiqueta} con mejor Score de Acumulación ahora mismo:\n"]
-    for n, d in top:
-        lineas.append(f"- **{n}**: Acum {d['sa']:.0f}/100, Antic {d['sn']:.0f}/100 → {d.get('accion','')}")
-    lineas.append("\n*Recordá: score alto = relativamente barato en su propio historial reciente, no es una garantía de suba.*")
-    return "\n".join(lineas)
+    # "sectores baratos", "qué sector...", o cualquier otra consulta de oportunidades
+    return _responder_sectores_subsectores(ctx)
 
 
 def _responder_simular(tk, monto, periodo, ctx):
@@ -2599,6 +2706,7 @@ def _render_botones_rapidos(pares, turno):
 # Labels cortos para que no se corten con "..." en el panel flotante
 _SUGERENCIAS_RAPIDAS = [
     "📉 Sectores Baratos",
+    "🏦 Analizar ETFs",
     "📊 Analizar Acción",
     "🧩 Armar Cartera",
     "✍️ Registrar",
