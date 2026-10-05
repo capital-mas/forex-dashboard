@@ -8596,6 +8596,8 @@ CTX_IA = dict(
     TICKER_INDUSTRY=TICKER_INDUSTRY, GLOSARIO=GLOSARIO,       # ← queda solo acá
     cargar_sectores_corto=cargar_sectores_corto, cargar_paises_corto=cargar_paises_corto,
     cargar_acciones_corto=cargar_acciones_corto,
+    cargar_subsectores_corto=cargar_subsectores_corto,
+    cargar_etfs_corto=cargar_etfs_corto,
     cargar_mercados_corto=cargar_mercados_corto,
     _tdc_analizar_ticker=_tdc_analizar_ticker,
     HORIZONTES_TDC=HORIZONTES_TDC,
