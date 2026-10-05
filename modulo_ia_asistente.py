@@ -1986,6 +1986,9 @@ def _responder_sectores_subsectores(ctx):
     return "\n\n---\n\n".join(partes)
 
 
+_CATS_ETF_ACCIONARIOS = {'Índices', 'Factores', 'Global'}
+
+
 def _responder_etfs(ctx):
     fn = ctx.get('cargar_etfs_corto')
     if not fn:
@@ -1994,9 +1997,8 @@ def _responder_etfs(ctx):
     if not datos:
         return "No pude cargar los ETFs en este momento. Probá de nuevo en un rato."
 
-    # Las tasas del Tesoro (^IRX, ^TNX...) son rendimientos, no precios de un ETF:
-    # "barato/caro" no significa lo mismo, así que quedan fuera del ranking.
-    datos = {n: d for n, d in datos.items() if d.get('cat') != 'Tasas Tesoro'}
+    # Solo ETFs de renta variable: Índices, Factores y Global (sin bonos ni tasas)
+    datos = {n: d for n, d in datos.items() if d.get('cat') in _CATS_ETF_ACCIONARIOS}
     filas = _filas_desde_loader(datos, ctx.get('ETFS'))
     if len(filas) < 4:
         return "No hay suficientes ETFs con datos para armar el ranking."
@@ -2004,25 +2006,14 @@ def _responder_etfs(ctx):
     orden = sorted(filas, key=lambda x: x['sa'], reverse=True)
     n = min(_TOP_COMPRA_VENTA, len(orden) // 2)
 
-    L = [f"## 🏦 ETFs y Bonos — {len(filas)} analizados",
+    L = [f"## 🏦 ETFs (Índices, Factores y Global) — {len(filas)} analizados",
          f"\n**🟢 Los {n} más baratos (Acumulación más alta):**"]
     L += [_linea_item(f) for f in orden[:n]]
     L.append(f"\n**🔴 Los {n} más caros (Acumulación más baja):**")
     L += [_linea_item(f) for f in orden[::-1][:n]]
 
-    cats = {}
-    for f in filas:
-        if f['grupo']:
-            cats.setdefault(f['grupo'], []).append(f['sa'])
-    if len(cats) >= 2:
-        prom = sorted(((c, float(np.mean(v)), len(v)) for c, v in cats.items()),
-                      key=lambda x: x[1], reverse=True)
-        L.append("\n**📂 Por categoría (Acum. promedio):**")
-        L.append(f"- Más barata: **{prom[0][0]}** ({prom[0][1]:.0f}, {prom[0][2]} ETFs)")
-        L.append(f"- Más cara: **{prom[-1][0]}** ({prom[-1][1]:.0f}, {prom[-1][2]} ETFs)")
-
     L.append("\n*Barato/caro es relativo al propio rango reciente de cada ETF. "
-             "Las tasas del Tesoro no entran al ranking. Decime 'analizame <ticker>' para el detalle.*")
+             "Decime 'analizame <ticker>' para el detalle.*")
     return "\n".join(L)
 
 
