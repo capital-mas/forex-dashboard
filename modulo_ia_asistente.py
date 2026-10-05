@@ -1520,11 +1520,18 @@ def _div_pct(v):
     return v if v > 0.2 else v * 100
 
 
+def _fila(nombre, valor, fmt, cortes, etiquetas, expl):
+    """Línea con nivel; si no hay dato muestra N/D."""
+    if valor is None:
+        return f"- **{nombre}: N/D** — sin dato en Yahoo Finance para este activo."
+    return _lm(nombre, fmt(valor), _nivel(valor, cortes, etiquetas), expl)
+
+
 def _bloque_fundamental(res_f, resumen_f, fmt):
     g = res_f.get
     L = []
 
-    # ── Encabezado: señal + analistas ──
+    # ── Encabezado ──
     upside = None
     if g('target_price') and g('precio'):
         upside = (g('target_price') / g('precio') - 1) * 100
@@ -1537,86 +1544,115 @@ def _bloque_fundamental(res_f, resumen_f, fmt):
     L.append("_La señal cuenta cuántos criterios fundamentales se cumplen (positivas vs. alertas). "
              "El veredicto de abajo pondera los scores 0-10 y puede diferir._")
 
+    x = lambda v: f"{v:.1f}x"
+    p = lambda v: f"{v*100:.1f}%"          # fracción -> %
+    p0 = lambda v: f"{v*100:.0f}%"
+    pp = lambda v: f"{v:+.1f}%"            # ya viene en %
+
     # ── Valuación ──
     L.append("\n**💰 Valuación — ¿está cara o barata?**")
-    per, pb, eve, pfcf, peg = g('per'), g('pb'), g('ev_ebitda'), g('p_fcf'), g('peg')
-    if per:
-        L.append(_lm('PER', f"{per:.1f}x",
-                     _nivel(per, [10, 15, 25, 40], [('🟢', 'Muy barato'), ('🟢', 'Barato'), ('🟡', 'Normal'),
-                                                    ('🟠', 'Exigente'), ('🔴', 'Muy exigente')]),
-                     f"pagás unos {per:.0f} años de ganancias actuales por cada acción. Más bajo = más barata."))
-    if pb:
-        L.append(_lm('P/B', f"{pb:.1f}x",
-                     _nivel(pb, [1, 2.5, 6], [('🟢', 'Bajo'), ('🟡', 'Razonable'), ('🟠', 'Elevado'), ('🔴', 'Muy elevado')]),
-                     "precio vs. patrimonio contable. Ojo: empresas que recompran muchas acciones "
-                     "muestran un P/B alto sin que sea necesariamente malo."))
-    if eve:
-        L.append(_lm('EV/EBITDA', f"{eve:.1f}x",
-                     _nivel(eve, [10, 15, 20], [('🟢', 'Atractivo'), ('🟡', 'Normal'), ('🟠', 'Elevado'), ('🔴', 'Muy elevado')]),
-                     "valor de la empresa completa (incluida la deuda) vs. su ganancia operativa. "
-                     "Sirve para comparar sin que influya cómo se financia."))
-    if pfcf:
-        L.append(_lm('P/FCF', f"{pfcf:.1f}x",
-                     _nivel(pfcf, [15, 25, 40], [('🟢', 'Atractivo'), ('🟡', 'Normal'), ('🟠', 'Elevado'), ('🔴', 'Muy elevado')]),
-                     "precio vs. la caja libre que genera el negocio. Es como el PER pero con plata real, no contable."))
-    if peg:
-        L.append(_lm('PEG', f"{peg:.2f}",
-                     _nivel(peg, [1, 2], [('🟢', 'Barato'), ('🟡', 'Razonable'), ('🔴', 'Caro')]),
-                     "PER ajustado por crecimiento. Menor a 1 = el crecimiento esperado está barato; mayor a 2 = caro."))
+    L.append(_fila('PER', g('per'), x, [10, 15, 25, 40],
+        [('🟢','Muy barato'),('🟢','Barato'),('🟡','Normal'),('🟠','Exigente'),('🔴','Muy exigente')],
+        "años de ganancias actuales que pagás por acción. Más bajo = más barata."))
+    L.append(_fila('P/B', g('pb'), x, [1, 2.5, 6],
+        [('🟢','Bajo'),('🟡','Razonable'),('🟠','Elevado'),('🔴','Muy elevado')],
+        "precio vs. patrimonio contable. Con muchas recompras el P/B sube sin ser necesariamente malo."))
+    L.append(_fila('EV/EBITDA', g('ev_ebitda'), x, [10, 15, 20],
+        [('🟢','Atractivo'),('🟡','Normal'),('🟠','Elevado'),('🔴','Muy elevado')],
+        "valor de la empresa completa (con deuda) vs. su ganancia operativa."))
+    L.append(_fila('EV/Sales', g('ev_sales'), x, [1, 3, 8],
+        [('🟢','Bajo'),('🟡','Normal'),('🟠','Elevado'),('🔴','Muy elevado')],
+        "valor de la empresa vs. sus ventas. Útil si las ganancias son bajas o volátiles."))
+    L.append(_fila('P/FCF', g('p_fcf'), x, [15, 25, 40],
+        [('🟢','Atractivo'),('🟡','Normal'),('🟠','Elevado'),('🔴','Muy elevado')],
+        "precio vs. la caja libre que genera el negocio."))
+    L.append(_fila('PEG', g('peg'), lambda v: f"{v:.2f}", [1, 2],
+        [('🟢','Barato'),('🟡','Razonable'),('🔴','Caro')],
+        "PER ajustado por crecimiento. Menor a 1 = barato; mayor a 2 = caro."))
 
-    # ── Rentabilidad ──
-    L.append("\n**📈 Rentabilidad — ¿qué tan bien gana plata?**")
-    roe, roic, gm, pm = g('roe'), g('roic'), g('gross_margin'), g('profit_margin')
-    if roe is not None:
-        L.append(_lm('ROE', _pf(roe),
-                     _nivel(roe * 100, [8, 15, 25], [('🔴', 'Débil'), ('🟡', 'Aceptable'), ('🟢', 'Bueno'), ('🟢', 'Excepcional')]),
-                     "ganancia sobre el patrimonio de los accionistas. Si es altísimo (más de 100%) "
-                     "suele deberse a recompras de acciones que achican el patrimonio."))
-    if roic is not None:
-        L.append(_lm('ROIC', _pf(roic),
-                     _nivel(roic * 100, [5, 10, 15], [('🔴', 'Débil'), ('🟡', 'Aceptable'), ('🟢', 'Bueno'), ('🟢', 'Excepcional')]),
-                     "retorno sobre todo el capital invertido (propio y deuda). Mide si el negocio crea valor; "
-                     "más de 15% es muy bueno."))
-    if gm is not None:
-        L.append(_lm('Margen bruto', _pf(gm),
-                     _nivel(gm * 100, [20, 40, 60], [('🔴', 'Bajo'), ('🟡', 'Moderado'), ('🟢', 'Bueno'), ('🟢', 'Excelente')]),
-                     "lo que queda de cada venta después del costo de producir. Alto = poder de fijar precios."))
-    if pm is not None:
-        L.append(_lm('Margen neto', _pf(pm),
-                     _nivel(pm * 100, [5, 10, 20], [('🔴', 'Bajo'), ('🟡', 'Moderado'), ('🟢', 'Bueno'), ('🟢', 'Excelente')]),
-                     "ganancia final por cada 100 de ventas, ya descontados todos los costos e impuestos."))
+    # ── Rentabilidad / márgenes ──
+    L.append("\n**📈 Rentabilidad y márgenes — ¿qué tan bien gana plata?**")
+    def _f100(nombre, v, cortes, etiquetas, expl):
+        L.append(_fila(nombre, None if v is None else v * 100, lambda z: f"{z:.1f}%", cortes, etiquetas, expl))
+    _f100('ROE', g('roe'), [8, 15, 25],
+          [('🔴','Débil'),('🟡','Aceptable'),('🟢','Bueno'),('🟢','Excepcional')],
+          "ganancia sobre el patrimonio. Más de 100% suele deberse a recompras.")
+    _f100('ROIC', g('roic'), [5, 10, 15],
+          [('🔴','Débil'),('🟡','Aceptable'),('🟢','Bueno'),('🟢','Excepcional')],
+          "retorno sobre todo el capital invertido. Más de 15% es muy bueno.")
+    _f100('Margen bruto', g('gross_margin'), [20, 40, 60],
+          [('🔴','Bajo'),('🟡','Moderado'),('🟢','Bueno'),('🟢','Excelente')],
+          "lo que queda de cada venta tras el costo de producir.")
+    _f100('Margen operativo', g('op_margin'), [10, 20, 30],
+          [('🔴','Bajo'),('🟡','Moderado'),('🟢','Bueno'),('🟢','Excelente')],
+          "ganancia del negocio antes de intereses e impuestos.")
+    _f100('Margen neto', g('profit_margin'), [5, 10, 20],
+          [('🔴','Bajo'),('🟡','Moderado'),('🟢','Bueno'),('🟢','Excelente')],
+          "ganancia final por cada 100 de ventas.")
+    _f100('Crecimiento de ingresos', g('revenue_growth'), [0, 10, 20],
+          [('🔴','Contracción'),('🟡','Moderado'),('🟢','Bueno'),('🟢','Excelente')],
+          "cuánto crecieron las ventas vs. el año anterior.")
+    _f100('Crecimiento de EPS', g('eps_growth'), [0, 10, 20],
+          [('🔴','Contracción'),('🟡','Moderado'),('🟢','Bueno'),('🟢','Excelente')],
+          "cuánto crecieron las ganancias por acción.")
 
-    # ── Crecimiento y solvencia ──
-    L.append("\n**🏗️ Crecimiento y solvencia — ¿crece y aguanta?**")
-    rg, de, nde, beta = g('revenue_growth'), g('debt_equity'), g('net_debt_ebitda'), g('beta')
-    if rg is not None:
-        L.append(_lm('Crecimiento de ingresos', _pf(rg),
-                     _nivel(rg * 100, [0, 10, 20], [('🔴', 'Contracción'), ('🟡', 'Moderado'), ('🟢', 'Bueno'), ('🟢', 'Excelente')]),
-                     "cuánto crecieron las ventas vs. el año anterior."))
-    if de is not None:
-        L.append(_lm('Deuda/Patrimonio (D/E)', f"{de:.2f}x",
-                     _nivel(de, [0.5, 1, 2], [('🟢', 'Conservador'), ('🟡', 'Moderado'), ('🟠', 'Elevado'), ('🔴', 'Muy elevado')]),
-                     "cuánta deuda usa por cada peso de capital propio. Más alto = más riesgo financiero."))
-    if nde is not None:
-        txt = ("tiene más caja que deuda." if nde < 0
-               else f"con su ganancia operativa tardaría ~{nde:.1f} años en pagar la deuda neta.")
-        L.append(_lm('Deuda neta/EBITDA', f"{nde:.2f}x",
-                     _nivel(nde, [1, 3], [('🟢', 'Bajo'), ('🟡', 'Moderado'), ('🔴', 'Alto')]), txt))
-    if beta is not None:
-        L.append(_lm('Beta', f"{beta:.2f}",
-                     _nivel(beta, [0.8, 1.2, 1.5], [('🟢', 'Defensiva'), ('🟡', 'Como el mercado'),
-                                                    ('🟠', 'Más volátil'), ('🔴', 'Muy volátil')]),
-                     "sensibilidad al mercado: con beta 1.2, si el mercado sube o baja 10% la acción tiende a moverse ~12%."))
+    # ── Solvencia y riesgo ──
+    L.append("\n**🔒 Solvencia y riesgo — ¿aguanta?**")
+    L.append(_fila('Deuda/Patrimonio (D/E)', g('debt_equity'), lambda v: f"{v:.2f}x", [0.5, 1, 2],
+        [('🟢','Conservador'),('🟡','Moderado'),('🟠','Elevado'),('🔴','Muy elevado')],
+        "cuánta deuda usa por cada peso de capital propio."))
+    nde = g('net_debt_ebitda')
+    L.append(_fila('Deuda neta/EBITDA', nde, lambda v: f"{v:.2f}x", [1, 3],
+        [('🟢','Bajo'),('🟡','Moderado'),('🔴','Alto')],
+        "tiene más caja que deuda." if (nde is not None and nde < 0)
+        else (f"con su ganancia operativa tardaría ~{nde:.1f} años en pagar la deuda neta." if nde is not None else "")))
+    L.append(_fila('Current Ratio', g('curr_ratio'), lambda v: f"{v:.2f}x", [1, 1.5, 2],
+        [('🔴','Riesgo de liquidez'),('🟡','Ajustado'),('🟢','Saludable'),('🟢','Muy líquido')],
+        "activos de corto plazo vs. deudas de corto plazo. Menor a 1 = puede costarle pagar."))
+    L.append(_fila('Cobertura de intereses', g('interest_coverage'), x, [2, 3, 8],
+        [('🔴','Riesgoso'),('🟠','Ajustado'),('🟡','Cómodo'),('🟢','Muy holgado')],
+        "cuántas veces la ganancia operativa cubre los intereses de la deuda."))
+    L.append(_fila('Beta', g('beta'), lambda v: f"{v:.2f}", [0.8, 1.2, 1.5],
+        [('🟢','Defensiva'),('🟡','Como el mercado'),('🟠','Más volátil'),('🔴','Muy volátil')],
+        "sensibilidad al mercado: con beta 1.2, si el mercado se mueve 10% la acción tiende a moverse ~12%."))
 
-    # ── Dividendo ──
+    # ── Retorno al accionista ──
+    L.append("\n**💰 Retorno al accionista**")
     dy = _div_pct(g('div_yield'))
-    if dy is not None:
-        if dy == 0:
-            L.append("- **Dividendo:** no paga dividendos (reinvierte las ganancias).")
-        else:
-            L.append(_lm('Rendimiento por dividendo', f"{dy:.2f}%",
-                         _nivel(dy, [2, 4, 6], [('🟡', 'Bajo'), ('🟢', 'Moderado'), ('🟢', 'Atractivo'), ('🟠', 'Muy alto')]),
-                         "dividendo anual sobre el precio. Si supera el 6%, verificá que sea sostenible."))
+    if dy is None:
+        L.append("- **Dividendo: N/D** — sin dato.")
+    elif dy == 0:
+        L.append("- **Dividendo:** no paga dividendos (reinvierte las ganancias).")
+    else:
+        L.append(_lm('Rendimiento por dividendo', f"{dy:.2f}%",
+                     _nivel(dy, [2, 4, 6], [('🟡','Bajo'),('🟢','Moderado'),('🟢','Atractivo'),('🟠','Muy alto')]),
+                     "dividendo anual sobre el precio. Si supera 6%, verificá que sea sostenible."))
+    po = g('payout_ratio')
+    L.append(_fila('Payout Ratio', None if po is None else po * 100, lambda v: f"{v:.0f}%", [30, 60, 90],
+        [('🟢','Conservador'),('🟢','Sano'),('🟡','Alto'),('🔴','Insostenible')],
+        "qué parte de las ganancias reparte como dividendo. Más de 90% deja poco margen."))
+    L.append(_fila('Variación de acciones (YoY)', g('shares_change_yoy'), pp, [-2, 1, 5],
+        [('🟢','Recompra acciones'),('🟡','Estable'),('🟠','Dilución leve'),('🔴','Dilución fuerte')],
+        "si baja, recompra acciones (bueno); si sube, emite nuevas y diluye."))
+
+    # ── Rendimiento y flujos ──
+    L.append("\n**🚀 Rendimiento y flujos**")
+    L.append(_fila('Alza YTD', g('alza_ytd'), pp, [-15, 0, 15, 30],
+        [('🔴','Bajista fuerte'),('🟠','Bajista / lateral'),('🟢','Alcista moderado'),
+         ('🟢','Alcista fuerte'),('🟡','Muy fuerte, verificar sostenibilidad')],
+        "lo que sube o baja la acción en lo que va del año."))
+    fc = g('fcf_conversion')
+    L.append(_fila('Conversión a FCF', None if fc is None else fc * 100, lambda v: f"{v:.0f}%", [30, 60, 80],
+        [('🔴','Baja'),('🟡','Regular'),('🟢','Buena'),('🟢','Excelente')],
+        "qué parte del EBITDA se convierte en caja libre real."))
+    fcf = g('fcf')
+    if fcf is None:
+        L.append("- **Flujo de caja libre: N/D**")
+    else:
+        L.append(f"- **Flujo de caja libre: {'🟢 positivo' if fcf > 0 else '🔴 negativo'}** ({_big(fcf)})")
+
+    # ── Señales ──
+    L.append(f"\n**✅ Señales OK:** {res_f['n_ok']} positivas · {res_f['n_alt']} alertas")
 
     # ── Scores 0-10 ──
     if resumen_f:
