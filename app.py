@@ -672,7 +672,7 @@ def _mostrar_bloqueo_pro(nombre_funcion):
       </div>
       <div style="font-size:13px;color:#8b949e;line-height:1.7;max-width:480px;margin:0 auto 20px auto">
         Tu plan actual (Básico) no incluye esta función. Actualizá a Pro para
-        desbloquear Optimizador de Cartera y Rotación/Pares.
+        desbloquear Optimizador de Cartera, Rotación/Pares, Lectura de Velas y más.
       </div>
     </div>
     """, unsafe_allow_html=True)
