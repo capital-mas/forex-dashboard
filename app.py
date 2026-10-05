@@ -23,7 +23,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations
-from modulo_landing import pantalla_landing
+from modulo_landing import pantalla_landing, buscar_uid_por_email
 from modulo_opciones import modulo_opciones
 from modulo_gex import modulo_gex
 from modulo_estados_financieros import render_analisis_profundo, render_comparativo_estados
@@ -494,7 +494,7 @@ def restaurar_sesion():
 restaurar_sesion()
 
 if "usuario" not in st.session_state:
-    pantalla_landing(auth_client, cookies)
+    pantalla_landing(auth_client, cookies, supabase)
     st.stop()
     
 USER_ID = st.session_state["usuario"].id
@@ -9276,26 +9276,75 @@ st.markdown(f"""
 
 
 def panel_reset_password(supabase_admin):
-    st.markdown("### 🔑 Resetear contraseña de un usuario")
-    st.caption("Verificá la identidad de la persona por otro medio antes de resetear.")
+    import secrets
+    from datetime import timedelta, timezone
+
+    st.markdown("### 🔑 Reseteo de contraseñas")
+    st.caption("Verificá la identidad por otro medio (WhatsApp, etc.) ANTES de habilitar. "
+               "Al habilitar se genera un código: pasáselo al usuario.")
+
+    try:
+        pend = (supabase_admin.table("solicitudes_reset").select("*")
+                .eq("estado", "pendiente").order("id").execute().data or [])
+        habil = (supabase_admin.table("solicitudes_reset").select("*")
+                 .eq("estado", "habilitada").order("id", desc=True).execute().data or [])
+    except Exception as e:
+        st.error(f"No se pudo leer solicitudes_reset (¿corriste el SQL?): {e}")
+        pend, habil = [], []
+
+    st.markdown(f"**Pendientes ({len(pend)})**")
+    if not pend:
+        st.caption("No hay solicitudes pendientes.")
+    for s in pend:
+        c1, c2, c3 = st.columns([4, 1.3, 1.3])
+        with c1:
+            st.markdown(f"📧 **{s['email']}** · pedida {str(s['creada_en'])[:16].replace('T', ' ')}")
+        with c2:
+            if st.button("✅ Habilitar", key=f"rst_ok_{s['id']}", use_container_width=True):
+                try:
+                    if buscar_uid_por_email(supabase_admin, s["email"]) is None:
+                        st.warning("Ese email no tiene cuenta en Capital+.")
+                    else:
+                        ahora = datetime.now(timezone.utc)
+                        supabase_admin.table("solicitudes_reset").update({
+                            "estado": "habilitada",
+                            "codigo": f"{secrets.randbelow(10**6):06d}",
+                            "intentos": 0,
+                            "habilitada_en": ahora.isoformat(),
+                            "vence_en": (ahora + timedelta(hours=24)).isoformat(),
+                        }).eq("id", s["id"]).execute()
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        with c3:
+            if st.button("❌ Rechazar", key=f"rst_no_{s['id']}", use_container_width=True):
+                supabase_admin.table("solicitudes_reset").update({"estado": "rechazada"}).eq("id", s["id"]).execute()
+                st.rerun()
+
+    st.markdown(f"**Habilitadas, esperando que el usuario use el código ({len(habil)})**")
+    if not habil:
+        st.caption("Ninguna.")
+    for s in habil:
+        c1, c2, c3 = st.columns([3, 2, 1.3])
+        with c1:
+            st.markdown(f"📧 **{s['email']}** · vence {str(s.get('vence_en'))[:16].replace('T', ' ')} UTC")
+        with c2:
+            st.code(s.get("codigo") or "-", language=None)
+        with c3:
+            if st.button("🗑️ Anular", key=f"rst_anu_{s['id']}", use_container_width=True):
+                supabase_admin.table("solicitudes_reset").update({"estado": "rechazada"}).eq("id", s["id"]).execute()
+                st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### 🛠️ Alternativa: ponerle una contraseña temporal directamente")
     email = st.text_input("Email del usuario", key="adm_reset_email").strip().lower()
     nueva = st.text_input("Contraseña temporal", type="password", key="adm_reset_pass")
-
     if st.button("Resetear contraseña", key="adm_reset_btn"):
         if not email or len(nueva) < 6:
             st.error("Completá el email y una contraseña de al menos 6 caracteres.")
             return
         try:
-            uid, page = None, 1
-            while uid is None:
-                usuarios = supabase_admin.auth.admin.list_users(page=page, per_page=200)
-                if not usuarios:
-                    break
-                for u in usuarios:
-                    if (u.email or "").lower() == email:
-                        uid = u.id
-                        break
-                page += 1
+            uid = buscar_uid_por_email(supabase_admin, email)
             if uid is None:
                 st.error("No existe ningún usuario con ese email.")
             else:
