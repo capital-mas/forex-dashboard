@@ -9,9 +9,10 @@
 #  vol. implícita (estructura y skew), flujo inusual, DEX (exposición delta con
 #  la delta publicada por CBOE), Vanna y Charm, un puente hacia
 #  "Valuación de Opciones" (punto de cambio de gamma, paredes y strikes
-#  vendidos sugeridos) y el Squeeze Metrics Score (índice propio 0-100:
+#  vendidos sugeridos), el Squeeze Metrics Score (índice propio 0-100:
 #  gamma negativa + DEX sesgado + PCR extremo + gamma concentrada en el
-#  primer vencimiento, con alerta de "Zona de Squeeze Inminente").
+#  primer vencimiento, con alerta de "Zona de Squeeze Inminente") y el
+#  ranking de los 5 niveles (strikes) con más gamma de Calls y de Puts.
 #
 #  Uso:   from modulo_gex import modulo_gex
 #         modulo_gex()
@@ -19,6 +20,7 @@
 #         from modulo_gex import leer_puente_gex
 #         p = leer_puente_gex('SPY')      # dict o None
 #         p['squeeze']                    # score, nivel, direccion, inminente
+#         p['top_calls'], p['top_puts']   # strikes ordenados de mayor a menor gamma
 #  Requiere: streamlit (>= 1.37, por st.fragment), pandas, numpy, scipy,
 #            plotly, requests
 # ==============================================================
@@ -273,6 +275,25 @@ def calcular_zonas_gex(piv, grid, total, S):
         regimen = 'positivo' if S > flip else 'negativo'
     return dict(flip=flip, call_wall=call_wall, put_wall=put_wall,
                 gex_total=gex_total_spot, regimen=regimen)
+
+
+def calcular_top_niveles(piv, S, n=5):
+    """Top n strikes por GEX de Calls (positivo) y de Puts (negativo), de mayor a menor peso.
+    Devuelve (top_calls, top_puts). Si hay menos de n strikes con gamma, devuelve los que haya."""
+    bruto = float(piv['gex_calls'].abs().sum() + piv['gex_puts'].abs().sum())
+
+    def _armar(col, es_put):
+        x = piv[['strike', col]].copy()
+        x = x[x[col] < 0] if es_put else x[x[col] > 0]
+        x = x.sort_values(col, ascending=es_put).head(n)          # puts: el más negativo primero
+        x = x.rename(columns={col: 'gex'})
+        x['abs'] = x['gex'].abs()
+        x['dist_pct'] = (x['strike'] / S - 1) * 100
+        x['pct_total'] = x['abs'] / bruto * 100 if bruto > 0 else np.nan
+        x.insert(0, 'rank', range(1, len(x) + 1))
+        return x.reset_index(drop=True)
+
+    return _armar('gex_calls', False), _armar('gex_puts', True)
 
 
 def lectura_personalizada_gex(z, S):
@@ -787,13 +808,16 @@ def fig_barras_signo(x, y, S, titulo, ytitulo):
 
 def publicar_puente_gex(simbolo, S, z, extra=None):
     """Guarda en session_state el punto de cambio de gamma, las paredes y (si hay) los strikes sugeridos.
-    Conserva el último Squeeze Score del mismo símbolo. La calculadora lo lee con leer_puente_gex()."""
+    Conserva el último Squeeze Score y el top de niveles del mismo símbolo.
+    La calculadora lo lee con leer_puente_gex()."""
     prev = st.session_state.get(CLAVE_PUENTE) or {}
     p = {'simbolo': simbolo, 'spot': float(S), 'flip': z['flip'], 'call_wall': z['call_wall'],
          'put_wall': z['put_wall'], 'regimen': z['regimen'], 'gex_total': z['gex_total'],
          'hora': datetime.now().strftime('%H:%M:%S'), 'ts': time.time()}
-    if prev.get('simbolo') == simbolo and prev.get('squeeze'):
-        p['squeeze'] = prev['squeeze']
+    if prev.get('simbolo') == simbolo:
+        for k in ('squeeze', 'top_calls', 'top_puts'):
+            if prev.get(k):
+                p[k] = prev[k]
     if extra:
         p.update(extra)
     st.session_state[CLAVE_PUENTE] = p
@@ -1434,7 +1458,7 @@ CBOE publica la vol. implícita y el interés abierto de cada contrato, pero no 
 
             render_explicacion('Cómo funciona el puente con Valuación de Opciones y cómo usarlo', f"""
 **Qué hace**
-Toma lo que ya calculó el GEX (**punto de cambio de gamma** y **paredes de Calls y Puts**) y lo deja disponible para la calculadora de opciones. A partir de eso sugiere **qué strikes vender** en el vencimiento que elijas. Todos los datos (strikes, primas, vol. implícita, delta) vienen de la misma cadena de CBOE. También deja publicado el **Squeeze Metrics Score** para que la calculadora pueda advertir si el activo está en zona de riesgo.
+Toma lo que ya calculó el GEX (**punto de cambio de gamma** y **paredes de Calls y Puts**) y lo deja disponible para la calculadora de opciones. A partir de eso sugiere **qué strikes vender** en el vencimiento que elijas. Todos los datos (strikes, primas, vol. implícita, delta) vienen de la misma cadena de CBOE. También deja publicado el **Squeeze Metrics Score** y el **top 5 de niveles de Calls y Puts** para que la calculadora pueda usarlos.
 
 **Cómo elige los strikes**
 - **Call vendido:** el primer strike listado **en o por encima de la pared de Calls**, siempre que esa pared esté sobre el precio. La lógica: la pared suele actuar como techo, así que vender por encima tiene un "escudo" extra.
@@ -1758,6 +1782,40 @@ def render_squeeze(simbolo_cboe, simbolo, n_vtos, rango_pct, r, q, mult, auto=Fa
 
 
 # ==============================================================
+#  TOP 5 NIVELES DE CALLS Y PUTS (render)
+# ==============================================================
+
+def render_top_niveles(top_c, top_p, n=5):
+    """Dibuja las dos tablas (Calls a la izquierda, Puts a la derecha), de mayor a menor gamma."""
+    st.markdown('#### 🏆 Niveles con más gamma (top 5 de cada lado)')
+    st.caption('Strikes ordenados de mayor a menor peso de gamma, sumando los vencimientos elegidos y dentro del rango de precios.')
+    col_c, col_p = st.columns(2)
+
+    def _tabla(df_top, titulo, col, key):
+        with col:
+            st.markdown(f'**{titulo}**')
+            if df_top.empty:
+                st.info('No hay strikes con gamma de este tipo en el rango elegido.')
+                return
+            t = pd.DataFrame({'#': df_top['rank'],
+                              'Strike': df_top['strike'],
+                              'GEX (M US$ / 1%)': df_top['gex'] / 1e6,
+                              'Distancia al precio %': df_top['dist_pct'],
+                              '% del GEX bruto': df_top['pct_total']})
+            st.dataframe(t, use_container_width=True, hide_index=True, key=key,
+                         column_config={'Strike': st.column_config.NumberColumn(format='%.2f'),
+                                        'GEX (M US$ / 1%)': st.column_config.NumberColumn(format='%+.1f'),
+                                        'Distancia al precio %': st.column_config.NumberColumn(format='%+.1f'),
+                                        '% del GEX bruto': st.column_config.NumberColumn(format='%.1f')})
+
+    _tabla(top_c, '🟢 Calls (resistencias / imanes)', col_c, 'gex_top_calls')
+    _tabla(top_p, '🔴 Puts (soportes)', col_p, 'gex_top_puts')
+    if len(top_c) < n or len(top_p) < n:
+        st.caption(f'ℹ️ Solo hay {len(top_c)} niveles de Calls y {len(top_p)} de Puts con gamma en el rango elegido. '
+                   'Ampliá el rango de precios o sumá vencimientos para ver más.')
+
+
+# ==============================================================
 #  UI PRINCIPAL
 # ==============================================================
 
@@ -1839,9 +1897,11 @@ def modulo_gex():
         return
     grid, total = gex_total_vs_spot(df, S, r, q, mult)
     z = calcular_zonas_gex(piv, grid, total, S)
+    top_c, top_p = calcular_top_niveles(piv, S, n=5)
 
     # Puente base hacia Valuación de Opciones (la pestaña "Puente" lo completa con strikes sugeridos)
-    publicar_puente_gex(simbolo, S, z)
+    publicar_puente_gex(simbolo, S, z, extra={'top_calls': top_c['strike'].tolist(),
+                                              'top_puts': top_p['strike'].tolist()})
 
     m1, m2, m3, m4 = st.columns(4)
     with m1: st.metric('GEX total (al precio actual)', f"{z['gex_total']/1e6:,.1f} millones de US$")
@@ -1895,6 +1955,9 @@ Cada barra es un precio de ejercicio. **Verde hacia arriba** = gamma de las call
 - Si el precio se acerca a la pared de Puts desde arriba, prestá atención: perderla puede acelerar la caída.
 - Combinalo siempre con el resto del análisis (tendencia, volatilidad, perfil de resultado). **No es una señal de compra o venta por sí solo.**
 """)
+
+    # ── Top 5 niveles de Calls y Puts (de mayor a menor) ──
+    render_top_niveles(top_c, top_p, n=5)
 
     st.markdown('**Lectura con los datos de hoy:**')
     for linea in lectura_personalizada_gex(z, S):
