@@ -1913,23 +1913,7 @@ def _responder_analizar_sin_cache(tk, ctx):
                  f"Sent {d['ss']:.0f} → {d['accion']}")
 
     if res_f:
-        upside = None
-        if res_f.get('target_price') and res_f.get('precio'):
-            upside = (res_f['target_price'] / res_f['precio'] - 1) * 100
-        L.append(f"\n**📊 Fundamental:** señal **{res_f['senal_final']}** "
-                 f"({res_f['n_ok']} positivas · {res_f['n_alt']} alertas) · analistas: {res_f.get('recommendation') or 'N/D'}"
-                 + (f" · precio objetivo {fmt(res_f['target_price'])} ({upside:+.1f}%)" if upside is not None else ''))
-        L.append(f"- Valuación: PER {_n(res_f.get('per'))}x · P/B {_n(res_f.get('pb'))}x · "
-                 f"EV/EBITDA {_n(res_f.get('ev_ebitda'))}x · P/FCF {_n(res_f.get('p_fcf'))}x · PEG {_n(res_f.get('peg'))}")
-        L.append(f"- Rentabilidad: ROE {_pf(res_f.get('roe'))} · ROIC {_pf(res_f.get('roic'))} · "
-                 f"Mg. bruto {_pf(res_f.get('gross_margin'))} · Mg. neto {_pf(res_f.get('profit_margin'))}")
-        L.append(f"- Crecimiento y solvencia: Ingresos {_pf(res_f.get('revenue_growth'))} · "
-                 f"D/E {_n(res_f.get('debt_equity'))}x · Net Debt/EBITDA {_n(res_f.get('net_debt_ebitda'))}x · "
-                 f"Beta {_n(res_f.get('beta'))} · Div. yield {_pf(res_f.get('div_yield'))}")
-        if resumen_f:
-            L.append(f"- Scores: Calidad {_s10(resumen_f.get('calidad'))} · Valoración {_s10(resumen_f.get('valoracion'))} · "
-                     f"Crecimiento {_s10(resumen_f.get('crecimiento'))} · Riesgo {_s10(resumen_f.get('riesgo'))} "
-                     f"→ {resumen_f.get('v_emoji', '')} {resumen_f.get('veredicto', '')}")
+        L.extend(_bloque_fundamental(res_f, resumen_f, fmt))
     elif not sin_fund:
         L.append("\n**📊 Fundamental:** sin datos disponibles en Yahoo Finance para este activo.")
     else:
