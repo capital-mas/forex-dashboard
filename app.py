@@ -8932,10 +8932,9 @@ with st.container(key='nav_pills_wrap'):
                          ('senales', 'senales'),
             '🎲 Valuación de Opciones': ('opciones', 'opciones'),
             '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),
-            # ← borrá acá la línea de '🕯️ Lectura de Velas'
+            ('🕯️ Lectura de Velas' if TIENE_ACCESO_PRO else '🔒 Lectura de Velas (Pro)'):
+                                     ('velas', 'velas'),
         }
-        if ES_ADMIN:
-            _TRADING_MAP['🕯️ Lectura de Velas'] = ('velas', 'velas')
         
         _trading_horizontes = {'pares', 'senales', 'opciones', 'gex', 'velas'}
         _trading_activo = HORIZONTE in _trading_horizontes
@@ -9069,12 +9068,12 @@ with st.container(key='nav_mobile_wrap'):
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
         ('📡 Salud Mercado' if TIENE_ACCESO_PRO else '🔒 Salud Mercado (Pro)'): 'breadth',
         ('📉 Renta Fija/Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija/Macro (Pro)'): 'renta_fija_macro',
+        ('🕯️ Velas' if TIENE_ACCESO_PRO else '🔒 Velas (Pro)'): 'velas',
         '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
     }
     if ES_ADMIN:
         _label_admin_mobile = f'🛠️ Panel de Pagos 🔴{n_pagos_pend}' if n_pagos_pend > 0 else '🛠️ Panel de Pagos'
         _OPCIONES_HORIZONTE_MOBILE[_label_admin_mobile] = 'admin_pagos'
-        _OPCIONES_HORIZONTE_MOBILE['🕯️ Velas'] = 'velas'   # ← agregar
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
                   '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
@@ -9477,7 +9476,7 @@ elif MODULO == 'valuacion':
         _mostrar_bloqueo_pro('Simulador de Valuación')
 
 elif MODULO == 'velas':
-    if ES_ADMIN:
+    if TIENE_ACCESO_PRO:
         modulo_velas(
             descargar_datos=descargar_datos,
             selector_ticker_autocomplete=selector_ticker_autocomplete,
@@ -9486,7 +9485,7 @@ elif MODULO == 'velas':
             PLOTLY_CONFIG=PLOTLY_CONFIG,
         )
     else:
-        st.warning('Este módulo todavía no está disponible.')
+        _mostrar_bloqueo_pro('Lectura de Velas')
 
 elif MODULO == 'admin_pagos':
     if ES_ADMIN:
