@@ -12,11 +12,13 @@
 #      )
 #
 #  Pestaña "🎲 Monte Carlo". El usuario elige por separado:
-#     - la temporalidad de las VELAS (1D o 1H), arriba, y
+#     - la temporalidad de las VELAS (1D, 1H o 30M), arriba, y
 #     - el horizonte del MONTE CARLO (próxima 1 hora o próximo 1 día),
 #       dentro de la pestaña.
 #
 #  NOVEDADES:
+#     - Velas de 30 minutos (además de 1D y 1H). Yahoo solo entrega ~60 días
+#       de velas de 30m, por eso el historial máximo en 30M es de 2 meses.
 #     - Tabla AUTOMÁTICA de probabilidades de llegar a distintos precios
 #       (múltiplos de σ + niveles técnicos), sin cargar objetivo a mano.
 #     - Historial de las últimas 15 velas del Monte Carlo (backtest:
@@ -103,14 +105,14 @@ def _descargar_velas_intradia(ticker, period, interval='1h'):
         return None
 
 
-def _preparar_intradia(df, excluir_formacion=True):
-    """Opcionalmente descarta la vela de la hora en curso (todavía incompleta) y pasa
+def _preparar_intradia(df, excluir_formacion=True, minutos=60):
+    """Opcionalmente descarta la vela en curso (todavía incompleta) y pasa
     el índice a horario Argentina, sin zona horaria, para mostrar y graficar."""
     d = df.copy()
     tz = d.index.tz
     if excluir_formacion and len(d) > 1:
         ahora = pd.Timestamp.now(tz=tz) if tz is not None else pd.Timestamp.now()
-        if d.index[-1] + pd.Timedelta(hours=1) > ahora:
+        if d.index[-1] + pd.Timedelta(minutes=minutos) > ahora:
             d = d.iloc[:-1]
     if tz is not None:
         d.index = d.index.tz_convert('America/Argentina/Buenos_Aires').tz_localize(None)
@@ -234,7 +236,7 @@ def preparar_velas(df, umbral_mov=0.03):
 #  GRÁFICO
 # ==============================================================
 
-def _fig_velas(d, ticker, intradia=False):
+def _fig_velas(d, ticker, intradia=False, etiqueta='Velas de 1 hora'):
     if intradia:
         d = d.copy()
         d.index = d.index.strftime('%d/%m %H:%M')
@@ -293,7 +295,7 @@ def _fig_velas(d, ticker, intradia=False):
     fig.update_yaxes(gridcolor=C_GRID)
     fig.update_layout(
         **_LAYOUT_BASE,
-        title=dict(text=f"{ticker} — {'Velas de 1 hora' if intradia else 'Velas diarias'}", font=dict(color=C_TEXT, size=14),
+        title=dict(text=f"{ticker} — {etiqueta if intradia else 'Velas diarias'}", font=dict(color=C_TEXT, size=14),
                    x=0.01, xanchor='left', y=0.97),
         height=620, hovermode='x unified',
         legend=dict(orientation='h', y=1.08, x=0, font=dict(size=9)),
@@ -850,10 +852,6 @@ def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
     st.dataframe(
         _estilo_tabla(tabla_niv, {'Sentido': _c_sentido, 'Prob. de tocarlo': _c_prob}),
         use_container_width=True, hide_index=True, height=min(520, len(tabla_niv) * 36 + 45))
-    st.caption('"σ" es la volatilidad estimada del horizonte (ej. +1.0σ = precio actual × e^σ). '
-               '"Tocarlo" = que el precio llegue al nivel en algún momento del horizonte; '
-               '"terminar más allá" = que cierre el horizonte por encima (niveles arriba) o por debajo (niveles abajo). '
-               'Tocar siempre es más probable que terminar más allá.')
 
     st.plotly_chart(_fig_mc_abanico(paths, S0, horizonte),
                     use_container_width=True, config=PLOTLY_CONFIG,
@@ -913,7 +911,7 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
         Detecta patrones de velas japonesas (martillo, estrella fugaz, envolventes, rechazos, doji),
         los combina con RSI, volumen y contexto de las últimas 5 velas, y arma un score de
         <b style="color:#3fb950">freno de caída</b> / <b style="color:#f85149">freno de suba</b>
-        con niveles de confirmación e invalidación. Velas <b>diarias</b> o de <b>1 hora</b>.
+        con niveles de confirmación e invalidación. Velas <b>diarias</b>, de <b>1 hora</b> o de <b>30 minutos</b>.
         Además incluye una simulación <b>Monte Carlo</b> a <b>1 hora</b> o <b>1 día</b> que calcula sola
         la probabilidad de llegar a cada precio y muestra el historial de sus últimas 15 velas.
       </div>
@@ -924,11 +922,16 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     with c_inp:
         ticker = selector_ticker_autocomplete('velas_ticker', st.session_state.get('ticker_from_table', ''))
     with c_tf:
-        tf = st.selectbox('Temporalidad velas', ['1d', '1h'], key='velas_tf',
-                          format_func=lambda x: {'1d': 'Diaria (1D)', '1h': '1 hora (1H)'}[x])
-    intradia = (tf == '1h')
+        tf = st.selectbox('Temporalidad velas', ['1d', '1h', '30m'], key='velas_tf',
+                          format_func=lambda x: {'1d': 'Diaria (1D)', '1h': '1 hora (1H)',
+                                                 '30m': '30 minutos (30M)'}[x])
+    intradia = tf in ('1h', '30m')
+    minutos_vela = 30 if tf == '30m' else 60
     with c_per:
-        if intradia:
+        if tf == '30m':
+            periodo = st.selectbox('Historial', ['5d', '1mo', '2mo'], index=1, key='velas_periodo_30m',
+                                   format_func=lambda x: {'5d': '5 días', '1mo': '1 mes', '2mo': '2 meses'}[x])
+        elif tf == '1h':
             periodo = st.selectbox('Historial', ['1mo', '3mo', '6mo'], index=1, key='velas_periodo_1h',
                                    format_func=lambda x: {'1mo': '1 mes', '3mo': '3 meses', '6mo': '6 meses'}[x])
         else:
@@ -937,7 +940,7 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     with c_rue:
         opciones_vel = [60, 120, 200, 300] if intradia else [30, 60, 90, 120]
         ruedas = st.selectbox('Velas en gráfico', opciones_vel, index=1,
-                              key='velas_ruedas_1h' if intradia else 'velas_ruedas_1d')
+                              key=f'velas_ruedas_{tf}')
     with c_btn:
         st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
         analizar = st.button('▶ Analizar', use_container_width=True, key='velas_btn')
@@ -945,8 +948,8 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     excluir_formacion = True
     if intradia:
         excluir_formacion = st.checkbox(
-            'Excluir la vela de la hora en curso (todavía incompleta)', value=True, key='velas_excl',
-            help='Una vela de 1H que aún no cerró puede cambiar de forma y disparar señales falsas.')
+            'Excluir la vela en curso (todavía incompleta)', value=True, key='velas_excl',
+            help='Una vela que aún no cerró puede cambiar de forma y disparar señales falsas.')
 
     if analizar and ticker:
         st.session_state['velas_ticker_ok'] = ticker
@@ -964,9 +967,12 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
         """, unsafe_allow_html=True)
         return
 
-    with st.spinner(f'Descargando velas de {ticker_ok} ({"1H" if intradia else "1D"})...'):
+    tf_corto = {'1d': '1D', '1h': '1H', '30m': '30M'}[tf]
+    tf_largo = {'1d': 'Diario', '1h': '1 hora', '30m': '30 minutos'}[tf]
+
+    with st.spinner(f'Descargando velas de {ticker_ok} ({tf_corto})...'):
         if intradia:
-            df = _descargar_velas_intradia(ticker_ok, periodo, '1h')
+            df = _descargar_velas_intradia(ticker_ok, periodo, tf)
         else:
             df = descargar_datos(ticker_ok, periodo)
 
@@ -975,18 +981,20 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
         return
 
     if intradia:
-        df = _preparar_intradia(df, excluir_formacion)
+        df = _preparar_intradia(df, excluir_formacion, minutos_vela)
 
-    d = preparar_velas(df, umbral_mov=0.01 if intradia else 0.03)
+    d = preparar_velas(df, umbral_mov={'1d': 0.03, '1h': 0.01, '30m': 0.007}[tf])
     if len(d) < 25:
         st.warning('Hay muy poco historial para leer las velas con indicadores confiables (se necesitan ≥ 25 velas).')
         return
 
-    st.markdown(f'<div class="sec-title">Resultados para: {ticker_ok} · {"1 hora" if intradia else "Diario"}</div>',
+    st.markdown(f'<div class="sec-title">Resultados para: {ticker_ok} · {tf_largo}</div>',
                 unsafe_allow_html=True)
     if intradia:
-        st.caption('🕐 Horario Argentina · SMA20/SMA50 y RSI calculados sobre velas de 1 hora · '
-                   '"Movimiento previo" mide las últimas 5 horas (umbral 1%).')
+        st.caption(f'🕐 Horario Argentina · SMA20/SMA50 y RSI calculados sobre velas de {tf_largo} · '
+                   + ('"Movimiento previo" mide las últimas 5 velas de 30 min (2,5 horas, umbral 0,7%).'
+                      if tf == '30m' else
+                      '"Movimiento previo" mide las últimas 5 horas (umbral 1%).'))
 
     u = d.iloc[-1]
     ref_niveles = {
@@ -998,7 +1006,8 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     tab_graf, tab_hist, tab_mc = st.tabs(['📈 Gráfico y conclusión', '🗂️ Historial de señales',
                                           '🎲 Monte Carlo'])
     with tab_graf:
-        st.plotly_chart(_fig_velas(d.tail(ruedas), ticker_ok, intradia), use_container_width=True,
+        st.plotly_chart(_fig_velas(d.tail(ruedas), ticker_ok, intradia, f'Velas de {tf_largo}'),
+                        use_container_width=True,
                         config=PLOTLY_CONFIG, key=f'velas_fig_{ticker_ok}_{tf}')
         _render_conclusion(d, ticker_ok, fmt_precio, kpi_cards_4, intradia)
     with tab_hist:
@@ -1007,7 +1016,7 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     with tab_mc:
         _render_montecarlo(ticker_ok, fmt_precio, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
                            senal_vela=u['SEÑAL_VELA'],
-                           tf_velas_txt='1H' if intradia else '1D',
+                           tf_velas_txt=tf_corto,
                            ref_niveles=ref_niveles)
 
     st.markdown(
