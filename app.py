@@ -8428,6 +8428,9 @@ def modulo_topdown_cuantitativo():
     elif universo_label.startswith('🛢️'):
         tickers_tuple = tuple((n, tk) for n, (tk, _cat, _c) in MERCADOS_REALES.items())
         extra_map = {n: {'cat': cat, 'color': c} for n, (tk, cat, c) in MERCADOS_REALES.items()}
+    elif universo_label.startswith('📦'):
+        tickers_tuple = tuple((n, tk) for n, (tk, _cat, _c) in ETFS.items())
+        extra_map = {n: {'cat': cat, 'color': c} for n, (tk, cat, c) in ETFS.items()}
     else:
         ind_disp_tdc = list(ACCIONES_POR_INDUSTRIA.keys())
         ind_sel_tdc = st.multiselect('Industrias', ind_disp_tdc,
@@ -9761,7 +9764,7 @@ elif HORIZONTE == 'corto':
         with tab4:
             tabla_corto(datos_m)
 
-        elif MODULO == 'etfs':
+    elif MODULO == 'etfs':
         with st.spinner('Descargando ETFs y bonos...'):
             datos_e = cargar_etfs_corto()
         if not datos_e: st.error('Sin datos.'); st.stop()
