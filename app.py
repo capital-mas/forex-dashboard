@@ -2087,6 +2087,10 @@ def cargar_mercados_corto():
     tareas = {nombre: (tk, dict(tk=tk, cat=cat, color=color)) for nombre, (tk, cat, color) in MERCADOS_REALES.items()}
     return _fetch_paralelo(tareas, max_workers=10, grupo='mercados')
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def cargar_etfs_corto():
+    tareas = {nombre: (tk, dict(tk=tk, cat=cat, color=color)) for nombre, (tk, cat, color) in ETFS.items()}
+    return _fetch_paralelo(tareas, max_workers=10, grupo='etfs')
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cargar_acciones_corto(industrias_sel):
@@ -8552,7 +8556,7 @@ def _refrescar_cotizaciones():
     todo a Yahoo de golpe y aparece N/D por rate limit."""
     funciones_a_limpiar = [
         descargar_datos, descargar_bulk,
-        cargar_forex_corto, cargar_paises_corto, cargar_sectores_corto,
+        cargar_forex_corto, cargar_paises_corto, cargar_sectores_corto, cargar_etfs_corto,
         cargar_mercados_corto, cargar_acciones_corto, cargar_resultados_largo,
         cargar_precios_inicio_base, cargar_precios_acciones_inicio,
         cargar_ticker_tape, cargar_topdown_cuantitativo,
