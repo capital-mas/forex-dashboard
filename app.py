@@ -2104,7 +2104,7 @@ def cargar_acciones_corto(industrias_sel):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def cargar_resultados_largo(industrias_sel):
-    tickers = list(set(t for ind in industrias_sel for t in ACCIONES_POR_INDUSTRIA.get(ind,[])))
+    tickers = list(set(t for ind in industrias_sel for t in UNIVERSO_LARGO.get(ind, [])))
     if not tickers: return pd.DataFrame()
     df_all = descargar_bulk(tickers, period='2y')
     if df_all is None: return pd.DataFrame()
@@ -8402,7 +8402,7 @@ def modulo_topdown_cuantitativo():
     with c2:
         universo_label = st.selectbox('Universo', [
             '🌍 Países / Índices Globales', '📊 Sectores GICS',
-            '🧩 Sub-sectores / Temáticos', '🛢️ Mercados Reales',
+            '🧩 Sub-sectores / Temáticos', '🛢️ Mercados Reales', '📦 ETFs y Bonos',
             '📈 Acciones por Industria',
         ], key='tdc_universo')
 
@@ -8475,6 +8475,7 @@ def modulo_topdown_cuantitativo():
     tab1, tab2, tab3, tab4, tab5 = st.tabs(['📊 Scores', '📈 Momentum', '🗺️ Cuadrante', '🔥 Heatmap', '📋 Ranking'])
     items_ord = sorted(datos.items(), key=lambda x: x[1]['sa'], reverse=True)
     es_subsectores = universo_label.startswith('🧩')
+    es_etfs = universo_label.startswith('📦')
 
     with tab1:
         if es_subsectores:
@@ -8498,6 +8499,19 @@ def modulo_topdown_cuantitativo():
             colores_grp = COLORES_SECTOR_PADRE
         elif universo_label.startswith('🌍'):
             colores_grp = COLORES_REGION
+        elif universo_label.startswith('📦'):
+            colores_grp = COLORES_ETF_CAT
+        elif es_etfs:
+            cats_en = list(dict.fromkeys(d.get('cat', 'Otros') for d in datos.values()))
+            for i in range(0, len(cats_en), 2):
+                cols = st.columns(2)
+                for j, cat in enumerate(cats_en[i:i+2]):
+                    items_c = sorted([(n, d) for n, d in datos.items() if d.get('cat') == cat],
+                                      key=lambda x: x[1]['sa'], reverse=True)
+                    if not items_c: continue
+                    with cols[j]:
+                        st.plotly_chart(fig_barras_h(items_c, cat, COLORES_ETF_CAT.get(cat, C_MONSTER)),
+                                         use_container_width=True, key=f'tdc_barras_etf_{cat}')
         else:
             colores_grp = None
         st.plotly_chart(fig_cuadrante(datos, colores_grp, f'Mapa de Oportunidades — {HORIZONTES_TDC[hz]["nombre"]}'),
@@ -9858,7 +9872,7 @@ elif HORIZONTE == 'largo':
     if MODULO in ('fundamental', 'tdc', 'cot', 'tff'):
         pass  # handled by modulo_fundamental() / modulo_topdown_cuantitativo() below
     else:
-        ind_disp = list(ACCIONES_POR_INDUSTRIA.keys())
+        ind_disp = list(UNIVERSO_LARGO.keys())
         ind_sel  = st.multiselect('Industrias a analizar (2 años de historia)', ind_disp,
                                    default=st.session_state['nav_ind_sel_largo'], key='largo_ind_sel')
         st.session_state['nav_ind_sel_largo'] = ind_sel
@@ -9983,7 +9997,7 @@ elif HORIZONTE == 'largo':
 
 
         elif MODULO == 'ticker':
-            todos_tickers = sorted(set(t for ind in ind_sel for t in ACCIONES_POR_INDUSTRIA.get(ind,[])))
+            todos_tickers = sorted(set(t for ind in ind_sel for t in UNIVERSO_LARGO.get(ind,[])))
             if not todos_tickers:
                 st.info('Seleccioná al menos una industria.'); st.stop()
             ticker_sel = st.selectbox('Seleccioná un ticker', todos_tickers, key='largo_ticker_sel')
