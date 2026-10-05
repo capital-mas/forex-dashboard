@@ -1250,6 +1250,23 @@ ETFS = {
     'Soberanos Desarrollados ex-US':('IGOV',  'Renta Fija Global', '#0288d1'),
 }
 
+# ── ETFs y Bonos agrupados por categoría (para Largo Plazo / TDC / Corto Plazo) ──
+COLORES_ETF_CAT = {}
+ETFS_POR_CATEGORIA = {}
+for _nombre, (_tk, _cat, _color) in ETFS.items():
+    ETFS_POR_CATEGORIA.setdefault(f'ETF · {_cat}', []).append(_tk)
+    COLORES_ETF_CAT.setdefault(_cat, _color)
+
+# Universo de Largo Plazo = acciones por industria + ETFs/Bonos
+# (Fundamental, COT y TFF siguen usando solo ACCIONES_POR_INDUSTRIA)
+UNIVERSO_LARGO = {**ACCIONES_POR_INDUSTRIA, **ETFS_POR_CATEGORIA}
+
+for _ind, _lst in ETFS_POR_CATEGORIA.items():
+    for _t in _lst:
+        TICKER_INDUSTRY.setdefault(_t, _ind)
+
+_ETF_TICKERS_SET = {v[0] for v in ETFS.values()}
+
 SECTORES_TOTAL = {
     # --- Sectores (SPDR, vista macro - 11 sectores GICS) ---
     'Tecnología':     ('XLK',  'Sectores', '#3a7bd5'),
@@ -1414,6 +1431,9 @@ def _build_universo_buscador():
     for t in ALL_TICKERS:
         opciones.append(t); mapa[t] = t
     for nombre, (tk, _) in FOREX.items():
+        label = f'{nombre} · {tk}'
+        opciones.append(label); mapa[label] = tk
+    for nombre, (tk, cat, _) in ETFS.items():
         label = f'{nombre} · {tk}'
         opciones.append(label); mapa[label] = tk
     for nombre, (tk, _) in PAISES.items():
@@ -3144,9 +3164,10 @@ def _fmt_big(v):
     return str(round(v, 2))
 
 def _es_activo_sin_fundamentals(ticker):
-    """Forex, cripto y futuros/commodities no tienen estados financieros en Yahoo Finance."""
+    """Forex, cripto, futuros, índices (^) y ETFs no tienen estados financieros en Yahoo Finance."""
     t = ticker.upper()
-    return t.endswith('=X') or t.endswith('-USD') or t.endswith('=F')
+    return (t.endswith('=X') or t.endswith('-USD') or t.endswith('=F')
+            or t.startswith('^') or t in _ETF_TICKERS_SET)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -4558,7 +4579,10 @@ def _renderizar_buscador(ticker):
     if 'estados' in activos:
         st.markdown('---')
         st.markdown('### 👥📑 Accionistas y Estados Financieros')
-        render_analisis_profundo(ticker, key_suffix='buscador')
+        if _es_activo_sin_fundamentals(ticker):
+            st.info('Este activo (ETF, bono, índice, forex, cripto o commodity) no tiene estados financieros propios.')
+        else:
+            render_analisis_profundo(ticker, key_suffix='buscador')
 
 
 # ==============================================================
@@ -8662,7 +8686,7 @@ def _nav_btn(col, label, key, is_active, on_click_state, on_click_val_h=None, on
 
 
 _OPCIONES_SUB_CORTO = {
-    '🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
+    '🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises', '📦 ETFs y Bonos': 'etfs',
     '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
     '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones',
 }
@@ -9075,7 +9099,7 @@ with st.container(key='nav_mobile_wrap'):
         _label_admin_mobile = f'🛠️ Panel de Pagos 🔴{n_pagos_pend}' if n_pagos_pend > 0 else '🛠️ Panel de Pagos'
         _OPCIONES_HORIZONTE_MOBILE[_label_admin_mobile] = 'admin_pagos'
     _OPCIONES_MODULO_MOBILE = {
-        'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '🌍 Países': 'paises',
+        'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '📦 ETFs y Bonos': 'etfs', '🌍 Países': 'paises',
                   '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
                   '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones'},
         'largo': {'📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
@@ -9189,6 +9213,7 @@ titulos = {
     'comparador':('Comparador de Activos', '⚖️', 'Comparación lado a lado — rendimiento y scores cuantitativos'),
     'optimizador': ('Optimizador de Cartera', '🧮', 'Monte Carlo · Frontera eficiente · Comparación vs benchmark'),
     'pares': ('Rotación y Pares', '🔄', 'Portfolio Rotation · Sector Rotation · Scanner de Pares (Mean Reversion)'),
+    'etfs': ('ETFs y Bonos', '📦', 'Índices, factores, geografías, tasas del Tesoro, bonos y crédito — corto plazo'),
     'forex':     ('Análisis Forex', '💱', 'Pares de divisas — ranking y oportunidades de acumulación'),
     'paises':    ('Países / Índices Globales', '🌍', 'Índices nacionales y regionales — flujo de capital macro'),
     'sectores':  ('Sectores S&P500', '📊', '11 sectores GICS — rotación y momentum'),
@@ -9717,6 +9742,35 @@ elif HORIZONTE == 'corto':
                 st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key='merc_cuadrante')
         with tab4:
             tabla_corto(datos_m)
+
+        elif MODULO == 'etfs':
+        with st.spinner('Descargando ETFs y bonos...'):
+            datos_e = cargar_etfs_corto()
+        if not datos_e: st.error('Sin datos.'); st.stop()
+        badge_actualizacion('etfs')
+        aviso_fallidos('etfs', etiqueta='ETFs/bonos')
+        tab1, tab2, tab3, tab4 = st.tabs(['📊 Por categoría','📈 Momentum','🗺️ Cuadrante','📋 Ranking'])
+        with tab1:
+            cats = list(dict.fromkeys(d['cat'] for d in datos_e.values()))
+            for i in range(0, len(cats), 2):
+                cols = st.columns(2)
+                for j, cat in enumerate(cats[i:i+2]):
+                    items = sorted([(n, d) for n, d in datos_e.items() if d['cat'] == cat],
+                                   key=lambda x: x[1]['sa'], reverse=True)
+                    if not items: continue
+                    fig = fig_barras_h(items, cat, COLORES_ETF_CAT.get(cat, C_MONSTER))
+                    with cols[j]:
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f'etf_barras_{cat}')
+        with tab2:
+            fig2 = fig_momentum(sorted(datos_e.items(), key=lambda x: x[1]['ret_5d'], reverse=True))
+            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key='etf_momentum')
+        with tab3:
+            c_m, _ = st.columns([2,1])
+            with c_m:
+                fig3 = fig_cuadrante(datos_e, COLORES_ETF_CAT, 'Mapa Oportunidades ETFs y Bonos')
+                st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key='etf_cuadrante')
+        with tab4:
+            tabla_corto(datos_e, key_suffix='etfs')
 
 
     elif MODULO == 'acciones':
