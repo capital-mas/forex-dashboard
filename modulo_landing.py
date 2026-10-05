@@ -493,7 +493,6 @@ def _seccion_mercados():
     st.markdown('<div class="landing-section-title">Elegí tu plan</div>', unsafe_allow_html=True)
     st.markdown('<div class="landing-section-sub">Dos niveles de acceso, pagando en criptomonedas</div>', unsafe_allow_html=True)
 
-    st.markdown("""
     # ── Contenido de cada plan ──
     BASICO_ITEMS = [
         'Cotizaciones del día: índices, ETFs, sectores, forex y cripto',
