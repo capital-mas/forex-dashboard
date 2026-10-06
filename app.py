@@ -8583,7 +8583,7 @@ UNIVERSO_TICKERS_VALIDOS = (
 )
 
 # ── Resúmenes GEX / COT / Velas / Opciones para el asistente ──
-RES_IA = crear_resumenes(supabase, descargar_datos)
+CTX_IA.update(RES_IA)   # incluye gex_resumen, gex_niveles, cot_resumen, velas_resumen, opciones_resumen
 if not TIENE_ACCESO_PRO:
     RES_IA.pop('velas_resumen', None)
 
