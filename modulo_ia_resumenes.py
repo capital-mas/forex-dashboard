@@ -15,6 +15,9 @@ import numpy as np
 import pandas as pd
 
 _SIN_OPCIONES = ('=X', '=F', '-USD')   # forex, futuros y cripto no tienen cadena de opciones
+# índices de Yahoo -> símbolo que entiende CBOE
+_MAPA_INDICES = {'^GSPC': 'SPX', '^SPX': 'SPX', '^NDX': 'NDX', '^RUT': 'RUT',
+                 '^VIX': 'VIX', '^DJI': 'DJX'}
 
 
 # ──────────────────────────────────────────────────────────────
@@ -22,12 +25,16 @@ _SIN_OPCIONES = ('=X', '=F', '-USD')   # forex, futuros y cripto no tienen caden
 # ──────────────────────────────────────────────────────────────
 def _gex_calc(tk, n_vtos=6, rango=0.20, r=0.045, q=0.0, mult=100):
     import modulo_gex as G
-    t = tk.upper()
-    if t.endswith(_SIN_OPCIONES):
-        return None
+    t = _MAPA_INDICES.get(tk.upper(), tk.upper())
 
     cboe, simbolo, _ = G.resolver_simbolo(t)
-    datos = G._gex_descargar(cboe)            # cacheado 5 min
+    # forex / futuros / cripto SIN equivalente (ETF o Deribit) no tienen cadena: se omiten
+    if t.endswith(_SIN_OPCIONES) and cboe in (t, t.lstrip('^')):
+        return None
+    if cboe.startswith('DERIBIT:'):
+        mult = 1                                  # cada contrato de Deribit = 1 unidad
+
+    datos = G._gex_descargar(cboe)                # cacheado 5 min
     S = datos['spot']
     df, _ = G.preparar_cadena(datos['df'], n_vtos)
     if df is None:
@@ -44,7 +51,9 @@ def _gex_calc(tk, n_vtos=6, rango=0.20, r=0.045, q=0.0, mult=100):
     _, tot_pc = G.calcular_put_call(G._subset_vtos(datos['df'], n_vtos))
     res_v, _ = G.calcular_gex_por_vto(df, S, r, q, mult, rango)
     sq = G.calcular_squeeze_score(piv, piv_d, tot_pc, z, S, res_v)
-    return dict(S=S, z=z, sq=sq, pc=tot_pc.get('P/C OI'), simbolo=simbolo)
+    niv = G.calcular_niveles_clasificados(piv, S, n=5)      # ← Niveles clave de gamma
+    return dict(S=S, z=z, sq=sq, pc=tot_pc.get('P/C OI'), simbolo=simbolo, niv=niv,
+                proxy=(simbolo.upper() != tk.upper().lstrip('^')))
 
 
 def _gex_resumen(tk):
@@ -70,14 +79,15 @@ def _gex_resumen(tk):
 
 
 def _gex_niveles(tk):
-    """Versión numérica para que el asistente arme la conclusión."""
+    """Versión numérica para la conclusión + niveles clasificados para el detalle."""
     d = _gex_calc(tk)
     if not d:
         return None
     z, sq = d['z'], d['sq']
     return dict(spot=d['S'], flip=z['flip'], call_wall=z['call_wall'], put_wall=z['put_wall'],
                 regimen=z['regimen'], squeeze_score=sq['score'], squeeze_nivel=sq['nivel'],
-                inminente=sq['inminente'])
+                inminente=sq['inminente'], niveles=d['niv'],
+                simbolo=d['simbolo'], proxy=d['proxy'])
 
 # ──────────────────────────────────────────────────────────────
 #  COT  (los commodities son texto libre en tu tabla, ver mapeo)
