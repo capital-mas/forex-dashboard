@@ -3421,12 +3421,13 @@ def modulo_ia_asistente(ctx, compacto=False):
     _render_badge_modulos(ctx)
 
     pares_botones = _opciones_pendientes_botones(ctx)
+    sugerencias = list(_SUGERENCIAS_RAPIDAS) + (['🎯 Plan Trading'] if ctx.get('es_admin') else [])
 
     sugerencia_click = None
     if not pares_botones:
-        n_cols_sug = 2 if compacto else len(_SUGERENCIAS_RAPIDAS)
-        for i in range(0, len(_SUGERENCIAS_RAPIDAS), n_cols_sug):
-            fila = _SUGERENCIAS_RAPIDAS[i:i + n_cols_sug]
+        n_cols_sug = 2 if compacto else len(sugerencias)
+        for i in range(0, len(sugerencias), n_cols_sug):
+            fila = sugerencias[i:i + n_cols_sug]
             cols_sug = st.columns(len(fila))
             for j, (col, sug) in enumerate(zip(cols_sug, fila)):
                 with col:
