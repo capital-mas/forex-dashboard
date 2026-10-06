@@ -1969,6 +1969,152 @@ def render_squeeze(simbolo_cboe, simbolo, n_vtos, rango_pct, r, q, mult, auto=Fa
 
 
 # ==============================================================
+#  NIVELES CLASIFICADOS: Pivote/Pinning · Resistencia Absoluta · Soporte Absoluto
+# ==============================================================
+#  Cada strike tiene gamma de calls Y de puts. En vez de rankearlos por separado (y ver el mismo
+#  strike dos veces), se compara ambos lados en el mismo strike:
+#   · Pivote / Pinning:     calls y puts ambos altos (parejos) y strike pegado al precio (≤ TL_PIVOTE_DIST %).
+#   · Resistencia Absoluta: GEX de calls ≥ TL_DOMINIO × GEX de puts  → techo / amortiguador.
+#   · Soporte Absoluto:     GEX de puts  ≥ TL_DOMINIO × GEX de calls → piso (si se pierde, puede acelerar la venta).
+#   · Mixto:                calls y puts parejos pero lejos del precio (sin dominio claro).
+#  Los umbrales son heurísticos (no calibrados con backtest): ajustalos a gusto.
+
+TL_DOMINIO = 1.5            # veces que un lado debe superar al otro para ser "absoluto"
+TL_PIVOTE_DIST = 1.0        # % máximo de distancia al precio para ser pivote
+TL_PIVOTE_BALANCE = 0.25    # lado menor / lado mayor mínimo para considerar "altos ambos"
+TL_PIVOTE_PESO_MIN = 10.0   # el strike debe pesar al menos este % del strike más pesado
+
+
+def calcular_niveles_clasificados(piv, S, n=5):
+    """Une el top n de calls, el top n de puts y los posibles pivotes, y clasifica cada strike una sola vez.
+    Devuelve un DataFrame (vacío si no hay datos) con: strike, calls, puts (valores absolutos), bruto, dist_pct,
+    pct_total, balance, dominio y tipo ('Pivote' | 'Resistencia' | 'Soporte' | 'Mixto')."""
+    cols = ['strike', 'calls', 'puts', 'bruto', 'dist_pct', 'pct_total', 'balance', 'dominio', 'tipo']
+    if piv is None or piv.empty:
+        return pd.DataFrame(columns=cols)
+    x = piv[['strike', 'gex_calls', 'gex_puts']].copy()
+    x['calls'] = x['gex_calls'].clip(lower=0.0)
+    x['puts'] = x['gex_puts'].abs()
+    x['bruto'] = x['calls'] + x['puts']
+    x = x[x['bruto'] > 0].copy()
+    if x.empty:
+        return pd.DataFrame(columns=cols)
+    max_b = float(x['bruto'].max())
+    x['dist_pct'] = (x['strike'] / S - 1) * 100
+    x['pct_total'] = x['bruto'] / float(x['bruto'].sum()) * 100
+    hi = np.maximum(x['calls'], x['puts'])
+    lo = np.minimum(x['calls'], x['puts'])
+    x['balance'] = lo / hi
+    x['dominio'] = (hi / lo.where(lo > 0)).fillna(99.0).clip(upper=99.0)
+
+    def _es_pivote(r):
+        return (abs(r['dist_pct']) <= TL_PIVOTE_DIST and r['balance'] >= TL_PIVOTE_BALANCE
+                and r['bruto'] >= max_b * TL_PIVOTE_PESO_MIN / 100)
+
+    top_c, top_p = calcular_top_niveles(piv, S, n)
+    cand = set(top_c['strike']) | set(top_p['strike'])
+    cand |= set(x.loc[x.apply(_es_pivote, axis=1), 'strike'])
+    x = x[x['strike'].isin(cand)].copy()
+
+    def _clasificar(r):
+        if _es_pivote(r):
+            return 'Pivote'
+        if r['calls'] >= TL_DOMINIO * r['puts']:
+            return 'Resistencia'
+        if r['puts'] >= TL_DOMINIO * r['calls']:
+            return 'Soporte'
+        return 'Mixto'
+
+    x['tipo'] = x.apply(_clasificar, axis=1)
+    return x[cols].sort_values('bruto', ascending=False).reset_index(drop=True)
+
+
+def render_niveles_clasificados(niv, S):
+    """Tres columnas: Resistencia Absoluta · Pivote/Pinning · Soporte Absoluto (+ tabla de Mixtos si hay)."""
+    st.markdown('#### 🏆 Niveles clave de gamma (cada strike clasificado una sola vez)')
+    st.caption('Se compara la gamma de calls contra la de puts **dentro de cada strike**: el que domina define si es techo, piso o pivote.')
+    if niv is None or niv.empty:
+        st.info('No hay strikes con gamma suficiente en el rango elegido.')
+        return
+
+    resist = niv[niv['tipo'] == 'Resistencia'].sort_values('bruto', ascending=False)
+    soport = niv[niv['tipo'] == 'Soporte'].sort_values('bruto', ascending=False)
+    pivote = niv[niv['tipo'] == 'Pivote'].assign(_a=lambda d: d['dist_pct'].abs()).sort_values('_a')
+    mixto = niv[niv['tipo'] == 'Mixto'].sort_values('bruto', ascending=False)
+
+    def _tabla(sub, titulo, col, key, vacio):
+        with col:
+            st.markdown(f'**{titulo}**')
+            if sub.empty:
+                st.info(vacio)
+                return
+            t = pd.DataFrame({'Strike': sub['strike'],
+                              'Calls (M US$)': sub['calls'] / 1e6,
+                              'Puts (M US$)': -sub['puts'] / 1e6,
+                              'Dist. %': sub['dist_pct'],
+                              'Dominio ×': sub['dominio']})
+            st.dataframe(t, use_container_width=True, hide_index=True, key=key,
+                         column_config={'Strike': st.column_config.NumberColumn(format='%.2f'),
+                                        'Calls (M US$)': st.column_config.NumberColumn(format='%+.1f'),
+                                        'Puts (M US$)': st.column_config.NumberColumn(format='%+.1f'),
+                                        'Dist. %': st.column_config.NumberColumn(format='%+.1f'),
+                                        'Dominio ×': st.column_config.NumberColumn(format='%.1f')})
+
+    c_r, c_p, c_s = st.columns(3)
+    _tabla(resist, '🟢 Resistencia Absoluta (techo)', c_r, 'gex_niv_res', 'Ningún strike con calls dominantes.')
+    _tabla(pivote, '🟡 Pivote / Pinning (ancla)', c_p, 'gex_niv_piv', 'Ningún strike cumple calls + puts altos pegado al precio.')
+    _tabla(soport, '🔴 Soporte Absoluto (piso)', c_s, 'gex_niv_sop', 'Ningún strike con puts dominantes.')
+
+    if not mixto.empty:
+        st.markdown('**⚪ Mixtos** (calls y puts parejos pero lejos del precio: sin dominio claro)')
+        t = pd.DataFrame({'Strike': mixto['strike'], 'Calls (M US$)': mixto['calls'] / 1e6,
+                          'Puts (M US$)': -mixto['puts'] / 1e6, 'Dist. %': mixto['dist_pct'],
+                          'Dominio ×': mixto['dominio']})
+        st.dataframe(t, use_container_width=True, hide_index=True, key='gex_niv_mix',
+                     column_config={'Strike': st.column_config.NumberColumn(format='%.2f'),
+                                    'Calls (M US$)': st.column_config.NumberColumn(format='%+.1f'),
+                                    'Puts (M US$)': st.column_config.NumberColumn(format='%+.1f'),
+                                    'Dist. %': st.column_config.NumberColumn(format='%+.1f'),
+                                    'Dominio ×': st.column_config.NumberColumn(format='%.1f')})
+
+    # Lectura con los datos de hoy
+    L = []
+    ra = resist[resist['strike'] > S].sort_values('strike')
+    sa = soport[soport['strike'] < S].sort_values('strike', ascending=False)
+    L.append(f"Resistencia absoluta más cercana **sobre** el precio: **{ra.iloc[0]['strike']:,.2f}** ({ra.iloc[0]['dist_pct']:+.1f}%)."
+             if not ra.empty else 'No hay resistencia absoluta sobre el precio dentro del rango.')
+    L.append(f"Soporte absoluto más cercano **bajo** el precio: **{sa.iloc[0]['strike']:,.2f}** ({sa.iloc[0]['dist_pct']:+.1f}%)."
+             if not sa.empty else 'No hay soporte absoluto bajo el precio dentro del rango.')
+    if not pivote.empty:
+        pv = pivote.iloc[0]
+        L.append(f"Hay un **pivote en {pv['strike']:,.2f}** ({pv['dist_pct']:+.1f}% del precio): tiende a anclar el precio mientras duren esas opciones.")
+    for linea in L:
+        st.markdown(f'- {linea}')
+
+    render_explicacion('Cómo interpretar estos niveles (y por qué un strike ya no aparece dos veces)', f"""
+**Por qué antes se repetían**
+Cada precio de ejercicio tiene **calls y puts abiertos a la vez**. Si el ranking de calls y el de puts se arman por separado, el mismo strike puede aparecer en ambos. Acá se **comparan los dos lados dentro de cada strike** y se lo clasifica según cuál domina.
+
+**Las categorías**
+- 🟡 **Pivote / Pinning (ancla):** calls y puts **ambos altos** (el lado menor pesa al menos el {TL_PIVOTE_BALANCE:.0%} del mayor) y el strike está a **{TL_PIVOTE_DIST:.0f}% o menos del precio**. Zona de atracción y baja volatilidad: el activo tiende a quedar "clavado" o lateralizar ahí hasta que expiren esas opciones.
+- 🟢 **Resistencia Absoluta:** el GEX de calls es **{TL_DOMINIO:.1f} veces o más** el de puts. Techo de mercado: actúa como amortiguador y tope.
+- 🔴 **Soporte Absoluto:** el GEX de puts (monto negativo) supera **{TL_DOMINIO:.1f} veces o más** al de calls en magnitud. Piso de mercado: si se pierde, puede acelerar las ventas (gamma negativa).
+- ⚪ **Mixto:** calls y puts parejos pero **lejos del precio**. No hay dominio claro, así que no se fuerza a techo ni a piso.
+
+**Cómo leer las columnas**
+- **Calls / Puts (M US$):** gamma de cada lado en ese strike. **Dominio ×:** cuántas veces el lado mayor supera al menor (99 = el otro lado es cero).
+- **Dist. %:** distancia al precio actual. Una *resistencia* con distancia **negativa** ya quedó por debajo del precio (ya fue superada) y un *soporte* con distancia **positiva** quedó por encima: pierden sentido como techo o piso, tomalos como referencia histórica.
+
+**Cómo sacarle provecho**
+- El **pivote** sirve para estrategias de rango (vender prima cerca de ese nivel), sobre todo en los últimos días antes del vencimiento.
+- Las **resistencias** son candidatas para vender calls por encima; los **soportes**, para vender puts por debajo.
+- Revisá siempre **de qué vencimiento** viene la gamma (pestaña GEX por vencimiento): si vence pronto, el nivel caduca con ella.
+
+**Límites:** los umbrales (`TL_DOMINIO`, `TL_PIVOTE_DIST`, `TL_PIVOTE_BALANCE`, `TL_PIVOTE_PESO_MIN`) son heurísticos, no están calibrados con backtest. Asume creadores de mercado largos calls y cortos puts, y no es una señal de compra o venta por sí sola.
+""")
+
+
+# ==============================================================
 #  TOP 5 NIVELES DE CALLS Y PUTS (render)
 # ==============================================================
 
@@ -2097,8 +2243,12 @@ def modulo_gex():
     top_c, top_p = calcular_top_niveles(piv, S, n=5)
 
     # Puente base hacia Valuación de Opciones (la pestaña "Puente" lo completa con strikes sugeridos)
-    publicar_puente_gex(simbolo, S, z, extra={'top_calls': top_c['strike'].tolist(),
-                                              'top_puts': top_p['strike'].tolist()})
+    niv = calcular_niveles_clasificados(piv, S, n=5)
+    publicar_puente_gex(simbolo, S, z, extra={
+        'top_calls': top_c['strike'].tolist(), 'top_puts': top_p['strike'].tolist(),
+        'resistencias': niv.loc[niv['tipo'] == 'Resistencia', 'strike'].tolist(),
+        'pivotes': niv.loc[niv['tipo'] == 'Pivote', 'strike'].tolist(),
+        'soportes': niv.loc[niv['tipo'] == 'Soporte', 'strike'].tolist()})
 
     m1, m2, m3, m4 = st.columns(4)
     with m1: st.metric('GEX total (al precio actual)', f"{z['gex_total']/1e6:,.1f} millones de US$")
@@ -2153,8 +2303,10 @@ Cada barra es un precio de ejercicio. **Verde hacia arriba** = gamma de las call
 - Combinalo siempre con el resto del análisis (tendencia, volatilidad, perfil de resultado). **No es una señal de compra o venta por sí solo.**
 """)
 
-    # ── Top 5 niveles de Calls y Puts (de mayor a menor) ──
-    render_top_niveles(top_c, top_p, n=5)
+    # ── Niveles clave clasificados: Resistencia Absoluta · Pivote/Pinning · Soporte Absoluto ──
+    render_niveles_clasificados(niv, S)
+    with st.expander('Ver ranking sin clasificar (top 5 de Calls y de Puts por separado)', expanded=False):
+        render_top_niveles(top_c, top_p, n=5)
 
     st.markdown('**Lectura con los datos de hoy:**')
     for linea in lectura_personalizada_gex(z, S):
