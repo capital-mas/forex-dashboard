@@ -1180,7 +1180,7 @@ def responder(texto_usuario, ctx):
         st.session_state['ia_ultimo_ticker'] = tickers[0]
 
     if intencion == 'ayuda' and not tickers and not industria_detectada:
-        return _respuesta_ayuda()
+        return _respuesta_ayuda() + (_AYUDA_ADMIN if ctx.get('es_admin') else '')
 
     if intencion == 'sistema':
         return _respuesta_sistema()
@@ -3471,6 +3471,7 @@ def modulo_ia_asistente(ctx, compacto=False):
         st.session_state['ia_registro_menu_pendiente'] = False
         st.session_state['ia_esperando_ticker'] = False
         st.session_state['ia_ultimo_ticker'] = None
+        st.session_state['ia_esperando_plan'] = False
         st.session_state['ia_cache_analisis'] = {}
         st.rerun(scope="fragment")
 
