@@ -2,7 +2,12 @@
 #  MÓDULO GEX — Gamma Exposure, punto de cambio de gamma y paredes
 #  100% independiente del módulo de opciones (no comparte funciones,
 #  caché ni claves de sesión, salvo el "puente" explícito de abajo).
-#  Fuente de datos: cadena pública y gratuita de CBOE (retrasada ~15 min).
+#
+#  Fuentes de datos (todas gratuitas y sin clave):
+#   · CBOE (cadena pública, retrasada ~15 min): acciones, ETFs, ADRs e índices de EEUU.
+#     Con ETFs se cubren otros mercados: oro, plata, petróleo, gas, bonos, DIVISAS
+#     (FXE, FXY, FXB, FXA, FXC, FXF, UUP, UDN, CEW), países (EWZ, FXI, EWW...), etc.
+#   · Deribit (API pública): opciones de BTC y ETH (casi tiempo real).
 #  No usa Yahoo Finance ni yfinance.
 #
 #  Incluye: GEX + Put/Call, Max Pain, movimiento esperado, GEX por vencimiento,
@@ -54,6 +59,91 @@ MAPA_ADR = {'GGAL.BA': 'GGAL', 'YPFD.BA': 'YPF', 'PAMP.BA': 'PAM', 'BMA.BA': 'BM
 
 _OCC = re.compile(r'^(.+?)(\d{6})([CP])(\d{8})$')            # ej. NVDA260116C00150000
 
+# ── Cripto (Deribit) ──
+CRIPTOS_DERIBIT = {'BTC', 'ETH'}                              # cadena completa y gratuita en Deribit
+DERIBIT_URL = 'https://www.deribit.com/api/v2/public/'
+_MESES = {m: i + 1 for i, m in enumerate(['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                                          'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'])}
+_DERIBIT_INST = re.compile(r'^([A-Z]+)-(\d{1,2})([A-Z]{3})(\d{2})-([\d.]+)-([CP])$')   # BTC-27MAR26-80000-C
+
+# ── Otros mercados vía ETFs de EEUU (opciones en CBOE) ──
+# Pares de divisas, futuros y commodities que se escriben "a lo Yahoo/TradingView" → ETF equivalente.
+# Cada valor es (ETF, nota). La nota avisa cuando el ETF se mueve al revés del par.
+ALIAS_MERCADOS = {
+    # divisas
+    'EURUSD': ('FXE', 'EUR/USD → **FXE** (ETF del euro).'),
+    'GBPUSD': ('FXB', 'GBP/USD → **FXB** (ETF de la libra).'),
+    'AUDUSD': ('FXA', 'AUD/USD → **FXA** (ETF del dólar australiano).'),
+    'USDJPY': ('FXY', 'USD/JPY → **FXY** (ETF del yen). Ojo: FXY sube cuando el yen se aprecia, es decir al REVÉS que USD/JPY.'),
+    'USDCAD': ('FXC', 'USD/CAD → **FXC** (ETF del dólar canadiense). Ojo: FXC sube cuando el CAD se aprecia, al REVÉS que USD/CAD.'),
+    'USDCHF': ('FXF', 'USD/CHF → **FXF** (ETF del franco suizo). Ojo: FXF sube cuando el franco se aprecia, al REVÉS que USD/CHF.'),
+    'DXY': ('UUP', 'Índice dólar (DXY) → **UUP** (ETF alcista del dólar contra una canasta de divisas).'),
+    'DX-Y.NYB': ('UUP', 'Índice dólar (DXY) → **UUP** (ETF alcista del dólar contra una canasta de divisas).'),
+    'DX=F': ('UUP', 'Futuro del índice dólar → **UUP** (ETF alcista del dólar).'),
+    'USDX': ('UUP', 'Índice dólar → **UUP** (ETF alcista del dólar).'),
+    # commodities / futuros
+    'XAUUSD': ('GLD', 'Oro (XAU/USD) → **GLD** (ETF de oro).'),
+    'GC=F': ('GLD', 'Futuro de oro → **GLD** (ETF de oro).'),
+    'XAGUSD': ('SLV', 'Plata (XAG/USD) → **SLV** (ETF de plata).'),
+    'SI=F': ('SLV', 'Futuro de plata → **SLV** (ETF de plata).'),
+    'CL=F': ('USO', 'Futuro de petróleo WTI → **USO** (ETF de petróleo).'),
+    'WTI': ('USO', 'Petróleo WTI → **USO** (ETF de petróleo).'),
+    'NG=F': ('UNG', 'Futuro de gas natural → **UNG** (ETF de gas natural).'),
+    'HG=F': ('CPER', 'Futuro de cobre → **CPER** (ETF de cobre; opciones poco líquidas).'),
+    # futuros de índices
+    'ES=F': ('SPY', 'Futuro del S&P 500 → **SPY** (ETF del S&P 500).'),
+    'NQ=F': ('QQQ', 'Futuro del Nasdaq 100 → **QQQ** (ETF del Nasdaq 100).'),
+    'YM=F': ('DIA', 'Futuro del Dow Jones → **DIA** (ETF del Dow Jones).'),
+    'RTY=F': ('IWM', 'Futuro del Russell 2000 → **IWM** (ETF del Russell 2000).'),
+    'ZB=F': ('TLT', 'Futuro del bono a 30 años → **TLT** (ETF de bonos del Tesoro 20+ años).'),
+}
+
+# ETFs cuyas opciones suelen tener poco interés abierto: la lectura del GEX es menos confiable.
+LIQUIDEZ_BAJA = {'FXB', 'FXA', 'FXC', 'FXF', 'CEW', 'UDN', 'CPER', 'DBA', 'CYB'}
+
+# Atajos del selector (etiqueta → símbolo). Todos salen de CBOE salvo BTC y ETH (Deribit).
+ATAJOS_MERCADOS = {
+    '— Elegir un atajo —': None,
+    # Índices
+    '📈 Índice S&P 500 (SPX)': 'SPX',
+    '📈 Índice Nasdaq 100 (NDX)': 'NDX',
+    '📈 Índice Russell 2000 (RUT)': 'RUT',
+    '😱 Índice de volatilidad (VIX)': 'VIX',
+    # Divisas
+    '💵 Dólar contra canasta, alcista (UUP)': 'UUP',
+    '💵 Dólar contra canasta, bajista (UDN)': 'UDN',
+    '💶 Euro (FXE)': 'FXE',
+    '💴 Yen japonés (FXY)': 'FXY',
+    '💷 Libra esterlina (FXB)': 'FXB',
+    '🇦🇺 Dólar australiano (FXA)': 'FXA',
+    '🇨🇦 Dólar canadiense (FXC)': 'FXC',
+    '🇨🇭 Franco suizo (FXF)': 'FXF',
+    '🌐 Divisas emergentes (CEW)': 'CEW',
+    # Commodities
+    '🥇 Oro (GLD)': 'GLD',
+    '🥈 Plata (SLV)': 'SLV',
+    '🛢️ Petróleo (USO)': 'USO',
+    '🔥 Gas natural (UNG)': 'UNG',
+    '🌾 Agro (DBA)': 'DBA',
+    # Bonos
+    '🏦 Bonos del Tesoro 20+ años (TLT)': 'TLT',
+    '🏦 Bonos high yield (HYG)': 'HYG',
+    # Países / regiones
+    '🌎 Mercados emergentes (EEM)': 'EEM',
+    '🌍 Desarrollados ex-EEUU (EFA)': 'EFA',
+    '🇧🇷 Brasil (EWZ)': 'EWZ',
+    '🇨🇳 China (FXI)': 'FXI',
+    '🇲🇽 México (EWW)': 'EWW',
+    # Argentina
+    '🇦🇷 Galicia (GGAL)': 'GGAL',
+    '🇦🇷 YPF': 'YPF',
+    '🇦🇷 Mercado Libre (MELI)': 'MELI',
+    # Cripto
+    '₿ Bitcoin (Deribit)': 'BTC',
+    'Ξ Ethereum (Deribit)': 'ETH',
+    '₿ ETF Bitcoin de BlackRock (IBIT)': 'IBIT',
+}
+
 EXPLICACIONES_ABIERTAS = True
 
 # Clave de sesión del puente hacia "Valuación de Opciones" (único punto de contacto entre módulos)
@@ -77,23 +167,49 @@ def fmt_precio(p):
 
 
 def resolver_simbolo(entrada):
-    """Devuelve (simbolo_cboe, simbolo_limpio, aviso).
+    """Devuelve (simbolo_fuente, simbolo_limpio, aviso).
     - Quita el prefijo ^ y espacios.
+    - Pares de divisas / futuros / commodities estilo Yahoo (EURUSD=X, GC=F, DXY...) → ETF equivalente de EEUU.
+    - Cripto (BTC, ETH, también BTC-USD / BTCUSDT) → 'DERIBIT:BTC' (API de Deribit).
     - Si es .BA, usa el ADR conocido o, si no, la raíz sin .BA (CEDEARs de acciones de EEUU).
     - Índices (SPX, NDX...) llevan guion bajo en CBOE."""
     s = (entrada or '').strip().upper().lstrip('^')
     aviso = None
+
+    # 1) alias de divisas / futuros / commodities
+    k = s.replace('=X', '').replace('/', '').replace(' ', '')
+    for clave in (s, k, k.replace('-', '')):
+        if clave in ALIAS_MERCADOS:
+            etf, nota = ALIAS_MERCADOS[clave]
+            return etf, etf, nota
+
+    # 2) cripto → Deribit
+    base = re.sub(r'[-/]?(USDT|USDC|USD|PERP)$', '', s)
+    if base in CRIPTOS_DERIBIT:
+        return (f'DERIBIT:{base}', base,
+                f'**{base}** se analiza con las opciones de **Deribit** (gratis). Cada contrato es de 1 {base}, '
+                f'así que el multiplicador se fija en 1 automáticamente.')
+
+    # 3) Buenos Aires → subyacente de EEUU
     if s.endswith('.BA'):
-        base = MAPA_ADR.get(s) or s[:-3]
-        aviso = (f'{s} cotiza en Buenos Aires y no tiene opciones en CBOE; se usa **{base}** '
+        base_ba = MAPA_ADR.get(s) or s[:-3]
+        aviso = (f'{s} cotiza en Buenos Aires y no tiene opciones en CBOE; se usa **{base_ba}** '
                  f'(el subyacente de EEUU, precio en USD).')
-        s = base
+        s = base_ba
+
     cboe = f'_{s}' if s in INDICES_CBOE else s.replace('.', '-')
     return cboe, s, aviso
 
 
+def _aplicar_atajo():
+    """Callback del selector de atajos: copia el símbolo elegido al cuadro de texto."""
+    sym = ATAJOS_MERCADOS.get(st.session_state.get('gex_atajo'))
+    if sym:
+        st.session_state['gex_ticker'] = sym
+
+
 # ==============================================================
-#  DATOS — CBOE (gratis, sin clave)
+#  DATOS — CBOE (gratis, sin clave) y Deribit (cripto, gratis)
 # ==============================================================
 
 def _mid_contrato(bid, ask, last):
@@ -111,10 +227,80 @@ def _mid_contrato(bid, ask, last):
         return np.nan
 
 
+def _descargar_deribit(moneda):
+    """Cadena completa de opciones de Deribit en el mismo formato que la de CBOE.
+    - Precio: índice spot de Deribit (btc_usd / eth_usd).
+    - IV: mark_iv (viene en %, se pasa a decimal). OI y volumen: en unidades de la moneda (contratos de 1).
+    - Prima: bid/ask/last vienen en la moneda (BTC/ETH) → se multiplican por el spot para dejarlos en US$.
+    - Delta: este endpoint no la trae → queda NaN y reparar_delta() la completa con Black-Scholes."""
+    h = {'Accept': 'application/json', 'User-Agent': CBOE_HEADERS['User-Agent']}
+    ultimo = None
+    for i in range(3):
+        try:
+            r1 = requests.get(DERIBIT_URL + 'get_index_price', params={'index_name': f'{moneda.lower()}_usd'},
+                              headers=h, timeout=20)
+            r1.raise_for_status()
+            spot = (r1.json().get('result') or {}).get('index_price')
+            if not spot:
+                raise ValueError('Deribit no informó el precio índice.')
+
+            r2 = requests.get(DERIBIT_URL + 'get_book_summary_by_currency',
+                              params={'currency': moneda, 'kind': 'option'}, headers=h, timeout=25)
+            r2.raise_for_status()
+            res = r2.json().get('result') or []
+            if not res:
+                raise LookupError(f'Deribit respondió sin contratos para {moneda}.')
+
+            hoy = date.today()
+            filas = []
+            for o in res:
+                m = _DERIBIT_INST.match(str(o.get('instrument_name', '')))
+                if not m:
+                    continue
+                mes = _MESES.get(m.group(3))
+                if not mes:
+                    continue
+                try:
+                    vto = date(2000 + int(m.group(4)), mes, int(m.group(2)))
+                except ValueError:
+                    continue
+                dias = (vto - hoy).days
+                if dias < 0:
+                    continue
+                iv = o.get('mark_iv')
+                mid = _mid_contrato(o.get('bid_price'), o.get('ask_price'), o.get('last'))
+                filas.append((float(m.group(5)), m.group(6), vto.isoformat(), max(dias, 0.5) / 365.0,
+                              o.get('open_interest'),
+                              float(iv) / 100.0 if iv else np.nan,
+                              o.get('volume'),
+                              mid * float(spot) if not np.isnan(mid) else np.nan,
+                              np.nan))
+            if not filas:
+                raise LookupError('No se pudo interpretar ningún contrato vigente de Deribit.')
+
+            df = pd.DataFrame(filas, columns=['strike', 'tipo', 'vto', 'T', 'openInterest', 'impliedVolatility',
+                                                 'volume', 'mid', 'delta'])
+            for c in ('openInterest', 'volume'):
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+            for c in ('impliedVolatility', 'mid', 'delta'):
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+            return {'spot': float(spot), 'df': df, 'hora': '', 'fuente': 'Deribit',
+                    'descargado': datetime.now().strftime('%H:%M:%S')}
+        except LookupError:
+            raise
+        except Exception as e:
+            ultimo = e
+            time.sleep(0.8 * (i + 1))
+    raise RuntimeError(f'No se pudo descargar de Deribit tras 3 intentos: {type(ultimo).__name__}: {ultimo}')
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _gex_descargar(simbolo_cboe):
-    """Descarga la cadena completa de CBOE. Si falla LANZA excepción, así el error
-    NO queda cacheado (st.cache_data no guarda excepciones)."""
+    """Descarga la cadena completa de CBOE (o de Deribit si el símbolo empieza con 'DERIBIT:').
+    Si falla LANZA excepción, así el error NO queda cacheado (st.cache_data no guarda excepciones)."""
+    if simbolo_cboe.startswith('DERIBIT:'):
+        return _descargar_deribit(simbolo_cboe.split(':', 1)[1])
+
     ultimo = None
     for i in range(3):
         try:
@@ -162,6 +348,7 @@ def _gex_descargar(simbolo_cboe):
             df['delta'] = pd.to_numeric(df['delta'], errors='coerce')
             return {'spot': float(spot), 'df': df,
                     'hora': str(data.get('last_trade_time') or ''),
+                    'fuente': 'CBOE',
                     'descargado': datetime.now().strftime('%H:%M:%S')}
         except LookupError:
             raise                                   # no tiene sentido reintentar
@@ -197,13 +384,13 @@ def preparar_cadena(df_completo, n_vtos, iv_respaldo=0.40):
 
 
 def _delta_bs_vec(S, K, T, r, sigma, q, tipo):
-    """Delta Black-Scholes (solo se usa para completar contratos donde CBOE no publicó delta)."""
+    """Delta Black-Scholes (solo se usa para completar contratos donde la fuente no publicó delta)."""
     d1 = (np.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
     return np.where(tipo == 'C', np.exp(-q * T) * norm.cdf(d1), -np.exp(-q * T) * norm.cdf(-d1))
 
 
 def reparar_delta(df, S, r, q):
-    """Deja la columna 'delta' lista: usa la de CBOE y solo completa (con Black-Scholes) los contratos
+    """Deja la columna 'delta' lista: usa la de la fuente y solo completa (con Black-Scholes) los contratos
     donde falta o es inválida (call fuera de 0..1, put fuera de -1..0). Devuelve (df, cantidad_completada)."""
     df = df.copy()
     if 'delta' not in df.columns:
@@ -384,7 +571,7 @@ def fig_gex_total(grid, total, S, flip):
 
 
 # ==============================================================
-#  ANÁLISIS COMPLEMENTARIOS — misma descarga de CBOE, sin pedidos extra
+#  ANÁLISIS COMPLEMENTARIOS — misma descarga, sin pedidos extra
 #  1) Put/Call  2) Max Pain  3) Movimiento esperado
 #  4) GEX por vencimiento  5) Vol. implícita (estructura + skew)  6) Flujo inusual
 #  7) DEX  8) Vanna y Charm  9) Puente a Valuación de Opciones
@@ -711,11 +898,11 @@ def fig_volumen_por_strike(x, S, rango):
     return fig
 
 
-# ── 7) DEX — exposición delta (delta publicada por CBOE) ──────────────────
+# ── 7) DEX — exposición delta ─────────────────────────────────────────────
 
 def calcular_dex_por_strike(df, S, mult=100, rango=0.20):
-    """DEX en dólares por precio de ejercicio = delta (CBOE) × interés abierto × multiplicador × precio.
-    Calls con delta positiva, puts con delta negativa (tal cual la publica CBOE)."""
+    """DEX en dólares por precio de ejercicio = delta × interés abierto × multiplicador × precio.
+    Calls con delta positiva, puts con delta negativa."""
     x = df.copy()
     x['dex'] = x['delta'] * x['openInterest'] * mult * S
     x = x[(x['strike'] >= S * (1 - rango)) & (x['strike'] <= S * (1 + rango))]
@@ -757,7 +944,7 @@ def fig_dex(piv, S):
     return fig
 
 
-# ── 8) Vanna y Charm (Black-Scholes con la vol. implícita de CBOE) ────────
+# ── 8) Vanna y Charm (Black-Scholes con la vol. implícita de la fuente) ───
 
 def calcular_vanna_charm(df, S, r, q, mult=100, rango=0.20):
     """Exposición Vanna (Δ de la delta por +1 punto de vol.) y Charm (Δ de la delta por día), en dólares.
@@ -885,7 +1072,7 @@ def sugerir_strikes_vendidos(df, S, z, vto, fila_em=None):
 
 def _render_analisis_extra(d, df, S, r, q, mult, rango_pct, clave, z, simbolo):
     st.markdown('---')
-    st.markdown('### 🔬 Análisis complementarios (mismos datos de CBOE)')
+    st.markdown('### 🔬 Análisis complementarios (mismos datos de la fuente)')
     st.caption('Se calculan con la misma descarga de arriba (sin pedidos extra) y sobre los vencimientos que elegiste.')
 
     dias_map = d.groupby('vto')['dias'].first().to_dict()
@@ -1035,7 +1222,7 @@ Es el rango de precios que **el mercado está descontando** hasta cada vencimien
 - **Para comprar opciones:** si tu escenario espera un movimiento **mayor** que el descontado, las opciones están baratas; si esperás uno menor, están caras.
 - Compará este rango con el del **Monte Carlo** de la calculadora de opciones: si difieren mucho, el mercado y la estadística histórica no coinciden y conviene entender por qué (eventos como resultados, por ejemplo).
 
-**Límites:** el straddle es una aproximación; usa precios con retraso de ~15 min y en contratos poco líquidos el punto medio puede ser engañoso. Es lo que se descuenta, no una predicción.
+**Límites:** el straddle es una aproximación; usa precios con retraso de ~15 min (en CBOE) y en contratos poco líquidos el punto medio puede ser engañoso. Es lo que se descuenta, no una predicción.
 """)
 
     # ───────────── 4) GEX POR VENCIMIENTO ─────────────
@@ -1227,7 +1414,7 @@ La vol. implícita **según el precio de ejercicio**, para un mismo vencimiento.
                 top_txt = 'Con los filtros actuales no hay contratos que se destaquen.'
             render_explicacion('Cómo leer el flujo inusual y cómo usarlo', f"""
 **Qué muestra**
-Los contratos donde **hoy se operó mucho más de lo habitual** respecto de lo que había abierto ayer (el interés abierto que publica CBOE es del día anterior). Si el volumen supera al interés abierto, esos contratos son en gran parte **posiciones nuevas**, no cierres de posiciones viejas.
+Los contratos donde **hoy se operó mucho más de lo habitual** respecto de lo que había abierto ayer (el interés abierto es del día anterior). Si el volumen supera al interés abierto, esos contratos son en gran parte **posiciones nuevas**, no cierres de posiciones viejas.
 
 **Datos de hoy**
 - Volumen total: **{_fmt_ent(vc)} calls** y **{_fmt_ent(vp)} puts**.
@@ -1246,7 +1433,7 @@ Los contratos donde **hoy se operó mucho más de lo habitual** respecto de lo q
 
 **Límites (importante)**
 - **No se sabe si fue una compra o una venta.** Un call muy operado puede ser alguien comprando o alguien vendiendo. Tampoco distingue una cobertura de una apuesta.
-- Los datos tienen ~15 minutos de retraso y el volumen es **acumulado del día**: a media rueda la lectura es parcial.
+- En CBOE los datos tienen ~15 minutos de retraso y el volumen es **acumulado del día**: a media rueda la lectura es parcial.
 - Con el mercado cerrado, muestra el volumen final del último día operado.
 """)
 
@@ -1292,7 +1479,7 @@ Los contratos donde **hoy se operó mucho más de lo habitual** respecto de lo q
             signo_txt = 'largo' if dex_n > 0 else 'corto'
             render_explicacion('Cómo leer el DEX (exposición delta) y cómo usarlo', f"""
 **Qué es**
-La **delta** de una opción dice cuánto cambia su valor si el activo se mueve 1 dólar: un call tiene delta positiva (entre 0 y 1) y un put, negativa (entre −1 y 0). El **DEX** suma la delta de **todas las opciones abiertas**, multiplicada por el interés abierto, el multiplicador del contrato y el precio. El resultado es una cifra en dólares que responde: *"¿cuánta exposición direccional al subyacente hay metida en las opciones?"*. La delta es **la que publica CBOE** en cada contrato; solo se completa con Black-Scholes en los pocos casos donde CBOE no la trae.
+La **delta** de una opción dice cuánto cambia su valor si el activo se mueve 1 dólar: un call tiene delta positiva (entre 0 y 1) y un put, negativa (entre −1 y 0). El **DEX** suma la delta de **todas las opciones abiertas**, multiplicada por el interés abierto, el multiplicador del contrato y el precio. El resultado es una cifra en dólares que responde: *"¿cuánta exposición direccional al subyacente hay metida en las opciones?"*. En CBOE se usa la delta **publicada** en cada contrato; solo se completa con Black-Scholes en los pocos casos donde falta (en Deribit se calcula siempre con Black-Scholes).
 
 **Datos de hoy**
 - DEX neto: **{_fmt_musd(dex_n)}**, equivalente a estar **{signo_txt}** en unas **{abs(equiv):,.0f} unidades** del subyacente.
@@ -1311,8 +1498,8 @@ La **delta** de una opción dice cuánto cambia su valor si el activo se mueve 1
 - Mirá la tabla por vencimiento: si el DEX está concentrado en el primer vencimiento, esa exposición **desaparece al expirar**.
 
 **Límites**
-- El interés abierto no dice quién compró y quién vendió: el DEX muestra la **exposición del conjunto**, no la posición real de los creadores de mercado. Por eso acá los puts figuran con su delta negativa tal cual la publica CBOE, y no con la convención "creadores largos calls / cortos puts" del GEX.
-- Usa el interés abierto del día anterior y datos con ~15 min de retraso.
+- El interés abierto no dice quién compró y quién vendió: el DEX muestra la **exposición del conjunto**, no la posición real de los creadores de mercado. Por eso acá los puts figuran con su delta negativa, y no con la convención "creadores largos calls / cortos puts" del GEX.
+- Usa el interés abierto del día anterior (CBOE) y datos con ~15 min de retraso.
 - No es una señal de compra o venta por sí solo.
 """)
 
@@ -1373,7 +1560,7 @@ Son dos "griegas de segundo orden": miden **cómo cambia la delta** (y por lo ta
 Cuando la delta de sus posiciones cambia, los creadores de mercado **compran o venden el subyacente** para volver a quedar cubiertos. Eso genera flujos de compra o venta que **no dependen de ninguna noticia**.
 
 **Cómo se calculan**
-CBOE publica la vol. implícita y el interés abierto de cada contrato, pero no publica Vanna ni Charm. Se calculan con las fórmulas de **Black-Scholes** usando esa vol. implícita, y se suman con la misma convención del GEX (creadores largos calls / cortos puts).
+La fuente publica la vol. implícita y el interés abierto de cada contrato, pero no Vanna ni Charm. Se calculan con las fórmulas de **Black-Scholes** usando esa vol. implícita, y se suman con la misma convención del GEX (creadores largos calls / cortos puts).
 
 **Datos de hoy**
 - Vanna neta: **{_fmt_musd(vex_n)}** por cada +1 punto de vol. → {vanna_txt}.
@@ -1392,7 +1579,7 @@ CBOE publica la vol. implícita y el interés abierto de cada contrato, pero no 
 
 **Límites (importante)**
 - Son **difíciles de interpretar**: dependen de asumir quién está largo y quién corto, y esa hipótesis puede fallar.
-- Se calculan con Black-Scholes y la vol. implícita publicada por CBOE (con retraso y ruido en strikes ilíquidos). En contratos que vencen en 0 o 1 día, el Charm es muy grande y muy sensible: tomalo con pinzas.
+- Se calculan con Black-Scholes y la vol. implícita publicada por la fuente (con retraso y ruido en strikes ilíquidos). En contratos que vencen en 0 o 1 día, el Charm es muy grande y muy sensible: tomalo con pinzas.
 - Un cambio brusco de la vol. o del precio puede dar vuelta la lectura en minutos.
 """)
 
@@ -1429,7 +1616,7 @@ CBOE publica la vol. implícita y el interés abierto de cada contrato, pero no 
                 tabla_s = pd.DataFrame([{
                     'Operación': s['lado'], 'Strike': s['strike'], 'Distancia al precio %': s['dist_pct'],
                     'Criterio': s['base'], 'Prima media (US$)': s['prima_mid'],
-                    'Vol. implícita %': s['iv'], 'Delta (CBOE)': s['delta'],
+                    'Vol. implícita %': s['iv'], 'Delta': s['delta'],
                     'Prob. aprox. de terminar dentro del dinero %': s['prob_itm'],
                     'Interés abierto': s['oi']} for s in sug])
                 st.dataframe(tabla_s, use_container_width=True, hide_index=True,
@@ -1437,7 +1624,7 @@ CBOE publica la vol. implícita y el interés abierto de cada contrato, pero no 
                                             'Distancia al precio %': st.column_config.NumberColumn(format='%+.1f'),
                                             'Prima media (US$)': st.column_config.NumberColumn(format='%.2f'),
                                             'Vol. implícita %': st.column_config.NumberColumn(format='%.1f'),
-                                            'Delta (CBOE)': st.column_config.NumberColumn(format='%+.2f'),
+                                            'Delta': st.column_config.NumberColumn(format='%+.2f'),
                                             'Prob. aprox. de terminar dentro del dinero %': st.column_config.NumberColumn(format='%.0f'),
                                             'Interés abierto': st.column_config.NumberColumn(format='%.0f')})
 
@@ -1458,7 +1645,7 @@ CBOE publica la vol. implícita y el interés abierto de cada contrato, pero no 
 
             render_explicacion('Cómo funciona el puente con Valuación de Opciones y cómo usarlo', f"""
 **Qué hace**
-Toma lo que ya calculó el GEX (**punto de cambio de gamma** y **paredes de Calls y Puts**) y lo deja disponible para la calculadora de opciones. A partir de eso sugiere **qué strikes vender** en el vencimiento que elijas. Todos los datos (strikes, primas, vol. implícita, delta) vienen de la misma cadena de CBOE. También deja publicado el **Squeeze Metrics Score** y el **top 5 de niveles de Calls y Puts** para que la calculadora pueda usarlos.
+Toma lo que ya calculó el GEX (**punto de cambio de gamma** y **paredes de Calls y Puts**) y lo deja disponible para la calculadora de opciones. A partir de eso sugiere **qué strikes vender** en el vencimiento que elijas. Todos los datos (strikes, primas, vol. implícita, delta) vienen de la misma cadena descargada. También deja publicado el **Squeeze Metrics Score** y el **top 5 de niveles de Calls y Puts** para que la calculadora pueda usarlos.
 
 **Cómo elige los strikes**
 - **Call vendido:** el primer strike listado **en o por encima de la pared de Calls**, siempre que esa pared esté sobre el precio. La lógica: la pared suele actuar como techo, así que vender por encima tiene un "escudo" extra.
@@ -1466,9 +1653,9 @@ Toma lo que ya calculó el GEX (**punto de cambio de gamma** y **paredes de Call
 - Si la pared no sirve (está del lado equivocado del precio), usa el **techo o piso del movimiento esperado** y, como último recurso, **±5%** del precio.
 
 **Cómo leer la tabla**
-- **Delta (CBOE):** la delta que publica CBOE para ese contrato.
+- **Delta:** la delta del contrato (publicada por CBOE o calculada con Black-Scholes en Deribit).
 - **Prob. aprox. de terminar dentro del dinero:** es el valor absoluto de la delta expresado en porcentaje. Es una aproximación habitual, no una probabilidad exacta. Un put vendido con 15% quiere decir que, según el mercado, tiene alrededor de una chance en siete de terminar perdiendo.
-- **Prima media:** el promedio entre compra y venta, por acción (multiplicala por {mult} para tener el valor por contrato).
+- **Prima media:** el promedio entre compra y venta, por unidad del subyacente (multiplicala por {mult} para tener el valor por contrato).
 
 **Cómo sacarle provecho**
 - Usalo como **punto de partida**: llevá esos strikes a la calculadora para ver el perfil de resultado, el máximo de pérdida y las griegas antes de decidir.
@@ -1479,7 +1666,7 @@ Toma lo que ya calculó el GEX (**punto de cambio de gamma** y **paredes de Call
 **Límites**
 - Es una **referencia**, no una recomendación. Las paredes son un modelo y no garantizan que el precio no las cruce.
 - Vender opciones descubiertas puede generar pérdidas grandes. Verificá el riesgo en la calculadora antes de operar.
-- Los datos tienen ~15 minutos de retraso y el interés abierto es del día anterior.
+- En CBOE los datos tienen ~15 minutos de retraso y el interés abierto es del día anterior.
 """)
 
 
@@ -1665,7 +1852,7 @@ def _actualizar_hist_squeeze(simbolo, sq):
 
 
 def _panel_squeeze(simbolo_cboe, simbolo, n_vtos, rango_pct, r, q, mult):
-    """Panel completo. Recalcula desde la caché de CBOE (TTL 5 min), por eso puede correr solo como fragmento."""
+    """Panel completo. Recalcula desde la caché de la fuente (TTL 5 min), por eso puede correr solo como fragmento."""
     try:
         datos = _gex_descargar(simbolo_cboe)
     except Exception as e:
@@ -1768,15 +1955,15 @@ Un índice propio de **0 a 100** que resume cuánto "combustible" hay para un mo
 
 **Límites (importante)**
 - Es un **índice heurístico**: los pesos, umbrales y saturaciones (constantes `SQ_*` arriba del bloque) son un punto de partida razonable, **no están calibrados con backtest**. Conviene ajustarlos mirando cómo se comporta en tus activos.
-- La **concentración en el 1.er vencimiento** es estructuralmente alta en activos con vencimientos diarios (SPX, SPY, QQQ), donde casi siempre hay un 0DTE dominante: ahí el componente sube casi siempre y aporta poca información. En acciones individuales (vencimientos semanales/mensuales) es mucho más discriminante.
-- El PCR es **relativo al activo**: los índices y ETFs tienen P/C naturalmente altos por coberturas, así que un valor "extremo" puede ser lo normal en SPX/SPY.
-- Datos de CBOE con ~15 min de retraso e interés abierto del día anterior: es "casi tiempo real", no tick a tick.
+- La **concentración en el 1.er vencimiento** es estructuralmente alta en activos con vencimientos diarios (SPX, SPY, QQQ, BTC, ETH), donde casi siempre hay un 0DTE dominante: ahí el componente sube casi siempre y aporta poca información. En acciones individuales (vencimientos semanales/mensuales) es mucho más discriminante.
+- El PCR es **relativo al activo**: los índices y ETFs tienen P/C naturalmente altos por coberturas, así que un valor "extremo" puede ser lo normal en SPX/SPY. En divisas y commodities el P/C también tiene sus propios niveles habituales.
+- Datos con retraso (~15 min en CBOE) e interés abierto del día anterior: es "casi tiempo real", no tick a tick.
 - No es una señal de compra o venta por sí sola.
 """)
 
 
 def render_squeeze(simbolo_cboe, simbolo, n_vtos, rango_pct, r, q, mult, auto=False):
-    """Dibuja el panel. Con auto=True se vuelve a calcular solo cada 5 min (mismo TTL de la caché de CBOE)."""
+    """Dibuja el panel. Con auto=True se vuelve a calcular solo cada 5 min (mismo TTL de la caché de datos)."""
     panel = st.fragment(run_every=300 if auto else None)(_panel_squeeze)
     panel(simbolo_cboe, simbolo, n_vtos, rango_pct, r, q, mult)
 
@@ -1828,15 +2015,18 @@ def modulo_gex():
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
         Mostrá dónde están concentradas las coberturas de los creadores de mercado y si el régimen actual
         <b style="color:#3fb950">amortigua</b> o <b style="color:#f85149">amplifica</b> los movimientos.
-        Datos de opciones de <b>CBOE</b> (gratis, retrasados ~15 min). Cubre símbolos con opciones listadas en EEUU
-        (acciones, ETFs, ADRs e índices como SPX).
+        Datos gratuitos: opciones de <b>CBOE</b> (retrasadas ~15 min) para acciones, ETFs, ADRs e índices de EEUU
+        (incluye ETFs de <b>divisas, oro, petróleo, bonos y países</b>) y de <b>Deribit</b> para <b>BTC y ETH</b>.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
+    st.selectbox('Atajos por mercado (índices, divisas, commodities, bonos, países, cripto)',
+                 list(ATAJOS_MERCADOS), key='gex_atajo', on_change=_aplicar_atajo)
+
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
-        entrada = st.text_input('Símbolo (ej: SPY, NVDA, AAPL, GGAL, SPX; los .BA se convierten solos)',
+        entrada = st.text_input('Símbolo (ej: SPY, NVDA, SPX, GGAL, FXE, GLD, BTC; también EURUSD, XAUUSD, GC=F; los .BA se convierten solos)',
                                 value='SPY', key='gex_ticker')
     with c2:
         n_vtos = st.slider('Vencimientos a incluir', 1, 12, 6, key='gex_nvtos',
@@ -1861,6 +2051,12 @@ def modulo_gex():
     simbolo_cboe, simbolo, aviso = resolver_simbolo(entrada)
     if aviso:
         st.info(aviso)
+    es_cripto = simbolo_cboe.startswith('DERIBIT:')
+    if es_cripto:
+        mult = 1                                    # cada contrato de Deribit = 1 unidad de la moneda
+    if simbolo in LIQUIDEZ_BAJA:
+        st.warning(f'⚠️ Las opciones de **{simbolo}** suelen tener poco interés abierto y pocos strikes: '
+                   'las paredes y el punto de cambio de gamma pueden ser poco confiables. Mirá el interés abierto antes de usarlos.')
 
     b1, _ = st.columns([1, 3])
     with b1:
@@ -1869,7 +2065,7 @@ def modulo_gex():
             st.rerun()
 
     try:
-        with st.spinner(f'Descargando cadena de {simbolo} desde CBOE...'):
+        with st.spinner(f"Descargando cadena de {simbolo} desde {'Deribit' if es_cripto else 'CBOE'}..."):
             datos = _gex_descargar(simbolo_cboe)
     except Exception as e:
         st.error(f'No se pudieron obtener datos de {simbolo}.')
@@ -1883,12 +2079,13 @@ def modulo_gex():
         return
     df, n_delta_rell = reparar_delta(df, S, r, q)
 
-    st.caption(f"📡 Fuente: CBOE · {simbolo} · precio {fmt_precio(S)} · descargado {datos['descargado']} · "
+    st.caption(f"📡 Fuente: {datos.get('fuente', 'CBOE')} · {simbolo} · precio {fmt_precio(S)} · descargado {datos['descargado']} · "
                f"{diag['vtos']} vencimientos · {diag['filas']:,} contratos")
     if diag['iv_rellenadas']:
         st.caption(f"ℹ️ {diag['iv_rellenadas']} contratos tenían vol. implícita inválida; se reemplazó por la mediana del vencimiento.")
     if n_delta_rell:
-        st.caption(f"ℹ️ {n_delta_rell} contratos no traían delta válida de CBOE; se completó con Black-Scholes (afecta solo al DEX y a los strikes sugeridos).")
+        st.caption(f"ℹ️ {n_delta_rell} contratos no traían delta válida de la fuente; se completó con Black-Scholes "
+                   f"(afecta solo al DEX y a los strikes sugeridos).")
 
     piv = calcular_gex_por_strike(df, S, r, q, mult, rango_pct / 100)
     if piv.empty:
@@ -1983,7 +2180,7 @@ Responde a esta pregunta: *"si el activo estuviera en otro precio, ¿cuál serí
 """)
 
     st.caption('⚠️ Asume creadores de mercado largos calls / cortos puts. Usa el interés abierto del día anterior y la vol. implícita '
-               'publicada por CBOE (con ~15 min de retraso; puede ser ruidosa en precios de ejercicio ilíquidos). '
+               'publicada por la fuente (CBOE con ~15 min de retraso; puede ser ruidosa en precios de ejercicio ilíquidos). '
                'Es una referencia de régimen, no una señal por sí sola.')
 
     # ── Análisis complementarios: Put/Call, Max Pain, mov. esperado, GEX por vencimiento, IV, flujo, DEX, Vanna/Charm y puente ──
