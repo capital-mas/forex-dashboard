@@ -2336,23 +2336,27 @@ def _responder_analizar_sin_cache(tk, ctx):
     L.append(f"## 📊 {nombre} ({tk}) — {fmt(precio) if precio else ''}")
     L.append(f"_{industria}_" + (f" · {perfil['sector']}" if perfil and perfil.get('sector') else ''))
 
-    # ── RESUMEN (arriba de todo) ──
-    L.append(f"\n### 🎯 Resumen\n**{_veredicto_compuesto(compuesto)}** — score compuesto **{compuesto:.0f}/100** "
-             f"(sobre {len(señales)} módulos con datos).")
-    L.append("\n".join(f"- {n}: **{s:.0f}/100**" for n, s, _ in señales))
+        # ── RESUMEN (se muestra más abajo, arriba de GEX) ──
+    L_res = []
+    L_res.append(f"\n---\n### 🎯 Resumen\n**{_veredicto_compuesto(compuesto)}** — score compuesto **{compuesto:.0f}/100** "
+                 f"(sobre {len(señales)} módulos con datos).")
+    L_res.append("\n".join(f"- {n}: **{s:.0f}/100**" for n, s, _ in señales))
     if len(señales) >= 2:
         mx, mn = max(señales, key=lambda x: x[1]), min(señales, key=lambda x: x[1])
         if mx[1] - mn[1] >= 35:
-            L.append(f"\n⚠️ **Señales divergentes:** {mx[0]} ({mx[1]:.0f}) vs {mn[0]} ({mn[1]:.0f}). "
-                     f"El veredicto promedia visiones distintas — mirá el detalle antes de concluir.")
+            L_res.append(f"\n⚠️ **Señales divergentes:** {mx[0]} ({mx[1]:.0f}) vs {mn[0]} ({mn[1]:.0f}). "
+                         f"El veredicto promedia visiones distintas — mirá el detalle antes de concluir.")
     if pros:
-        L.append("\n**✅ A favor**\n" + "\n".join(f"- {p}" for p in pros[:5]))
+        L_res.append("\n**✅ A favor**\n" + "\n".join(f"- {p}" for p in pros[:5]))
     if contras:
-        L.append("\n**⚠️ En contra / riesgos**\n" + "\n".join(f"- {c}" for c in contras[:5]))
+        L_res.append("\n**⚠️ En contra / riesgos**\n" + "\n".join(f"- {c}" for c in contras[:5]))
+
+    # ── CONCLUSIÓN (se muestra más abajo, después de Velas) ──
+    L_concl = []
     concl = _a_safe(_generar_conclusion, nombre, precio, compuesto, resumen_f, r_largo, r_corto,
                     None if (gex and gex.get('proxy')) else gex)
     if concl:
-        L.append("\n### 🧭 Conclusión\n" + concl)
+        L_concl.append("\n---\n### 🧭 Conclusión\n" + concl)
 
     # ── Detalle ──
     L.append("\n---\n### 🔎 Detalle por módulo")
@@ -2401,17 +2405,28 @@ def _responder_analizar_sin_cache(tk, ctx):
     if fscore is not None:
         L.append(f"\n**🧮 F-Score (Piotroski):** {fscore:.1f}/9")
 
+    # ── Resumen (arriba de GEX) ──
+    L.extend(L_res)
+
     # ── Niveles clave de gamma (para TODOS los activos que tengan cadena de opciones) ──
     if gex and gex.get('niveles') is not None:
         L.extend(_bloque_niveles_gamma(gex, tk))
 
-    # ── Módulos opcionales (GEX, COT, Velas, Opciones) — se muestran si los conectás ──
-    for etiqueta, clave in (('🧲 GEX', 'gex_resumen'), ('📑 COT', 'cot_resumen'),
-                            ('🕯️ Velas', 'velas_resumen'), ('🎲 Opciones', 'opciones_resumen')):
+    # ── Módulos opcionales: GEX → COT → Velas → [Conclusión] → Opciones ──
+    def _mod_opcional(etiqueta, clave):
         if ctx.get(clave):
             txt = _a_safe(ctx[clave], tk)
             if txt:
                 L.append(f"\n**{etiqueta}:** {txt}")
+
+    _mod_opcional('🧲 GEX', 'gex_resumen')
+    _mod_opcional('📑 COT', 'cot_resumen')
+    _mod_opcional('🕯️ Velas', 'velas_resumen')
+
+    # ── Conclusión (abajo de Velas) ──
+    L.extend(L_concl)
+
+    _mod_opcional('🎲 Opciones', 'opciones_resumen')
 
     L.append(f"\n---\n*Cálculo cuantitativo sobre datos históricos de Yahoo Finance — no es asesoramiento financiero. "
              f"Decime «comparalo con X» o «armame una cartera con {tk}» para seguir.*")
