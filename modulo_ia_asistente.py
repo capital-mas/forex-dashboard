@@ -146,6 +146,11 @@ _PATRONES_INTENCION = [
         r'\bagreg[aá]\s+(un\s+)?(gasto|ingreso|movimiento|deuda)', r'\bsum[aá]\s+(esto|este\s+gasto|este\s+ingreso)',
         r'\bmet[eé]lo\b', r'\bpon[eé]lo\s+en\s+mis?\s+finanzas\b',
     ]),
+    ('plan_trading', [
+        r'\bplan\s+(de\s+)?trading\b', r'\bscalping\b', r'\bday[\s\-]?trad', r'\bswing\b',
+        r'\bstop[\s\-]?loss\b', r'\btake[\s\-]?profit\b', r'\bmarco\s+temporal\b',
+        r'\bd[oó]nde\s+entr', r'\bcu[aá]ndo\s+entr', r'\bsetup\b',
+    ]),
     ('finanzas', [
         r'\bmis?\s+finanzas\b', r'\bfinanzas\b', r'\bmis?\s+gastos?\b', r'\bgastos?\b',
         r'\bmi\s+presupuesto\b', r'\bpresupuesto\b', r'\bcu[aá]nto\s+gast',
