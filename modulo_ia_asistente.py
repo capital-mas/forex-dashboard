@@ -1672,6 +1672,52 @@ def _bloque_fundamental(res_f, resumen_f, fmt):
                 L.append("_Lectura: está barata, pero por algo: la calidad del negocio es floja (posible trampa de valor)._")
     return L
 
+def _bloque_niveles_gamma(gex, tk):
+    """Niveles clave de gamma (igual que el módulo GEX): Resistencia / Pivote / Soporte / Mixto."""
+    niv = gex.get('niveles')
+    if niv is None or niv.empty:
+        return []
+    S = gex['spot']
+    L = ["\n**🏆 Niveles clave de gamma** _(cada strike clasificado una sola vez)_"]
+    if gex.get('proxy'):
+        L.append(f"_⚠️ {tk} no tiene opciones propias: los niveles salen de **{gex['simbolo']}** "
+                 f"y están en el precio de ese instrumento. Fijate en la distancia %, no en el valor absoluto._")
+
+    def _linea(r):
+        return (f"  - **{r['strike']:,.2f}** ({r['dist_pct']:+.1f}% del precio) · "
+                f"Calls {r['calls'] / 1e6:+,.1f} M · Puts {-r['puts'] / 1e6:+,.1f} M · "
+                f"dominio ×{r['dominio']:.1f}")
+
+    resist = niv[niv['tipo'] == 'Resistencia'].sort_values('bruto', ascending=False)
+    pivote = niv[niv['tipo'] == 'Pivote'].assign(_a=lambda d: d['dist_pct'].abs()).sort_values('_a')
+    soport = niv[niv['tipo'] == 'Soporte'].sort_values('bruto', ascending=False)
+    mixto = niv[niv['tipo'] == 'Mixto'].sort_values('bruto', ascending=False)
+
+    for titulo, sub, vacio in (
+            ('🟢 Resistencia Absoluta (techo)', resist, 'ningún strike con calls dominantes'),
+            ('🟡 Pivote / Pinning (ancla)', pivote, 'ningún strike con calls y puts altos pegado al precio'),
+            ('🔴 Soporte Absoluto (piso)', soport, 'ningún strike con puts dominantes'),
+            ('⚪ Mixtos (sin dominio claro)', mixto, None)):
+        if sub.empty:
+            if vacio:
+                L.append(f"- {titulo}: _{vacio}_")
+            continue
+        L.append(f"- {titulo}:")
+        L.extend(_linea(r) for _, r in sub.iterrows())
+
+    ra = resist[resist['strike'] > S].sort_values('strike')
+    sa = soport[soport['strike'] < S].sort_values('strike', ascending=False)
+    lect = []
+    if not ra.empty:
+        lect.append(f"resistencia más cercana sobre el precio en {ra.iloc[0]['strike']:,.2f} ({ra.iloc[0]['dist_pct']:+.1f}%)")
+    if not sa.empty:
+        lect.append(f"soporte más cercano bajo el precio en {sa.iloc[0]['strike']:,.2f} ({sa.iloc[0]['dist_pct']:+.1f}%)")
+    if not pivote.empty:
+        lect.append(f"pivote en {pivote.iloc[0]['strike']:,.2f} ({pivote.iloc[0]['dist_pct']:+.1f}%)")
+    if lect:
+        L.append("_Lectura: " + " · ".join(lect) + "._")
+    return L
+    
 def _m(p):
     """Precio con $ escapado (Streamlit interpreta $...$ como fórmula)."""
     return f'\\${p:,.2f}'
