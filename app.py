@@ -8583,7 +8583,7 @@ UNIVERSO_TICKERS_VALIDOS = (
 )
 
 # ── Resúmenes GEX / COT / Velas / Opciones para el asistente ──
-CTX_IA.update(RES_IA)   # incluye gex_resumen, gex_niveles, cot_resumen, velas_resumen, opciones_resumen
+RES_IA = crear_resumenes(supabase, descargar_datos)
 if not TIENE_ACCESO_PRO:
     RES_IA.pop('velas_resumen', None)
 
@@ -8593,7 +8593,7 @@ CTX_IA = dict(
     scores_corto=scores_corto, señal_accion_corto=señal_accion_corto,
     analizar_largo=analizar_largo, interpretar_largo=interpretar_largo,
     analizar_fundamental=analizar_fundamental, _es_activo_sin_fundamentals=_es_activo_sin_fundamentals,
-    TICKER_INDUSTRY=TICKER_INDUSTRY, GLOSARIO=GLOSARIO,       # ← queda solo acá
+    TICKER_INDUSTRY=TICKER_INDUSTRY, GLOSARIO=GLOSARIO,
     cargar_sectores_corto=cargar_sectores_corto, cargar_paises_corto=cargar_paises_corto,
     cargar_acciones_corto=cargar_acciones_corto,
     cargar_subsectores_corto=cargar_subsectores_corto,
@@ -8616,7 +8616,7 @@ CTX_IA = dict(
     calcular_regimen_hmm=calcular_regimen_hmm,
     obtener_perfil_empresa=obtener_perfil_empresa,
     resumen_visual_fundamental=_resumen_visual_fundamental,
-    **RES_IA,
+    **RES_IA,   # ya incluye gex_resumen, gex_niveles, cot_resumen, velas_resumen, opciones_resumen
 )
 # ==============================================================
 #  ESTADO DE NAVEGACIÓN
