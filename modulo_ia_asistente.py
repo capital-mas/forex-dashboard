@@ -1953,7 +1953,8 @@ def _responder_analizar_sin_cache(tk, ctx):
         L.append("\n**✅ A favor**\n" + "\n".join(f"- {p}" for p in pros[:5]))
     if contras:
         L.append("\n**⚠️ En contra / riesgos**\n" + "\n".join(f"- {c}" for c in contras[:5]))
-    concl = _a_safe(_generar_conclusion, nombre, precio, compuesto, resumen_f, r_largo, r_corto, gex)
+    concl = _a_safe(_generar_conclusion, nombre, precio, compuesto, resumen_f, r_largo, r_corto,
+                    None if (gex and gex.get('proxy')) else gex)
     if concl:
         L.append("\n### 🧭 Conclusión\n" + concl)
 
