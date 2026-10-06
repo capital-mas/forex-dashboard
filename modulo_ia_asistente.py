@@ -1448,6 +1448,371 @@ def _calc_largo(tk, ctx):
         return ctx['analizar_largo'](tk, cl_l)
     return None
 
+# ==============================================================
+#  PLAN DE TRADING (solo admin) — marco temporal + SL/TP
+#  Usa TODO el sistema: corto, largo, TDC, HMM, F-Score, ATR y GEX.
+#  Con datos DIARIOS: los niveles de scalping/day son estimaciones
+#  sobre ATR; confirmar en gráfico intradía.
+# ==============================================================
+
+_TF_CFG = {
+    'scalping': dict(nombre='Scalping', icono='⚡', sl=0.20, tp1=0.30, tp2=0.50,
+                     dur='minutos a pocas horas, cerrando el mismo día'),
+    'day':      dict(nombre='Day Trading', icono='🌅', sl=0.50, tp1=1.00, tp2=1.50,
+                     dur='intradía, cerrando antes del cierre de la rueda'),
+    'swing':    dict(nombre='Swing Trading', icono='🌊', sl=1.50, tp1=3.00, tp2=4.50,
+                     dur='de varios días a unas semanas'),
+}
+
+_AYUDA_ADMIN = ("\n\n**🔐 Solo admin — 🎯 Plan de Trading** — *\"plan de trading de NVDA\"*, *\"scalping de BTC\"*, "
+                "*\"swing de GGAL capital 10000 riesgo 1%\"*: uso todo el sistema para decirte qué marco temporal "
+                "conviene (scalping / day trading / swing) con entrada, stop loss y take profit.")
+
+
+def _fmt_px(p):
+    if p is None:
+        return 'N/D'
+    p = float(p)
+    if abs(p) >= 1000: return f'{p:,.2f}'
+    if abs(p) >= 10:   return f'{p:.2f}'
+    if abs(p) >= 1:    return f'{p:.4f}'
+    return f'{p:.5f}'
+
+
+def _mix(pares):
+    v = [(x, w) for x, w in pares if x is not None]
+    if not v:
+        return None
+    tw = sum(w for _, w in v)
+    return sum(x * w for x, w in v) / tw
+
+
+def _dir_de(b):
+    if b is None: return 'NEUTRAL'
+    return 'LARGO' if b >= 0.15 else ('CORTO' if b <= -0.15 else 'NEUTRAL')
+
+
+def _recolectar_trading(tk, ctx):
+    sin_fund = _es_sin_fundamentals(tk, ctx)
+    fn_tdc, hz_cfg = ctx.get('_tdc_analizar_ticker'), ctx.get('HORIZONTES_TDC')
+    with _pool_con_ctx(10) as ex:
+        f_fs = None if sin_fund else ex.submit(_car_fscore_rapido, tk)
+        f_gex = ex.submit(_a_safe, ctx['gex_niveles'], tk) if ctx.get('gex_niveles') else None
+        periodos = ['3mo', '1mo', '6mo', '2y'] + (['10y'] if fn_tdc else [])
+        for f in [ex.submit(_a_safe, ctx['descargar_datos'], tk, p) for p in periodos]:
+            f.result()
+        f_corto = ex.submit(_a_safe, _calc_corto, tk, ctx)
+        f_hmm = ex.submit(_a_safe, _calc_hmm, tk, ctx)
+        f_largo = ex.submit(_a_safe, _calc_largo, tk, ctx)
+        f_tdc = {hz: ex.submit(_a_safe, fn_tdc, tk, hz_cfg[hz])
+                 for hz in ('MP', 'LP') if fn_tdc and hz_cfg and hz in hz_cfg}
+
+    df_v = _a_safe(ctx['descargar_datos'], tk, '3mo')
+    if df_v is None or df_v.empty:
+        return None
+    atr_s = _a_safe(ctx['calcular_atr'], df_v)
+    atr_s = pd.Series(atr_s).dropna() if atr_s is not None else pd.Series(dtype=float)
+    if atr_s.empty or float(atr_s.iloc[-1]) <= 0:
+        return None
+
+    tdc = {}
+    for hz, f in f_tdc.items():
+        r = f.result()
+        if r:
+            tdc[hz] = r
+    rc, rl = f_corto.result(), f_largo.result()
+    cl = _a_safe(ctx['get_close_series'], df_v)
+    precio = (rc or {}).get('precio') or (rl or {}).get('precio') or (float(cl.iloc[-1]) if cl is not None else None)
+    if not precio:
+        return None
+    hi20 = lo20 = None
+    try:
+        hi20, lo20 = float(df_v['High'].tail(20).max()), float(df_v['Low'].tail(20).min())
+    except Exception:
+        pass
+    return dict(rc=rc, rl=rl, hmm=f_hmm.result(), tdc=tdc, gex=f_gex.result() if f_gex else None,
+                fscore=f_fs.result() if f_fs else None, atr=float(atr_s.iloc[-1]),
+                precio=float(precio), hi20=hi20, lo20=lo20, sin_fund=sin_fund)
+
+
+def _niveles_estructurales(d):
+    """[(precio_nivel, etiqueta)] de soportes/resistencias reales del activo."""
+    L = []
+    rl, gex, precio = d['rl'], d['gex'], d['precio']
+    if rl:
+        for k, lab in (('ma20', 'Media de 20 ruedas'), ('lower_bb', 'Banda de Bollinger inferior'),
+                       ('upper_bb', 'Banda de Bollinger superior')):
+            if rl.get(k):
+                L.append((float(rl[k]), lab))
+    if d.get('hi20'): L.append((d['hi20'], 'Máximo de 20 ruedas'))
+    if d.get('lo20'): L.append((d['lo20'], 'Mínimo de 20 ruedas'))
+    # Niveles GEX: solo si son del propio activo (con proxy el precio no es comparable)
+    if gex and gex.get('spot') and not gex.get('proxy'):
+        f = precio / gex['spot']
+        for k, lab in (('call_wall', 'Pared de Calls'), ('put_wall', 'Pared de Puts'),
+                       ('flip', 'Punto de cambio de gamma')):
+            if gex.get(k):
+                L.append((float(gex[k]) * f, lab))
+        niv = gex.get('niveles')
+        if niv is not None and not niv.empty:
+            for _, r in niv.iterrows():
+                if r['tipo'] in ('Resistencia', 'Soporte', 'Pivote'):
+                    L.append((float(r['strike']) * f, f"{r['tipo']} de gamma"))
+    return L
+
+
+def _plan_niveles(direccion, precio, atr, niveles, cfg):
+    s = 1 if direccion == 'LARGO' else -1
+    k_sl, k1, k2 = cfg['sl'], cfg['tp1'], cfg['tp2']
+    notas = []
+
+    # ── Stop loss: ATR, ajustado detrás de un nivel real si hay uno en la zona ──
+    sl = precio - s * k_sl * atr
+    base_sl = f"{k_sl:g}×ATR"
+    cand = [(lv, lab) for lv, lab in niveles
+            if 0.7 * k_sl * atr <= s * (precio - lv) <= 1.4 * k_sl * atr]
+    if cand:
+        lv, lab = min(cand, key=lambda x: abs(s * (precio - x[0]) - k_sl * atr))
+        sl = lv - s * 0.15 * atr
+        base_sl = f"{'debajo' if s > 0 else 'encima'} de {lab} ({_fmt_px(lv)})"
+
+    # ── Take profits: ATR, frenados antes del primer obstáculo ──
+    tp1 = precio + s * k1 * atr
+    tp2 = precio + s * k2 * atr
+    obst = sorted([(s * (lv - precio), lv, lab) for lv, lab in niveles
+                   if 0.5 * k1 * atr <= s * (lv - precio) < k2 * atr])
+    if obst:
+        dist, lv, lab = obst[0]
+        if dist < k1 * atr:
+            tp1 = lv - s * 0.05 * atr
+            notas.append(f"TP1 limitado por {lab} ({_fmt_px(lv)}); TP2 exige romperlo")
+        else:
+            dist2 = max(dist - 0.05 * atr, k1 * atr * 1.1)
+            tp2 = precio + s * dist2
+            notas.append(f"TP2 limitado por {lab} ({_fmt_px(lv)})")
+
+    riesgo = abs(precio - sl)
+    r1, r2 = abs(tp1 - precio) / riesgo, abs(tp2 - precio) / riesgo
+    if r1 < 1.0:
+        notas.append("⚠️ R:R de TP1 menor a 1: el recorrido hasta el primer obstáculo no compensa el riesgo")
+    elif r2 < 1.5:
+        notas.append("⚠️ R:R de TP2 bajo (<1.5): setup poco atractivo")
+    return dict(dir=direccion, entrada=precio, sl=sl, base_sl=base_sl, tp1=tp1, tp2=tp2,
+                riesgo=riesgo, r1=r1, r2=r2, notas=notas)
+
+
+def _responder_plan_trading(tk, ctx, texto=''):
+    d = _recolectar_trading(tk, ctx)
+    if d is None:
+        return (f"No pude calcular el plan de **{tk}**: faltan precios o ATR suficientes. "
+                f"Verificá el símbolo.")
+    rc, rl, hmm, tdc, gex, fscore = d['rc'], d['rl'], d['hmm'], d['tdc'], d['gex'], d['fscore']
+    precio, atr = d['precio'], d['atr']
+    atr_pct = atr / precio * 100
+
+    # ── Opciones del mensaje ──
+    t = _norm(texto)
+    forzado = ('scalping' if re.search(r'scalp', t) else
+               'day' if re.search(r'day\s*-?\s*trad|intradia', t) else
+               'swing' if re.search(r'swing', t) else None)
+    m_cap = re.search(r'capital\s*(?:de\s*)?(\d[\d\.,]*)', t)
+    capital = extraer_monto(m_cap.group(1)) if m_cap else None
+    m_r = (re.search(r'riesg\w*\s*(?:del?\s*)?(\d+(?:[.,]\d+)?)\s*%', t)
+           or re.search(r'(\d+(?:[.,]\d+)?)\s*%\s*de\s*riesgo', t))
+    riesgo_pct = float(m_r.group(1).replace(',', '.')) if m_r else (1.0 if capital else None)
+
+    # ── Componentes direccionales (-1 bajista … +1 alcista) ──
+    corto_dir = (rc['sf'] - 50) / 50 if rc else None
+    largo_dir = (rl['global_score'] - 50) / 50 if rl else None
+    hmm_dir = ({'ALCISTA': 1, 'BAJISTA': -1}.get(hmm['regimen'], 0) * hmm['prob'] / 100) if hmm else None
+    tdc_dir = (float(np.mean([x['sf'] for x in tdc.values()])) - 50) / 50 if tdc else None
+    macd_dir = (1 if rl['macd_bull'] else -1) if rl else None
+    tec = (((1 if rl['golden_cross'] else -1) + macd_dir) / 2) if rl else None
+    mom = None
+    if rc and rc.get('ret5') is not None:
+        mom = max(-1.0, min(1.0, rc['ret5'] / (3 * atr_pct)))
+
+    bias = {
+        'scalping': _mix([(mom, .35), (corto_dir, .25), (macd_dir, .20), (hmm_dir, .20)]),
+        'day':      _mix([(corto_dir, .30), (mom, .20), (tec, .20), (hmm_dir, .15), (largo_dir, .15)]),
+        'swing':    _mix([(largo_dir, .30), (tdc_dir, .25), (tec, .20), (hmm_dir, .15), (corto_dir, .10)]),
+    }
+    dirs = {k: _dir_de(v) for k, v in bias.items()}
+
+    # ── Qué tan adecuado es cada marco (0-100) ──
+    razones = {k: [] for k in _TF_CFG}
+    gamma_pos = bool(gex and gex.get('regimen') == 'positivo')
+    pivote_cerca = False
+    if gex and not gex.get('proxy') and gex.get('niveles') is not None and not gex['niveles'].empty:
+        pv = gex['niveles'][gex['niveles']['tipo'] == 'Pivote']
+        pivote_cerca = bool((pv['dist_pct'].abs() <= 1.0).any()) if not pv.empty else False
+
+    sc = 20
+    if atr_pct >= 2:   sc += 25; razones['scalping'].append(f"ATR diario {atr_pct:.1f}%: rango intradía amplio")
+    elif atr_pct >= 1: sc += 12; razones['scalping'].append(f"ATR diario {atr_pct:.1f}%: rango intradía aceptable")
+    elif atr_pct < 0.6: sc -= 20; razones['scalping'].append(f"ATR {atr_pct:.2f}%: el rango no cubre costos de operar")
+    if gex:
+        if gamma_pos: sc += 15; razones['scalping'].append("Gamma positiva: el precio tiende a oscilar en rango")
+        else:         sc -= 10; razones['scalping'].append("Gamma negativa: movimientos bruscos, mal contexto para scalping")
+        if gex.get('inminente'): sc -= 15; razones['scalping'].append("Squeeze inminente: riesgo de ruptura violenta")
+    if pivote_cerca: sc += 10; razones['scalping'].append("Pivote de gamma pegado al precio (efecto ancla)")
+    if rl and rl['hurst'] < 0.5: sc += 10; razones['scalping'].append(f"Hurst {rl['hurst']:.2f}: comportamiento reversivo")
+    if bias['scalping'] is None or abs(bias['scalping']) < 0.15:
+        sc -= 15; razones['scalping'].append("Sin sesgo direccional claro de muy corto plazo")
+    sc = max(0, min(70, sc))   # tope: no hay datos intradía
+
+    dy = 35
+    if 1 <= atr_pct <= 4: dy += 20; razones['day'].append(f"ATR {atr_pct:.1f}%: volatilidad ideal para intradía")
+    elif atr_pct > 4:     dy += 5;  razones['day'].append(f"ATR {atr_pct:.1f}%: muy alto, ojo con gaps y ruido")
+    else:                 dy -= 15; razones['day'].append(f"ATR {atr_pct:.2f}%: poco movimiento diario")
+    if rc and rc['sn'] >= 65: dy += 15; razones['day'].append(f"Anticipación {rc['sn']:.0f}: movimiento inminente")
+    if gex and (gex.get('regimen') == 'negativo' or gex.get('squeeze_score', 0) >= 50):
+        dy += 10; razones['day'].append("Gamma negativa / squeeze elevado: favorece tendencia intradía")
+    if bias['day'] is not None and abs(bias['day']) >= 0.3:
+        dy += 10; razones['day'].append("Sesgo direccional claro de corto plazo")
+    if dirs['day'] == dirs['swing'] != 'NEUTRAL':
+        dy += 10; razones['day'].append("Dirección alineada con el swing")
+    dy = max(0, min(100, dy))
+
+    sw = 40
+    if rl is None: sw -= 30; razones['swing'].append("Historial insuficiente para largo plazo")
+    ab = abs(bias['swing']) if bias['swing'] is not None else 0
+    if ab >= 0.3:    sw += 20; razones['swing'].append(f"Sesgo de fondo claro ({bias['swing']:+.2f})")
+    elif ab >= 0.15: sw += 10; razones['swing'].append(f"Sesgo de fondo moderado ({bias['swing']:+.2f})")
+    else:            sw -= 10; razones['swing'].append("Sin dirección clara de fondo")
+    if rl and rl['hurst'] > 0.55: sw += 10; razones['swing'].append(f"Hurst {rl['hurst']:.2f}: tendencia persistente")
+    if corto_dir is not None and largo_dir is not None:
+        if corto_dir * largo_dir > 0 and min(abs(corto_dir), abs(largo_dir)) > 0.1:
+            sw += 15; razones['swing'].append("Corto y largo plazo alineados")
+        elif corto_dir * largo_dir < 0 and min(abs(corto_dir), abs(largo_dir)) > 0.15:
+            sw -= 15; razones['swing'].append("Corto y largo plazo se contradicen")
+    if hmm and ((hmm['regimen'] == 'ALCISTA' and dirs['swing'] == 'LARGO')
+                or (hmm['regimen'] == 'BAJISTA' and dirs['swing'] == 'CORTO')):
+        sw += 10; razones['swing'].append(f"Régimen HMM {hmm['regimen'].lower()} a favor ({hmm['prob']}%)")
+    if fscore is not None and dirs['swing'] == 'LARGO':
+        if fscore >= 6:   sw += 5;  razones['swing'].append(f"F-Score {fscore:.1f}/9: negocio sólido")
+        elif fscore <= 3: sw -= 10; razones['swing'].append(f"F-Score {fscore:.1f}/9: calidad financiera baja")
+    if atr_pct > 6: sw -= 10; razones['swing'].append(f"ATR {atr_pct:.1f}%: volatilidad muy alta para swing")
+    sw = max(0, min(100, sw))
+    puntaje = {'scalping': sc, 'day': dy, 'swing': sw}
+
+    # ── Elegir marco ──
+    if forzado:
+        elegido = forzado
+    else:
+        direccionales = [k for k in puntaje if dirs[k] != 'NEUTRAL']
+        pool = direccionales or list(puntaje)
+        elegido = max(pool, key=lambda k: puntaje[k])
+
+    niveles = _niveles_estructurales(d)
+    planes = {k: (_plan_niveles(dirs[k], precio, atr, niveles, _TF_CFG[k]) if dirs[k] != 'NEUTRAL' else None)
+              for k in _TF_CFG}
+
+    # ══ Armado de la respuesta ══
+    cfg = _TF_CFG[elegido]
+    dir_e, plan = dirs[elegido], planes[elegido]
+    b = bias[elegido]
+    conv = 'ALTA' if b is not None and abs(b) >= .5 else ('MEDIA' if b is not None and abs(b) >= .3 else 'BAJA')
+    nombre = (_info_mercado(tk, ctx) or (tk,))[0]
+    L = [f"## 🎯 Plan de Trading — {nombre} ({tk})",
+         f"_Precio {_fmt_px(precio)} · ATR(14) {_fmt_px(atr)} ({atr_pct:.2f}% diario) · 🔐 solo admin_"]
+
+    if plan:
+        flecha = '🟢 COMPRA (largo)' if dir_e == 'LARGO' else '🔴 VENTA (corto)'
+        L.append(f"\n### {cfg['icono']} Marco recomendado: **{cfg['nombre']}** — {flecha}\n"
+                 f"Convicción **{conv}** · adecuación del marco **{puntaje[elegido]}/100** · "
+                 f"duración típica: {cfg['dur']}." + (" _(marco elegido por vos)_" if forzado else ""))
+    else:
+        L.append(f"\n### ⏸️ Sin ventaja direccional en {cfg['nombre']}\n"
+                 f"Las señales del sistema no se inclinan con claridad (sesgo {b:+.2f}). "
+                 f"Lo prudente es **esperar**." if b is not None else
+                 f"\n### ⏸️ Sin datos suficientes para definir dirección")
+        k = cfg['sl'] / 3 * atr
+        L.append(f"Disparadores a vigilar: compra si cierra sobre **{_fmt_px(precio + k)}**, "
+                 f"venta si cierra bajo **{_fmt_px(precio - k)}**.")
+
+    # Tabla de los 3 marcos
+    L.append("\n**📊 Los 3 marcos temporales:**\n")
+    L.append("| Marco | Adecuación | Dirección | Entrada | Stop Loss | TP1 | TP2 | R:R (TP1 / TP2) |\n|---|---|---|---|---|---|---|---|")
+    for k, c in _TF_CFG.items():
+        p = planes[k]
+        marca = ' ⭐' if k == elegido else ''
+        if p:
+            ico = '🟢 Largo' if p['dir'] == 'LARGO' else '🔴 Corto'
+            L.append(f"| {c['icono']} {c['nombre']}{marca} | {puntaje[k]}/100 | {ico} | {_fmt_px(p['entrada'])} | "
+                     f"{_fmt_px(p['sl'])} | {_fmt_px(p['tp1'])} | {_fmt_px(p['tp2'])} | "
+                     f"{p['r1']:.1f} / {p['r2']:.1f} |")
+        else:
+            L.append(f"| {c['icono']} {c['nombre']}{marca} | {puntaje[k]}/100 | ⏸️ Neutral | — | — | — | — | — |")
+
+    # Detalle del plan elegido
+    if plan:
+        pct = lambda x: abs(x - precio) / precio * 100
+        L.append(f"\n**🧭 Plan {cfg['nombre']} paso a paso:**")
+        L.append(f"- **Entrada:** {_fmt_px(plan['entrada'])} (precio actual)")
+        L.append(f"- **Stop loss:** {_fmt_px(plan['sl'])} (-{pct(plan['sl']):.2f}%) — {plan['base_sl']}")
+        L.append(f"- **Take profit 1:** {_fmt_px(plan['tp1'])} (+{pct(plan['tp1']):.2f}%) · R:R {plan['r1']:.1f}")
+        L.append(f"- **Take profit 2:** {_fmt_px(plan['tp2'])} (+{pct(plan['tp2']):.2f}%) · R:R {plan['r2']:.1f}")
+        for n in plan['notas']:
+            L.append(f"- {n}")
+        if elegido == 'swing' and rl:
+            if dir_e == 'LARGO' and (rl['rsi'] > 70 or (rl.get('upper_bb') and precio >= rl['upper_bb'])) and rl.get('ma20'):
+                L.append(f"- 💡 Está extendido (RSI {rl['rsi']:.0f}): mejor entrada alternativa en un retroceso hacia "
+                         f"**{_fmt_px(rl['ma20'])}** (media de 20).")
+            if dir_e == 'CORTO' and (rl['rsi'] < 30 or (rl.get('lower_bb') and precio <= rl['lower_bb'])) and rl.get('ma20'):
+                L.append(f"- 💡 Está sobrevendido (RSI {rl['rsi']:.0f}): mejor entrada alternativa en un rebote hacia "
+                         f"**{_fmt_px(rl['ma20'])}**.")
+        if elegido == 'swing':
+            L.append("- **Gestión:** al llegar a TP1 cerrá ~50% y llevá el stop a la entrada (break-even); el resto apunta a TP2. "
+                     "Invalidación: cierre diario más allá del stop.")
+        else:
+            L.append("- **Gestión:** al llegar a TP1 cerrá ~50% y llevá el stop a break-even. "
+                     "Cerrá todo antes del cierre de la rueda; no lo dejes pasar la noche.")
+        if dir_e == 'CORTO':
+            L.append("- ⚠️ Operar en corto requiere margen o CFDs y expone a pérdidas mayores al capital.")
+        if capital and riesgo_pct:
+            r_usd = capital * riesgo_pct / 100
+            unid = r_usd / plan['riesgo']
+            valor = unid * plan['entrada']
+            txt = (f"\n**💼 Tamaño de posición:** capital {capital:,.0f} · riesgo {riesgo_pct:g}% = {r_usd:,.2f} "
+                   f"→ ≈ **{unid:,.4f} unidades** (posición ≈ {valor:,.0f}, {valor / capital * 100:.0f}% del capital).")
+            if valor > capital:
+                txt += f" ⚠️ Requiere apalancamiento ≈ {valor / capital:.1f}x."
+            L.append(txt)
+        else:
+            L.append("\n_Tip: sumá «capital 10000 riesgo 1%» al mensaje y te calculo el tamaño de la posición._")
+
+    # Por qué
+    L.append(f"\n**🧠 Por qué {cfg['nombre']}:**")
+    for r in razones[elegido][:6]:
+        L.append(f"- {r}")
+    if not razones[elegido]:
+        L.append("- Sin factores destacados a favor ni en contra.")
+
+    # Contexto de todo el sistema
+    ctx_l = []
+    if rc: ctx_l.append(f"Corto: Acum {rc['sa']:.0f} · Antic {rc['sn']:.0f} → {rc['señal']}")
+    if rl: ctx_l.append(f"Largo: Global {int(rl['global_score'])}/100 ({rl['sesgo']}) · RSI {rl['rsi']:.0f} · Hurst {rl['hurst']:.2f}")
+    if tdc:  ctx_l.append("TDC: " + " · ".join(f"{hz} {x['sf']:.0f}/100" for hz, x in tdc.items()))
+    if hmm:  ctx_l.append(f"HMM: {hmm['regimen']} ({hmm['prob']}%)")
+    if fscore is not None: ctx_l.append(f"F-Score: {fscore:.1f}/9")
+    if gex:
+        g = f"Gamma {gex['regimen']} · Squeeze {gex['squeeze_score']:.0f}/100"
+        if gex.get('proxy'):
+            g += f" (medido en {gex['simbolo']}; sus niveles no se usan para SL/TP)"
+        ctx_l.append(g)
+    L.append("\n**🔎 Señales del sistema usadas:** " + " | ".join(ctx_l))
+
+    # Conflictos entre marcos
+    activas = {dirs[k] for k in dirs if dirs[k] != 'NEUTRAL'}
+    if len(activas) > 1:
+        L.append("\n⚠️ **Marcos en conflicto:** el corto plazo y el largo plazo apuntan a lados opuestos. "
+                 "Operá solo el marco elegido y no mezcles posiciones.")
+
+    L.append("\n---\n*Los niveles se calculan sobre datos **diarios** (ATR y estructura); para scalping y day trading "
+             "confirmá la entrada en un gráfico de 1–15 min. Revisá también el calendario económico y los resultados "
+             "de la empresa antes de operar. Es un cálculo cuantitativo, no asesoramiento financiero.*")
+    return "\n".join(L)
 
 # ── Análisis COMPLETO de ticker (todos los módulos + resumen) ────
 
