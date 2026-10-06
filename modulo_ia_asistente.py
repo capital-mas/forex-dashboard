@@ -2004,6 +2004,10 @@ def _responder_analizar_sin_cache(tk, ctx):
     if fscore is not None:
         L.append(f"\n**🧮 F-Score (Piotroski):** {fscore:.1f}/9")
 
+    # ── Niveles clave de gamma (para TODOS los activos que tengan cadena de opciones) ──
+    if gex and gex.get('niveles') is not None:
+        L.extend(_bloque_niveles_gamma(gex, tk))
+
     # ── Módulos opcionales (GEX, COT, Velas, Opciones) — se muestran si los conectás ──
     for etiqueta, clave in (('🧲 GEX', 'gex_resumen'), ('📑 COT', 'cot_resumen'),
                             ('🕯️ Velas', 'velas_resumen'), ('🎲 Opciones', 'opciones_resumen')):
