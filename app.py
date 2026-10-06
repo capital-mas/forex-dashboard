@@ -8616,6 +8616,8 @@ CTX_IA = dict(
     calcular_regimen_hmm=calcular_regimen_hmm,
     obtener_perfil_empresa=obtener_perfil_empresa,
     resumen_visual_fundamental=_resumen_visual_fundamental,
+    tiene_acceso_pro=TIENE_ACCESO_PRO,
+    es_admin=ES_ADMIN,          # ← NUEVA
     **RES_IA,   # ya incluye gex_resumen, gex_niveles, cot_resumen, velas_resumen, opciones_resumen
 )
 # ==============================================================
