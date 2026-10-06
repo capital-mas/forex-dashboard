@@ -1043,6 +1043,23 @@ def _responder_pais_completo(pais, ctx):
 def responder(texto_usuario, ctx):
     universo = _universo_completo(ctx)
 
+    # ── 0-bis) Plan de Trading (solo admin) ──
+    if st.session_state.pop('ia_esperando_plan', False) and ctx.get('es_admin'):
+        tks_p = extraer_tickers(texto_usuario, universo, ctx['validar_ticker'], ctx)
+        if not tks_p:
+            v_p = ctx['validar_ticker'](texto_usuario.strip())
+            tks_p = [v_p] if v_p else []
+        if tks_p:
+            st.session_state['ia_ultimo_ticker'] = tks_p[0]
+            return _responder_plan_trading(tks_p[0], ctx, texto_usuario)
+        if len(texto_usuario.split()) <= 2:
+            return "No reconocí ese símbolo. Probá con *NVDA*, *GGAL*, *BTC-USD*, *EUR/USD* o *oro*."
+
+    if ctx.get('es_admin') and texto_usuario.strip().lower() in ('🎯 plan trading', 'plan trading', 'plan de trading'):
+        st.session_state['ia_esperando_plan'] = True
+        return ("¿Para qué activo armo el plan? Escribime el ticker o nombre (ej: *NVDA*, *BTC-USD*, *EUR/USD*). "
+                "Podés agregar *capital 10000 riesgo 1%* o forzar un marco: *scalping*, *day trading* o *swing*.")
+
     # ── 0) ¿El asistente le preguntó qué ticker analizar? ──
     if st.session_state.pop('ia_esperando_ticker', False):
         tks = extraer_tickers(texto_usuario, universo, ctx['validar_ticker'], ctx)
@@ -1142,6 +1159,8 @@ def responder(texto_usuario, ctx):
         return "No identifiqué esa opción. " + _texto_menu_registro()
 
     intencion = detectar_intencion(texto_usuario)
+    if intencion == 'plan_trading' and not ctx.get('es_admin'):
+        intencion = 'analizar_ticker'     # para el resto de usuarios no existe
     tickers = extraer_tickers(texto_usuario, universo, ctx['validar_ticker'], ctx)
     paises_cal = (_detectar_paises_calendario(texto_usuario)
                   if intencion in ('analizar_ticker', 'ayuda') else [])
@@ -1154,7 +1173,7 @@ def responder(texto_usuario, ctx):
     if (not tickers and not industria_detectada and not paises_cal
             and st.session_state.get('ia_ultimo_ticker')
             and len(texto_usuario.split()) > 1
-            and intencion in ('analizar_ticker', 'simular', 'tdc', 'fscore')):
+            and intencion in ('analizar_ticker', 'simular', 'tdc', 'fscore', 'plan_trading')):
         tickers = [st.session_state['ia_ultimo_ticker']]
     # "anotá que gasté 5000 en café" no debe fijar KC=F como último ticker
     if tickers and intencion not in ('registrar_movimiento', 'finanzas'):
@@ -1165,6 +1184,13 @@ def responder(texto_usuario, ctx):
 
     if intencion == 'sistema':
         return _respuesta_sistema()
+
+    if intencion == 'plan_trading':
+        if not tickers:
+            st.session_state['ia_esperando_plan'] = True
+            return ("¿Para qué activo armo el plan? Escribime el ticker o nombre "
+                    "(ej: *NVDA*, *BTC-USD*, *EUR/USD*).")
+        return _responder_plan_trading(tickers[0], ctx, texto_usuario)
 
     if intencion == 'registrar_movimiento':
         return _iniciar_registro_movimiento(texto_usuario, ctx)
