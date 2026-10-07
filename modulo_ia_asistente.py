@@ -3130,11 +3130,323 @@ def _continuar_wizard_cartera(texto_usuario, ctx):
     st.session_state['ia_cartera_wizard'] = None
     return "Se desincronizó el asistente de carteras — probemos de nuevo: escribí *'armame una cartera'*."
 
+# ==============================================================
+#  ARMAR CARTERA v2 — fundamental completo + momento de compra
+#  (soportes/resistencias GEX + mediano plazo) + mini tablas móvil
+# ==============================================================
+
+_CAR_PESOS_RANKING = dict(corto=0.15, largo=0.20, tdc_mp=0.20, fund=0.30, fscore=0.15)
+_CAR_MIN_PESO_DETALLE = 0.01   # activos con >1% de la cartera recomendada tienen ficha
+
+_E_VAL = [('🟢','Muy barato'),('🟢','Barato'),('🟡','Normal'),('🟠','Exigente'),('🔴','Muy exigente')]
+_E_MULT = [('🟢','Bajo'),('🟡','Normal'),('🟠','Elevado'),('🔴','Muy elevado')]
+_E_ATRAC = [('🟢','Atractivo'),('🟡','Normal'),('🟠','Elevado'),('🔴','Muy elevado')]
+_E_REND = [('🔴','Débil'),('🟡','Aceptable'),('🟢','Bueno'),('🟢','Excepcional')]
+_E_MARG = [('🔴','Bajo'),('🟡','Moderado'),('🟢','Bueno'),('🟢','Excelente')]
+
+_fx  = lambda v: f"{v:.1f}x"
+_fx2 = lambda v: f"{v:.2f}x"
+_fp  = lambda v: f"{v:.1f}%"
+_fp0 = lambda v: f"{v:.0f}%"
+_fps = lambda v: f"{v:+.1f}%"
+_fd2 = lambda v: f"{v:.2f}"
+
+# (grupo, nombre, clave, mult, fmt, cortes, etiquetas, solo_positivo)
+# mult: 100 = viene como fracción; 1 = ya viene en %; 'div' = rendimiento por dividendo
+_SPEC_FUND = [
+    ('💰 Valuación', 'PER', 'per', 1, _fx, [10,15,25,40], _E_VAL, True),
+    ('💰 Valuación', 'P/B', 'pb', 1, _fx, [1,2.5,6],
+        [('🟢','Bajo'),('🟡','Razonable'),('🟠','Elevado'),('🔴','Muy elevado')], True),
+    ('💰 Valuación', 'EV/EBITDA', 'ev_ebitda', 1, _fx, [10,15,20], _E_ATRAC, True),
+    ('💰 Valuación', 'EV/Sales', 'ev_sales', 1, _fx, [1,3,8], _E_MULT, True),
+    ('💰 Valuación', 'P/FCF', 'p_fcf', 1, _fx, [15,25,40], _E_ATRAC, True),
+    ('💰 Valuación', 'PEG', 'peg', 1, _fd2, [1,2],
+        [('🟢','Barato'),('🟡','Razonable'),('🔴','Caro')], True),
+
+    ('📈 Rentabilidad', 'ROE', 'roe', 100, _fp, [8,15,25], _E_REND, False),
+    ('📈 Rentabilidad', 'ROIC', 'roic', 100, _fp, [5,10,15], _E_REND, False),
+    ('📈 Rentabilidad', 'Margen bruto', 'gross_margin', 100, _fp, [20,40,60], _E_MARG, False),
+    ('📈 Rentabilidad', 'Margen operativo', 'op_margin', 100, _fp, [10,20,30], _E_MARG, False),
+    ('📈 Rentabilidad', 'Margen neto', 'profit_margin', 100, _fp, [5,10,20], _E_MARG, False),
+    ('📈 Rentabilidad', 'Crec. ingresos', 'revenue_growth', 100, _fp, [0,10,20],
+        [('🔴','Contracción'),('🟡','Moderado'),('🟢','Bueno'),('🟢','Excelente')], False),
+    ('📈 Rentabilidad', 'Crec. EPS', 'eps_growth', 100, _fp, [0,10,20],
+        [('🔴','Contracción'),('🟡','Moderado'),('🟢','Bueno'),('🟢','Excelente')], False),
+
+    ('🔒 Solvencia y riesgo', 'Deuda/Patrimonio', 'debt_equity', 1, _fx2, [0.5,1,2],
+        [('🟢','Conservador'),('🟡','Moderado'),('🟠','Elevado'),('🔴','Muy elevado')], False),
+    ('🔒 Solvencia y riesgo', 'Deuda neta/EBITDA', 'net_debt_ebitda', 1, _fx2, [1,3],
+        [('🟢','Bajo'),('🟡','Moderado'),('🔴','Alto')], False),
+    ('🔒 Solvencia y riesgo', 'Current Ratio', 'curr_ratio', 1, _fx2, [1,1.5,2],
+        [('🔴','Liquidez en riesgo'),('🟡','Ajustado'),('🟢','Saludable'),('🟢','Muy líquido')], False),
+    ('🔒 Solvencia y riesgo', 'Cobertura intereses', 'interest_coverage', 1, _fx, [2,3,8],
+        [('🔴','Riesgoso'),('🟠','Ajustado'),('🟡','Cómodo'),('🟢','Muy holgado')], False),
+    ('🔒 Solvencia y riesgo', 'Beta', 'beta', 1, _fd2, [0.8,1.2,1.5],
+        [('🟢','Defensiva'),('🟡','Como el mercado'),('🟠','Más volátil'),('🔴','Muy volátil')], False),
+
+    ('🏦 Retorno al accionista', 'Dividendo', 'div_yield', 'div', lambda v: f"{v:.2f}%", [2,4,6],
+        [('🟡','Bajo'),('🟢','Moderado'),('🟢','Atractivo'),('🟠','Muy alto, verificar')], False),
+    ('🏦 Retorno al accionista', 'Payout', 'payout_ratio', 100, _fp0, [30,60,90],
+        [('🟢','Conservador'),('🟢','Sano'),('🟡','Alto'),('🔴','Insostenible')], False),
+    ('🏦 Retorno al accionista', 'Var. acciones YoY', 'shares_change_yoy', 1, _fps, [-2,1,5],
+        [('🟢','Recompra'),('🟡','Estable'),('🟠','Dilución leve'),('🔴','Dilución fuerte')], False),
+
+    ('🚀 Rendimiento y flujos', 'Alza YTD', 'alza_ytd', 1, _fps, [-15,0,15,30],
+        [('🔴','Bajista fuerte'),('🟠','Bajista/lateral'),('🟢','Alcista moderado'),
+         ('🟢','Alcista fuerte'),('🟡','Muy fuerte, ojo')], False),
+    ('🚀 Rendimiento y flujos', 'Conversión a FCF', 'fcf_conversion', 100, _fp0, [30,60,80],
+        [('🔴','Baja'),('🟡','Regular'),('🟢','Buena'),('🟢','Excelente')], False),
+]
+
+
+def _tablas_fundamental(res_f, resumen_f):
+    """Todas las métricas fundamentales en mini tablas (Métrica | Valor | Lectura).
+    Las que no tienen dato se agrupan en una sola línea para ahorrar pantalla."""
+    g = res_f.get
+    grupos, sin_dato = {}, []
+    for grupo, nombre, clave, mult, fmt, cortes, etq, solo_pos in _SPEC_FUND:
+        v = g(clave)
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            sin_dato.append(nombre)
+            continue
+        v = _div_pct(v) if mult == 'div' else float(v) * mult
+        if mult == 'div' and v == 0:
+            grupos.setdefault(grupo, []).append(f"| {nombre} | 0% | ⚪ No paga |")
+            continue
+        if solo_pos and v <= 0:
+            grupos.setdefault(grupo, []).append(f"| {nombre} | {fmt(v)} | ⚪ No aplica |")
+            continue
+        emo, txt = _nivel(v, cortes, etq)
+        grupos.setdefault(grupo, []).append(f"| {nombre} | {fmt(v)} | {emo} {txt} |")
+
+    fcf = g('fcf')
+    if fcf is not None:
+        grupos.setdefault('🚀 Rendimiento y flujos', []).append(
+            f"| Flujo de caja libre | {_big(fcf)} | {'🟢 Positivo' if fcf > 0 else '🔴 Negativo'} |")
+    else:
+        sin_dato.append('Flujo de caja libre')
+
+    L = []
+    for grupo, filas in grupos.items():
+        L.append(f"\n**{grupo}**\n\n| Métrica | Valor | Lectura |\n|---|---:|---|\n" + "\n".join(filas))
+    if sin_dato:
+        L.append(f"\n_Sin dato en Yahoo: {', '.join(sin_dato)}._")
+
+    L.append(f"\n**✅ Señales:** {res_f['n_ok']} positivas · ⚠️ {res_f['n_alt']} alertas")
+
+    if resumen_f:
+        s10 = _s10
+        L.append("\n**🎯 Scores (0 a 10)**\n\n"
+                 "| Calidad | Valoración | Crecim. | Riesgo |\n|:-:|:-:|:-:|:-:|\n"
+                 f"| {s10(resumen_f.get('calidad'))} | {s10(resumen_f.get('valoracion'))} | "
+                 f"{s10(resumen_f.get('crecimiento'))} | {s10(resumen_f.get('riesgo'))} |")
+        L.append("_Valoración: 10 = muy barata, 0 = muy cara. Riesgo: más alto = MÁS riesgoso._")
+        L.append(f"\n**Veredicto: {resumen_f.get('v_emoji', '')} {resumen_f.get('veredicto', '')}**")
+        cal, val = resumen_f.get('calidad'), resumen_f.get('valoracion')
+        if cal is not None and val is not None:
+            if cal >= 7 and val <= 3:
+                L.append("_Lectura: gran negocio, pero el precio ya lo refleja. El problema es lo que pagás por él._")
+            elif cal >= 7 and val >= 7:
+                L.append("_Lectura: buen negocio a precio atractivo, la combinación más buscada._")
+            elif cal < 5 and val >= 7:
+                L.append("_Lectura: está barata, pero por algo: calidad floja (posible trampa de valor)._")
+    return "\n".join(L)
+
+
+def _candidatos_niveles(gex, rl, precio):
+    """[(etiqueta, dist_pct, precio_nivel|None)] — GEX si hay; si no, niveles técnicos."""
+    c = []
+    if gex and gex.get('spot'):
+        S, proxy = gex['spot'], bool(gex.get('proxy'))
+
+        def add(lab, lv):
+            if lv:
+                c.append((lab, (float(lv) / S - 1) * 100, None if proxy else float(lv)))
+        add('Pared de Calls', gex.get('call_wall'))
+        add('Pared de Puts', gex.get('put_wall'))
+        add('Cambio de gamma', gex.get('flip'))
+        niv = gex.get('niveles')
+        if niv is not None and not niv.empty:
+            for _, r in niv.iterrows():
+                if r['tipo'] in ('Resistencia', 'Soporte', 'Pivote'):
+                    c.append((f"{r['tipo']} gamma", float(r['dist_pct']),
+                              None if proxy else float(r['strike'])))
+        if c:
+            return c, 'GEX'
+    if rl and precio:
+        for k, lab in (('upper_bb', 'Bollinger sup.'), ('ma20', 'Media 20'), ('lower_bb', 'Bollinger inf.')):
+            if rl.get(k):
+                c.append((lab, (float(rl[k]) / precio - 1) * 100, float(rl[k])))
+    return c, 'técnico'
+
+
+def _tabla_niveles(precio, cands):
+    arriba = sorted([x for x in cands if x[1] > 0.05], key=lambda x: x[1])
+    abajo = sorted([x for x in cands if x[1] < -0.05], key=lambda x: -x[1])
+
+    def _f(emo, tit, x):
+        px = _fmt_px(x[2]) if x[2] is not None else '—'
+        return f"| {emo} {tit} | {px} | {x[1]:+.1f}% | {x[0]} |"
+    filas = []
+    if len(arriba) > 1: filas.append(_f('🔴', 'Techo lejano', arriba[-1]))
+    if arriba:          filas.append(_f('🟠', 'Techo cercano', arriba[0]))
+    filas.append(f"| ⚪ **Precio actual** | **{_fmt_px(precio)}** | — | |")
+    if abajo:           filas.append(_f('🟡', 'Piso cercano', abajo[0]))
+    if len(abajo) > 1:  filas.append(_f('🟢', 'Piso lejano', abajo[-1]))
+    if len(filas) == 1:
+        return "_Sin niveles de soporte/resistencia disponibles._"
+    return "| Nivel | Precio | Dist. | Tipo |\n|---|---:|---:|---|\n" + "\n".join(filas)
+
+
+def _momento_compra(precio, cands, tdc_mp, rl, rc, gex, resumen_f):
+    pts, rz = 50, []
+    arriba = sorted(x[1] for x in cands if x[1] > 0.05)
+    abajo = sorted(-x[1] for x in cands if x[1] < -0.05)
+    d_up = arriba[0] if arriba else None
+    d_dn = abajo[0] if abajo else None
+
+    if tdc_mp:
+        sa = tdc_mp['sa']
+        if sa >= 62:   pts += 15; rz.append(f"Mediano plazo: zona de acumulación (Acum {sa:.0f}/100)")
+        elif sa <= 38: pts -= 15; rz.append(f"Mediano plazo: caro vs. su rango (Acum {sa:.0f}/100)")
+        else:          rz.append(f"Mediano plazo neutral (Acum {sa:.0f}/100)")
+    if rl:
+        rsi = rl['rsi']
+        if rsi > 70:   pts -= 15; rz.append(f"Sobrecompra técnica (RSI {rsi:.0f})")
+        elif rsi < 35: pts += 10; rz.append(f"Sobreventa técnica (RSI {rsi:.0f})")
+        if rl['golden_cross'] and rl['macd_bull']:
+            pts += 8; rz.append("Tendencia alcista confirmada (Golden Cross + MACD)")
+        elif not rl['golden_cross'] and not rl['macd_bull']:
+            pts -= 8; rz.append("Tendencia bajista (sin Golden Cross y MACD bajista)")
+    if rc:
+        if rc['sa'] >= 62:   pts += 8
+        elif rc['sa'] <= 38: pts -= 8
+    if d_up is not None and d_dn is not None:
+        rr = d_up / max(d_dn, 0.1)
+        if rr >= 2:   pts += 12; rz.append(f"Más recorrido al techo (+{d_up:.1f}%) que riesgo al piso (-{d_dn:.1f}%)")
+        elif rr < 1:  pts -= 12; rz.append(f"Poco recorrido al techo (+{d_up:.1f}%) vs. piso (-{d_dn:.1f}%)")
+    if d_up is not None and d_up <= 1.5:
+        pts -= 10; rz.append(f"Pegado a la resistencia más cercana (+{d_up:.1f}%)")
+    if d_dn is not None and d_dn <= 1.5:
+        pts += 10; rz.append(f"Apoyado sobre un soporte cercano (-{d_dn:.1f}%)")
+    if gex and gex.get('regimen') == 'negativo':
+        rz.append("Gamma negativa: los movimientos pueden amplificarse")
+    if gex and gex.get('inminente'):
+        rz.append(f"🚨 Squeeze inminente ({gex['squeeze_score']:.0f}/100)")
+    val = (resumen_f or {}).get('valoracion')
+    if val is not None and val <= 2:
+        pts -= 5; rz.append("Valuación muy exigente: si entrás, mejor escalonado")
+
+    pts = max(0, min(100, pts))
+    if not rz:
+        rz.append("Sin datos suficientes para evaluar el momento")
+    if pts >= 62:   emo, txt = '🟢', 'BUEN MOMENTO'
+    elif pts >= 45: emo, txt = '🟡', 'ESPERAR / ENTRAR ESCALONADO'
+    else:           emo, txt = '🔴', 'NO ES MOMENTO'
+    return dict(emo=emo, txt=txt, pts=pts, razones=rz[:5])
+
+
+def _car_analizar_uno(tk, ctx, fscore):
+    """Todo lo necesario de UN activo: corto, largo, TDC mediano plazo y fundamental."""
+    rc = _a_safe(_calc_corto, tk, ctx)
+    rl = _a_safe(_calc_largo, tk, ctx)
+    fn_tdc, hz = ctx.get('_tdc_analizar_ticker'), ctx.get('HORIZONTES_TDC')
+    tdc_mp = _a_safe(fn_tdc, tk, hz['MP']) if (fn_tdc and hz and 'MP' in hz) else None
+
+    sin_fund = _es_sin_fundamentals(tk, ctx)
+    res_f = resumen_f = None
+    if not sin_fund and ctx.get('analizar_fundamental'):
+        info_m = _info_mercado(tk, ctx)
+        industria = ctx['TICKER_INDUSTRY'].get(tk) or (info_m[1] if info_m else 'Sin Clasificar')
+        res_f = _a_safe(ctx['analizar_fundamental'], tk, industria)
+        if res_f and ctx.get('resumen_visual_fundamental'):
+            resumen_f = _a_safe(ctx['resumen_visual_fundamental'], res_f)
+
+    fund = None
+    if res_f:
+        if resumen_f and resumen_f.get('conclusion') is not None:
+            fund = resumen_f['conclusion'] * 10
+        else:
+            fund = {'COMPRA FUERTE': 80, 'MANTENER': 55}.get(res_f['senal_final'], 30)
+
+    W = _CAR_PESOS_RANKING
+    combinado = _mix([
+        (rc['sf'] if rc else None, W['corto']),
+        (rl['global_score'] if rl else None, W['largo']),
+        (tdc_mp['sf'] if tdc_mp else None, W['tdc_mp']),
+        (fund, W['fund']),
+        (fscore / 9 * 100 if fscore is not None else None, W['fscore']),
+    ])
+    if combinado is None:
+        return None
+    precio = (rc or {}).get('precio') or (rl or {}).get('precio')
+    return dict(tk=tk, rc=rc, rl=rl, tdc_mp=tdc_mp, res_f=res_f, resumen_f=resumen_f,
+                fscore=fscore, fund=fund, combinado=combinado, precio=precio, sin_fund=sin_fund)
+
+
+def _gex_para(tks, ctx):
+    fn = ctx.get('gex_niveles')
+    out = {}
+    if not fn:
+        return out
+    with _pool_con_ctx(6) as ex:
+        futs = {ex.submit(_a_safe, fn, tk): tk for tk in tks}
+        for f in as_completed(futs):
+            out[futs[f]] = f.result()
+    return out
+
+
+def _fmt_cartera(icono, nombre, cart, tickers_ok, emo):
+    pesos = sorted(((tk, float(cart[tk])) for tk in tickers_ok if cart[tk] > 0.01), key=lambda x: -x[1])
+    dist = '  '.join(f"{emo.get(tk, '⚪')} {tk}: {w * 100:.1f}%" for tk, w in pesos)
+    return (f"{icono} **{nombre}**  \n"
+            f"• CAGR: {cart['CAGR'] * 100:+.1f}% | Sharpe: {cart['Sharpe']:.2f} | "
+            f"Max DD: {cart['Max Drawdown'] * 100:.1f}%  \n"
+            f"📊 **Distribución de Capital:** {dist}")
+
+
+def _card_activo(d, peso, gex, mom, cands, ctx):
+    tk = d['tk']
+    info_m = _info_mercado(tk, ctx)
+    nombre = info_m[0] if info_m else tk
+    L = [f"### {mom['emo']} {nombre} ({tk}) · {peso * 100:.1f}% de la cartera"]
+
+    # ── Momento de compra ──
+    L.append(f"**⏱️ Momento de compra: {mom['emo']} {mom['txt']}** ({mom['pts']}/100)")
+    L.extend(f"- {r}" for r in mom['razones'])
+
+    # ── Mediano plazo ──
+    if d['tdc_mp']:
+        t = d['tdc_mp']
+        L.append("\n**🧭 Mediano plazo (Top-Down)**\n\n"
+                 "| Acum. | Antic. | Sent. | Señal |\n|:-:|:-:|:-:|---|\n"
+                 f"| {t['sa']:.0f} | {t['sn']:.0f} | {t['ss']:.0f} | {t['accion']} |")
+
+    # ── Soportes y resistencias ──
+    if cands:
+        fuente = 'GEX' if (gex and gex.get('spot')) else 'técnicos'
+        L.append(f"\n**🧱 Soportes y resistencias ({fuente})**\n")
+        if gex and gex.get('proxy'):
+            L.append(f"_Sin opciones propias: niveles de {gex['simbolo']}, solo vale la distancia %._")
+        L.append(_tabla_niveles(d['precio'], cands))
+
+    # ── Fundamental ──
+    if d['res_f']:
+        cab = f"\n**📊 Fundamental:** señal **{d['res_f']['senal_final']}**"
+        if d['fscore'] is not None:
+            cab += f" · F-Score **{d['fscore']:.1f}/9**"
+        L.append(cab)
+        L.append(_tablas_fundamental(d['res_f'], d['resumen_f']))
+    elif d['sin_fund']:
+        L.append("\n_Sin balance (ETF, cripto, commodity o índice): no aplica Fundamental ni F-Score._")
+    else:
+        L.append("\n_Sin datos fundamentales disponibles en Yahoo Finance._")
+    return "\n".join(L)
+
 
 def _responder_armar_cartera(datos, ctx):
     universo_texto = datos['universo']
-    fscore_min = datos['fscore_min']
-    fscore_max = datos['fscore_max']
+    fscore_min, fscore_max = datos['fscore_min'], datos['fscore_max']
 
     tickers_universo = _car_construir_universo(universo_texto, ctx)
     if not tickers_universo:
@@ -3146,116 +3458,101 @@ def _responder_armar_cartera(datos, ctx):
     if truncado:
         tickers_universo = tickers_universo[:_CAR_MAX_UNIVERSO]
 
-    # ── 1) F-Score (en paralelo, con caché de 6 h). Los activos sin balance
-    #       (futuros, cripto, índices, ETFs) se eximen del filtro. ─────────
+    # ── 1) F-Score (paralelo, caché 6 h). Activos sin balance: exentos del filtro ──
     exentos = [tk for tk in tickers_universo if _es_sin_fundamentals(tk, ctx)]
     a_calcular = [tk for tk in tickers_universo if tk not in exentos]
-    txt_ex = (f" (+{len(exentos)} sin balance —commodities/cripto/ETFs— exentos del F-Score)"
-              if exentos else "")
+    txt_ex = f" (+{len(exentos)} sin balance exentos)" if exentos else ""
 
     fscores = {}
     with _pool_con_ctx(8) as ex:
         futuros = {ex.submit(_car_fscore_rapido, tk): tk for tk in a_calcular}
         for fut in as_completed(futuros):
-            tk = futuros[fut]
             r = fut.result()
             if r is not None:
-                fscores[tk] = r
+                fscores[futuros[fut]] = r
 
     aprobados = [tk for tk, sc in fscores.items() if fscore_min <= sc <= fscore_max] + exentos
     if len(aprobados) < 2:
         detalle = ', '.join(f'{tk} ({sc:.1f})' for tk, sc in sorted(fscores.items(), key=lambda x: -x[1])[:12])
-        sin_datos = ('ninguno disponible (puede que sean poco líquidos o sin estados financieros '
-                     'en Yahoo Finance)')
         return (f"Con F-Score entre **{fscore_min:.1f}** y **{fscore_max:.1f}** quedaron solo "
-                f"**{len(aprobados)}** activo(s) de los {len(tickers_universo)} analizados "
-                f"({len(fscores)} con F-Score calculable) — necesito al menos 2 para armar una cartera.\n\n"
-                f"F-Scores calculados: {detalle or sin_datos}.\n\n"
-                f"Probá ampliar el rango de F-Score o sumar más sectores/tickers.")
+                f"**{len(aprobados)}** activo(s) de {len(tickers_universo)} — necesito al menos 2.\n\n"
+                f"F-Scores calculados: {detalle or 'ninguno disponible'}.\n\n"
+                f"Probá ampliar el rango o sumar más sectores/tickers.")
 
-    # ── 2) Top-Down Cuantitativo: corto plazo (scores_corto) + largo plazo (Global Score) ──
-    def _rank_uno(tk):
-        sa = None
-        df_v = ctx['descargar_datos'](tk, '3mo')
-        df_m = ctx['descargar_datos'](tk, '1mo')
-        if df_v is not None and df_m is not None:
-            cl_v = ctx['get_close_series'](df_v)
-            cl_m = ctx['get_close_series'](df_m)
-            if cl_v is not None and cl_m is not None and len(cl_v.dropna()) >= 15:
-                atr = ctx['calcular_atr'](df_m)
-                sa, _sn, _ss = ctx['scores_corto'](cl_v, cl_m, atr)
-
-        global_score = None
-        df_l = ctx['descargar_datos'](tk, '2y')
-        cl_l = ctx['get_close_series'](df_l) if df_l is not None else None
-        if cl_l is not None and len(cl_l) >= 150:
-            r_l = ctx['analizar_largo'](tk, cl_l)
-            if r_l:
-                global_score = r_l['global_score']
-
-        if sa is None and global_score is None:
-            return None
-        valores_validos = [v for v in (sa, global_score) if v is not None]
-        combinado = float(np.mean(valores_validos)) if valores_validos else 0.0
-        return dict(tk=tk, fscore=fscores.get(tk), sa=sa, global_score=global_score, combinado=combinado)
-
+    # ── 2) Análisis integral por activo: corto + largo + TDC MP + fundamental + F-Score ──
     ranking = []
     with _pool_con_ctx(8) as ex:
-        for r in ex.map(lambda t: _a_safe(_rank_uno, t), aprobados):
+        for r in ex.map(lambda t: _a_safe(_car_analizar_uno, t, ctx, fscores.get(t)), aprobados):
             if r:
                 ranking.append(r)
-
     if len(ranking) < 2:
-        return ("Los activos pasaron el filtro de F-Score, pero no pude calcular scores de corto/largo plazo "
-                "suficientes para ninguno (historial insuficiente). Probá con otros sectores/tickers.")
+        return ("Los activos pasaron el filtro de F-Score, pero no pude calcular scores suficientes "
+                "(historial insuficiente). Probá con otros sectores/tickers.")
 
     ranking.sort(key=lambda x: x['combinado'], reverse=True)
-    tickers_finales = [r['tk'] for r in ranking[:_CAR_TOP_N_RANKING]]
+    top = ranking[:_CAR_TOP_N_RANKING]
+    por_tk = {r['tk']: r for r in top}
 
-    # ── 3) Optimizador de Cartera (Monte Carlo) ───────────────────────
-    carteras, tickers_ok = _car_simular_cartera(tickers_finales, ctx)
+    # ── 3) Optimizador Monte Carlo ──
+    carteras, tickers_ok = _car_simular_cartera([r['tk'] for r in top], ctx)
     if carteras is None:
-        return ("Filtré los activos por F-Score y por score cuantitativo de corto/largo plazo, pero no logré "
-                "descargar suficiente historial de precios en común entre ellos para correr el optimizador "
-                "Monte Carlo. Probá con otra combinación de sectores/tickers.")
+        return ("Filtré por F-Score y por score integral, pero no hay historial de precios en común "
+                "suficiente para correr el optimizador. Probá con otra combinación.")
 
-    # ── Armado de la respuesta ─────────────────────────────────────────
-    partes = []
-    aviso_trunc = f" _(se truncó a los primeros {_CAR_MAX_UNIVERSO} para no demorar demasiado)_" if truncado else ""
-    partes.append(
-        f"**Pipeline ejecutado** 🧩 sobre {len(tickers_universo)} activos{aviso_trunc} → "
-        f"**{len(aprobados)}** pasaron el filtro F-Score ({fscore_min:.1f}–{fscore_max:.1f}){txt_ex} → "
-        f"top **{len(tickers_finales)}** por score cuantitativo → cartera optimizada con **{len(tickers_ok)}** activos "
-        f"(los que tenían historial de precios en común)."
-    )
+    nombre_rec = 'Recomendada (Score Global)'
+    rec = carteras[nombre_rec]
 
-    partes.append("\n**Ranking usado (F-Score · Corto Acum. · Largo Global Score):**")
-    for r in ranking[:_CAR_TOP_N_RANKING]:
-        sa_txt = f"{r['sa']:.0f}" if r['sa'] is not None else 'N/D'
-        gl_txt = f"{r['global_score']:.0f}" if r['global_score'] is not None else 'N/D'
-        fs_txt = f"{r['fscore']:.1f}" if r['fscore'] is not None else 'n/a (sin balance)'
-        marca = " ✅ (en cartera final)" if r['tk'] in tickers_ok else ""
-        partes.append(f"- **{r['tk']}**: F-Score {fs_txt} · Corto {sa_txt}/100 · Largo {gl_txt}/100{marca}")
+    # ── 4) Momento de compra: GEX + mediano plazo, para todo activo con >1% en alguna cartera ──
+    usados = [tk for tk in tickers_ok if any(c[tk] > 0.01 for c in carteras.values())]
+    gexs = _gex_para(usados, ctx)
+    cands_d, moms = {}, {}
+    for tk in usados:
+        d = por_tk[tk]
+        cands_d[tk], _ = _candidatos_niveles(gexs.get(tk), d['rl'], d['precio'])
+        moms[tk] = _momento_compra(d['precio'], cands_d[tk], d['tdc_mp'], d['rl'], d['rc'],
+                                   gexs.get(tk), d['resumen_f'])
+    emo = {tk: m['emo'] for tk, m in moms.items()}
 
-    partes.append("\n**Las 5 carteras candidatas (Monte Carlo, 2 años de historial):**")
+    # ══ Armado de la respuesta (pensado para pantalla de celular) ══
+    aviso = f" _(truncado a {_CAR_MAX_UNIVERSO})_" if truncado else ""
+    P = [f"**🧩 Pipeline:** {len(tickers_universo)} activos{aviso} → {len(aprobados)} pasan F-Score "
+         f"({fscore_min:.1f}–{fscore_max:.1f}){txt_ex} → top {len(top)} por score integral "
+         f"(corto, largo, mediano plazo, fundamental y F-Score) → optimizador con {len(tickers_ok)} activos."]
+    P.append("_Ranking: " + " · ".join(f"{r['tk']} {r['combinado']:.0f}" for r in top) + "_")
+
+    # Cartera recomendada + semáforo
+    P.append("\n---\n" + _fmt_cartera('🏆', f'Cartera {nombre_rec}', rec, tickers_ok, emo))
+
+    pesos_rec = sorted(((tk, float(rec[tk])) for tk in tickers_ok if rec[tk] > _CAR_MIN_PESO_DETALLE),
+                       key=lambda x: -x[1])
+    filas = []
+    for tk, w in pesos_rec:
+        d = por_tk[tk]
+        rf = d['resumen_f']
+        fund_txt = (f"{rf.get('v_emoji', '')} {rf['conclusion']:.0f}/10"
+                    if rf and rf.get('conclusion') is not None else ('s/balance' if d['sin_fund'] else 'N/D'))
+        med_txt = f"{d['tdc_mp']['sf']:.0f}" if d['tdc_mp'] else 'N/D'
+        filas.append(f"| {tk} | {w * 100:.0f}% | {fund_txt} | {med_txt} | {moms[tk]['emo']} {moms[tk]['pts']} |")
+    P.append("\n**🚦 Semáforo de la cartera**\n\n| Activo | Peso | Fund. | Mediano | Momento |\n"
+             "|---|--:|:-:|:-:|:-:|\n" + "\n".join(filas))
+    P.append("_Emoji de cada activo = momento de compra: 🟢 buen momento · 🟡 esperar/escalonar · 🔴 no es momento._")
+
+    # Otras 4 carteras
+    P.append("\n---\n**Otras carteras candidatas**")
+    iconos = {'Más Rentable': '💰', 'Mejor Sharpe': '⚖️', 'Mejor Sortino': '🛡️', 'Menor Drawdown': '🧊'}
     for nombre, cart in carteras.items():
-        pesos_txt = ' · '.join(
-            f"{tk}: {cart[tk]*100:.1f}%" for tk in tickers_ok if cart[tk] > 0.01
-        )
-        partes.append(
-            f"\n**{nombre}** — CAGR {cart['CAGR']*100:+.1f}% · Sharpe {cart['Sharpe']:.2f} · "
-            f"Sortino {cart['Sortino']:.2f} · Vol {cart['Volatilidad']*100:.1f}% · "
-            f"Max Drawdown {cart['Max Drawdown']*100:.1f}%\n"
-            f"_{pesos_txt}_"
-        )
+        if nombre != nombre_rec:
+            P.append("\n" + _fmt_cartera(iconos.get(nombre, '📌'), nombre, cart, tickers_ok, emo))
 
-    partes.append(
-        "\n\n*Todo esto es un cálculo cuantitativo sobre datos históricos — no es asesoramiento financiero. "
-        "Si querés afinar parámetros (benchmark, capital, más simulaciones, rebalanceo, VaR, inflación) usá "
-        "🧰 Herramientas → Optimizar cartera con estos mismos tickers cargados.*"
-    )
-    return "\n".join(partes)
+    # Fichas por activo de la cartera recomendada
+    P.append("\n---\n## 🔎 Detalle de cada activo (cartera recomendada)")
+    for tk, w in pesos_rec:
+        P.append("\n" + _card_activo(por_tk[tk], w, gexs.get(tk), moms[tk], cands_d[tk], ctx))
+        P.append("\n---")
 
+    P.append("*Cálculo cuantitativo sobre datos históricos de Yahoo Finance y opciones de CBOE — no es "
+             "asesoramiento financiero. Para afinar parámetros usá 🧰 Herramientas → Optimizar cartera.*")
+    return "\n".join(P)
 
 # ==============================================================
 #  BOTONES RÁPIDOS — evita tener que escribir cuando el asistente
