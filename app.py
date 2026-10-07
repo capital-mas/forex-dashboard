@@ -49,6 +49,7 @@ from modulo_volatilidad_y_analisis_tecnico import (
     modulo_analisis_tecnico,
 )
 from modulo_pares_cointegracion import modulo_pares_cointegracion
+from cot_fetch import auto_sync
 from modulo_cot import modulo_cot
 from modulo_tff import modulo_tff
 from modulo_pyme import render_pyme, render_nav_pyme, get_nombre_negocio
