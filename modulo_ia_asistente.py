@@ -3550,6 +3550,77 @@ def _responder_armar_cartera(datos, ctx):
         P.append("\n" + _card_activo(por_tk[tk], w, gexs.get(tk), moms[tk], cands_d[tk], ctx))
         P.append("\n---")
 
+    def _motivo_corto(d, cands, mom):
+    """Motivo breve por el que un activo no está en 🟢."""
+    arriba = sorted((x for x in cands if x[1] > 0.05), key=lambda x: x[1])
+    if arriba and arriba[0][1] <= 1.5:
+        return f"a {arriba[0][1]:+.1f}% de {arriba[0][0]}"
+    rl, t = d.get('rl'), d.get('tdc_mp')
+    if rl and rl['rsi'] > 70:
+        return f"RSI {rl['rsi']:.0f}, sobrecompra"
+    if t and t['sa'] <= 38:
+        return "caro en mediano plazo"
+    return mom['razones'][0].split(':')[0].lower() if mom['razones'] else "señales mixtas"
+
+
+def _resumen_ejecutivo(rec, pesos_rec, por_tk, moms, cands_d):
+    cagr = rec['CAGR'] * 100
+    dd = abs(rec['Max Drawdown']) * 100
+    sh = rec['Sharpe']
+
+    # ── 1) Estrategia general ──
+    perfil = ('conservador/defensivo' if dd <= 12 else 'moderado' if dd <= 20
+              else 'agresivo' if dd <= 30 else 'muy agresivo')
+    calif = 'muy sólido' if sh >= 1.2 else 'sólido' if sh >= 1 else 'razonable' if sh >= 0.6 else 'débil'
+    s1 = (f"La cartera tiene un perfil {perfil} {calif} "
+          f"(CAGR {cagr:+.1f}% con Max DD de -{dd:.1f}%, Sharpe {sh:.2f}).")
+    top_tk, top_w = pesos_rec[0]
+    if top_w >= 0.5:
+        s1 += f" Ojo: {top_tk} concentra el {top_w * 100:.0f}% del capital."
+
+    # ── 2) Acción hoy ──
+    total = sum(w for _, w in pesos_rec) or 1
+    grupos = {'🟢': [], '🟡': [], '🔴': []}
+    for tk, w in pesos_rec:
+        grupos[moms[tk]['emo']].append((tk, w))
+    pct_verde = sum(w for _, w in grupos['🟢']) / total * 100
+    no_verde = sorted(grupos['🟡'] + grupos['🔴'], key=lambda x: -x[1])
+
+    detalle = ''
+    if no_verde:
+        sel = no_verde[:3]
+        partes = [f"{tk} ({_motivo_corto(por_tk[tk], cands_d[tk], moms[tk])})" for tk, _ in sel]
+        lista = ", ".join(partes[:-1]) + " y " + partes[-1] if len(partes) > 1 else partes[0]
+        peso_sel = sum(w for _, w in sel) * 100
+        verbo = 'representan' if len(sel) > 1 else 'representa'
+        detalle = f" {lista} {verbo} el {peso_sel:.1f}% del portafolio recomendado."
+
+    if pct_verde >= 60:
+        s2 = (f"Condiciones favorables: el {pct_verde:.0f}% del capital está en 🟢 buen momento, "
+              f"se puede ejecutar la cartera de forma gradual.{detalle}")
+    elif pct_verde >= 30:
+        s2 = f"Ejecutar de forma parcial: solo el {pct_verde:.0f}% del capital está en buen momento.{detalle}"
+    else:
+        s2 = f"Esperar para ejecutar compras masivas.{detalle}"
+
+    # ── 3) Oportunidad táctica ──
+    nom = lambda lst: ", ".join(tk for tk, _ in lst)
+    partes = []
+    if grupos['🟢']:
+        partes.append(f"entradas en {nom(grupos['🟢'])} (🟢 Buen Momento)")
+    if grupos['🟡']:
+        partes.append(f"compras escalonadas en {nom(grupos['🟡'])} (🟡 Esperar/Escalonar)")
+    s3 = ("El bot habilita " + " y ".join(partes) + "." if partes
+          else "Ningún activo de la cartera da señal de entrada hoy.")
+    if grupos['🔴']:
+        s3 += f" Evitar por ahora: {nom(grupos['🔴'])} (🔴 No es momento)."
+
+    return ("\n---\n### 🧠 Resumen Ejecutivo del Asistente\n"
+            f"- **Estrategia General:** {s1}\n"
+            f"- **Acción Hoy:** {s2}\n"
+            f"- **Oportunidad Táctica:** {s3}")
+
+    P.append(_resumen_ejecutivo(rec, pesos_rec, por_tk, moms, cands_d))
     P.append("*Cálculo cuantitativo sobre datos históricos de Yahoo Finance y opciones de CBOE — no es "
              "asesoramiento financiero. Para afinar parámetros usá 🧰 Herramientas → Optimizar cartera.*")
     return "\n".join(P)
