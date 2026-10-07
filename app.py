@@ -10475,15 +10475,17 @@ if HORIZONTE == 'largo' and MODULO == 'tdc':
 
 if HORIZONTE == 'largo' and MODULO == 'cot':
     if TIENE_ACCESO_PRO:
+        auto_sync(supabase, _cot_es_admin(st.session_state["usuario"].email))
         modulo_cot(supabase, USER_ID, st.session_state["usuario"].email)
     else:
         _mostrar_bloqueo_pro('Análisis COT')
 
 if HORIZONTE == 'largo' and MODULO == 'tff':
     if TIENE_ACCESO_PRO:
+        auto_sync(supabase, _cot_es_admin(st.session_state["usuario"].email))
         modulo_tff(supabase, USER_ID, st.session_state["usuario"].email)
     else:
-        _mostrar_bloqueo_pro('Análisis TFF')  
+        _mostrar_bloqueo_pro('Análisis TFF')
 
  # ==============================================================
 #  ASISTENTE IA — panel flotante tipo chatbot (lado derecho)
