@@ -911,14 +911,8 @@ def _tff_tab_carga(supabase, es_admin):
                 "Podés consultar todo lo cargado en las pestañas **Análisis General** e **Individual**.")
         return
 
-    if st.button('🔄 Sincronizar con CFTC', key='tff_sync_cftc'):
-        from cot_fetch import sync_tff
-        try:
-            n, _ = sync_tff(supabase)
-            st.success(f'{n} filas sincronizadas desde la CFTC.')
-            st.rerun()
-        except Exception as e:
-            st.error(f'❌ Error al sincronizar: {e}')
+    from cot_fetch import ui_sincronizar
+    ui_sincronizar(supabase, 'tff')
 
     st.markdown("""
     <div class="info-banner">
