@@ -3200,37 +3200,46 @@ _SPEC_FUND = [
 
 
 def _tablas_fundamental(res_f, resumen_f):
-    """Todas las métricas fundamentales en mini tablas (Métrica | Valor | Lectura).
-    Las que no tienen dato se agrupan en una sola línea para ahorrar pantalla."""
+    """Fundamental resumido: favorables / total por grupo, señales, scores y veredicto."""
     g = res_f.get
-    grupos, sin_dato = {}, []
+    cont = {}      # grupo -> [favorables, total]
+    n_sin = 0
+
+    def _sumar(grupo, fav):
+        c = cont.setdefault(grupo, [0, 0])
+        c[1] += 1
+        c[0] += int(fav)
+
     for grupo, nombre, clave, mult, fmt, cortes, etq, solo_pos in _SPEC_FUND:
         v = g(clave)
         if v is None or (isinstance(v, float) and np.isnan(v)):
-            sin_dato.append(nombre)
+            n_sin += 1
             continue
         v = _div_pct(v) if mult == 'div' else float(v) * mult
         if mult == 'div' and v == 0:
-            grupos.setdefault(grupo, []).append(f"| {nombre} | 0% | ⚪ No paga |")
-            continue
+            continue                      # no paga dividendo: no suma ni resta
         if solo_pos and v <= 0:
-            grupos.setdefault(grupo, []).append(f"| {nombre} | {fmt(v)} | ⚪ No aplica |")
+            _sumar(grupo, False)          # múltiplo negativo / no aplica
             continue
-        emo, txt = _nivel(v, cortes, etq)
-        grupos.setdefault(grupo, []).append(f"| {nombre} | {fmt(v)} | {emo} {txt} |")
+        emo, _ = _nivel(v, cortes, etq)
+        _sumar(grupo, emo == '🟢')
 
     fcf = g('fcf')
     if fcf is not None:
-        grupos.setdefault('🚀 Rendimiento y flujos', []).append(
-            f"| Flujo de caja libre | {_big(fcf)} | {'🟢 Positivo' if fcf > 0 else '🔴 Negativo'} |")
+        _sumar('🚀 Rendimiento y flujos', fcf > 0)
     else:
-        sin_dato.append('Flujo de caja libre')
+        n_sin += 1
+
+    def _semaforo(f, t):
+        r = f / t if t else 0
+        return '🟢' if r >= 2 / 3 else ('🟡' if r >= 1 / 3 else '🔴')
 
     L = []
-    for grupo, filas in grupos.items():
-        L.append(f"\n**{grupo}**\n\n| Métrica | Valor | Lectura |\n|---|---:|---|\n" + "\n".join(filas))
-    if sin_dato:
-        L.append(f"\n_Sin dato en Yahoo: {', '.join(sin_dato)}._")
+    if cont:
+        filas = [f"| {grupo} | {_semaforo(f, t)} {f}/{t} |" for grupo, (f, t) in cont.items()]
+        L.append("\n| Grupo | Favorables |\n|---|:-:|\n" + "\n".join(filas))
+    if n_sin:
+        L.append(f"_Sin dato en Yahoo: {n_sin} métrica{'s' if n_sin != 1 else ''}._")
 
     L.append(f"\n**✅ Señales:** {res_f['n_ok']} positivas · ⚠️ {res_f['n_alt']} alertas")
 
@@ -3240,16 +3249,7 @@ def _tablas_fundamental(res_f, resumen_f):
                  "| Calidad | Valoración | Crecim. | Riesgo |\n|:-:|:-:|:-:|:-:|\n"
                  f"| {s10(resumen_f.get('calidad'))} | {s10(resumen_f.get('valoracion'))} | "
                  f"{s10(resumen_f.get('crecimiento'))} | {s10(resumen_f.get('riesgo'))} |")
-        L.append("_Valoración: 10 = muy barata, 0 = muy cara. Riesgo: más alto = MÁS riesgoso._")
         L.append(f"\n**Veredicto: {resumen_f.get('v_emoji', '')} {resumen_f.get('veredicto', '')}**")
-        cal, val = resumen_f.get('calidad'), resumen_f.get('valoracion')
-        if cal is not None and val is not None:
-            if cal >= 7 and val <= 3:
-                L.append("_Lectura: gran negocio, pero el precio ya lo refleja. El problema es lo que pagás por él._")
-            elif cal >= 7 and val >= 7:
-                L.append("_Lectura: buen negocio a precio atractivo, la combinación más buscada._")
-            elif cal < 5 and val >= 7:
-                L.append("_Lectura: está barata, pero por algo: calidad floja (posible trampa de valor)._")
     return "\n".join(L)
 
 
