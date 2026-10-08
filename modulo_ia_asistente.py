@@ -2420,7 +2420,13 @@ def _responder_analizar_sin_cache(tk, ctx):
                 L.append(f"\n**{etiqueta}:** {txt}")
 
     _mod_opcional('🧲 GEX', 'gex_resumen')
-    _mod_opcional('📑 COT', 'cot_resumen')
+    # COT (commodities) o TFF (índices, divisas, cripto): explicación completa debajo de GEX
+    if ctx.get('posicionamiento_detalle'):
+        txt_pos = _a_safe(ctx['posicionamiento_detalle'], tk)
+        if txt_pos:
+            L.append("\n" + txt_pos)
+    else:
+        _mod_opcional('📑 COT', 'cot_resumen')
     _mod_opcional('🕯️ Velas', 'velas_resumen')
 
     # ── Conclusión (abajo de Velas) ──
