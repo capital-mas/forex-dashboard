@@ -3819,7 +3819,7 @@ def modulo_ia_asistente(ctx, compacto=False):
 
     sugerencia_click = None
     if not pares_botones:
-        n_cols_sug = 2 if compacto else len(sugerencias)
+        n_cols_sug = 3 if compacto else len(sugerencias)
         for i in range(0, len(sugerencias), n_cols_sug):
             fila = sugerencias[i:i + n_cols_sug]
             cols_sug = st.columns(len(fila))
