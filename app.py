@@ -10508,6 +10508,8 @@ st.markdown("""
     padding: 12px 12px 8px 12px;
     box-shadow: 0 12px 40px rgba(0,0,0,0.65);
 }
+/* ← NUEVO: header fijo al hacer scroll dentro del panel */
+.st-key-ia_chat_flotante > div:first-child { position: sticky; top: 0; z-index: 5; background: #0d1117; padding-bottom: 4px; }
 .st-key-ia_chat_flotante h1, .st-key-ia_chat_flotante h2,
 .st-key-ia_chat_flotante h3 { text-align: left !important; }
 /* Centrar título, subtítulo y badge dentro del panel */
