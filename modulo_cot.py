@@ -794,7 +794,7 @@ def _cot_resumen_commodity(df_commodity):
     fila = df.iloc[-1]
     net_series = df['MM Net']
 
-        tendencia = _cot_tendencia(net_series) if n >= 3 else None
+    tendencia = _cot_tendencia(net_series) if n >= 3 else None
     pct = _cot_percentil(net_series) if n >= 5 else None
     pct_class, pct_color = _cot_clasificar_percentil(pct, fila.get('MM Net'))
     consistencia = _cot_consistencia(net_series) if n >= 3 else None
