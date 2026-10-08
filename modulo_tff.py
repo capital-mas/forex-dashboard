@@ -45,6 +45,8 @@ import plotly.graph_objects as go
 ADMIN_EMAIL = "brainferreyra@gmail.com"
 
 TABLA_TFF = "tff_data"
+ETIQUETA_MINIMO_RELATIVO = 'MÍNIMO RELATIVO (NETO LONG)'
+SCORE_PISO_NETO_LONG = 41.0
 
 # ------------------------------------------------------------------
 #  PALETA — coherente con el resto de Capital+ (idéntica a modulo_cot.py)
@@ -354,11 +356,15 @@ def _tff_percentil(net_series, min_semanas=5):
     pct = float((s < valor).sum()) / len(s) * 100
     return round(pct, 1)
 
-
-def _tff_clasificar_percentil(pct):
+def _tff_neto_comprador(am_net):
+    return am_net is not None and pd.notna(am_net) and am_net > 0
+    
+def _tff_clasificar_percentil(pct, am_net=None):
     if pct is None:
         return 'INSUFFICIENT HISTORY', C_MUTED
     if pct <= 10:
+        if _tff_neto_comprador(am_net):
+            return ETIQUETA_MINIMO_RELATIVO, C_YELLOW
         return 'EXTREME SHORT', C_RED
     if pct <= 30:
         return 'LOW POSITIONING', C_LRED
@@ -515,10 +521,15 @@ def _tff_clasificar_score(score):
     return 'MUY ALCISTA', C_GREEN, '💚'
 
 
-def _tff_señal_final(score, cambio_interp, pct_class):
+def _tff_señal_final(score, cambio_interp, pct_class, am_net=None):   # <-- firma nueva
     if score is None:
         return 'DATOS INSUFICIENTES'
     label, _, _ = _tff_clasificar_score(score)
+    neto_long = _tff_neto_comprador(am_net)                            # <-- nuevo
+
+    if neto_long and pct_class == ETIQUETA_MINIMO_RELATIVO:            # <-- nuevo
+        return 'TOMA DE GANANCIAS / MÍNIMO LOCAL'                      # <-- nuevo
+
     extremo = pct_class in ('EXTREME LONG', 'EXTREME SHORT')
 
     if label == 'MUY ALCISTA' and extremo:
@@ -616,6 +627,13 @@ def _tff_guia_aprendizaje(r):
                     f"El percentil {pct:.0f}% ubica al Asset Manager en una zona de <b>posible piso "
                     "institucional</b>: el posicionamiento vendedor está entre los más extremos del "
                     "historial disponible."
+                )
+            elif pct_class == ETIQUETA_MINIMO_RELATIVO:
+                partes_fase.append(
+                    f"El percentil {pct:.0f}% marca el mínimo de la ventana cargada, pero el Asset Manager "
+                    f"sigue <b>neto comprador</b> ({r['am_net']:,.0f} contratos). Se lee como toma de "
+                    "ganancias o cobertura táctica sobre una posición estructuralmente alcista, no como "
+                    "distribución bajista."
                 )
             elif pct_class in ('HIGH POSITIONING', 'LOW POSITIONING'):
                 partes_fase.append(
