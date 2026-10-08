@@ -5433,8 +5433,8 @@ def _opt_interpretar_var(df_var, capital_opt, horiz_var):
     lineas = []
     lineas.append(
         f"Con 95% de confianza, en un {horiz_var.lower()} normal, la cartera con mayor riesgo de cola es "
-        f"<b>{peor['Cartera']}</b> (VaR histórico {peor['VaR Histórico %']:.2f}%, ≈ USD {peor['VaR Hist. USD']:,.0f} "
-        f"sobre USD {capital_opt:,.0f}), y la más conservadora es <b>{mejor['Cartera']}</b> "
+        f"<b>{peor['Cartera']}</b> (VaR histórico {peor['VaR Histórico %']:.2f}%, ≈ {_opt_mon()} {peor['VaR Hist. USD']:,.0f} "
+        f"sobre {_opt_mon()} {capital_opt:,.0f}), y la más conservadora es <b>{mejor['Cartera']}</b> "
         f"({mejor['VaR Histórico %']:.2f}%)."
     )
     if mayor_gap['Gap %'] > 0.5:
@@ -6252,6 +6252,7 @@ def _opt_cagr_desde_serie_nivel(serie):
     return serie.iloc[-1] ** (1 / anios) - 1
 
 def _opt_pais_sugerido(ticker):
+    if str(ticker).upper().endswith('.BA'): return 'Argentina'
     """Sugerencia inicial de país según la industria del ticker (editable por el usuario)."""
     ind = TICKER_INDUSTRY.get(ticker, '')
     if ind == 'Argentina': return 'Argentina'
