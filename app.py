@@ -10494,12 +10494,13 @@ st.markdown("""
 <style>
 .st-key-ia_chat_flotante {
     position: fixed !important;
-    bottom: 64px;               /* deja libre la barra "Manage app" */
-    right: 20px;
-    width: 390px; max-width: calc(100vw - 24px);
-    max-height: calc(100vh - 84px);
+    bottom: 56px;
+    right: 16px;
+    top: auto;
+    width: 370px; max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 70px);
     overflow-y: auto;
-    scroll-behavior: auto;
+    overscroll-behavior: contain;
     z-index: 9999;
     background: #0d1117;
     border: 1px solid #21262d; border-top: 2px solid #bc8cff;
@@ -10509,7 +10510,6 @@ st.markdown("""
 }
 .st-key-ia_chat_flotante h1, .st-key-ia_chat_flotante h2,
 .st-key-ia_chat_flotante h3 { text-align: left !important; }
-
 /* Centrar título, subtítulo y badge dentro del panel */
 .st-key-ia_chat_flotante [data-testid="stMarkdownContainer"] { text-align: center; }
 .st-key-ia_chat_flotante .ia-badge { display: flex; width: fit-content; margin: 2px auto 6px auto; }
