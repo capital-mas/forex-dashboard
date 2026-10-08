@@ -10514,7 +10514,7 @@ st.markdown("""
 
 if st.session_state.get('ia_chat_abierto'):
     with st.container(key='ia_chat_flotante'):
-        _h1, _h2 = st.columns([5, 1])
+        _h0, _h1, _h2 = st.columns([1, 5, 1])
         with _h1:
             st.markdown(
                 '<div style="font-size:15px;font-weight:700;color:#e6edf3">🤖 Asistente Capital+</div>'
