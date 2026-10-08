@@ -10498,7 +10498,8 @@ st.markdown("""
     right: 16px;
     top: auto;
     width: 370px; max-width: calc(100vw - 24px);
-    max-height: calc(100vh - 70px);
+    /* antes: calc(100vh - 70px) → el panel llegaba hasta debajo de la barra de Streamlit */
+    max-height: calc(100vh - 56px - 72px);
     overflow-y: auto;
     overscroll-behavior: contain;
     z-index: 9999;
@@ -10554,7 +10555,7 @@ html body .st-key-ia_chat_flotante div[class*="st-key-ia_sug_"] .stButton > butt
     .st-key-ia_chat_flotante {
         right: 6px; bottom: 64px;
         width: calc(100vw - 12px);
-        max-height: calc(100vh - 84px);
+        max-height: calc(100vh - 64px - 72px);
     }
 }
 </style>
