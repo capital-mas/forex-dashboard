@@ -1,6 +1,6 @@
 # ==============================================================
-#  RESÚMENES DE UNA LÍNEA para el Asistente IA
-#  (GEX, COT, Velas, Opciones). Cada función recibe el ticker y
+#  RESÚMENES para el Asistente IA
+#  (GEX, COT/TFF, Velas, Opciones). Cada función recibe el ticker y
 #  devuelve un str o None. Si algo falla, el asistente la omite
 #  (responder() ya las llama dentro de _a_safe).
 #
@@ -89,6 +89,7 @@ def _gex_niveles(tk):
                 inminente=sq['inminente'], niveles=d['niv'],
                 simbolo=d['simbolo'], proxy=d['proxy'])
 
+
 # ──────────────────────────────────────────────────────────────
 #  COT  (los commodities son texto libre en tu tabla, ver mapeo)
 # ──────────────────────────────────────────────────────────────
@@ -114,6 +115,7 @@ _COT_KEYWORDS = {
 
 
 def _cot_resumen(tk, supabase):
+    """Versión de una línea (se mantiene como respaldo)."""
     from modulo_cot import _cot_obtener_registros, _cot_records_to_df, _cot_resumen_commodity
     kws = _COT_KEYWORDS.get(tk.upper())
     if not kws:
@@ -227,6 +229,7 @@ def _opciones_resumen(tk):
         txt += f" · straddle ATM ±{sum(mids) / S * 100:.1f}%"
     return txt
 
+
 # ──────────────────────────────────────────────────────────────
 #  POSICIONAMIENTO DETALLADO (COT / TFF) — explicación clara
 #  Aparece debajo de GEX en el análisis de un activo.
@@ -248,6 +251,22 @@ _TFF_ALIAS = {
 # En estos pares el dólar va primero, pero el futuro es sobre la OTRA moneda (se lee al revés)
 _TFF_INVERSOS = {'USDJPY=X': 'yen', 'USDCAD=X': 'dólar canadiense', 'USDCHF=X': 'franco suizo'}
 
+# Sectores del S&P 500: ETF Select Sector SPDR -> palabras clave del nombre del futuro E-MINI S&P.
+# ⚠️ Si algún sector no aparece, mirá cómo figura en la CFTC (buscador de cot_fetch) y ajustá la palabra.
+_TFF_SECTOR_KW = {
+    'XLK': ['tech'],            'XLF': ['financ'],
+    'XLE': ['energy'],          'XLV': ['health'],
+    'XLI': ['industr'],         'XLB': ['material'],
+    'XLRE': ['real estate'],    'XLU': ['util'],
+    'XLP': ['staples'],         'XLY': ['discretion'],
+    'XLC': ['communic'],
+}
+_TFF_SECTOR_NOMBRE = {
+    'XLK': 'Tecnología', 'XLF': 'Financiero', 'XLE': 'Energía', 'XLV': 'Salud',
+    'XLI': 'Industrial', 'XLB': 'Materiales', 'XLRE': 'Inmobiliario', 'XLU': 'Servicios públicos',
+    'XLP': 'Consumo básico', 'XLY': 'Consumo discrecional', 'XLC': 'Comunicaciones',
+}
+
 _PCT_TXT = {
     'EXTREME LONG': "los fondos están **más comprados que casi nunca** en el historial cargado: queda poco margen para nuevos compradores y crece el riesgo de un techo.",
     'HIGH POSITIONING': "posicionamiento comprador alto, pero todavía sin llegar a un extremo histórico.",
@@ -261,6 +280,30 @@ def _f(v, dec=0, signo=False):
     if v is None or pd.isna(v):
         return 'N/D'
     return f'{v:+,.{dec}f}' if signo else f'{v:,.{dec}f}'
+
+
+def _pct_txt(v):
+    return 'N/D' if v is None else f'{v:.0f}%'
+
+
+def _es_tff(tk):
+    t = tk.upper()
+    return t in _TFF_ALIAS or t in _TFF_SECTOR_KW
+
+
+def _tff_mercado(tk, df):
+    """Nombre del mercado TFF guardado en Supabase para este ticker (o None)."""
+    t = tk.upper()
+    nombres = df['Contract Market Name'].dropna().unique()
+    if t in _TFF_ALIAS:
+        return next((n for n in nombres if str(n).upper() == _TFF_ALIAS[t]), None)
+    kws = _TFF_SECTOR_KW.get(t)
+    if kws:
+        for n in nombres:
+            nu = str(n).lower()
+            if 'e-mini s&p' in nu and any(k in nu for k in kws):
+                return n
+    return None
 
 
 def _cruce_net_oi(net_chg, oi_chg, quien):
@@ -302,7 +345,7 @@ def _cot_detalle(tk, supabase):
     r = _cot_buscar(tk, supabase)
     if not r:
         return None
-    fila = r['df'].iloc[-1]
+    pct = _pct_txt(r['percentil'])
     L = [f"---\n### 📑 COT — {r['commodity']}: ¿qué están haciendo los grandes fondos?",
          "**¿Qué es el COT?** Es el informe semanal de la CFTC (el regulador de futuros de EE.UU.) que muestra "
          "cuántos contratos tiene abierto cada tipo de trader. Sale los viernes con datos del martes, así que es "
@@ -320,7 +363,7 @@ def _cot_detalle(tk, supabase):
              f"| Cambio del neto vs. semana anterior | {_f(r['mm_net_chg'], signo=True)} |\n"
              f"| Open Interest | {_f(r['oi'])} |\n"
              f"| Cambio del Open Interest | {_f(r['oi_chg'], signo=True)} |\n"
-             f"| Percentil histórico | {f'{r['percentil']:.0f}%' if r['percentil'] is not None else 'N/D'} |\n"
+             f"| Percentil histórico | {pct} |\n"
              f"| Tendencia del neto | {r['tendencia'] or 'N/D'} |")
 
     L.append("\n**🧠 Cómo leerlo:**")
@@ -330,7 +373,8 @@ def _cot_detalle(tk, supabase):
         L.append(f"- **Neto:** es Largos menos Cortos. Positivo = los fondos apuestan a la suba; negativo = a la baja. "
                  f"Hoy es {net:,.0f}, o sea {lado}.")
     if r['percentil'] is not None:
-        L.append(f"- **Percentil {r['percentil']:.0f}%:** compara el neto de hoy con todas las semanas cargadas — {_PCT_TXT.get(r['pct_class'], '')}")
+        L.append(f"- **Percentil {pct}:** compara el neto de hoy con todas las semanas cargadas — "
+                 f"{_PCT_TXT.get(r['pct_class'], '')}")
     else:
         L.append("- **Percentil:** todavía no hay al menos 5 semanas cargadas para compararlo con su historial.")
     if r['tendencia']:
@@ -341,9 +385,9 @@ def _cot_detalle(tk, supabase):
         L.append(f"- {cruce}")
     if r.get('divergencia_tag') in ('DIVERGENCIA ALCISTA DE SUELO', 'DIVERGENCIA BAJISTA DE TECHO'):
         L.append(f"- 🔀 **{r['divergencia_tag']}:** {r['divergencia_texto']}")
-    elif r.get('pct_producer') is not None:
+    elif r.get('pct_producer') is not None and r['percentil'] is not None:
         L.append(f"- **Fondos vs. industria:** no están enfrentados de forma extrema (fondos en percentil "
-                 f"{r['percentil']:.0f}%, comerciales en {r['pct_producer']:.0f}%).")
+                 f"{pct}, comerciales en {_pct_txt(r['pct_producer'])}).")
 
     L.append(f"\n**🎯 En resumen:** {r['score_emoji']} COT Score **{r['score']:.0f}/100** ({r['score_label']}) · "
              f"señal: **{r['señal_final']}**. _0 = muy bajista, 100 = muy alcista; combina percentil, tendencia, "
@@ -355,19 +399,21 @@ def _cot_detalle(tk, supabase):
 
 def _tff_detalle(tk, supabase):
     from modulo_tff import _tff_obtener_registros, _tff_records_to_df, _tff_resumen_market
-    alias = _TFF_ALIAS.get(tk.upper())
-    if not alias:
+    if not _es_tff(tk):
         return None
     df = _tff_records_to_df(_tff_obtener_registros(supabase))
     if df.empty:
         return None
-    g = df[df['Contract Market Name'].str.upper() == alias]
-    if g.empty:
+    mercado = _tff_mercado(tk, df)
+    if not mercado:
         return None
+    g = df[df['Contract Market Name'] == mercado]
     r = _tff_resumen_market(g)
     if not r or r['score'] is None:
         return None
 
+    t = tk.upper()
+    pct = _pct_txt(r['percentil'])
     L = [f"---\n### 📑 TFF — {r['market']}: ¿qué hacen los institucionales vs. los especuladores?",
          "**¿Qué es el TFF?** (Traders in Financial Futures) Es el informe semanal de la CFTC para futuros "
          "financieros: índices, divisas y cripto. Sale los viernes con datos del martes, así que tiene unos días "
@@ -376,9 +422,13 @@ def _tff_detalle(tk, supabase):
          "- **Leveraged Funds** = hedge funds especulativos, más rápidos y con apalancamiento.\n"
          "- **Dealers** = bancos que dan liquidez y suelen estar del lado contrario (contexto, no señal)."]
 
-    if tk.upper() in _TFF_INVERSOS:
-        L.append(f"⚠️ **Ojo con la lectura:** el contrato es sobre el **{_TFF_INVERSOS[tk.upper()]}**. Si los "
-                 f"institucionales compran {_TFF_INVERSOS[tk.upper()]}, {tk.upper().replace('=X', '')} tiende a **bajar** (y viceversa).")
+    if t in _TFF_SECTOR_KW:
+        L.append(f"ℹ️ Este mercado es el futuro E-mini del sector **{_TFF_SECTOR_NOMBRE[t]}** del S&P 500. "
+                 f"{t} replica ese mismo sector, así que sirve como referencia del posicionamiento institucional en él.")
+
+    if t in _TFF_INVERSOS:
+        L.append(f"⚠️ **Ojo con la lectura:** el contrato es sobre el **{_TFF_INVERSOS[t]}**. Si los "
+                 f"institucionales compran {_TFF_INVERSOS[t]}, {t.replace('=X', '')} tiende a **bajar** (y viceversa).")
 
     L.append(f"\n**📊 Lectura de la semana del {r['fecha']:%d/%m/%Y}** _({r['n_semanas']} semanas cargadas)_\n\n"
              "| Dato | Valor |\n|---|--:|\n"
@@ -388,7 +438,7 @@ def _tff_detalle(tk, supabase):
              f"| Cambio del neto vs. semana anterior | {_f(r['am_net_chg'], signo=True)} |\n"
              f"| Neto Leveraged Funds | {_f(r['lev_net'])} ({_f(r['lev_net_chg'], signo=True)}) |\n"
              f"| Open Interest | {_f(r['oi'])} ({_f(r['oi_chg'], signo=True)}) |\n"
-             f"| Percentil histórico (Asset Managers) | {f'{r['percentil']:.0f}%' if r['percentil'] is not None else 'N/D'} |\n"
+             f"| Percentil histórico (Asset Managers) | {pct} |\n"
              f"| Tendencia del neto (Asset Managers) | {r['tendencia'] or 'N/D'} |")
 
     L.append("\n**🧠 Cómo leerlo:**")
@@ -398,7 +448,8 @@ def _tff_detalle(tk, supabase):
         L.append(f"- **Neto:** es Largos menos Cortos. Positivo = suba, negativo = baja. Hoy los institucionales "
                  f"tienen {net:,.0f} y {lado}.")
     if r['percentil'] is not None:
-        L.append(f"- **Percentil {r['percentil']:.0f}%:** compara el neto institucional de hoy con todas las semanas cargadas — {_PCT_TXT.get(r['pct_class'], '')}")
+        L.append(f"- **Percentil {pct}:** compara el neto institucional de hoy con todas las semanas cargadas — "
+                 f"{_PCT_TXT.get(r['pct_class'], '')}")
     else:
         L.append("- **Percentil:** todavía no hay al menos 5 semanas cargadas para compararlo con su historial.")
     if r['tendencia']:
@@ -423,8 +474,8 @@ def _tff_detalle(tk, supabase):
 
 
 def _posicionamiento_detalle(tk, supabase):
-    """TFF para índices/divisas/cripto, COT para commodities. Devuelve markdown o None."""
-    primero, segundo = ((_tff_detalle, _cot_detalle) if tk.upper() in _TFF_ALIAS
+    """TFF para índices/divisas/cripto/sectores S&P, COT para commodities. Devuelve markdown o None."""
+    primero, segundo = ((_tff_detalle, _cot_detalle) if _es_tff(tk)
                         else (_cot_detalle, _tff_detalle))
     for fn in (primero, segundo):
         try:
@@ -435,6 +486,7 @@ def _posicionamiento_detalle(tk, supabase):
             return txt
     return None
 
+
 # ──────────────────────────────────────────────────────────────
 #  FÁBRICA: devuelve el dict para sumar a CTX_IA
 # ──────────────────────────────────────────────────────────────
@@ -443,7 +495,7 @@ def crear_resumenes(supabase, descargar_datos):
         'gex_resumen': _gex_resumen,
         'gex_niveles': _gex_niveles,
         'cot_resumen': lambda tk: _cot_resumen(tk, supabase),
-        'posicionamiento_detalle': lambda tk: _posicionamiento_detalle(tk, supabase),   # ← nueva
+        'posicionamiento_detalle': lambda tk: _posicionamiento_detalle(tk, supabase),
         'velas_resumen': lambda tk: _velas_resumen(tk, descargar_datos),
         'opciones_resumen': _opciones_resumen,
     }
