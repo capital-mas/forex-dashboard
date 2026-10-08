@@ -29,6 +29,52 @@ ADMIN_EMAIL = "brainferreyra@gmail.com"
 
 TABLA_COT = "cot_data"
 
+# Por debajo de esta cantidad de semanas el percentil es poco confiable
+# y se usa la interpretación sensible al signo del neto.
+VENTANA_CORTA_SEMANAS = 52
+
+
+def interpretar_cot_ventana_corta(neto_actual, cambio_neto, cambio_oi, percentil_local):
+    """Asigna etiqueta, score y diagnóstico coherentes para pocas semanas."""
+    if pd.isna(neto_actual) or percentil_local is None:
+        return None, None, None
+
+    sin_flujo = pd.isna(cambio_neto) or pd.isna(cambio_oi)
+
+    # Neto exactamente 0: ni comprados ni vendidos
+    if neto_actual == 0:
+        return "🟡 POSICIONAMIENTO NEUTRAL", 50.0, "Posición neta nula en el historial cargado."
+
+    # 1. FONDOS COMPRADORES (Neto > 0)
+    if neto_actual > 0:
+        if percentil_local < 20:
+            etiqueta = "🟠 DESARME DE LARGOS (Mínimo local)"
+            score = 42.0
+            if not sin_flujo and cambio_neto < 0 and cambio_oi < 0:
+                diag = "Cierre de posiciones alcistas (Long Liquidation). Toma de ganancias, no venta en corto."
+            else:
+                diag = "Posición compradora en la zona baja del historial cargado."
+        elif percentil_local > 80:
+            etiqueta = "🟢 EXTREMA ACUMULACIÓN ALCISTA"
+            score = 75.0
+            diag = "Fuerte concentración de compras en el rango cargado."
+        else:
+            etiqueta = "🟢 POSICIONAMIENTO ALCISTA MODERADO"
+            score = 58.0
+            diag = "Posicionamiento equilibrado dentro de la tendencia."
+
+    # 2. FONDOS VENDEDORES (Neto < 0)
+    else:
+        if percentil_local < 20:
+            etiqueta = "🔴 FUERTE POSICIONAMIENTO BAJISTA (EXTREME SHORT)"
+            score = 20.0
+            diag = "Apuesta corta agresiva (riesgo alto de Short Squeeze)."
+        else:
+            etiqueta = "🟠 POSICIONAMIENTO BAJISTA MODERADO"
+            score = 35.0
+            diag = "Predominio de posiciones cortas en el mercado."
+
+    return etiqueta, score, diag
 # ------------------------------------------------------------------
 #  PALETA — coherente con el resto de Capital+
 # ------------------------------------------------------------------
@@ -287,10 +333,12 @@ def _cot_percentil(net_series, min_semanas=5):
     return round(pct, 1)
 
 
-def _cot_clasificar_percentil(pct):
+def _cot_clasificar_percentil(pct, neto=None):
     if pct is None:
         return 'INSUFFICIENT HISTORY', C_MUTED
     if pct <= 10:
+        if neto is not None and pd.notna(neto) and neto > 0:
+            return 'DESARME DE LARGOS', C_LRED
         return 'EXTREME SHORT', C_RED
     if pct <= 30:
         return 'LOW POSITIONING', C_LRED
@@ -298,9 +346,48 @@ def _cot_clasificar_percentil(pct):
         return 'NORMAL', C_YELLOW
     if pct <= 90:
         return 'HIGH POSITIONING', C_LGREEN
+    if neto is not None and pd.notna(neto) and neto < 0:
+        return 'CIERRE DE CORTOS', C_LGREEN
     return 'EXTREME LONG', C_GREEN
 
+def interpretar_cot_ventana_corta(neto_actual, cambio_neto, cambio_oi, percentil_local):
+    """Asigna etiqueta, score y diagnóstico coherentes para pocas semanas."""
+    if pd.isna(neto_actual) or percentil_local is None:
+        return None, None, None
 
+    sin_flujo = pd.isna(cambio_neto) or pd.isna(cambio_oi)
+
+    if neto_actual == 0:
+        return "🟡 POSICIONAMIENTO NEUTRAL", 50.0, "Posición neta nula en el historial cargado."
+
+    if neto_actual > 0:
+        if percentil_local < 20:
+            etiqueta = "🟠 DESARME DE LARGOS (Mínimo local)"
+            score = 42.0
+            if not sin_flujo and cambio_neto < 0 and cambio_oi < 0:
+                diag = "Cierre de posiciones alcistas (Long Liquidation). Toma de ganancias, no venta en corto."
+            else:
+                diag = "Posición compradora en la zona baja del historial cargado."
+        elif percentil_local > 80:
+            etiqueta = "🟢 EXTREMA ACUMULACIÓN ALCISTA"
+            score = 75.0
+            diag = "Fuerte concentración de compras en el rango cargado."
+        else:
+            etiqueta = "🟢 POSICIONAMIENTO ALCISTA MODERADO"
+            score = 58.0
+            diag = "Posicionamiento equilibrado dentro de la tendencia."
+    else:
+        if percentil_local < 20:
+            etiqueta = "🔴 FUERTE POSICIONAMIENTO BAJISTA (EXTREME SHORT)"
+            score = 20.0
+            diag = "Apuesta corta agresiva (riesgo alto de Short Squeeze)."
+        else:
+            etiqueta = "🟠 POSICIONAMIENTO BAJISTA MODERADO"
+            score = 35.0
+            diag = "Predominio de posiciones cortas en el mercado."
+
+    return etiqueta, score, diag
+    
 def _cot_clasificar_divergencia(pct_mm, pct_producer):
     """MÓDULO 3 — Divergencias Comerciales vs. Especuladores.
     Cruza el percentil del Managed Money Net con el percentil del
