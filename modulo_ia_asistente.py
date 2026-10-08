@@ -252,6 +252,12 @@ _ALIAS_ACTIVOS.update({
     'nasdaq': 'QQQ', 'nasdaq 100': 'QQQ',
     's&p 500': 'SPY', 's&p500': 'SPY', 'sp500': 'SPY', 's&p': 'SPY',
     'dow jones': 'DIA', 'russell': 'IWM',
+    'yen': 'USDJPY=X', 'euro': 'EURUSD=X', 'libra esterlina': 'GBPUSD=X',
+    'franco suizo': 'USDCHF=X', 'dolar canadiense': 'USDCAD=X',
+    'dolar australiano': 'AUDUSD=X', 'dolar neozelandes': 'NZDUSD=X',
+    'dxy': 'DX-Y.NYB', 'indice dolar': 'DX-Y.NYB',
+    'nikkei': '^N225', 'solana': 'SOL-USD', 'avalanche': 'AVAX-USD', 'chainlink': 'LINK-USD',
+    'trigo': 'ZW=F', 'platino': 'PL=F', 'cobre': 'HG=F', 'gas natural': 'NG=F',
 })
 
 # Alias extra de MERCADOS_REALES (los nombres exactos se generan solos desde el dict)
