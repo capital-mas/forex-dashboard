@@ -5572,7 +5572,7 @@ def _opt_fig_equity(series_dict, capital_inicial, benchmark):
             line=dict(color=color, width=2.2, dash=dash)))
     fig.update_layout(
         **PLOTLY_LAYOUT_BASE,
-        title=dict(text=f'Evolución de USD {capital_inicial:,.0f}', font=dict(color=C_TEXT, size=14),
+        title=dict(text=f'Evolución de {_opt_mon()} {capital_inicial:,.0f}', font=dict(color=C_TEXT, size=14),
                    y=0.97, yanchor='top', x=0.01, xanchor='left'),
         xaxis=dict(gridcolor=C_GRID), yaxis=dict(gridcolor=C_GRID, title='Valor de la inversión'),
         height=490, hovermode='x unified',
@@ -5720,8 +5720,9 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
     for c in ['VaR Histórico %','CVaR Histórico %','VaR Paramétrico %','CVaR Paramétrico %']:
         df_var_fmt[c] = df_var_fmt[c].apply(lambda v: f'{v:.2f}%')
     for c in ['VaR Hist. USD','CVaR Hist. USD']:
-        df_var_fmt[c] = df_var_fmt[c].apply(lambda v: f'USD {v:,.0f}')
-
+        df_var_fmt[c] = df_var_fmt[c].apply(lambda v: f'{_opt_mon()} {v:,.0f}')
+    df_var_fmt = df_var_fmt.rename(columns={'VaR Hist. USD': f'VaR Hist. {_opt_mon()}',
+                                            'CVaR Hist. USD': f'CVaR Hist. {_opt_mon()}'})
     st.dataframe(df_var_fmt, use_container_width=True, hide_index=True,
                  height=min(500, len(df_var_fmt)*36+45))
     st.caption(f'Horizonte: {horiz_var} · Capital de referencia: USD {capital_opt:,.0f} · '
@@ -6993,7 +6994,7 @@ def modulo_optimizador():
 
         styled_cap_anual = (df_cap_anual.style
             .apply(_color_cap_var, axis=0)
-            .format('USD {:,.0f}')
+            .format(moneda_opt + ' {:,.0f}')
             .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
             .set_table_styles([
                 {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
