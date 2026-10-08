@@ -10553,7 +10553,7 @@ html body .st-key-ia_chat_flotante div[class*="st-key-ia_sug_"] .stButton > butt
 
 @media (max-width: 768px) {
     .st-key-ia_chat_flotante {
-        right: 6px; bottom: 48px;
+        right: 6px; bottom: 40px;
         width: calc(100vw - 12px);
         max-height: calc(100vh - 48px - 64px);
     }
