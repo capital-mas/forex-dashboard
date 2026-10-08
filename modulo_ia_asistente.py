@@ -3726,13 +3726,13 @@ _CSS_CHIPS_IA = """
 <style>
 /* Chips de sugerencia: texto completo, sin puntos suspensivos */
 html body div[class*="st-key-ia_sug_"] .stButton > button {
-    padding: 6px 6px !important;
-    min-height: 36px !important;
+    padding: 4px 4px !important;
+    min-height: 30px !important;
     white-space: nowrap !important;
 }
 html body div[class*="st-key-ia_sug_"] .stButton > button p,
 html body div[class*="st-key-ia_sug_"] .stButton > button div {
-    font-size: 11.5px !important;
+    font-size: 10px !important;
     white-space: nowrap !important;
     overflow: visible !important;
     text-overflow: clip !important;
