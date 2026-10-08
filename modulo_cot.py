@@ -794,16 +794,27 @@ def _cot_resumen_commodity(df_commodity):
     fila = df.iloc[-1]
     net_series = df['MM Net']
 
-    tendencia = _cot_tendencia(net_series) if n >= 3 else None
+        tendencia = _cot_tendencia(net_series) if n >= 3 else None
     pct = _cot_percentil(net_series) if n >= 5 else None
-    pct_class, pct_color = _cot_clasificar_percentil(pct)
+    pct_class, pct_color = _cot_clasificar_percentil(pct, fila.get('MM Net'))
     consistencia = _cot_consistencia(net_series) if n >= 3 else None
     cambio_interp = _cot_interp_cambio_semanal(fila.get('MM Long Chg'), fila.get('MM Short Chg'))
     oi_texto, oi_tag = _cot_interp_oi(fila.get('MM Net Chg'), fila.get('OI Chg'))
     score = _cot_score(fila, net_series, pct, tendencia, consistencia, oi_tag)
-    score_label, score_color, score_emoji = _cot_clasificar_score(score)
 
-    señal = _cot_señal_final(score, cambio_interp, pct_class)
+    # Ventana corta: interpretación coherente con el signo del neto
+    diag_corta = None
+    señal_override = None
+    if n < VENTANA_CORTA_SEMANAS and pct is not None:
+        etiqueta, score_v, diag_corta = interpretar_cot_ventana_corta(
+            fila.get('MM Net'), fila.get('MM Net Chg'), fila.get('OI Chg'), pct
+        )
+        if etiqueta is not None:
+            score = score_v
+            señal_override = etiqueta.split(' ', 1)[1]  # sin emoji
+
+    score_label, score_color, score_emoji = _cot_clasificar_score(score)
+    señal = señal_override or _cot_señal_final(score, cambio_interp, pct_class)
 
     # MÓDULO 3 — Divergencias Comerciales vs. Especuladores
     pct_producer = _cot_percentil(df['Producer Net']) if n >= 5 else None
