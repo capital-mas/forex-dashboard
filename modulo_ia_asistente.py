@@ -3829,7 +3829,7 @@ def modulo_ia_asistente(ctx, compacto=False):
                         sugerencia_click = sug
 
     # Caja con scroll fija en modo flotante; normal en pantalla completa
-    caja = st.container(height=220) if compacto else st.container()
+    caja = st.container(height=200) if compacto else st.container()
 
     with caja:
         for msg in st.session_state['ia_mensajes']:
