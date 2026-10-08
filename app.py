@@ -6857,7 +6857,7 @@ def modulo_optimizador():
             styled_reb = (df_reb.style
                 .pipe(lambda s: getattr(s, _map_reb)(_color_accion_reb, subset=['Acción']))
                 .format({'Peso Actual %': '{:.2f}%', 'Peso Objetivo %': '{:.2f}%',
-                          'Diferencia %': '{:+.2f}%', f'Monto a operar ({moneda_opt})': '{:+,.2f}'
+                          'Diferencia %': '{:+.2f}%', f'Monto a operar ({moneda_opt})': '{:+,.2f}'})
                 .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
                 .set_table_styles([
                     {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
