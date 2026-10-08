@@ -10497,8 +10497,9 @@ st.markdown("""
     bottom: 64px;               /* deja libre la barra "Manage app" */
     right: 20px;
     width: 390px; max-width: calc(100vw - 24px);
-    max-height: calc(100vh - 84px);   /* nunca pasa por encima de la barra ni se sale arriba */
+    max-height: calc(100vh - 84px);
     overflow-y: auto;
+    scroll-behavior: auto;
     z-index: 9999;
     background: #0d1117;
     border: 1px solid #21262d; border-top: 2px solid #bc8cff;
@@ -10539,6 +10540,13 @@ html body .st-key-ia_chat_flotante div[class*="st-key-ia_sug_"] .stButton > butt
 
 /* Resto de botones dentro del panel (botones rápidos, limpiar, etc.) */
 .st-key-ia_chat_flotante .stButton > button { font-size: 11px !important; }
+
+/* Títulos de las respuestas del asistente: tamaño razonable */
+.st-key-ia_chat_flotante [data-testid="stChatMessage"] h1 { font-size: 18px !important; line-height: 1.3 !important; }
+.st-key-ia_chat_flotante [data-testid="stChatMessage"] h2 { font-size: 16px !important; line-height: 1.3 !important; }
+.st-key-ia_chat_flotante [data-testid="stChatMessage"] h3 { font-size: 14px !important; line-height: 1.3 !important; }
+.st-key-ia_chat_flotante [data-testid="stChatMessage"] p,
+.st-key-ia_chat_flotante [data-testid="stChatMessage"] li { font-size: 12.5px !important; line-height: 1.5 !important; }
 
 @media (max-width: 768px) {
     .st-key-ia_chat_flotante {
