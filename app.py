@@ -6554,6 +6554,20 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
         ]))
     st.dataframe(styled_cap_infl, use_container_width=True, height=min(500, len(df_cap_infl) * 36 + 45))
 
+def _opt_mon():
+    """Moneda de la simulación actual ('USD' o 'ARS'). La setea modulo_optimizador()."""
+    return st.session_state.get('opt_moneda', 'USD')
+
+
+def _opt_detectar_moneda(tickers):
+    """'ARS' si todos son .BA, 'USD' si ninguno, 'MIXTA' si hay de los dos."""
+    n_ba = sum(1 for t in tickers if str(t).upper().endswith('.BA'))
+    if n_ba == 0:
+        return 'USD'
+    if n_ba == len(tickers):
+        return 'ARS'
+    return 'MIXTA'
+    
 def modulo_optimizador():
     st.markdown("""
     <div style="background:linear-gradient(135deg,#150d20 0%,#1c0a30 50%,#0d1117 100%);
@@ -6569,7 +6583,10 @@ def modulo_optimizador():
     """, unsafe_allow_html=True)
 
     if 'opt_tickers' not in st.session_state:
-        st.session_state['opt_tickers'] = ['VIST', 'PFE', 'MU', 'SPXL', 'TQQQ', 'GDX', 'SLV', 'XLE', 'GGAL']
+        st.session_state['opt_tickers'] = []
+
+    st.caption('💡 Para simular en pesos argentinos usá tickers con sufijo .BA (ej: AAPL.BA, GGAL.BA, YPFD.BA). '
+               'No mezcles activos .BA con activos en USD.')
 
     c_add, c_btn = st.columns([4, 1])
     with c_add:
@@ -6599,18 +6616,38 @@ def modulo_optimizador():
         st.info('Agregá al menos 2 activos para poder optimizar la cartera.')
         return
 
+    moneda_opt = _opt_detectar_moneda(st.session_state['opt_tickers'])
+    if moneda_opt == 'MIXTA':
+        st.error('⚠️ Estás mezclando activos en pesos (.BA) con activos en USD. Los retornos quedarían en '
+                 'monedas distintas y las correlaciones/volatilidades no serían comparables. '
+                 'Dejá solo tickers .BA (simulación en ARS) o solo tickers en USD.')
+        return
+    st.session_state['opt_moneda'] = moneda_opt
+
     st.markdown('---')
     cb1, cb2, cb3 = st.columns(3)
     with cb1:
-        bench_opciones = {
-            'S&P 500 (SPY)': 'SPY', 'Nasdaq 100 (QQQ)': 'QQQ', 'Dow Jones (DIA)': 'DIA',
-            'Russell 2000 (IWM)': 'IWM', 'Mercado total EE.UU. (VTI)': 'VTI',
-            'Innovación / growth (ARKK)': 'ARKK', 'Mercados emergentes (EEM)': 'EEM',
-        }
-        bench_label = st.selectbox('Benchmark', list(bench_opciones.keys()), key='opt_bench_sel')
+        if moneda_opt == 'ARS':
+            bench_opciones = {
+                'Merval (^MERV)': '^MERV',
+                'S&P 500 CEDEAR (SPY.BA)': 'SPY.BA',
+                'Nasdaq 100 CEDEAR (QQQ.BA)': 'QQQ.BA',
+            }
+        else:
+            bench_opciones = {
+                'S&P 500 (SPY)': 'SPY', 'Nasdaq 100 (QQQ)': 'QQQ', 'Dow Jones (DIA)': 'DIA',
+                'Russell 2000 (IWM)': 'IWM', 'Mercado total EE.UU. (VTI)': 'VTI',
+                'Innovación / growth (ARKK)': 'ARKK', 'Mercados emergentes (EEM)': 'EEM',
+            }
+        bench_label = st.selectbox('Benchmark', list(bench_opciones.keys()), key=f'opt_bench_sel_{moneda_opt}')
         benchmark_opt = bench_opciones[bench_label]
     with cb2:
-        capital_opt = st.number_input('Capital inicial (USD)', min_value=100.0, value=10000.0, step=500.0, key='opt_capital')
+        if moneda_opt == 'ARS':
+            capital_opt = st.number_input('Capital inicial (ARS)', min_value=1000.0, value=10000000.0,
+                                          step=100000.0, key='opt_capital_ARS')
+        else:
+            capital_opt = st.number_input('Capital inicial (USD)', min_value=100.0, value=10000.0,
+                                          step=500.0, key='opt_capital_USD')
     with cb3:
         sim_opt = st.slider('Simulaciones', 1000, 30000, 10000, 1000, key='opt_sims')
 
@@ -6744,13 +6781,13 @@ def modulo_optimizador():
         hide_index=True,
         column_config={
             'Ticker': st.column_config.TextColumn(disabled=True),
-            'Monto actual (USD)': st.column_config.NumberColumn(min_value=0.0, step=50.0, format='%.2f'),
+            'Monto actual (USD)': st.column_config.NumberColumn(f'Monto actual ({moneda_opt})', min_value=0.0, step=50.0, format='%.2f'),
         },
     )
     st.session_state['reb_montos'] = df_reb_input
 
     cash_actual = st.number_input(
-        'Efectivo sin invertir (USD, opcional)', min_value=0.0, value=0.0, step=50.0, key='reb_cash'
+        f'Efectivo sin invertir ({moneda_opt}, opcional)', min_value=0.0, value=0.0, step=50.0, key='reb_cash'
     )
 
     cartera_comparar = st.selectbox(
@@ -6807,6 +6844,7 @@ def modulo_optimizador():
             df_reb = pd.DataFrame(filas_reb).sort_values(
                 'Monto a operar (USD)', key=lambda s: s.abs(), ascending=False
             )
+            df_reb = df_reb.rename(columns={'Monto a operar (USD)': f'Monto a operar ({moneda_opt})'})
 
             def _color_accion_reb(val):
                 if 'Comprar' in val or 'Invertir' in val: return 'color:#3fb950;font-weight:700'
@@ -6817,7 +6855,7 @@ def modulo_optimizador():
             styled_reb = (df_reb.style
                 .pipe(lambda s: getattr(s, _map_reb)(_color_accion_reb, subset=['Acción']))
                 .format({'Peso Actual %': '{:.2f}%', 'Peso Objetivo %': '{:.2f}%',
-                          'Diferencia %': '{:+.2f}%', 'Monto a operar (USD)': '{:+,.2f}'})
+                          'Diferencia %': '{:+.2f}%', f'Monto a operar ({moneda_opt})': '{:+,.2f}'
                 .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
                 .set_table_styles([
                     {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
@@ -6920,7 +6958,7 @@ def modulo_optimizador():
     cap_final = {n: capital_opt * metricas_cart[n]['Equity'].iloc[-1] for n in nombres_col}
     st.markdown('### 💵 Capital final simulado')
     df_cap = pd.DataFrame({'Cartera': list(cap_final.keys()), 'Capital Final': list(cap_final.values())}).sort_values('Capital Final', ascending=False)
-    df_cap['Capital Final'] = df_cap['Capital Final'].apply(lambda v: f'USD {v:,.2f}')
+    df_cap['Capital Final'] = df_cap['Capital Final'].apply(lambda v: f'{moneda_opt} {v:,.2f}')
     st.dataframe(df_cap, use_container_width=True, hide_index=True)
 
     st.markdown('---')
@@ -6933,7 +6971,7 @@ def modulo_optimizador():
         st.plotly_chart(_opt_fig_equity(eq_dict, capital_opt, benchmark_opt), use_container_width=True, config=PLOTLY_CONFIG, key='opt_equity_fig')
 
         st.markdown('#### 💵 Capital simulado año por año')
-        st.caption(f'Cómo hubiera evolucionado un capital inicial de USD {capital_opt:,.0f} en cada cartera, '
+        st.caption(f'Cómo hubiera evolucionado un capital inicial de {moneda_opt} {capital_opt:,.0f} en cada cartera, '
                     'tomando el valor al cierre de cada año calendario (mismos datos que el gráfico de arriba).')
 
         cap_anual = {}
