@@ -789,19 +789,26 @@ def _tff_resumen_market(df_market):
         return None
 
     fila = df.iloc[-1]
+    am_net_actual = fila.get('AM Net')
     am_net_series = df['AM Net']
     lev_net_series = df['LEV Net']
 
     tendencia = _tff_tendencia(am_net_series) if n >= 3 else None
     pct = _tff_percentil(am_net_series) if n >= 5 else None
-    pct_class, pct_color = _tff_clasificar_percentil(pct)
+    pct_class, pct_color = _tff_clasificar_percentil(pct, am_net_actual)
     consistencia = _tff_consistencia(am_net_series) if n >= 3 else None
     cambio_interp = _tff_interp_cambio_semanal(fila.get('AM Long Chg'), fila.get('AM Short Chg'))
     oi_texto, oi_tag = _tff_interp_oi(fila.get('AM Net Chg'), fila.get('OI Chg'))
     score = _tff_score(fila, am_net_series, pct, tendencia, consistencia, oi_tag)
-    score_label, score_color, score_emoji = _tff_clasificar_score(score)
 
-    señal = _tff_señal_final(score, cambio_interp, pct_class)
+    # NUEVO: piso de score
+    if score is not None and _tff_neto_comprador(am_net_actual):
+        score = max(score, SCORE_PISO_NETO_LONG)
+    
+    score_label, score_color, score_emoji = _tff_clasificar_score(score)
+    
+    # antes: señal = _tff_señal_final(score, cambio_interp, pct_class)
+    señal = _tff_señal_final(score, cambio_interp, pct_class, am_net_actual)
 
     combinacion_tag, combinacion_texto = _tff_interp_combinacion(
         fila.get('AM Net Chg'), fila.get('LEV Net Chg'), fila.get('OI Chg')
@@ -1198,7 +1205,9 @@ def _tff_tab_general():
     def _color_estado(v):
         colores = {
             'EXTREME LONG': C_GREEN, 'HIGH POSITIONING': C_LGREEN, 'NORMAL': C_YELLOW,
-            'LOW POSITIONING': C_LRED, 'EXTREME SHORT': C_RED, 'INSUFFICIENT HISTORY': C_MUTED,
+            'LOW POSITIONING': C_LRED, 'EXTREME SHORT': C_RED,
+            ETIQUETA_MINIMO_RELATIVO: C_YELLOW,          # <-- nueva
+            'INSUFFICIENT HISTORY': C_MUTED,
         }
         return f'color:{colores.get(v, "#e6edf3")};font-weight:700'
 
