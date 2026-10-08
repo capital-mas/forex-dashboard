@@ -619,6 +619,17 @@ def _cot_guia_aprendizaje(r):
                     "historial disponible. Es la zona típica donde, ante cualquier catalizador, se dispara "
                     "un short covering violento."
                 )
+            elif pct_class == 'DESARME DE LARGOS':
+                partes_fase.append(
+                    f"El percentil {pct:.0f}% es el mínimo del historial cargado, pero el Managed Money Net "
+                    "sigue siendo <b>positivo</b>: los fondos siguen comprados, solo están recortando. "
+                    "No es una posición bajista, es un desarme de largos dentro de un historial corto."
+                )
+            elif pct_class == 'CIERRE DE CORTOS':
+                partes_fase.append(
+                    f"El percentil {pct:.0f}% es el máximo del historial cargado, pero el neto sigue siendo "
+                    "<b>negativo</b>: los fondos todavía están vendidos, solo están recomprando cortos."
+                )
             elif pct_class in ('HIGH POSITIONING', 'LOW POSITIONING'):
                 partes_fase.append(
                     f"El percentil {pct:.0f}% ubica el posicionamiento en zona {pct_class}, es decir, "
@@ -801,6 +812,8 @@ def _cot_resumen_commodity(df_commodity):
     texto = _cot_texto_interpretacion(
         df_commodity['Commodity'].iloc[0], fila, tendencia, pct, pct_class, oi_texto, n
     )
+    if diag_corta:
+        texto += f" Diagnóstico (ventana de {n} semanas, menor a {VENTANA_CORTA_SEMANAS}): {diag_corta}"
 
     return dict(
         commodity=df_commodity['Commodity'].iloc[0],
@@ -1173,6 +1186,7 @@ def _cot_tab_general():
         colores = {
             'EXTREME LONG': C_GREEN, 'HIGH POSITIONING': C_LGREEN, 'NORMAL': C_YELLOW,
             'LOW POSITIONING': C_LRED, 'EXTREME SHORT': C_RED, 'INSUFFICIENT HISTORY': C_MUTED,
+            'DESARME DE LARGOS': C_LRED, 'CIERRE DE CORTOS': C_LGREEN,
         }
         return f'color:{colores.get(v, "#e6edf3")};font-weight:700'
 
