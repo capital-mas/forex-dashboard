@@ -10494,20 +10494,58 @@ st.markdown("""
 <style>
 .st-key-ia_chat_flotante {
     position: fixed !important;
-    bottom: 20px; right: 20px;
+    bottom: 64px;               /* deja libre la barra "Manage app" */
+    right: 20px;
     width: 390px; max-width: calc(100vw - 24px);
-    max-height: 88vh; overflow-y: auto;
+    max-height: calc(100vh - 84px);   /* nunca pasa por encima de la barra ni se sale arriba */
+    overflow-y: auto;
     z-index: 9999;
     background: #0d1117;
     border: 1px solid #21262d; border-top: 2px solid #bc8cff;
     border-radius: 16px;
-    padding: 14px 14px 10px 14px;
+    padding: 12px 12px 8px 12px;
     box-shadow: 0 12px 40px rgba(0,0,0,0.65);
 }
 .st-key-ia_chat_flotante h1, .st-key-ia_chat_flotante h2,
 .st-key-ia_chat_flotante h3 { text-align: left !important; }
+
+/* Centrar título, subtítulo y badge dentro del panel */
+.st-key-ia_chat_flotante [data-testid="stMarkdownContainer"] { text-align: center; }
+.st-key-ia_chat_flotante .ia-badge { display: flex; width: fit-content; margin: 2px auto 6px auto; }
+.st-key-ia_chat_flotante [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] { text-align: left; }
+
+/* Botón ✕: sin padding para que no se corte */
+.st-key-ia_chat_cerrar .stButton > button {
+    padding: 0 !important;
+    min-width: 0 !important;
+    width: 34px !important;
+    min-height: 34px !important;
+    height: 34px !important;
+    margin-left: auto !important;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px !important;
+}
+.st-key-ia_chat_cerrar .stButton > button p { font-size: 15px !important; margin: 0 !important; }
+
+/* Botones de sugerencias más chicos */
+html body .st-key-ia_chat_flotante div[class*="st-key-ia_sug_"] .stButton > button {
+    min-height: 30px !important;
+    padding: 3px 6px !important;
+}
+html body .st-key-ia_chat_flotante div[class*="st-key-ia_sug_"] .stButton > button p,
+html body .st-key-ia_chat_flotante div[class*="st-key-ia_sug_"] .stButton > button div {
+    font-size: 10.5px !important;
+}
+
+/* Resto de botones dentro del panel (botones rápidos, limpiar, etc.) */
+.st-key-ia_chat_flotante .stButton > button { font-size: 11px !important; }
+
 @media (max-width: 768px) {
-    .st-key-ia_chat_flotante { right: 6px; bottom: 6px; width: calc(100vw - 12px); }
+    .st-key-ia_chat_flotante {
+        right: 6px; bottom: 64px;
+        width: calc(100vw - 12px);
+        max-height: calc(100vh - 84px);
+    }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -10522,9 +10560,10 @@ if st.session_state.get('ia_chat_abierto'):
                 unsafe_allow_html=True,
             )
         with _h2:
-            if st.button('✕', key='ia_chat_cerrar', use_container_width=True):
-                st.session_state['ia_chat_abierto'] = False
-                st.rerun()
+            with st.container(key='ia_chat_cerrar'):
+                if st.button('✕', key='ia_chat_cerrar_btn'):
+                    st.session_state['ia_chat_abierto'] = False
+                    st.rerun()
         modulo_ia_asistente(CTX_IA, compacto=True)
         
 # ==============================================================
