@@ -130,6 +130,11 @@ FACTORES_AVANZADOS = {
     'Cobre (CPER)':               ('CPER',  'Macro Valuación', '#cd7f32'),
     'Oro (GLD)':                  ('GLD',   'Macro Valuación', '#e3b341'),
     'Energía (XLE)':              ('XLE',   'Macro Valuación', '#ffa657'),
+    'Desarrollados ex-US (EFA)':  ('EFA',  'Global y Países', '#3a7bd5'),
+    'Commodities (DBC)':          ('DBC',  'Macro Commodities', '#cd7f32'),
+    'Plata (SLV)':                ('SLV',  'Macro Commodities', '#c0c0c0'),
+    'Agro (DBA)':                 ('DBA',  'Macro Commodities', '#7ee787'),
+    'Acero e Infra. (SLX)':       ('SLX',  'Macro Commodities', '#8b949e'),
 }
 
 # Tickers cuyo valor de Yahoo viene multiplicado x10 (representan % de yield)
@@ -305,6 +310,21 @@ def calcular_matriz_ratios_macro(precios):
     ratios['Cobre/Oro — Doctor Copper (CPER/GLD)'] = r('CPER', 'GLD')
     ratios['Energía vs Mercado (XLE/SPY)']         = r('XLE', 'SPY')
 
+        # ── Global y Países / Deuda emergente ───────────────────────────────
+    ratios['Flujo Global a Desarrollados (EFA/VT)']     = r('EFA', 'VT')
+    ratios['Emergentes vs Desarrollados (EEM/EFA)']     = r('EEM', 'EFA')
+    ratios['China vs EE. UU. (FXI/SPY)']                = r('FXI', 'SPY')
+    ratios['Latinoamérica vs Mercado (ILF/SPY)']        = r('ILF', 'SPY')
+    ratios['Brasil vs Mercado Global (EWZ/VT)']         = r('EWZ', 'VT')
+    ratios['Japón vs Desarrollados (EWJ/EFA)']          = r('EWJ', 'EFA')
+    ratios['Riesgo Soberano Emergente (EMB/IEF)']       = r('EMB', 'IEF')
+
+    # ── Macro y Commodities ampliado ────────────────────────────────────
+    ratios['Commodities vs Mercado (DBC/SPY)']          = r('DBC', 'SPY')
+    ratios['Demanda Industrial Plata/Oro (SLV/GLD)']    = r('SLV', 'GLD')
+    ratios['Inflación de Alimentos (DBA/SPY)']          = r('DBA', 'SPY')
+    ratios['Metales de Infraestructura (SLX/SPY)']      = r('SLX', 'SPY')
+    
     df_out = pd.concat({k: v for k, v in ratios.items() if v is not None}, axis=1)
     return df_out.sort_index()
 
@@ -552,6 +572,71 @@ GLOSARIO_RATIOS = {
         'también sirve como indicador de rotación sectorial: subidas fuertes de XLE/SPY '
         'suelen coincidir con entornos de shocks de oferta de petróleo o con ciclos '
         'inflacionarios más amplios en la economía.',
+    
+    'Flujo Global a Desarrollados (EFA/VT)':
+        'Compara los mercados desarrollados fuera de EE.UU. (EFA: Europa, Japón, Australia, etc.) '
+        'contra el mercado global completo (VT), que tiene un gran peso de EE.UU. Cuando el '
+        'ratio sube, el capital está prefiriendo Europa y Pacífico por sobre las acciones '
+        'estadounidenses, algo típico de dólar débil o de valuaciones relativamente más '
+        'atractivas afuera. Cuando cae, domina el liderazgo de EE.UU. y de los activos globales.',
+
+    'Emergentes vs Desarrollados (EEM/EFA)':
+        'Compara los mercados emergentes (EEM) contra los desarrollados ex-EE.UU. (EFA). Los '
+        'emergentes tienen más beta: suben más en fases de apetito por riesgo y caen más en '
+        'fases de aversión. Un ratio en alza indica búsqueda de rendimiento y más beta global; '
+        'uno en baja, rotación hacia la seguridad relativa de los países desarrollados, típica '
+        'de dólar fuerte o de estrés global.',
+
+    'China vs EE. UU. (FXI/SPY)':
+        'Compara las grandes empresas chinas (FXI) contra el S&P 500 (SPY). Refleja el apetito '
+        'por la segunda economía del mundo y por los estímulos de política monetaria y fiscal '
+        'en Asia. Si sube, el capital vuelve a mirar a China; si cae, hay cautela o desinversión '
+        'en renta variable china frente a EE.UU.',
+
+    'Latinoamérica vs Mercado (ILF/SPY)':
+        'Compara el ETF de Latinoamérica (ILF) contra el S&P 500 (SPY). La región está muy '
+        'ligada a materias primas, por lo que funciona como termómetro del ciclo de commodities '
+        'y del apetito por riesgo emergente. Si sube, hay rotación hacia economías '
+        'exportadoras; si cae, hay fuga de capitales de LatAm hacia EE.UU.',
+
+    'Brasil vs Mercado Global (EWZ/VT)':
+        'Compara Brasil (EWZ), el principal mercado emergente de Latinoamérica, contra el '
+        'mercado global (VT). Brasil tiene mucho peso en recursos naturales y energía, así que '
+        'el ratio sube cuando el capital fluye hacia ese tipo de activos y cae cuando el '
+        'mercado brasileño se contrae frente al resto del mundo.',
+
+    'Japón vs Desarrollados (EWJ/EFA)':
+        'Compara Japón (EWJ) contra el bloque de desarrollados ex-EE.UU. (EFA). Está muy '
+        'influido por la dinámica del yen: un yen débil suele favorecer a los exportadores '
+        'japoneses y empujar el ratio hacia arriba, mientras que un ratio en baja marca '
+        'debilidad relativa de la plaza financiera nipona.',
+
+    'Riesgo Soberano Emergente (EMB/IEF)':
+        'Compara la deuda soberana emergente en dólares (EMB) contra los bonos del Tesoro de '
+        'EE.UU. a mediano plazo (IEF). Si el ratio sube, el mercado tolera más riesgo soberano '
+        'emergente; si cae, hay estrés de liquidez internacional y los inversores exigen más '
+        'prima para prestarles a esos países (un "Global Credit Squeeze").',
+
+    'Commodities vs Mercado (DBC/SPY)':
+        'Compara una canasta amplia de commodities (DBC) contra el S&P 500 (SPY). Cuando sube, '
+        'los activos reales le ganan a los financieros, típico de regímenes de inflación. '
+        'Cuando cae, se impone un régimen de desinflación con las acciones liderando.',
+
+    'Demanda Industrial Plata/Oro (SLV/GLD)':
+        'La plata tiene doble rol: es metal precioso y también insumo industrial (electrónica, '
+        'paneles solares, tecnología). El oro es casi puramente refugio. Si el ratio sube, hay '
+        'más demanda industrial y apetito por crecimiento; si cae, el capital busca la '
+        'protección pura del oro.',
+
+    'Inflación de Alimentos (DBA/SPY)':
+        'Compara una canasta de commodities agrícolas (DBA) contra el S&P 500 (SPY). Si sube, '
+        'hay presión en el agro y alzas en los costos de alimentos a nivel global, un componente '
+        'sensible de la inflación. Si cae, los precios agrícolas se estabilizan o bajan.',
+
+    'Metales de Infraestructura (SLX/SPY)':
+        'Compara el ETF de acero y metales (SLX) contra el S&P 500 (SPY). Mide el impulso de la '
+        'construcción, el acero y la infraestructura pesada. Si sube, hay demanda de insumos '
+        'básicos de construcción; si cae, esa demanda se contrae.',
 }
 
 
@@ -562,81 +647,124 @@ GLOSARIO_RATIOS = {
 # ==============================================================
 
 ESTADO_INTERPRETACION = {
+    # ── Crédito ──
     'Apetito Riesgo Crediticio (HYG/IEF)': dict(
         modo='sma',
-        arriba='Risk-On: el mercado tolera más riesgo de crédito',
+        arriba='Risk-On: el mercado tolera más riesgo de crédito corporativo',
         abajo='Risk-Off: el capital se refugia en bonos del Tesoro',
     ),
     'Riesgo de Crédito Puro (HYG/LQD)': dict(
         modo='sma',
         arriba='Crédito de baja calidad ganando terreno',
-        abajo='Mercado empieza a temerle a un default corporativo',
+        abajo='Preferencia por crédito corporativo Grado de Inversión',
     ),
     'Liquidez Corporativa (VCSH/LQD)': dict(
         modo='sma',
         arriba='Financiamiento corporativo de corto plazo saludable',
-        abajo='Posible estrés de liquidez en el corto plazo',
+        abajo='Ajuste de liquidez en el tramo corto corporativo',
     ),
+    # ── Curva y Tasas ──
     'Spread Curva 10Y-3M (TNX-IRX)': dict(
         modo='umbral', umbral=0.0,
-        arriba='Curva normal: sin señal de recesión por este indicador',
-        abajo='Curva invertida: señal histórica de recesión',
+        arriba='Desinversión / Normalización de curva',
+        abajo='Inversión de curva (alerta de recesión)',
     ),
     'Spread Curva Larga (TYX-TNX)': dict(
         modo='umbral', umbral=0.0,
         arriba='Prima normal por duración larga',
-        abajo='Prima comprimida: se espera crecimiento/inflación débil a largo plazo',
+        abajo='Aplanamiento de la curva larga',
     ),
     'Sensibilidad a Tasas / Duration (TLT/SHY)': dict(
         modo='sma',
-        arriba='Mercado posicionándose para una baja de tasas de la Fed',
-        abajo='Mercado espera tasas altas por más tiempo',
+        arriba='Apetito por duración / Expectativa de bajas de tasa',
+        abajo='Mercado espera tasas altas por más tiempo (Higher for longer)',
     ),
     'Expectativa Inflacionaria (TIP/IEF)': dict(
         modo='sma',
-        arriba='Mayor temor a inflación futura',
-        abajo='Las expectativas de inflación se están moderando',
+        arriba='Mayor temor a inflación futura / Protección inflacionaria',
+        abajo='Expectativas de desinflación',
+    ),
+    # ── Global y Países ──
+    'Flujo Global a Desarrollados (EFA/VT)': dict(
+        modo='sma',
+        arriba='Preferencia por Europa/Pacífico sin EE. UU.',
+        abajo='Dominancia de activos globales/EE. UU.',
+    ),
+    'Emergentes vs Desarrollados (EEM/EFA)': dict(
+        modo='sma',
+        arriba='Apetito por mayor beta global en mercados emergentes',
+        abajo='Rotación hacia la seguridad de mercados desarrollados',
+    ),
+    'China vs EE. UU. (FXI/SPY)': dict(
+        modo='sma',
+        arriba='Apetito por la 2ª economía mundial / Estímulo asiático',
+        abajo='Desinversión o cautela en renta variable china',
+    ),
+    'Latinoamérica vs Mercado (ILF/SPY)': dict(
+        modo='sma',
+        arriba='Rotación hacia economías exportadoras de materias primas',
+        abajo='Fuga de capitales de LatAm hacia EE. UU.',
+    ),
+    'Brasil vs Mercado Global (EWZ/VT)': dict(
+        modo='sma',
+        arriba='Flujo hacia recursos naturales y energía latinoamericana',
+        abajo='Contracción en el principal mercado emergente de LatAm',
+    ),
+    'Japón vs Desarrollados (EWJ/EFA)': dict(
+        modo='sma',
+        arriba='Fuerza en el mercado japonés / Dinámica del Yen',
+        abajo='Debilidad en la plaza financiera nipona',
     ),
     'Estrés Monetario Emergente (EMLC/EMB)': dict(
         modo='sma',
-        arriba='Confianza en las monedas emergentes',
-        abajo='Temor a una devaluación generalizada de monedas emergentes',
+        arriba='Confianza en las monedas emergentes en moneda local',
+        abajo='Presión por devaluación / Fuga hacia deudas en Dólares',
     ),
     'Flujo Global (EEM/VT)': dict(
         modo='sma',
         arriba='Apetito especial por riesgo emergente',
         abajo='Rotación hacia la seguridad de mercados desarrollados',
     ),
+    # ── Global y Deuda ──
+    'Riesgo Soberano Emergente (EMB/IEF)': dict(
+        modo='sma',
+        arriba='Tolerancia al riesgo soberano emergente',
+        abajo='Estrés de liquidez internacional (Global Credit Squeeze)',
+    ),
+    # ── Acciones y Estilos ──
     'Rotación Crecimiento vs Refugio (SPY/TLT)': dict(
         modo='sma',
         arriba='Capital rotando hacia acciones (Risk-On)',
-        abajo='Capital refugiándose en bonos largos (Risk-Off)',
+        abajo='Flujo de capital hacia la seguridad de los bonos',
     ),
     'Liderazgo Tecnológico (QQQ/SPY)': dict(
         modo='sma',
         arriba='Rally liderado (y concentrado) en tecnológicas',
-        abajo='Mercado ampliándose hacia otros sectores (rotación a value)',
+        abajo='Rotación fuera del sector tecnológico hacia el mercado amplio',
     ),
     'Estilos de Inversión (IWF/IWD)': dict(
         modo='sma',
         arriba='Growth liderando el ciclo de mercado',
-        abajo='Rotación hacia acciones de Value',
+        abajo='Value (Valor) superando a Crecimiento',
     ),
+    # ── Liquidez y Apalancamiento ──
+    'Apetito Apalancamiento (SPHB/SPLV)': dict(
+        modo='sma',
+        arriba='Apetito agresivo por riesgo dentro de la bolsa',
+        abajo='Rotación hacia acciones de baja volatilidad (Low Beta)',
+    ),
+    # ── Volatilidad y Miedo ──
     'Estrés Volatilidad Táctica (VIX/VIX9D)': dict(
         modo='umbral', umbral=1.0,
-        arriba='Curva de volatilidad normal (contango)',
-        abajo='Backwardation: más miedo al muy corto plazo que al mediano',
+        arriba='Curva de volatilidad normal (Contango)',
+        abajo='Estructura invertida (Backwardation / Pánico inminente)',
     ),
     'Miedo Crediticio vs Accionario (HYG_Vol/VIX)': dict(
         modo='sma',
         arriba='Crédito más nervioso que las acciones (alerta temprana)',
-        abajo='Crédito relativamente calmo frente a las acciones',
+        abajo='Renta variable mostrando mayor nerviosismo relativo',
     ),
-    'Apetito Apalancamiento (SPHB/SPLV)': dict(
-        modo='sma',
-        arriba='Apetito agresivo por riesgo dentro de la bolsa',
-        abajo='Rotación defensiva dentro de la bolsa',
-    ),
+    # ── Rotación Sectorial ──
     'Sensibilidad al Consumo (XLY/XLP)': dict(
         modo='sma',
         arriba='Consumidor gastando con confianza en bienes no esenciales',
@@ -644,7 +772,7 @@ ESTADO_INTERPRETACION = {
     ),
     'Salud Economía Real (XLI/XLU)': dict(
         modo='sma',
-        arriba='Economía real expandiéndose, confianza en la producción',
+        arriba='Expansión en la industria y producción real',
         abajo='Rotación defensiva hacia utilities',
     ),
     'Apetito Innovación/Especulación (ARKK/QQQ)': dict(
@@ -654,23 +782,44 @@ ESTADO_INTERPRETACION = {
     ),
     'Especulación Alta Beta (ARKK/SPY)': dict(
         modo='sma',
-        arriba='Apetito especulativo elevado (posible euforia)',
+        arriba='Apetito de riesgo especulativo / Dinero fácil',
         abajo='Pérdida de apetito especulativo / Preferencia por Megacaps',
     ),
     'Small Caps vs Mercado (IWM/SPY)': dict(
         modo='sma',
-        arriba='Rally ampliándose hacia small caps (apetito por riesgo doméstico)',
+        arriba='Apetito por riesgo doméstico y empresas pequeñas',
         abajo='Pérdida de apetito por riesgo doméstico / Preferencia por Megacaps',
+    ),
+    # ── Macro y Commodities ──
+    'Commodities vs Mercado (DBC/SPY)': dict(
+        modo='sma',
+        arriba='Régimen de Inflación / Activos Reales: commodities superan acciones',
+        abajo='Régimen de desinflación / Activos financieros liderando',
     ),
     'Cobre/Oro — Doctor Copper (CPER/GLD)': dict(
         modo='sma',
-        arriba='El mercado anticipa crecimiento económico',
-        abajo='El mercado anticipa desaceleración o aversión al riesgo',
+        arriba='El mercado anticipa crecimiento económico e industrial',
+        abajo='Temor a desaceleración económica o aversión al riesgo',
+    ),
+    'Demanda Industrial Plata/Oro (SLV/GLD)': dict(
+        modo='sma',
+        arriba='Alta demanda de metales para la industria y tecnología',
+        abajo='El capital busca la protección pura del oro',
     ),
     'Energía vs Mercado (XLE/SPY)': dict(
         modo='sma',
         arriba='Presión inflacionaria desde el costo de la energía',
-        abajo='La energía no está presionando la inflación general',
+        abajo='Alivio en los costos energéticos corporativos',
+    ),
+    'Inflación de Alimentos (DBA/SPY)': dict(
+        modo='sma',
+        arriba='Presión en el Agro: alza en costos de alimentos a nivel global',
+        abajo='Estabilización/Caída en precios agrícolas',
+    ),
+    'Metales de Infraestructura (SLX/SPY)': dict(
+        modo='sma',
+        arriba='Impulso en construcción, acero e infraestructura pesada',
+        abajo='Contracción en la demanda de insumos básicos de construcción',
     ),
 }
 
@@ -1186,46 +1335,32 @@ ORDEN_RATIOS = [
     ('Spread Curva Larga (TYX-TNX)', 'Curva y Tasas'),
     ('Sensibilidad a Tasas / Duration (TLT/SHY)', 'Curva y Tasas'),
     ('Expectativa Inflacionaria (TIP/IEF)', 'Curva y Tasas'),
-    ('Estrés Monetario Emergente (EMLC/EMB)', 'Global y Emergentes'),
-    ('Flujo Global (EEM/VT)', 'Global y Emergentes'),
+    ('Flujo Global a Desarrollados (EFA/VT)', 'Global y Países'),
+    ('Emergentes vs Desarrollados (EEM/EFA)', 'Global y Países'),
+    ('China vs EE. UU. (FXI/SPY)', 'Global y Países'),
+    ('Latinoamérica vs Mercado (ILF/SPY)', 'Global y Países'),
+    ('Brasil vs Mercado Global (EWZ/VT)', 'Global y Países'),
+    ('Japón vs Desarrollados (EWJ/EFA)', 'Global y Países'),
+    ('Estrés Monetario Emergente (EMLC/EMB)', 'Global y Países'),
+    ('Flujo Global (EEM/VT)', 'Global y Países'),
+    ('Riesgo Soberano Emergente (EMB/IEF)', 'Global y Deuda'),
     ('Rotación Crecimiento vs Refugio (SPY/TLT)', 'Acciones y Estilos'),
     ('Liderazgo Tecnológico (QQQ/SPY)', 'Acciones y Estilos'),
     ('Estilos de Inversión (IWF/IWD)', 'Acciones y Estilos'),
+    ('Apetito Apalancamiento (SPHB/SPLV)', 'Liquidez y Apalancamiento'),
     ('Estrés Volatilidad Táctica (VIX/VIX9D)', 'Volatilidad y Miedo'),
     ('Miedo Crediticio vs Accionario (HYG_Vol/VIX)', 'Volatilidad y Miedo'),
-    ('Apetito Apalancamiento (SPHB/SPLV)', 'Liquidez y Apalancamiento'),
     ('Sensibilidad al Consumo (XLY/XLP)', 'Rotación Sectorial'),
     ('Salud Economía Real (XLI/XLU)', 'Rotación Sectorial'),
     ('Apetito Innovación/Especulación (ARKK/QQQ)', 'Rotación Sectorial'),
     ('Especulación Alta Beta (ARKK/SPY)', 'Rotación Sectorial'),
     ('Small Caps vs Mercado (IWM/SPY)', 'Rotación Sectorial'),
+    ('Commodities vs Mercado (DBC/SPY)', 'Macro y Commodities'),
     ('Cobre/Oro — Doctor Copper (CPER/GLD)', 'Macro y Commodities'),
+    ('Demanda Industrial Plata/Oro (SLV/GLD)', 'Macro y Commodities'),
     ('Energía vs Mercado (XLE/SPY)', 'Macro y Commodities'),
-]
-
-ORDEN_RATIOS = [
-    ('Apetito Riesgo Crediticio (HYG/IEF)', 'Crédito'),
-    ('Riesgo de Crédito Puro (HYG/LQD)', 'Crédito'),
-    ('Liquidez Corporativa (VCSH/LQD)', 'Crédito'),
-    ('Spread Curva 10Y-3M (TNX-IRX)', 'Curva y Tasas'),
-    ('Spread Curva Larga (TYX-TNX)', 'Curva y Tasas'),
-    ('Sensibilidad a Tasas / Duration (TLT/SHY)', 'Curva y Tasas'),
-    ('Expectativa Inflacionaria (TIP/IEF)', 'Curva y Tasas'),
-    ('Estrés Monetario Emergente (EMLC/EMB)', 'Global y Emergentes'),
-    ('Flujo Global (EEM/VT)', 'Global y Emergentes'),
-    ('Rotación Crecimiento vs Refugio (SPY/TLT)', 'Acciones y Estilos'),
-    ('Liderazgo Tecnológico (QQQ/SPY)', 'Acciones y Estilos'),
-    ('Estilos de Inversión (IWF/IWD)', 'Acciones y Estilos'),
-    ('Estrés Volatilidad Táctica (VIX/VIX9D)', 'Volatilidad y Miedo'),
-    ('Miedo Crediticio vs Accionario (HYG_Vol/VIX)', 'Volatilidad y Miedo'),
-    ('Apetito Apalancamiento (SPHB/SPLV)', 'Liquidez y Apalancamiento'),
-    ('Sensibilidad al Consumo (XLY/XLP)', 'Rotación Sectorial'),
-    ('Salud Economía Real (XLI/XLU)', 'Rotación Sectorial'),
-    ('Apetito Innovación/Especulación (ARKK/QQQ)', 'Rotación Sectorial'),
-    ('Especulación Alta Beta (ARKK/SPY)', 'Rotación Sectorial'),
-    ('Small Caps vs Mercado (IWM/SPY)', 'Rotación Sectorial'),
-    ('Cobre/Oro — Doctor Copper (CPER/GLD)', 'Macro y Commodities'),
-    ('Energía vs Mercado (XLE/SPY)', 'Macro y Commodities'),
+    ('Inflación de Alimentos (DBA/SPY)', 'Macro y Commodities'),
+    ('Metales de Infraestructura (SLX/SPY)', 'Macro y Commodities'),
 ]
 
 
