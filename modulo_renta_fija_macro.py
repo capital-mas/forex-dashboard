@@ -1516,7 +1516,212 @@ def _tab_grupo_avanzado(df_ratios, ratios_grupo, titulo_grupo, color_grupo):
         _tarjeta_interp('¿Qué significa?', GLOSARIO_RATIOS.get(nombre, 'Sin descripción.'), color_grupo)
         st.markdown('<hr style="border-color:#21262d;margin:8px 0 18px 0">', unsafe_allow_html=True)
 
+# ==============================================================
+#  8b. RESUMEN MACRO / INTERMERCADO (informe automático por reglas)
+#      signo: +1 = que suba es sano · -1 = que suba es estrés/inflación · 0 = informativo
+# ==============================================================
 
+_B1 = '1. Renta Fija, Crédito y Estructura de Tasas'
+_B2 = '2. Rotación Sectorial y Estilos de Inversión'
+_B3 = '3. Flujos Geográficos Globales'
+_B4 = '4. Commodities y Activos Reales'
+
+BLOQUES_RESUMEN = [
+    (_B1, [('Apetito Riesgo Crediticio (HYG/IEF)', 1), ('Riesgo de Crédito Puro (HYG/LQD)', 1),
+           ('Liquidez Corporativa (VCSH/LQD)', 1), ('Spread Curva 10Y-3M (TNX-IRX)', 1),
+           ('Spread Curva Larga (TYX-TNX)', 1), ('Sensibilidad a Tasas / Duration (TLT/SHY)', 0),
+           ('Expectativa Inflacionaria (TIP/IEF)', 0)]),
+    (_B2, [('Sensibilidad al Consumo (XLY/XLP)', 1), ('Salud Economía Real (XLI/XLU)', 1),
+           ('Especulación Alta Beta (ARKK/SPY)', 1), ('Small Caps vs Mercado (IWM/SPY)', 1),
+           ('Apetito Apalancamiento (SPHB/SPLV)', 1), ('Liderazgo Tecnológico (QQQ/SPY)', 0)]),
+    (_B3, [('Flujo Global a Desarrollados (EFA/VT)', 0), ('Emergentes vs Desarrollados (EEM/EFA)', 1),
+           ('China vs EE. UU. (FXI/SPY)', 1), ('Latinoamérica vs Mercado (ILF/SPY)', 1),
+           ('Brasil vs Mercado Global (EWZ/VT)', 1), ('Europa vs Mercado (VGK/SPY)', 1)]),
+    (_B4, [('Cobre/Oro — Doctor Copper (CPER/GLD)', 1), ('Demanda Industrial Plata/Oro (SLV/GLD)', 1),
+           ('Metales de Infraestructura (SLX/SPY)', 1), ('Energía vs Mercado (XLE/SPY)', -1),
+           ('Petróleo vs Mercado (USO/SPY)', -1), ('Inflación de Alimentos (DBA/SPY)', -1),
+           ('Commodities vs Mercado (DBC/SPY)', 0)]),
+]
+
+_GESTION_RIESGO = {
+    'Alcista Sano': 'Exposición completa permitida. Stops por debajo de mínimos de swing recientes '
+                    '(o ~2×ATR) y trailing stop siguiendo la media de 20 ruedas.',
+    'Rally Concentrado': 'Reducir tamaño de posición (~25-50%) en activos fuera de las líderes. '
+                         'Stops más ajustados (~1.5×ATR), evitar perseguir rupturas.',
+    'Divergencia Crítica': 'Priorizar protección de capital: recortar exposición, no abrir posiciones '
+                           'nuevas apalancadas, stops ajustados y considerar coberturas.',
+    'Mercado Defensivo': 'Exposición mínima a riesgo. Preferir liquidez/defensivos; si se opera, '
+                         'tamaño reducido con stop corto y objetivos cercanos.',
+    'Transición / Sin señal dominante': 'Mantener tamaño normal-reducido, esperar confirmación de '
+                                        'dirección y operar solo setups de alta calidad.',
+}
+
+
+def _leer_ratio(df_ratios, nombre):
+    if nombre not in df_ratios.columns:
+        return None
+    s = df_ratios[nombre].dropna()
+    if len(s) < 2:
+        return None
+    est = _calcular_estado_serie(s, nombre=nombre)
+    if not est:
+        return None
+    ultimo = float(s.iloc[-1])
+    es_spread = nombre.startswith('Spread')
+
+    def _var(d):
+        if len(s) <= d:
+            return None
+        prev = float(s.iloc[-1 - d])
+        if es_spread:
+            return ultimo - prev
+        return (ultimo / prev - 1) * 100 if prev else None
+
+    return dict(nombre=nombre, ultimo=ultimo, v5=_var(5), v20=_var(20),
+                arriba=(est['flecha'] == '▲'), flecha=est['flecha'],
+                interp=est['interpretacion'], spread=es_spread)
+
+
+def _semaforo(score):
+    if score is None:
+        return '⚪'
+    return '🟢' if score >= 0.34 else ('🔴' if score <= -0.34 else '🟡')
+
+
+def _calcular_veredicto(scores, alertas, spy_5d, lect):
+    vals = [v for v in scores.values() if v is not None]
+    g = float(np.mean(vals)) if vals else 0.0
+    hay_div = any('Divergencia de Crédito' in a['titulo'] for a in alertas)
+    cred, rot = scores.get(_B1), scores.get(_B2)
+    qqq, iwm = lect.get('Liderazgo Tecnológico (QQQ/SPY)'), lect.get('Small Caps vs Mercado (IWM/SPY)')
+    sube = spy_5d is not None and spy_5d > 0
+
+    if hay_div or (cred is not None and cred <= -0.34 and sube):
+        return 'Divergencia Crítica', g
+    if g <= -0.25:
+        return 'Mercado Defensivo', g
+    concentrado = qqq and iwm and qqq['arriba'] and not iwm['arriba'] and sube
+    if concentrado or (rot is not None and rot <= -0.2 and sube):
+        return 'Rally Concentrado', g
+    if g >= 0.25:
+        return 'Alcista Sano', g
+    return 'Transición / Sin señal dominante', g
+
+
+def _tab_resumen(precios, df_ratios, alertas):
+    st.markdown("""
+    <div class="rf-info-banner">
+      <b>Informe macro e intermercado</b> generado automáticamente con los datos actuales del
+      dashboard: ratios de crédito, curva, rotación sectorial, flujos geográficos y commodities.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Lectura de todos los ratios y puntaje por bloque ──
+    lect, scores, filas_bloque = {}, {}, {}
+    for titulo, items in BLOQUES_RESUMEN:
+        pts, filas = [], []
+        for nombre, signo in items:
+            d = _leer_ratio(df_ratios, nombre)
+            if d is None:
+                continue
+            lect[nombre] = d
+            if signo != 0:
+                pts.append(signo if d['arriba'] else -signo)
+            filas.append((d, signo))
+        scores[titulo] = float(np.mean(pts)) if pts else None
+        filas_bloque[titulo] = filas
+
+    spy_5d = None
+    if 'SPY' in precios.columns:
+        spy = precios['SPY'].dropna()
+        if len(spy) > 5:
+            spy_5d = (float(spy.iloc[-1]) / float(spy.iloc[-6]) - 1) * 100
+    vix = float(precios['^VIX'].dropna().iloc[-1]) if '^VIX' in precios.columns and len(precios['^VIX'].dropna()) else None
+
+    fase, g = _calcular_veredicto(scores, alertas, spy_5d, lect)
+
+    # ── Highlights (3 oraciones) ──
+    validos = {k: v for k, v in scores.items() if v is not None}
+    peor = min(validos, key=validos.get) if validos else None
+    mejor = max(validos, key=validos.get) if validos else None
+    s1 = f'La fase de mercado actual es <b>{fase}</b> (puntaje global {g:+.2f} en escala -1 a +1).'
+    s2 = ''
+    if spy_5d is not None:
+        s2 = f'El S&amp;P 500 (SPY) rinde {spy_5d:+.2f}% en 5 ruedas' + (f' con VIX en {vix:.1f}.' if vix else '.')
+    altas = [a for a in alertas if a['nivel'] == 'alto']
+    if altas:
+        s3 = f'Lo más urgente: <b>{altas[0]["titulo"]}</b>.'
+    elif peor and mejor:
+        s3 = (f'El bloque más fuerte es «{mejor.split(". ",1)[1]}» y el más débil «{peor.split(". ",1)[1]}».')
+    else:
+        s3 = 'No hay datos suficientes para destacar un bloque.'
+    _tarjeta_interp('⚡ Puntos destacados', f'{s1} {s2} {s3}', C_ACENT)
+
+    # ── Alertas activas ──
+    st.markdown('#### 🚨 Alertas activas')
+    _render_alertas(alertas)
+
+    # ── Secciones por bloque ──
+    for titulo, _ in BLOQUES_RESUMEN:
+        sc = scores.get(titulo)
+        with st.expander(f'{_semaforo(sc)}  {titulo}', expanded=False):
+            filas = filas_bloque.get(titulo, [])
+            if not filas:
+                st.info('Sin datos suficientes para este bloque.')
+                continue
+            for d, signo in filas:
+                unidad = 'pp' if d['spread'] else '%'
+                v5 = f"{d['v5']:+.2f}{unidad}" if d['v5'] is not None else 'S/D'
+                v20 = f"{d['v20']:+.2f}{unidad}" if d['v20'] is not None else 'S/D'
+                if signo == 0:
+                    col = C_YELL
+                else:
+                    col = C_GREEN if (d['arriba'] == (signo > 0)) else C_RED
+                st.markdown(
+                    f"<div style='font-size:13px;color:#f5f7fa;margin-bottom:6px'>"
+                    f"<b>{d['nombre']}</b> — {d['ultimo']:.4f} · 5r: {v5} · 20r: {v20}<br>"
+                    f"<span style='color:{col};font-weight:700'>{d['flecha']} {d['interp']}</span></div>",
+                    unsafe_allow_html=True)
+
+    # ── Veredicto y gestión de riesgo ──
+    col_fase = {'Alcista Sano': C_GREEN, 'Rally Concentrado': C_YELL,
+                'Divergencia Crítica': C_RED, 'Mercado Defensivo': C_RED}.get(fase, C_YELL)
+    _tarjeta_interp(f'🧭 Veredicto: {fase}',
+                    f"<b>Gestión de riesgo sugerida:</b> {_GESTION_RIESGO[fase]}", col_fase)
+
+    # ── Tabla resumen final con semáforo ──
+    st.markdown('#### 🚦 Tabla resumen')
+    tabla = []
+    for titulo, _ in BLOQUES_RESUMEN:
+        sc = scores.get(titulo)
+        filas = filas_bloque.get(titulo, [])
+        favor = [d['nombre'].split('(')[-1].rstrip(')') for d, s in filas if s != 0 and d['arriba'] == (s > 0)]
+        contra = [d['nombre'].split('(')[-1].rstrip(')') for d, s in filas if s != 0 and d['arriba'] != (s > 0)]
+        tabla.append({
+            'Bloque': titulo,
+            'Estado': _semaforo(sc),
+            'Puntaje': f'{sc:+.2f}' if sc is not None else 'S/D',
+            'Puntos fuertes': ', '.join(favor) or '—',
+            'Vulnerabilidades': ', '.join(contra) or '—',
+        })
+    st.dataframe(pd.DataFrame(tabla), use_container_width=True, hide_index=True)
+
+    # ── Prompt + datos para pegar en una IA (opcional) ──
+    with st.expander('📋 Copiar prompt + datos para analizar con una IA', expanded=False):
+        resumen_datos = '\n'.join(
+            f"{d['nombre']}: {d['ultimo']:.4f} | 5r {d['v5'] if d['v5'] is None else round(d['v5'],2)} | "
+            f"20r {d['v20'] if d['v20'] is None else round(d['v20'],2)} | {d['flecha']} {d['interp']}"
+            for d in lect.values())
+        prompt = (
+            'Por favor, realiza un informe macroeconómico e intermercado de nivel institucional '
+            'con estos datos actualizados de mi dashboard. Secciones: 1) Renta Fija, Crédito y '
+            'Estructura de Tasas; 2) Rotación Sectorial y Estilos; 3) Flujos Geográficos; '
+            '4) Commodities y Activos Reales; 5) Conclusión Operativa y Matriz de Riesgo '
+            '(veredicto: Alcista Sano, Rally Concentrado, Divergencia Crítica o Mercado Defensivo, '
+            'con gestión de riesgo/stop-loss). Incluye highlights de 3 oraciones al inicio, alertas '
+            'activas y una tabla final con semáforo 🟢/🟡/🔴.\n\nDATOS:\n' + resumen_datos)
+        st.text_area('Prompt', prompt, height=260)
+        
 # ==============================================================
 #  9. ESTILOS LOCALES (inyectados una sola vez)
 # ==============================================================
