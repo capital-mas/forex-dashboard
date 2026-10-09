@@ -1173,6 +1173,10 @@ def responder(texto_usuario, ctx):
     intencion = detectar_intencion(texto_usuario)
     if intencion == 'plan_trading' and not ctx.get('es_admin'):
         intencion = 'analizar_ticker'     # para el resto de usuarios no existe
+    if intencion == 'sectores_etfs':
+        return _responder_sectores_etfs(ctx)
+    if intencion == 'salud_macro':
+        return _responder_salud_macro(ctx)
     tickers = extraer_tickers(texto_usuario, universo, ctx['validar_ticker'], ctx)
     paises_cal = (_detectar_paises_calendario(texto_usuario)
                   if intencion in ('analizar_ticker', 'ayuda') else [])
@@ -2684,7 +2688,135 @@ def _responder_oportunidades(texto, ctx):
     # "sectores baratos", "qué sector...", o cualquier otra consulta de oportunidades
     return _responder_sectores_subsectores(ctx)
 
+# ── Sectores & ETFs (unificado) ─────────────────────────────────
 
+def _responder_sectores_etfs(ctx):
+    partes = [_responder_sectores_subsectores(ctx), _responder_etfs(ctx)]
+    return "\n\n---\n\n".join(p for p in partes if p)
+
+
+# ── Salud de Mercado & Macro ────────────────────────────────────
+
+def _serie_cierre(tk, ctx, periodo='3mo'):
+    df = _a_safe(ctx['descargar_datos'], tk, periodo)
+    cl = _a_safe(ctx['get_close_series'], df) if df is not None else None
+    if cl is None:
+        return None
+    cl = cl.dropna().astype(float)
+    return cl if len(cl) >= 22 else None
+
+
+def _chg21(s):
+    return None if s is None else (float(s.iloc[-1]) / float(s.iloc[-22]) - 1) * 100
+
+
+def _tasa_serie(s):
+    """Yahoo a veces devuelve los yields x10 (42.5 = 4.25%)."""
+    if s is None:
+        return None
+    return s / 10 if float(s.iloc[-1]) > 20 else s
+
+
+def _responder_salud_macro(ctx):
+    tks = ['^VIX', '^IRX', '^FVX', '^TNX', '^TYX', 'HYG', 'IEF', 'UUP', 'GC=F', 'CL=F', 'HG=F']
+    with _pool_con_ctx(9) as ex:
+        futs = {ex.submit(_serie_cierre, tk, ctx): tk for tk in tks}
+        f_br = ex.submit(_a_safe, ctx['breadth_datos']) if ctx.get('breadth_datos') else None
+        f_spy = ex.submit(_a_safe, _calc_largo, 'SPY', ctx)
+        S = {futs[f]: f.result() for f in as_completed(futs)}
+        br = f_br.result() if f_br else None
+        spy = f_spy.result()
+
+    señales = []          # True = risk-on, False = risk-off, None = sin dato
+    L = ["## 🩺 Salud de Mercado & Macro"]
+
+    # ══ 1) SALUD DEL MERCADO (la del módulo 📡 Salud del Mercado) ══
+    L.append("\n### 📡 Salud del mercado")
+    if br:
+        L.append(br['texto'])
+        señales.append(br['señal'])
+    elif ctx.get('resumen_breadth'):
+        txt = _a_safe(ctx['resumen_breadth'])
+        L.append(txt or "- No pude calcular la salud del mercado en este momento.")
+    else:
+        L.append("- No tengo conectado el módulo de Salud del Mercado desde acá.")
+
+    if spy:
+        L.append(f"\n- **S&P 500 (SPY):** Global Score {int(spy['global_score'])}/100 ({spy['sesgo']}) · "
+                 f"RSI {spy['rsi']:.0f} · {'Golden Cross' if spy['golden_cross'] else 'sin Golden Cross'} · "
+                 f"MACD {'alcista' if spy['macd_bull'] else 'bajista'} · Max DD 2 años {spy['max_dd']:.1f}%")
+        señales.append(True if (spy['golden_cross'] and spy['macd_bull'])
+                       else (False if (not spy['golden_cross'] and not spy['macd_bull']) else None))
+
+    vix = S.get('^VIX')
+    if vix is not None:
+        v = float(vix.iloc[-1])
+        pct = float((vix < v).mean() * 100)
+        reg = ('calma' if v < 15 else 'normal' if v < 20 else 'nerviosismo' if v < 30 else 'estrés')
+        L.append(f"- **VIX:** {v:.1f} ({reg}) · percentil {pct:.0f}% de los últimos 3 meses")
+        señales.append(v < 20)
+
+    # ══ 2) MACRO ══════════════════════════════════════════════
+    L.append("\n### 📉 Renta fija y macro")
+    t3, t5, t10, t30 = (_tasa_serie(S.get(k)) for k in ('^IRX', '^FVX', '^TNX', '^TYX'))
+    if t10 is not None:
+        filas = []
+        for nombre, s in (('3 meses', t3), ('5 años', t5), ('10 años', t10), ('30 años', t30)):
+            if s is not None:
+                filas.append(f"| {nombre} | {float(s.iloc[-1]):.2f}% | {float(s.iloc[-1] - s.iloc[-22]):+.2f} p.p. |")
+        L.append("\n| Tasa del Tesoro | Hoy | Cambio 1 mes |\n|---|--:|--:|\n" + "\n".join(filas))
+        if t3 is not None:
+            sp = float(t10.iloc[-1] - t3.iloc[-1])
+            L.append(f"\n- **Curva 10Y − 3M:** {sp:+.2f} p.p. → "
+                     + ("🔴 **invertida** (históricamente anticipa desaceleración)" if sp < 0
+                        else "🟡 casi plana" if sp < 0.5 else "🟢 empinada (normal)"))
+            señales.append(sp > 0)
+    else:
+        L.append("- No pude cargar las tasas del Tesoro.")
+
+    hyg, ief = S.get('HYG'), S.get('IEF')
+    if hyg is not None and ief is not None:
+        r = (hyg / ief).dropna()
+        if len(r) >= 22:
+            c = (float(r.iloc[-1]) / float(r.iloc[-22]) - 1) * 100
+            L.append(f"- **Crédito (HYG/IEF, 1 mes):** {c:+.2f}% → "
+                     + ("🟢 el crédito basura rinde mejor que el Tesoro: apetito por riesgo" if c >= 0
+                        else "🔴 el crédito basura rinde peor que el Tesoro: se busca refugio"))
+            señales.append(c >= 0)
+
+    def _lin(nombre, s):
+        c = _chg21(s)
+        return f"{nombre} {c:+.1f}%" if c is not None else f"{nombre} N/D"
+    L.append("- **Activos macro (1 mes):** " + " · ".join([
+        _lin('Dólar (UUP)', S.get('UUP')), _lin('Oro', S.get('GC=F')),
+        _lin('Petróleo', S.get('CL=F')), _lin('Cobre', S.get('HG=F'))]))
+    cu, au = S.get('HG=F'), S.get('GC=F')
+    if cu is not None and au is not None:
+        rcg = (cu / au).dropna()
+        if len(rcg) >= 22:
+            c = (float(rcg.iloc[-1]) / float(rcg.iloc[-22]) - 1) * 100
+            L.append(f"- **Cobre/Oro (termómetro de crecimiento):** {c:+.1f}% → "
+                     + ("🟢 sube: el mercado descuenta crecimiento" if c >= 0 else "🔴 baja: el mercado se pone defensivo"))
+            señales.append(c >= 0)
+
+    if ctx.get('resumen_macro'):
+        txt = _a_safe(ctx['resumen_macro'])
+        if txt:
+            L.append("\n" + txt)
+
+    # ══ 3) LECTURA FINAL ══════════════════════════════════════
+    validas = [s for s in señales if s is not None]
+    if validas:
+        ok = sum(1 for s in validas if s)
+        r = ok / len(validas)
+        emo, txt = (('🟢', 'RISK-ON: el entorno acompaña a los activos de riesgo') if r >= 0.67 else
+                    ('🟡', 'MIXTO: señales contradictorias, conviene ir selectivo') if r >= 0.4 else
+                    ('🔴', 'RISK-OFF: predominan las señales defensivas'))
+        L.append(f"\n---\n### 🎯 Lectura final\n**{emo} {txt}** — {ok} de {len(validas)} señales a favor del riesgo.")
+    L.append("\n*Detalle completo en 🧰 Herramientas → Salud del Mercado y Renta Fija y Macro. "
+             "Cálculo sobre datos de Yahoo Finance, no es asesoramiento financiero.*")
+    return "\n".join(L)
+    
 def _responder_simular(tk, monto, periodo, ctx):
     df = ctx['descargar_datos'](tk, periodo)
     cl = ctx['get_close_series'](df) if df is not None else None
