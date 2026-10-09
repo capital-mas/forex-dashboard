@@ -8626,6 +8626,7 @@ CTX_IA = dict(
     analizar_largo=analizar_largo, interpretar_largo=interpretar_largo,
     analizar_fundamental=analizar_fundamental, _es_activo_sin_fundamentals=_es_activo_sin_fundamentals,
     TICKER_INDUSTRY=TICKER_INDUSTRY, GLOSARIO=GLOSARIO,
+    
     cargar_sectores_corto=cargar_sectores_corto, cargar_paises_corto=cargar_paises_corto,
     cargar_acciones_corto=cargar_acciones_corto,
     cargar_subsectores_corto=cargar_subsectores_corto,
@@ -8649,8 +8650,12 @@ CTX_IA = dict(
     obtener_perfil_empresa=obtener_perfil_empresa,
     resumen_visual_fundamental=_resumen_visual_fundamental,
     es_admin=ES_ADMIN,          # ← NUEVA
-    **RES_IA,   # ya incluye gex_resumen, gex_niveles, cot_resumen, velas_resumen, opciones_resumen
-)
+    **RES_IA, # ya incluye gex_resumen, gex_niveles, cot_resumen, velas_resumen, opciones_resumen
+    CTX_IA.update(crear_breadth_ia(
+    descargar_bulk=descargar_bulk,
+    get_close_from_bulk=get_close_from_bulk,
+))
+
 # ==============================================================
 #  ESTADO DE NAVEGACIÓN
 # ==============================================================
