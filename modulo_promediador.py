@@ -1,31 +1,26 @@
 # ==============================================================
-#  MÓDULO PROMEDIADOR — versión simple (adaptado a cualquier activo)
+#  MÓDULO PROMEDIADOR — v3 (multi-mercado, decimales automáticos)
 #  Calcula precio promedio, tamaño de posición según tu riesgo,
 #  tendencia y stop loss/apalancamiento — todo explicado en criollo.
 #
-#  NOVEDAD vs. la versión original: precisión numérica configurable
-#  (decimales para cantidad y precio), con sugerencia automática según
-#  el ticker (acciones, forex, cripto grande/chica) y override manual.
-#  Esto resuelve el problema de operar cantidades como 0.0001 o
-#  precios como 0.00000012 (típico de criptos chicas), que con un
-#  step/format fijo en 2 decimales se truncaban en el panel.
-#
-#  NOVEDAD v2:
-#  - "Capital total de tu cuenta" ahora tiene una explicación clara
-#    (no es lo que vas a poner en ESTA operación, es todo tu dinero
-#    operable) y el lenguaje se adapta según sea un TRADE (corto
-#    plazo, con apalancamiento) o una INVERSIÓN para conservar
-#    (largo plazo, normalmente sin apalancar).
-#  - Tope de sensatez al "% que estás dispuesto a perder": arriba de
-#    5% avisa, arriba de 25% no deja avanzar. Antes, si cargabas un
-#    % de riesgo absurdo (ej. 100%), el semáforo podía decirte "✅
-#    dentro de lo que dijiste" aunque estuvieras perdiendo el 96% de
-#    toda la cuenta — el chequeo comparaba SOLO contra tu propio
-#    número, nunca contra un límite absoluto de sensatez.
-#  - Chequeo de stop "disparatado": si el precio del stop queda a
-#    una distancia absurda del precio actual (típico error de
-#    tipeo, ej. stop en $0.01 con el activo en $65,000), te avisa
-#    ANTES de mostrarte el resto de los cálculos.
+#  NOVEDADES v3:
+#  - Se eliminó el panel "Precisión numérica": los decimales se
+#    deciden solos según el mercado y el ticker.
+#        Acciones / CEDEARs : cantidad 0 dec · precio 2 dec
+#        Cripto (BTC, ETH…) : cantidad 6 dec · precio 2 dec
+#                             (si el precio es < 1 sube solo a 4/6/10 dec
+#                              para no truncar altcoins baratas)
+#        Forex              : cantidad 2 dec (lotes) · precio 5 dec (3 en JPY)
+#        Commodities        : cantidad 2 dec (lotes) · precio 2 dec
+#  - Selector de mercado al inicio: Cripto / Acciones · Forex · Commodities.
+#  - Forex y Commodities se operan en LOTES. Internamente se convierte a
+#    unidades (1 lote Forex = 100.000 · 1 lote Oro = 100 oz · etc.) para
+#    que margen, exposición, pérdida y liquidación salgan bien.
+#  - Stop Loss con 3 modos: Manual · Por ATR · % Fijo (-2% / -3% / -5%).
+#  - Botón "⚡ Usar recomendado" pegado al campo de cantidad (un clic).
+#  - Semáforo coherente: sobre-riesgo = naranja/rojo; verde solo si la
+#    pérdida en el stop entra dentro del riesgo permitido.
+#  - Layout fijo en 2 columnas: izquierda = inputs, derecha = resultados.
 # ==============================================================
 """
 Se integra al Analizador Cuantitativo Unificado como un módulo más.
@@ -51,10 +46,12 @@ Uso en tu archivo principal:
         )
 """
 
+import math
+import time
+
 import numpy as np
 import pandas as pd
 import streamlit as st
-import time
 import plotly.graph_objects as go
 
 try:
@@ -65,6 +62,8 @@ except ImportError:
 
 # ==============================================================
 #  1) MATEMÁTICA PURA (sin Streamlit — se puede testear sola)
+#     Todas las cantidades de esta sección están en UNIDADES
+#     (nunca en lotes): la conversión lote→unidades se hace afuera.
 # ==============================================================
 
 def calcular_promedio(cant_actual, precio_prom_actual, cant_nueva, precio_nuevo):
@@ -109,10 +108,20 @@ def sugerir_stop_atr(precio_entrada, atr, direccion='long', multiplo=1.5):
     return round(precio_entrada + multiplo * atr, 10)
 
 
+def sugerir_stop_pct(precio_entrada, pct, direccion='long'):
+    """Stop a un % fijo del precio de entrada (long: por debajo · short: por encima)."""
+    if not precio_entrada or precio_entrada <= 0 or not pct or pct <= 0:
+        return None
+    if direccion == 'long':
+        return precio_entrada * (1 - pct / 100)
+    return precio_entrada * (1 + pct / 100)
+
+
 def calcular_tamano_posicion(capital, pct_riesgo, precio_entrada, precio_stop, apalancamiento=1.0):
     """
     LA CUENTA MÁS IMPORTANTE DE TODAS: cuánto podés comprar sin romper tu regla de riesgo.
     Fórmula: (capital × % que estás dispuesto a perder) / (distancia en $ hasta el stop).
+    Devuelve la cantidad en UNIDADES.
     """
     if capital <= 0 or pct_riesgo <= 0 or precio_entrada <= 0 or precio_stop <= 0:
         return None
@@ -127,6 +136,32 @@ def calcular_tamano_posicion(capital, pct_riesgo, precio_entrada, precio_stop, a
         dinero_a_arriesgar=dinero_a_arriesgar, cantidad_sugerida=cantidad_sugerida,
         exposicion_sugerida=exposicion_sugerida, margen_sugerido=margen_sugerido,
     )
+
+
+def cantidad_recomendada_unidades(capital, pct_riesgo, direccion, precio_entrada, precio_stop,
+                                   cant_actual=0.0, precio_prom_actual=0.0):
+    """
+    Cantidad (en unidades) que se puede AGREGAR sin superar el riesgo permitido.
+    Si ya hay posición, primero se descuenta del presupuesto de riesgo lo que ya
+    se perdería en esa posición si salta el stop.
+    Devuelve None si faltan datos o el stop está del lado equivocado.
+    """
+    if capital <= 0 or pct_riesgo <= 0 or precio_entrada <= 0 or precio_stop <= 0:
+        return None
+    if direccion == 'long' and precio_stop >= precio_entrada:
+        return None
+    if direccion == 'short' and precio_stop <= precio_entrada:
+        return None
+    presupuesto = capital * pct_riesgo / 100
+    if cant_actual > 0 and precio_prom_actual > 0:
+        perdida_existente = (
+            (precio_prom_actual - precio_stop) * cant_actual if direccion == 'long'
+            else (precio_stop - precio_prom_actual) * cant_actual
+        )
+        presupuesto -= perdida_existente
+    if presupuesto <= 0:
+        return 0.0
+    return presupuesto / abs(precio_entrada - precio_stop)
 
 
 def calcular_stop_loss(precio_entrada, precio_stop, cantidad, apalancamiento=1.0,
@@ -189,9 +224,6 @@ def calcular_stop_loss(precio_entrada, precio_stop, cantidad, apalancamiento=1.0
 
 # Techo absoluto de sensatez: por más que el usuario "acepte" perder más que
 # esto de TODA la cuenta en una sola operación, siempre se marca como ALTO.
-# Antes el semáforo solo comparaba contra el % que el propio usuario cargó,
-# así que si alguien ponía "estoy dispuesto a perder 100%", una pérdida del
-# 96% de la cuenta salía como "✅ dentro de lo que dijiste".
 PERDIDA_PCT_CUENTA_ALTO_ABSOLUTO = 15.0
 
 
@@ -212,7 +244,7 @@ def evaluar_riesgo_stop(stop_info, horizonte='largo', pct_riesgo_max_cuenta=2.0)
             avisos.append(f"Si te toca el stop, perdés {perdida_pct_cuenta:.1f}% de TODA tu cuenta "
                            f"— muy por encima del {pct_riesgo_max_cuenta:.0f}% que dijiste que ibas a arriesgar. "
                            f"La posición es demasiado grande para tu capital.")
-        elif perdida_pct_cuenta > pct_riesgo_max_cuenta:
+        elif perdida_pct_cuenta > pct_riesgo_max_cuenta * 1.0001:
             nivel = 'MEDIO' if nivel == 'OK' else nivel
             avisos.append(f"Si te toca el stop, perdés {perdida_pct_cuenta:.1f}% de tu cuenta, "
                            f"un poco por encima del {pct_riesgo_max_cuenta:.0f}% que te propusiste.")
@@ -261,39 +293,87 @@ def _sesgo_a_tendencia(sesgo):
 
 
 # ==============================================================
-#  1-bis) PRECISIÓN NUMÉRICA POR TIPO DE ACTIVO
+#  1-bis) CONFIGURACIÓN AUTOMÁTICA POR MERCADO / ACTIVO
+#         (decimales, lotes, tamaño de contrato)
 # ==============================================================
 
-def sugerir_decimales(ticker):
-    """
-    Devuelve decimales sugeridos para 'cantidad' y 'precio' según el ticker,
-    para que el panel no te trunque cantidades tipo 0.0001 BTC o precios
-    tipo 0.00000012 de una altcoin. Es solo un PUNTO DE PARTIDA: en el panel
-    lo podés pisar a mano en cualquier momento.
-    """
-    t = (ticker or '').upper().strip()
+MERCADOS = ['Cripto / Acciones', 'Forex', 'Commodities']
 
-    if '=X' in t:
-        return dict(cantidad=2, precio=5)
+CONTRATO_FOREX = 100_000.0  # 1 lote estándar = 100.000 unidades de la divisa base
 
+# Tamaño de contrato estándar (unidades por 1 lote) de los commodities más comunes.
+CONTRATOS_COMMODITY = {
+    'GC=F': 100.0,  'XAUUSD=X': 100.0, 'XAUUSD': 100.0, 'MGC=F': 10.0,   # Oro (onzas)
+    'SI=F': 5000.0, 'XAGUSD=X': 5000.0, 'XAGUSD': 5000.0,                # Plata (onzas)
+    'CL=F': 1000.0, 'BZ=F': 1000.0, 'USOIL': 1000.0,                     # Petróleo (barriles)
+    'NG=F': 10000.0,                                                     # Gas natural (MMBtu)
+    'HG=F': 25000.0,                                                     # Cobre (libras)
+    'PL=F': 50.0,   'PA=F': 100.0,                                       # Platino / Paladio (onzas)
+}
+
+_PLACEHOLDER_TICKER = {
+    'Cripto / Acciones': 'NVDA, AAPL, BTC-USD, ETH-USD',
+    'Forex': 'EURUSD=X, USDJPY=X',
+    'Commodities': 'GC=F (oro), CL=F (petróleo)',
+}
+
+
+def _es_cripto(t):
     sufijos_cripto = ('-USD', '-USDT', '-USDC', '-EUR', '-BTC', '-ETH')
     simbolos_cripto_conocidos = (
         'BTC', 'ETH', 'SOL', 'XRP', 'DOGE', 'ADA', 'BNB', 'AVAX', 'MATIC',
         'DOT', 'LINK', 'LTC', 'SHIB', 'TRX', 'ATOM', 'UNI', 'ETC', 'XLM',
     )
-    es_cripto = t.endswith(sufijos_cripto) or t.endswith('USDT') or any(
+    return t.endswith(sufijos_cripto) or t.endswith('USDT') or any(
         t.startswith(s) and (t == s or not t[len(s):len(s) + 1].isalpha())
         for s in simbolos_cripto_conocidos
     )
-    if es_cripto:
-        return dict(cantidad=6, precio=6)
 
-    return dict(cantidad=4, precio=2)
+
+def config_activo(mercado, ticker, precio_ref=None):
+    """
+    Decide sola la precisión y la unidad de operación. No hay nada que configurar a mano.
+    Devuelve: clase, dec_cant, dec_precio, es_lotes, contrato (unidades por lote o 1),
+    contrato_conocido (False si es un commodity que no tenemos en la tabla).
+    """
+    t = (ticker or '').upper().strip()
+
+    if mercado == 'Forex':
+        return dict(clase='forex', dec_cant=2, dec_precio=3 if 'JPY' in t else 5,
+                    es_lotes=True, contrato=CONTRATO_FOREX, contrato_conocido=True)
+
+    if mercado == 'Commodities':
+        contrato = CONTRATOS_COMMODITY.get(t)
+        return dict(clase='commodity', dec_cant=2, dec_precio=2, es_lotes=True,
+                    contrato=contrato or 100.0, contrato_conocido=contrato is not None)
+
+    if _es_cripto(t):
+        # 2 decimales de precio para las grandes; sube solo si el precio es chico
+        # para no truncar altcoins tipo 0.00000012.
+        if not precio_ref or precio_ref >= 1:
+            dec_p = 2
+        elif precio_ref >= 0.01:
+            dec_p = 4
+        elif precio_ref >= 0.0001:
+            dec_p = 6
+        else:
+            dec_p = 10
+        return dict(clase='cripto', dec_cant=6, dec_precio=dec_p,
+                    es_lotes=False, contrato=1.0, contrato_conocido=True)
+
+    return dict(clase='accion', dec_cant=0, dec_precio=2,
+                es_lotes=False, contrato=1.0, contrato_conocido=True)
 
 
 def _paso(decimales):
     """Paso mínimo (step) para un number_input dado un número de decimales."""
     return round(10 ** (-decimales), decimales) if decimales > 0 else 1.0
+
+
+def _floor_dec(x, decimales):
+    """Redondea hacia ABAJO (para que la cantidad recomendada nunca pase tu límite de riesgo)."""
+    f = 10 ** decimales
+    return math.floor(x * f + 1e-9) / f
 
 
 # ==============================================================
@@ -498,37 +578,6 @@ def evaluar_operacion(cant_actual, precio_prom_actual, cant_nueva, precio_nuevo,
     return dict(calculo=calc, tendencia=tendencia, riesgo=riesgo, veredicto=veredicto, razones=razones)
 
 
-def _fig_tendencia(info):
-    cl = info['serie']
-    color_tend = {'ALCISTA': '#3fb950', 'BAJISTA': '#f85149', 'LATERAL': '#e3b341'}.get(info['tendencia'], '#3a7bd5')
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=cl.index, y=cl, name='Precio', line=dict(color=color_tend, width=2)))
-    if info.get('motor') == 'analizar_largo':
-        ma50, ma200 = cl.rolling(50).mean(), cl.rolling(200).mean()
-        fig.add_trace(go.Scatter(x=ma50.index, y=ma50, name='Media 50 sesiones', line=dict(color='#3fb950', width=1.3)))
-        fig.add_trace(go.Scatter(x=ma200.index, y=ma200, name='Media 200 sesiones', line=dict(color='#f85149', width=1.3)))
-        titulo = f"{info['ticker']} · {info['sesgo']}"
-    elif info.get('motor') == 'corto_plazo':
-        ma7, ma20 = cl.rolling(7).mean(), cl.rolling(20).mean()
-        fig.add_trace(go.Scatter(x=ma7.index, y=ma7, name='Media 7 sesiones', line=dict(color='#e3b341', width=1.2, dash='dot')))
-        fig.add_trace(go.Scatter(x=ma20.index, y=ma20, name='Media 20 sesiones', line=dict(color='#3a7bd5', width=1.3)))
-        titulo = f"{info['ticker']} · Corto plazo · {info['tendencia']}"
-    else:
-        ma_c, ma_l = info['ma_corta'], info['ma_larga']
-        fig.add_trace(go.Scatter(x=ma_c.index, y=ma_c, name=f"MA{info['ventana_corta']}", line=dict(color='#e3b341', width=1.3, dash='dash')))
-        fig.add_trace(go.Scatter(x=ma_l.index, y=ma_l, name=f"MA{info['ventana_larga']}", line=dict(color='#3a7bd5', width=1.3)))
-        titulo = f"{info['ticker']} · {info['tendencia']}"
-    fig.update_layout(
-        plot_bgcolor='#0d1117', paper_bgcolor='#07090f',
-        font=dict(color='#b0bcd0', family='Inter, sans-serif'),
-        title=dict(text=titulo, font=dict(color='#e6edf3', size=13)),
-        xaxis=dict(gridcolor='#21262d'), yaxis=dict(gridcolor='#21262d'),
-        height=360, hovermode='x unified', legend=dict(orientation='h', y=1.1),
-        margin=dict(l=10, r=10, t=45, b=10),
-    )
-    return fig
-
-
 # ==============================================================
 #  3) GLOSARIO — para el expander "¿Qué significa cada cosa?"
 # ==============================================================
@@ -544,12 +593,17 @@ GLOSARIO_PROM = [
      'no solo lo que vas a poner en esta operación puntual. Se usa como referencia para calcular qué '
      'porción de tu plata total estarías arriesgando si esta operación sale mal. No es un monto que la '
      'herramienta te va a descontar ni reservar, es solo la base del cálculo.'),
-    ('% que arriesgo por operación', 'Cuánto de tu cuenta TOTAL estás dispuesto a perder si esta operación puntual '
+    ('% de riesgo deseado', 'Cuánto de tu cuenta TOTAL estás dispuesto a perder si esta operación puntual '
      'sale mal (no el % de esta operación en sí). La regla clásica de trading dice no arriesgar más del 1-2% '
      'de tu cuenta en una sola operación, aunque uses todo tu apalancamiento o toda tu convicción en ella.'),
+    ('Lote', 'Unidad de contrato que usan Forex y Commodities. 1 lote estándar de Forex = 100.000 unidades de la '
+     'divisa; 1 lote de oro = 100 onzas; 1 lote de petróleo = 1.000 barriles. El módulo convierte los lotes a '
+     'unidades por vos para calcular margen, exposición y pérdida.'),
     ('Stop Loss', 'El precio al que vas a vender (o cerrar la posición) automáticamente si el precio va en tu contra, '
      'para cortar la pérdida antes de que sea mayor. En una inversión de largo plazo suele pensarse más '
      'como "el precio al que la razón por la que compré dejó de ser válida", no como un stop ajustado día a día.'),
+    ('Modos de Stop', 'Manual: vos escribís el precio exacto. Por ATR: el módulo lo calcula según la volatilidad '
+     'real del activo. % Fijo: lo coloca a -2%, -3% o -5% del precio de entrada (invertido si es Short).'),
     ('ATR', 'Mide cuánto se mueve el precio de un activo en un día normal (su volatilidad). '
      'Un stop basado en ATR se adapta a cada activo, en vez de usar el mismo % para todos.'),
     ('Apalancamiento', 'Operar con más dinero del que tenés, pedido "prestado" por el bróker/exchange. '
@@ -560,18 +614,15 @@ GLOSARIO_PROM = [
      'perdiste todo el margen que pusiste. Cuanto más apalancamiento, más cerca está de tu precio de entrada. '
      'Con apalancamiento 1x no aplica: nadie te puede liquidar, en el peor caso el activo vale $0.'),
     ('Cantidad recomendada', 'Cuánto podés comprar/vender sin superar el % de tu cuenta que dijiste que ibas '
-     'a arriesgar, dado dónde pusiste el stop. Es el "tamaño correcto" de la operación.'),
+     'a arriesgar, dado dónde pusiste el stop. Es el "tamaño correcto" de la operación. Si ya tenés posición, '
+     'se descuenta el riesgo que esa posición ya tiene.'),
     ('Ratio Riesgo/Beneficio', 'Compara cuánto podés perder contra cuánto podés ganar. Un ratio de 2:1 significa '
      'que por cada $1 que arriesgás, tu objetivo es ganar $2.'),
-    ('Decimales de cantidad/precio', 'Cuántos números después de la coma maneja tu bróker/exchange para ese '
-     'activo. Una acción se opera casi siempre en enteros o con 2-4 decimales; una cripto grande (BTC, ETH) '
-     'suele necesitar 6 u 8 decimales de cantidad; una cripto muy chica puede necesitar hasta 10 decimales '
-     'de precio porque vale centésimas de centavo.'),
 ]
 
 
 # ==============================================================
-#  4) MÓDULO STREAMLIT — layout 2 columnas, resultados en vivo
+#  4) MÓDULO STREAMLIT — layout 2 columnas fijas, resultados en vivo
 # ==============================================================
 
 _TTL_TENDENCIA = 300  # segundos que se reutiliza la tendencia ya descargada
@@ -625,11 +676,8 @@ def _calcular_tendencia(ticker, horizonte, f):
 
 
 def _obtener_tendencia(ticker, horizonte, motores):
-    """
-    Como ahora todo se recalcula en cada cambio de input, la tendencia se
-    guarda unos minutos en session_state para no volver a descargar datos
-    cada vez que tocás un número.
-    """
+    """La tendencia se guarda unos minutos en session_state para no volver a descargar datos
+    cada vez que tocás un número."""
     cache = st.session_state.setdefault('_prom_cache_tend', {})
     clave = (ticker, horizonte)
     hit = cache.get(clave)
@@ -658,17 +706,21 @@ def _senal_modelo(info, direccion):
 
 # --------------------------------------------------------------
 #  Panel derecho: banner + grilla de KPIs
+#  (cantidades recibidas en UNIDADES; se muestran en lotes si corresponde)
 # --------------------------------------------------------------
-def _panel_resultados(capital, pct_max, horizonte, direccion, apal, precio, cant_op,
-                      precio_stop, precio_tp, cant_actual, prec_prom_actual,
-                      dec_c, dec_p, atr_val):
+def _panel_resultados(capital, pct_max, horizonte, direccion, apal, precio, cant_op_u,
+                      precio_stop, precio_tp, cant_actual_u, prec_prom_actual, cfg, atr_val):
+    dec_c, dec_p, contrato = cfg['dec_cant'], cfg['dec_precio'], cfg['contrato']
+
     faltan = []
     if precio <= 0:
         faltan.append('precio de entrada')
-    if cant_op <= 0:
+    if cant_op_u <= 0:
         faltan.append('cantidad')
     if precio_stop <= 0:
         faltan.append('Stop Loss')
+    if cant_actual_u > 0 and prec_prom_actual <= 0:
+        faltan.append('precio promedio actual')
     if faltan:
         st.markdown(_banner('info', 'Cargá ' + ', '.join(faltan) + ' para ver los resultados.'),
                     unsafe_allow_html=True)
@@ -685,91 +737,84 @@ def _panel_resultados(capital, pct_max, horizonte, direccion, apal, precio, cant
             unsafe_allow_html=True)
         return
 
-    # Promedio (si no hay posición previa, cant_actual = 0 y da la propia operación)
+    # Promedio (si no hay posición previa, cant_actual = 0 y da la propia operación).
+    # El riesgo se calcula sobre la posición TOTAL contra su precio promedio.
     try:
-        prom = calcular_promedio(cant_actual, prec_prom_actual, cant_op, precio)
+        prom = calcular_promedio(cant_actual_u, prec_prom_actual, cant_op_u, precio)
         stop_info = calcular_stop_loss(
-            precio_entrada=precio, precio_stop=precio_stop, cantidad=prom['cantidad_final'],
-            apalancamiento=apal, direccion=direccion, capital_cuenta=capital,
+            precio_entrada=prom['precio_promedio_final'], precio_stop=precio_stop,
+            cantidad=prom['cantidad_final'], apalancamiento=apal, direccion=direccion,
+            capital_cuenta=capital,
             precio_take_profit=precio_tp if precio_tp and precio_tp > 0 else None, atr=atr_val,
         )
     except ValueError as e:
         st.markdown(_banner('danger', str(e)), unsafe_allow_html=True)
         return
 
-    tam = calcular_tamano_posicion(capital, pct_max, precio, precio_stop, apal)
     riesgo_stop = evaluar_riesgo_stop(stop_info, horizonte, pct_max)
 
-    # ── Banner de validación ────────────────────────────────────────
+    # ── Banner de validación (semáforo coherente con la cantidad cargada) ──
     perdida_pct = stop_info['perdida_pct_cuenta']
     perdida_usd = stop_info['perdida_dinero']
+    dinero_max = capital * pct_max / 100
+    sobre = perdida_usd > dinero_max * 1.0001
+
     if not stop_info['stop_antes_de_liquidar']:
         lado = 'por debajo' if direccion == 'long' else 'por encima'
         st.markdown(_banner('danger', f'Peligro: El Stop Loss está {lado} del precio de liquidación'),
                     unsafe_allow_html=True)
     elif perdida_pct > PERDIDA_PCT_CUENTA_ALTO_ABSOLUTO:
         st.markdown(_banner('danger',
-                            f'Peligro: Si salta el stop perdés {perdida_pct:.1f}% de TODA tu cuenta — '
+                            f'Peligro: si salta el stop perdés {perdida_pct:.1f}% de TODA tu cuenta — '
                             f'demasiado para una sola operación'), unsafe_allow_html=True)
-    elif perdida_pct > pct_max:
+    elif perdida_usd > dinero_max * 2:
+        st.markdown(_banner('danger',
+                            f'Sobre-riesgo fuerte: perdés ${perdida_usd:,.2f} ({perdida_pct:.1f}%) y tu límite '
+                            f'es ${dinero_max:,.2f} ({pct_max:g}%). Reducí la cantidad.'),
+                    unsafe_allow_html=True)
+    elif sobre:
         st.markdown(_banner('warn',
-                            f'Alerta: Arriesgás ${perdida_usd:,.2f} ({perdida_pct:.1f}%), '
-                            f'superando el límite del {pct_max:g}% definido'), unsafe_allow_html=True)
+                            f'Sobre-riesgo: perdés ${perdida_usd:,.2f} ({perdida_pct:.1f}%) y tu límite '
+                            f'es ${dinero_max:,.2f} ({pct_max:g}%). Reducí la cantidad.'),
+                    unsafe_allow_html=True)
     else:
-        st.markdown(_banner('ok', f'Riesgo dentro del límite (Arriesgás {perdida_pct:.1f}% de tu cuenta)'),
+        st.markdown(_banner('ok',
+                            f'Riesgo dentro del límite: arriesgás ${perdida_usd:,.2f} '
+                            f'({perdida_pct:.1f}% de tu cuenta) de un máximo de ${dinero_max:,.2f}'),
                     unsafe_allow_html=True)
 
-    # ── Grilla de KPIs ──────────────────────────────────────────────
-    # 1) Cantidad recomendada vs cargada
-    rec = tam['cantidad_sugerida'] if tam else None
-    ratio_tam = (cant_op / rec) if rec else None
-    if ratio_tam is None:
-        card_cant = _kpi_card('Cargada / Recomendada', f'{cant_op:,.{dec_c}f}', 'Sin recomendación disponible')
+    # ── Grilla de KPIs (2×2) ────────────────────────────────────────
+    # 1) Ratio R/B (destacado) — la ganancia potencial va en el detalle
+    rr = stop_info['rr_ratio']
+    gan = stop_info['ganancia_potencial']
+    if rr is None:
+        card_rr = _kpi_card('Ratio Riesgo / Beneficio', '—', 'Definí un Take Profit para calcularlo',
+                            '#6b7d9a', True)
+    elif gan is not None and gan <= 0:
+        card_rr = _kpi_card('Ratio Riesgo / Beneficio', '—',
+                            '⚠️ El Take Profit está del lado equivocado de la entrada', '#f0883e', True)
     else:
-        if ratio_tam > 1.5:
-            col_c, det = '#f85149', f'🔴 Sobre-dimensionada: {ratio_tam:.1f}x lo que permite tu regla'
-        elif ratio_tam > 1.0:
-            col_c, det = '#f0883e', f'🟠 Un poco por encima ({ratio_tam:.2f}x)'
-        elif ratio_tam < 0.5:
-            col_c, det = '#3a7bd5', '🔵 Muy conservadora vs. tu límite'
-        else:
-            col_c, det = '#3fb950', '🟢 Dentro de tu regla de riesgo'
-        card_cant = _kpi_card('Cargada / Recomendada',
-                              f'{cant_op:,.{dec_c}f} / {rec:,.{dec_c}f}', det, col_c)
+        col_rr = '#3fb950' if rr >= 2 else ('#e3b341' if rr >= 1 else '#f85149')
+        txt_rr = 'Relación favorable' if rr >= 2 else ('Aceptable, ideal ≥ 1:2' if rr >= 1
+                                                       else 'Arriesgás más de lo que buscás ganar')
+        card_rr = _kpi_card('Ratio Riesgo / Beneficio', f'1:{rr:.1f}',
+                            f'{txt_rr} · ganancia potencial +${gan:,.2f} ({gan / capital * 100:.1f}% de tu cuenta)',
+                            col_rr, True)
 
     # 2) Pérdida máxima
     card_perd = _kpi_card('Pérdida máxima (si salta el Stop)', f'-${perdida_usd:,.2f}',
-                          f'{perdida_pct:.1f}% de tu cuenta · stop a {stop_info["distancia_stop_pct"]:.2f}%',
-                          '#f85149')
+                          f'{perdida_pct:.1f}% de tu cuenta · límite ${dinero_max:,.2f} · '
+                          f'stop a {stop_info["distancia_stop_pct"]:.2f}%',
+                          '#f85149' if sobre else '#e6edf3')
 
-    # 3) Ganancia potencial
-    if stop_info['ganancia_potencial'] is None:
-        card_gan = _kpi_card('Ganancia potencial (Take Profit)', '—', 'Definí un Take Profit', '#6b7d9a')
-    elif stop_info['ganancia_potencial'] <= 0:
-        card_gan = _kpi_card('Ganancia potencial (Take Profit)', '—',
-                             '⚠️ El Take Profit está del lado equivocado de la entrada', '#f0883e')
-    else:
-        gan = stop_info['ganancia_potencial']
-        card_gan = _kpi_card('Ganancia potencial (Take Profit)', f'+${gan:,.2f}',
-                             f'{gan / capital * 100:.1f}% de tu cuenta', '#3fb950')
-
-    # 4) Ratio R/B (destacado)
-    rr = stop_info['rr_ratio']
-    if rr is None or rr <= 0:
-        card_rr = _kpi_card('Ratio Riesgo / Beneficio', '—', 'Necesita un Take Profit válido', '#6b7d9a', True)
-    else:
-        col_rr = '#3fb950' if rr >= 2 else ('#e3b341' if rr >= 1 else '#f85149')
-        txt_rr = 'Relación favorable' if rr >= 2 else ('Aceptable, ideal ≥ 1:2' if rr >= 1 else 'Arriesgás más de lo que buscás ganar')
-        card_rr = _kpi_card('Ratio Riesgo / Beneficio', f'1:{rr:.1f}', txt_rr, col_rr, True)
-
-    # 5) Margen requerido
+    # 3) Margen requerido
     margen = stop_info['capital_propio']
     col_m = '#f85149' if margen > capital else '#e6edf3'
     det_m = (f'{margen / capital * 100:.1f}% de tu cuenta · exposición ${stop_info["exposicion_total"]:,.2f}'
              + (' · ⚠️ supera tu capital' if margen > capital else ''))
     card_marg = _kpi_card('Margen requerido', f'${margen:,.2f}', det_m, col_m)
 
-    # 6) Precio de liquidación
+    # 4) Precio de liquidación
     if apal > 1:
         col_l = '#e6edf3' if stop_info['stop_antes_de_liquidar'] else '#f85149'
         card_liq = _kpi_card('Precio de liquidación aprox.', f'${stop_info["precio_liquidacion"]:,.{dec_p}f}',
@@ -778,22 +823,17 @@ def _panel_resultados(capital, pct_max, horizonte, direccion, apal, precio, cant
         card_liq = _kpi_card('Precio de liquidación aprox.', 'No aplica',
                              'Sin apalancamiento (1x) nadie te puede liquidar', '#6b7d9a')
 
-    f1 = st.columns(3)
-    f2 = st.columns(3)
-    for col, card in zip(f1 + f2, [card_cant, card_perd, card_gan, card_rr, card_marg, card_liq]):
+    fila1 = st.columns(2)
+    fila2 = st.columns(2)
+    for col, card in zip(fila1 + fila2, [card_rr, card_perd, card_marg, card_liq]):
         with col:
             st.markdown(card, unsafe_allow_html=True)
 
-    # Acción rápida si te pasaste de tamaño
-    if rec and ratio_tam and ratio_tam > 1.15:
-        st.button('✅ Usar la cantidad recomendada', key='prom_usar_sugerida',
-                  on_click=_set_state, args=('prom_cant_op', round(rec, dec_c)),
-                  use_container_width=True)
-
-    if cant_actual > 0 and prom['variacion_precio_prom_pct'] is not None:
+    if cant_actual_u > 0 and prom['variacion_precio_prom_pct'] is not None:
+        unidad = 'lotes' if cfg['es_lotes'] else 'unidades'
         st.caption(f'🧮 Precio promedio nuevo: **${prom["precio_promedio_final"]:,.{dec_p}f}** '
                    f'({prom["variacion_precio_prom_pct"]:+.2f}%) · cantidad total: '
-                   f'**{prom["cantidad_final"]:,.{dec_c}f}**')
+                   f'**{prom["cantidad_final"] / contrato:,.{dec_c}f} {unidad}**')
 
     with st.expander('Ver detalle de los avisos de riesgo'):
         for aviso in riesgo_stop['avisos']:
@@ -825,16 +865,17 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
 
     col_in, col_out = st.columns([1, 1.25], gap='large')
 
-    # ══════════════════ COLUMNA IZQUIERDA: PARÁMETROS ══════════════════
+    # ══════════════════ COLUMNA IZQUIERDA: INPUTS ══════════════════
     with col_in:
         st.markdown('#### 📥 Parámetros del trade')
 
         # ── Bloque 1: Activo y Cuenta ──────────────────────────────
         with st.container(border=True):
             st.markdown('**① Activo y cuenta**')
+            mercado = st.selectbox('Mercado / tipo de activo', MERCADOS, key='prom_mercado')
             b1, b2 = st.columns([1, 1])
             with b1:
-                ticker = st.text_input('Ticker', value='', placeholder='NVDA, BTC-USD, EURUSD=X',
+                ticker = st.text_input('Ticker', value='', placeholder=_PLACEHOLDER_TICKER[mercado],
                                         key='prom_ticker').strip().upper()
             with b2:
                 horizonte_label = st.radio(
@@ -863,22 +904,22 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
             st.caption(f'Máximo a perder: **${capital_cuenta * pct_riesgo_max / 100:,.2f}**'
                        + (' · ⚠️ por encima del 5% que suele recomendarse' if pct_riesgo_max > 5 else ''))
 
-            # Precisión numérica (se resugiere al cambiar de tipo de activo)
-            _dec_sug = sugerir_decimales(ticker)
-            with st.expander('🔧 Precisión numérica (cripto, lotes chicos, etc.)'):
-                d1, d2 = st.columns(2)
-                with d1:
-                    decimales_cant = st.number_input(
-                        'Decimales cantidad', min_value=0, max_value=10, value=_dec_sug['cantidad'],
-                        step=1, key=f"prom_dec_cant_{_dec_sug['cantidad']}",
-                        help='0 para acciones enteras, 2 forex, 6-8 cripto.')
-                with d2:
-                    decimales_precio = st.number_input(
-                        'Decimales precio', min_value=0, max_value=10, value=_dec_sug['precio'],
-                        step=1, key=f"prom_dec_precio_{_dec_sug['precio']}",
-                        help='2 acciones, 5 forex, 6-10 cripto de precio muy bajo.')
-        paso_cant, paso_precio = _paso(decimales_cant), _paso(decimales_precio)
-        fmt_cant, fmt_precio = f'%.{decimales_cant}f', f'%.{decimales_precio}f'
+        # Tendencia (en caché). Se calcula acá porque el precio actual define los
+        # decimales de las criptos baratas y el ATR alimenta el stop automático.
+        info_tend, err_tend = None, None
+        if ticker:
+            with st.spinner(f'Analizando {ticker}...'):
+                info_tend, err_tend = _obtener_tendencia(ticker, horizonte, motores)
+        atr_val = info_tend.get('atr') if info_tend else None
+        precio_ref = info_tend['precio_actual'] if info_tend else None
+
+        # Precisión y unidad de operación: 100% automáticas
+        cfg = config_activo(mercado, ticker, precio_ref)
+        dec_c, dec_p = cfg['dec_cant'], cfg['dec_precio']
+        paso_cant, paso_precio = _paso(dec_c), _paso(dec_p)
+        fmt_cant, fmt_precio = f'%.{dec_c}f', f'%.{dec_p}f'
+        etiqueta_cant = ('Cantidad a operar (en Lotes)' if cfg['es_lotes']
+                         else 'Cantidad a operar (unidades/tokens)')
 
         # ── Bloque 2: Parámetros de entrada ────────────────────────
         with st.container(border=True):
@@ -893,23 +934,42 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                     key='prom_apalancamiento',
                     help='1x = con tu propia plata, sin margen ni futuros.'
                          + (' Para inversión de largo plazo lo normal es 1x.' if es_inversion else ''))
+
             e3, e4 = st.columns([1, 1])
             with e3:
                 precio_nuevo = st.number_input('Precio de entrada (USD)', min_value=0.0, value=0.0,
                                                 step=paso_precio, format=fmt_precio, key='prom_precio_nuevo')
             with e4:
-                cant_op = st.number_input('Cantidad a operar', min_value=0.0, value=0.0,
-                                           step=paso_cant, format=fmt_cant, key='prom_cant_op',
-                                           help='Dejala en cualquier valor: a la derecha ves la recomendada.')
-            slot_entrada = st.container()  # se completa luego con "usar precio actual"
+                cant_op = st.number_input(etiqueta_cant, min_value=0.0, value=0.0,
+                                           step=paso_cant, format=fmt_cant, key='prom_cant_op')
+
+            if info_tend:
+                px = info_tend['precio_actual']
+                st.button(f'📍 Usar precio actual (${px:,.{dec_p}f})', key='prom_btn_px',
+                          on_click=_set_state, args=('prom_precio_nuevo', round(float(px), dec_p)))
+
+            # Tamaño de contrato (solo Commodities no reconocidos piden dato manual)
+            if cfg['es_lotes']:
+                if cfg['clase'] == 'commodity' and not cfg['contrato_conocido']:
+                    cfg['contrato'] = st.number_input(
+                        'Unidades por lote (tamaño de contrato)', min_value=0.0001, value=100.0,
+                        step=1.0, key='prom_contrato_custom',
+                        help='No reconocimos este commodity: indicá cuántas unidades tiene 1 lote '
+                             'en tu bróker (ej. oro = 100 oz, petróleo = 1000 barriles).')
+                st.caption(f'📦 1 lote = {cfg["contrato"]:,.0f} unidades'
+                           + (f' → {cant_op:,.{dec_c}f} lotes = {cant_op * cfg["contrato"]:,.0f} unidades '
+                              f'de exposición' if cant_op > 0 else ''))
+
+            slot_rec = st.container()  # acá va "⚡ Usar recomendado" (se completa cuando ya hay stop)
 
             tiene_posicion = st.checkbox('Ya tengo posición en este activo (promediar)', key='prom_tiene_posicion')
             cant_actual, precio_prom_actual = 0.0, 0.0
             if tiene_posicion:
                 p1, p2 = st.columns(2)
                 with p1:
-                    cant_actual = st.number_input('Cantidad que ya tengo', min_value=0.0, value=0.0,
-                                                   step=paso_cant, format=fmt_cant, key='prom_cant_actual')
+                    cant_actual = st.number_input(
+                        'Cantidad que ya tengo' + (' (lotes)' if cfg['es_lotes'] else ''),
+                        min_value=0.0, value=0.0, step=paso_cant, format=fmt_cant, key='prom_cant_actual')
                 with p2:
                     precio_prom_actual = st.number_input('Precio promedio actual', min_value=0.0, value=0.0,
                                                           step=paso_precio, format=fmt_precio,
@@ -918,52 +978,92 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                 st.info('Marcaste "Inversión" pero usás apalancamiento: existe precio de liquidación aunque '
                         'tu plan sea conservar.')
 
-        # ── Bloque 3: Gestión de salida (SL y TP lado a lado) ──────
+        # ── Bloque 3: Gestión de salida ────────────────────────────
         with st.container(border=True):
             st.markdown('**③ Gestión de salida**')
-            s1, s2 = st.columns(2)
-            with s1:
+            modo_stop = st.radio('Modo de Stop Loss', ['Manual', 'Por ATR / Volatilidad', '% Fijo'],
+                                  horizontal=True, key='prom_modo_stop')
+            precio_stop = 0.0
+
+            if modo_stop == 'Manual':
                 precio_stop = st.number_input(
                     '🛑 Stop Loss (USD)', min_value=0.0, value=0.0, step=paso_precio,
                     format=fmt_precio, key='prom_stop_manual',
                     help='Precio al que cortás la pérdida.'
                          + (' En inversión: donde deja de ser válida la razón de tu compra.' if es_inversion else ''))
-            with s2:
-                precio_tp = st.number_input(
-                    '🎯 Take Profit (USD)', min_value=0.0, value=0.0, step=paso_precio,
-                    format=fmt_precio, key='prom_tp',
-                    help='Opcional (0 = sin objetivo). Es lo que habilita el ratio Riesgo/Beneficio.')
-            slot_stop = st.container()  # se completa luego con el stop sugerido por ATR
 
-    # ══════════ Tendencia (en caché; se usa en ambas columnas y abajo) ══════════
-    info_tend, err_tend = None, None
-    if ticker:
-        with st.spinner(f'Analizando {ticker}...'):
-            info_tend, err_tend = _obtener_tendencia(ticker, horizonte, motores)
-    atr_val = info_tend.get('atr') if info_tend else None
+            elif modo_stop == 'Por ATR / Volatilidad':
+                mults = [1.0, 1.5, 2.0, 3.0]
+                mult = st.select_slider(
+                    'Múltiplo de ATR', options=mults, value=3.0 if es_inversion else 1.5,
+                    key=f'prom_mult_atr_{horizonte}',
+                    format_func=lambda m: f'{m:g}× ATR',
+                    help='Cuántas "volatilidades diarias normales" separan el stop de tu entrada. '
+                         'Más alto = stop más holgado.')
+                if not ticker:
+                    st.info('Ingresá un ticker para calcular el ATR.')
+                elif not atr_val:
+                    st.warning('No hay ATR disponible para este activo. Usá el modo Manual o % Fijo.')
+                elif precio_nuevo <= 0:
+                    st.info('Cargá el precio de entrada para calcular el stop por ATR.')
+                else:
+                    sug = sugerir_stop_atr(precio_nuevo, atr_val, direccion, mult)
+                    if sug and sug > 0:
+                        precio_stop = round(sug, dec_p)
+                        st.success(f'🛑 Stop calculado: **${precio_stop:,.{dec_p}f}** '
+                                   f'({mult:g} × ATR de {atr_val:,.{dec_p}f})')
+                    else:
+                        st.warning('El stop por ATR quedaría en un precio inválido (≤ 0). '
+                                   'Probá un múltiplo menor.')
 
-    # Botones de ayuda que dependen de la tendencia (precio actual / stop ATR)
-    if info_tend:
-        with slot_entrada:
-            px = info_tend['precio_actual']
-            st.button(f'📍 Usar precio actual (${px:,.{decimales_precio}f})', key='prom_btn_px',
-                      on_click=_set_state, args=('prom_precio_nuevo', round(float(px), decimales_precio)))
-        if atr_val and precio_nuevo > 0:
-            mult = 3.0 if es_inversion else 1.5
-            stop_sug = sugerir_stop_atr(precio_nuevo, atr_val, direccion, mult)
-            if stop_sug and stop_sug > 0:
-                with slot_stop:
-                    st.button(f'🎯 Stop sugerido por ATR ({mult:g}x): ${stop_sug:,.{decimales_precio}f}',
-                              key='prom_btn_stop_atr', on_click=_set_state,
-                              args=('prom_stop_manual', round(stop_sug, decimales_precio)))
+            else:  # % Fijo
+                pct_stop = st.radio('Distancia del stop', [2, 3, 5], horizontal=True,
+                                     format_func=lambda p: f'-{p}%' if direccion == 'long' else f'+{p}%',
+                                     key='prom_pct_stop')
+                if precio_nuevo <= 0:
+                    st.info('Cargá el precio de entrada para calcular el stop.')
+                else:
+                    precio_stop = round(sugerir_stop_pct(precio_nuevo, pct_stop, direccion), dec_p)
+                    st.success(f'🛑 Stop calculado: **${precio_stop:,.{dec_p}f}** '
+                               f'({pct_stop}% {"por debajo" if direccion == "long" else "por encima"} de la entrada)')
+
+            precio_tp = st.number_input(
+                '🎯 Take Profit (USD)', min_value=0.0, value=0.0, step=paso_precio,
+                format=fmt_precio, key='prom_tp',
+                help='Opcional (0 = sin objetivo). Es lo que habilita el ratio Riesgo/Beneficio.')
+
+        # ── Botón "⚡ Usar recomendado" (junto al campo de cantidad) ──
+        contrato = cfg['contrato']
+        cant_actual_u = cant_actual * contrato
+        rec_u = cantidad_recomendada_unidades(
+            capital_cuenta, pct_riesgo_max, direccion, precio_nuevo, precio_stop,
+            cant_actual_u, precio_prom_actual)
+        with slot_rec:
+            if rec_u is None:
+                st.caption('⚡ Cargá entrada y Stop para ver la cantidad recomendada.')
+            else:
+                rec_op = _floor_dec(rec_u / contrato, dec_c)
+                r1, r2 = st.columns([1, 1.6])
+                with r1:
+                    st.button('⚡ Usar recomendado', key='prom_usar_sugerida',
+                              on_click=_set_state, args=('prom_cant_op', rec_op),
+                              disabled=rec_op <= 0, use_container_width=True)
+                with r2:
+                    if rec_op > 0:
+                        unidad = 'lotes' if cfg['es_lotes'] else ''
+                        st.caption(f'Recomendado: **{rec_op:,.{dec_c}f}** {unidad} para arriesgar '
+                                   f'como máximo ${capital_cuenta * pct_riesgo_max / 100:,.2f}'.replace('  ', ' '))
+                    else:
+                        st.caption('Con este stop y tu % de riesgo no alcanza ni para la mínima '
+                                   'cantidad operable. Acercá el stop o subí el % de riesgo.')
 
     # ══════════════════ COLUMNA DERECHA: RESULTADOS EN VIVO ══════════════════
     with col_out:
         st.markdown('#### 📊 Resultados en tiempo real')
         _panel_resultados(
             capital_cuenta, pct_riesgo_max, horizonte, direccion, apalancamiento, precio_nuevo,
-            cant_op, precio_stop, precio_tp, cant_actual, precio_prom_actual,
-            decimales_cant, decimales_precio, atr_val,
+            cant_op * contrato, precio_stop, precio_tp, cant_actual_u, precio_prom_actual,
+            cfg, atr_val,
         )
 
     # ══════════════════ SECCIÓN INFERIOR: TENDENCIA Y GRÁFICO ══════════════════
@@ -982,7 +1082,7 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
             _pill('Tendencia', (info_tend.get('sesgo') or info_tend['tendencia']).capitalize(), color_t),
             _pill('RSI', f"{info_tend['rsi']:.1f}"),
             _pill('Señal Modelo', senal_txt, senal_col),
-            _pill('Precio actual', f"${info_tend['precio_actual']:,.{decimales_precio}f}"),
+            _pill('Precio actual', f"${info_tend['precio_actual']:,.{dec_p}f}"),
         ]
         st.markdown('<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">'
                     + ''.join(pills) + '</div>', unsafe_allow_html=True)
@@ -1004,10 +1104,11 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
         )
         st.plotly_chart(fig, use_container_width=True, config=dict(displayModeBar=False, scrollZoom=False))
 
-        # Por qué la tendencia acompaña o no (misma lógica de antes)
+        # Por qué la tendencia acompaña o no
         if precio_nuevo > 0 and cant_op > 0:
             try:
-                ev = evaluar_operacion(cant_actual, precio_prom_actual, cant_op, precio_nuevo, info_tend)
+                ev = evaluar_operacion(cant_actual_u, precio_prom_actual, cant_op * contrato,
+                                       precio_nuevo, info_tend)
                 with st.expander(f"Detalle del filtro de tendencia — {ev['veredicto']}"):
                     for r in ev['razones']:
                         st.markdown(f'- {r}')
@@ -1020,5 +1121,5 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                         f"— <span style='color:#8b949e'>{explicacion}</span></div>", unsafe_allow_html=True)
 
     st.caption('⚠️ Herramienta de apoyo cuantitativo, no asesoramiento financiero. El precio de liquidación '
-               'es aproximado (no incluye fees ni margen de mantenimiento del bróker/exchange).')
-
+               'es aproximado (no incluye fees ni margen de mantenimiento del bróker/exchange). En Forex y '
+               'Commodities la pérdida se expresa en USD asumiendo que la moneda de cotización es el dólar.')
