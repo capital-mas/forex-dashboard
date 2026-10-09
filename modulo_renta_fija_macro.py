@@ -298,7 +298,8 @@ def calcular_matriz_ratios_macro(precios):
     # ── Ratios avanzados: Rotación Sectorial Profunda ───────────────────
     ratios['Sensibilidad al Consumo (XLY/XLP)']        = r('XLY', 'XLP')
     ratios['Salud Economía Real (XLI/XLU)']            = r('XLI', 'XLU')
-    ratios['Apetito Innovación/Especulación (ARKK/QQQ)'] = r('ARKK', 'QQQ')
+    ratios['Especulación Alta Beta (ARKK/SPY)']          = r('ARKK', 'SPY')
+    ratios['Small Caps vs Mercado (IWM/SPY)']            = r('IWM', 'SPY')
 
     # ── Ratios avanzados: Valuación Macro y Commodities ────────────────
     ratios['Cobre/Oro — Doctor Copper (CPER/GLD)'] = r('CPER', 'GLD')
@@ -510,6 +511,26 @@ GLOSARIO_RATIOS = {
         'de crecimiento no rentable y refugiándose en calidad dentro del propio sector '
         'tecnológico.',
 
+    'Especulación Alta Beta (ARKK/SPY)':
+        'Compara el ETF de innovación disruptiva de ARK (ARKK, empresas de alto crecimiento, '
+        'muchas sin ganancias consolidadas y muy sensibles a las tasas de interés y a la liquidez) '
+        'contra el S&P 500 completo (SPY). Cuando el ratio sube de forma sostenida, el mercado '
+        'está premiando la especulación y el crecimiento sin rentabilidad: es el síntoma típico '
+        'de la "fomocracia", cuando los inversores corren detrás de lo que más sube sin mirar '
+        'calidad. Cuando cae, el capital descarta el riesgo especulativo y vuelve a empresas '
+        'más sólidas. Un ratio disparado suele ser señal de euforia; uno que se desploma, de '
+        'aversión al riesgo o de tasas que vuelven a ajustar la liquidez.',
+
+    'Small Caps vs Mercado (IWM/SPY)':
+        'Compara las empresas pequeñas del Russell 2000 (IWM) contra el S&P 500 (SPY). Las '
+        'small caps dependen más del crédito bancario y de las tasas de interés que las grandes '
+        'empresas, y tienen balances menos sólidos, por eso funcionan como termómetro del '
+        'apetito por riesgo doméstico. Si el ratio sube, el rally se amplía hacia empresas '
+        'más chicas y cíclicas, algo típico de expansiones sanas o de expectativas de baja de '
+        'tasas. Si cae, el mercado se concentra en las mega caps y las empresas de menor '
+        'calidad financiera quedan rezagadas, lo que suele leerse como fragilidad en la '
+        'participación.',
+
     'Cobre/Oro — Doctor Copper (CPER/GLD)':
         'El cobre es un insumo industrial clave (construcción, electrónica, vehículos '
         'eléctricos, infraestructura), por lo que su precio refleja de forma directa el '
@@ -708,6 +729,65 @@ def generar_alertas_macro(precios, df_ratios):
     except Exception:
         pass
 
+    # ── Helper local: último valor vs. su SMA20 ─────────────────────────
+    def _vs_sma20(col):
+        if col not in df_ratios.columns:
+            return None
+        s = df_ratios[col].dropna()
+        if len(s) <= 20:
+            return None
+        sma = s.rolling(20).mean()
+        return float(s.iloc[-1]), float(sma.iloc[-1]), s
+
+    # ── Regla 4: Rally sin consumidor (SPY sube, XLY/XLP cae) ───────────
+    try:
+        r_cons = _vs_sma20('Sensibilidad al Consumo (XLY/XLP)')
+        if r_cons is not None and 'SPY' in precios.columns:
+            spy = precios['SPY'].dropna()
+            spy_sube_5d = len(spy) > 5 and float(spy.iloc[-1]) > float(spy.iloc[-6])
+            if spy_sube_5d and r_cons[0] < r_cons[1]:
+                alertas.append(dict(
+                    nivel='medio', icono='🟠', titulo='Rally sin Respaldo del Consumidor',
+                    texto='El S&P 500 sube en los últimos 5 días, pero XLY/XLP está por debajo '
+                          'de su media de 20 días: la suba viene de sectores defensivos o '
+                          'megacaps, no de apetito real del consumidor discrecional.',
+                ))
+    except Exception:
+        pass
+
+    # ── Regla 5: Ralentización industrial (XLI/XLU) ─────────────────────
+    try:
+        r_ind = _vs_sma20('Salud Economía Real (XLI/XLU)')
+        if r_ind is not None:
+            ultimo, sma_v, s_ind = r_ind
+            if ultimo < sma_v and ultimo < float(s_ind.iloc[-21]):
+                alertas.append(dict(
+                    nivel='medio', icono='🟠', titulo='Ralentización de la Economía Productiva',
+                    texto='XLI/XLU está por debajo de su media de 20 días y más abajo que hace '
+                          '20 ruedas: el capital rota de industriales hacia utilities, '
+                          'confirmando señales de desaceleración industrial.',
+                ))
+    except Exception:
+        pass
+
+    # ── Regla 6: Exceso de especulación (ARKK/SPY e IWM/SPY en máximos) ─
+    try:
+        cols_esp = ['Especulación Alta Beta (ARKK/SPY)', 'Small Caps vs Mercado (IWM/SPY)']
+        if all(c in df_ratios.columns for c in cols_esp):
+            en_maximos = []
+            for c in cols_esp:
+                s = df_ratios[c].dropna()
+                en_maximos.append(len(s) > 20 and float(s.iloc[-1]) >= float(s.rolling(20).max().iloc[-1]))
+            if all(en_maximos):
+                alertas.append(dict(
+                    nivel='medio', icono='🟡', titulo='Posible Exceso de Especulación',
+                    texto='ARKK/SPY e IWM/SPY están ambos en máximos de 20 días: el capital está '
+                          'corriendo hacia innovación especulativa y empresas de menor calidad '
+                          'financiera. Históricamente es una zona de euforia, para vigilar.',
+                ))
+    except Exception:
+        pass
+        
     return alertas
 
 
