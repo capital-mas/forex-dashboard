@@ -8650,8 +8650,11 @@ CTX_IA = dict(
     obtener_perfil_empresa=obtener_perfil_empresa,
     resumen_visual_fundamental=_resumen_visual_fundamental,
     es_admin=ES_ADMIN,          # ← NUEVA
-    **RES_IA, # ya incluye gex_resumen, gex_niveles, cot_resumen, velas_resumen, opciones_resumen
-    CTX_IA.update(crear_breadth_ia(
+    **RES_IA,   # ya incluye gex_resumen, gex_niveles, cot_resumen, velas_resumen, opciones_resumen
+)
+
+# Salud del Mercado real (la del módulo 📡) para el asistente
+CTX_IA.update(crear_breadth_ia(
     descargar_bulk=descargar_bulk,
     get_close_from_bulk=get_close_from_bulk,
 ))
