@@ -1644,6 +1644,7 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
             ['Commodities vs Mercado (DBC/SPY)', 'Cobre/Oro — Doctor Copper (CPER/GLD)',
              'Demanda Industrial Plata/Oro (SLV/GLD)', 'Energía vs Mercado (XLE/SPY)',
              'Inflación de Alimentos (DBA/SPY)', 'Metales de Infraestructura (SLX/SPY)'],
+            'Valuación Macro y Commodities', '#cd7f32',
         )
    
     with tabs[7]:
