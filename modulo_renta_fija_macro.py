@@ -1414,7 +1414,7 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
     _render_alertas(alertas)
 
     tabs = st.tabs([
-        '💵 Renta Fija', '🏥 Salud del Mercado', '📊 Matriz de 12 Ratios',
+        '💵 Renta Fija', '🏥 Salud del Mercado', '📊 Matriz de Ratios',
         '🌪️ Volatilidad y Miedo', '💧 Liquidez y Apalancamiento',
         '🔄 Rotación Sectorial', '🪙 Valuación Macro y Commodities',
     ])
