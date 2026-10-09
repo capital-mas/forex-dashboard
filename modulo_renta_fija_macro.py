@@ -795,66 +795,65 @@ def generar_alertas_macro(precios, df_ratios):
 #  6. FUNCIONES DE GRÁFICOS
 # ==============================================================
 
-def _calcular_estado_serie(serie, nombre=None, sma_ventana=20, dias_var=5):
-    """Calcula un resumen de 'situación actual' para una serie de un ratio:
-    posición vs. su media móvil (o vs. un umbral fijo, para spreads), qué
-    significa eso en criollo (según ESTADO_INTERPRETACION), variación reciente
-    y color/flecha asociados.
-    Devuelve un dict {'interpretacion','detalle','color','flecha'} o None si
-    no hay datos suficientes."""
+def _calcular_estado_serie(serie, nombre=None, sma_ventana=20, dias_var=5, dias_var_largo=20):
+    """Resumen de 'situación actual' de un ratio. En modo 'sma' decide por mayoría de 3
+    señales (var. 5 ruedas, var. 20 ruedas, posición vs SMA); en modo 'umbral' compara
+    contra un valor fijo. Flecha, color y texto salen siempre del mismo resultado.
+    Devuelve {'interpretacion','detalle','color','flecha','ultimo'} o None."""
     s = pd.Series(serie).dropna()
     if len(s) < 2:
         return None
 
     ultimo = float(s.iloc[-1])
     interp_cfg = ESTADO_INTERPRETACION.get(nombre)
-
-    # Variación de corto plazo (para la flecha y el detalle técnico)
-    var_txt = ''
-    sube = None
-    if len(s) > dias_var:
-        prev = float(s.iloc[-1 - dias_var])
-        if prev:
-            var_pct = (ultimo / prev - 1) * 100
-            sube = var_pct >= 0
-            var_txt = f'{var_pct:+.2f}% ({dias_var}r)'
-
-    # Posición vs. referencia (SMA o umbral fijo), para decidir arriba/abajo
-    arriba = None
-    ref_txt = ''
     modo = interp_cfg['modo'] if interp_cfg else 'sma'
 
+    def _var(d):
+        if len(s) <= d:
+            return None
+        prev = float(s.iloc[-1 - d])
+        return (ultimo / prev - 1) * 100 if prev else None
+
+    var_corta, var_larga = _var(dias_var), _var(dias_var_largo)
+    sube = None if var_corta is None else var_corta >= 0
+    var_txt = f'{var_corta:+.2f}% ({dias_var}r)' if var_corta is not None else ''
+
+    arriba, ref_txt = None, ''
     if modo == 'umbral' and interp_cfg is not None:
         umbral = interp_cfg['umbral']
         arriba = ultimo > umbral
         ref_txt = f'vs. umbral {umbral:g}'
-    elif len(s) > sma_ventana:
-        sma = s.rolling(sma_ventana).mean().dropna()
-        if len(sma):
-            sma_val = float(sma.iloc[-1])
-            if ultimo != sma_val:
-                arriba = ultimo > sma_val
-            ref_txt = f'SMA{sma_ventana}'
+        flecha = '●' if sube is None else ('▲' if sube else '▼')
+    else:
+        sobre_sma = None
+        if len(s) > sma_ventana:
+            sma = s.rolling(sma_ventana).mean().dropna()
+            if len(sma):
+                sma_val = float(sma.iloc[-1])
+                if ultimo != sma_val:
+                    sobre_sma = ultimo > sma_val
+                ref_txt = f'SMA{sma_ventana}'
 
-    # Texto de interpretación (qué significa) + color
+        votos = [v for v in (sube,
+                             None if var_larga is None else var_larga >= 0,
+                             sobre_sma) if v is not None]
+        if votos:
+            a = sum(votos)
+            if a * 2 != len(votos):
+                arriba = a * 2 > len(votos)
+            else:  # empate (solo con 2 señales): manda la dirección reciente
+                arriba = sube if sube is not None else bool(votos[0])
+        flecha = '●' if arriba is None else ('▲' if arriba else '▼')
+
     if arriba is not None and interp_cfg is not None:
         interpretacion = interp_cfg['arriba'] if arriba else interp_cfg['abajo']
-        color = C_GREEN if arriba else C_RED
     elif arriba is not None:
-        interpretacion = f'Por encima de su {ref_txt}' if arriba else f'Por debajo de su {ref_txt}'
-        color = C_GREEN if arriba else C_RED
-    elif sube is not None:
-        interpretacion = 'En tendencia alcista de corto plazo' if sube else 'En tendencia bajista de corto plazo'
-        color = C_GREEN if sube else C_RED
+        interpretacion = 'Tendencia alcista' if arriba else 'Tendencia bajista'
     else:
         interpretacion = 'Datos insuficientes'
-        color = C_MUTED
+    color = C_MUTED if arriba is None else (C_GREEN if arriba else C_RED)
 
-    flecha = '●' if sube is None else ('▲' if sube else '▼')
-
-    detalle_partes = [p for p in [ref_txt, var_txt] if p]
-    detalle = ' · '.join(detalle_partes)
-
+    detalle = ' · '.join(p for p in [ref_txt, var_txt] if p)
     return dict(interpretacion=interpretacion, detalle=detalle, color=color, flecha=flecha, ultimo=ultimo)
 
 
