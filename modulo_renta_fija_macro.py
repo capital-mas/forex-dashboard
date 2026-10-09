@@ -1645,6 +1645,7 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
              'Demanda Industrial Plata/Oro (SLV/GLD)', 'Energía vs Mercado (XLE/SPY)',
              'Inflación de Alimentos (DBA/SPY)', 'Metales de Infraestructura (SLX/SPY)'],
         )
+   
     with tabs[7]:
         st.markdown("""
         <div class="rf-info-banner">
