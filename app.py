@@ -5468,7 +5468,7 @@ def _opt_interpretar_stress(df_stress, capital_opt):
     lineas = []
     lineas.append(
         f"En este escenario, <b>{peor['Cartera']}</b> sería la más golpeada "
-        f"({peor['Impacto Estimado %']:+.2f}%, ≈ USD {peor['Impacto Estimado USD']:+,.0f}) y "
+        f"({peor['Impacto Estimado %']:+.2f}%, ≈ {_opt_mon()} {peor[f'Impacto Estimado {_opt_mon()}']:+,.0f}) y "
         f"<b>{mejor['Cartera']}</b> la que mejor resistiría ({mejor['Impacto Estimado %']:+.2f}%)."
     )
     dominante_str = ' · '.join(f"{n}: {f} (β={b:.2f})" for n, f, b in dominantes)
@@ -5725,7 +5725,7 @@ def _opt_render_riesgo_avanzado(tickers_opt, retornos_opt, ret_bench_opt, benchm
                                             'CVaR Hist. USD': f'CVaR Hist. {_opt_mon()}'})
     st.dataframe(df_var_fmt, use_container_width=True, hide_index=True,
                  height=min(500, len(df_var_fmt)*36+45))
-    st.caption(f'Horizonte: {horiz_var} · Capital de referencia: USD {capital_opt:,.0f} · '
+    st.caption(f'Horizonte: {horiz_var} · Capital de referencia: {_opt_mon()} {capital_opt:,.0f} · '
                'VaR/CVaR expresan la pérdida esperada, no un retorno negativo.')
 
     df_95 = df_var[df_var['Confianza']=='95%']
@@ -5980,7 +5980,7 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
             continue
         impacto = _opt_impacto_escenario(betas, shocks)
         desglose_impacto[nombre] = {f: betas.get(f, 0.0) * shocks.get(f, 0.0) * 100 for f in factores_nombres}
-        fila = {'Cartera': nombre, 'Impacto Estimado %': impacto * 100, 'Impacto Estimado USD': impacto * capital_opt}
+        fila = {'Cartera': nombre, 'Impacto Estimado %': impacto * 100, f'Impacto Estimado {_opt_mon()}': impacto * capital_opt}
         for f in factores_nombres:
             fila[f'Beta {f}'] = betas.get(f, 0.0)
         fila['R²'] = r2
@@ -6000,7 +6000,7 @@ def _opt_render_simulador_crisis(tickers_opt, retornos_opt, ret_bench_opt, bench
             return ''
 
     cols_beta = [f'Beta {f}' for f in factores_nombres]
-    fmt_stress = {'Impacto Estimado %': '{:+.2f}%', 'Impacto Estimado USD': '{:+,.0f}', 'R²': '{:.2f}'}
+    fmt_stress = {'Impacto Estimado %': '{:+.2f}%', f'Impacto Estimado {_opt_mon()}': '{:+,.0f}', 'R²': '{:.2f}'}
     fmt_stress.update({c: '{:.2f}' for c in cols_beta})
 
     _map_st = 'map' if hasattr(df_stress.style, 'map') else 'applymap'
@@ -6252,8 +6252,8 @@ def _opt_cagr_desde_serie_nivel(serie):
     return serie.iloc[-1] ** (1 / anios) - 1
 
 def _opt_pais_sugerido(ticker):
-    if str(ticker).upper().endswith('.BA'): return 'Argentina'
     """Sugerencia inicial de país según la industria del ticker (editable por el usuario)."""
+    if str(ticker).upper().endswith('.BA'): return 'Argentina'
     ind = TICKER_INDUSTRY.get(ticker, '')
     if ind == 'Argentina': return 'Argentina'
     if ind == 'Brasil': return 'Brasil'
@@ -6426,7 +6426,7 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
             }
             carteras_infl['Mi Cartera Actual'] = pesos_actual
 
-    tasa_default_bench = tasas_por_anio_pais.get('Estados Unidos', {})
+    tasa_default_bench = tasas_por_anio_pais.get('Argentina' if _opt_mon() == 'ARS' else 'Estados Unidos', {})
 
     filas_infl, equities_reales = [], {}
     for nombre, ret_s in series_ret.items():
@@ -6527,10 +6527,11 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
         _opt_fig_nominal_vs_real(eq_sel['nominal'], eq_sel['real'], capital_opt, cartera_ver),
         use_container_width=True, config=PLOTLY_CONFIG, key='infl_fig_nom_real',
     )
+    _m = _opt_mon()
     st.caption(
-        f"De cada USD {capital_opt:,.0f} invertido en {cartera_ver}, hoy tenés "
-        f"USD {capital_opt * eq_sel['nominal'].iloc[-1]:,.0f} nominales, que en poder de compra equivalen a "
-        f"USD {capital_opt * eq_sel['real'].iloc[-1]:,.0f} de cuando empezaste."
+        f"De cada {_m} {capital_opt:,.0f} invertido en {cartera_ver}, hoy tenés "
+        f"{_m} {capital_opt * eq_sel['nominal'].iloc[-1]:,.0f} nominales, que en poder de compra equivalen a "
+        f"{_m} {capital_opt * eq_sel['real'].iloc[-1]:,.0f} de cuando empezaste."
     )
 
     st.markdown('#### 💵 Capital simulado año por año — Nominal vs. Real')
@@ -6546,7 +6547,7 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
     df_cap_infl['Brecha (Nominal - Real)'] = df_cap_infl['Nominal'] - df_cap_infl['Real (ajustado)']
 
     styled_cap_infl = (df_cap_infl.style
-        .format('USD {:,.0f}')
+        .format(_opt_mon() + ' {:,.0f}')
         .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
         .set_table_styles([
             {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
