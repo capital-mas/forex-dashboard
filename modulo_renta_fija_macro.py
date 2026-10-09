@@ -1174,6 +1174,31 @@ ORDEN_RATIOS = [
     ('Energía vs Mercado (XLE/SPY)', 'Macro y Commodities'),
 ]
 
+ORDEN_RATIOS = [
+    ('Apetito Riesgo Crediticio (HYG/IEF)', 'Crédito'),
+    ('Riesgo de Crédito Puro (HYG/LQD)', 'Crédito'),
+    ('Liquidez Corporativa (VCSH/LQD)', 'Crédito'),
+    ('Spread Curva 10Y-3M (TNX-IRX)', 'Curva y Tasas'),
+    ('Spread Curva Larga (TYX-TNX)', 'Curva y Tasas'),
+    ('Sensibilidad a Tasas / Duration (TLT/SHY)', 'Curva y Tasas'),
+    ('Expectativa Inflacionaria (TIP/IEF)', 'Curva y Tasas'),
+    ('Estrés Monetario Emergente (EMLC/EMB)', 'Global y Emergentes'),
+    ('Flujo Global (EEM/VT)', 'Global y Emergentes'),
+    ('Rotación Crecimiento vs Refugio (SPY/TLT)', 'Acciones y Estilos'),
+    ('Liderazgo Tecnológico (QQQ/SPY)', 'Acciones y Estilos'),
+    ('Estilos de Inversión (IWF/IWD)', 'Acciones y Estilos'),
+    ('Estrés Volatilidad Táctica (VIX/VIX9D)', 'Volatilidad y Miedo'),
+    ('Miedo Crediticio vs Accionario (HYG_Vol/VIX)', 'Volatilidad y Miedo'),
+    ('Apetito Apalancamiento (SPHB/SPLV)', 'Liquidez y Apalancamiento'),
+    ('Sensibilidad al Consumo (XLY/XLP)', 'Rotación Sectorial'),
+    ('Salud Economía Real (XLI/XLU)', 'Rotación Sectorial'),
+    ('Apetito Innovación/Especulación (ARKK/QQQ)', 'Rotación Sectorial'),
+    ('Especulación Alta Beta (ARKK/SPY)', 'Rotación Sectorial'),
+    ('Small Caps vs Mercado (IWM/SPY)', 'Rotación Sectorial'),
+    ('Cobre/Oro — Doctor Copper (CPER/GLD)', 'Macro y Commodities'),
+    ('Energía vs Mercado (XLE/SPY)', 'Macro y Commodities'),
+]
+
 
 def _tab_matriz_ratios(df_ratios):
     st.markdown("""
