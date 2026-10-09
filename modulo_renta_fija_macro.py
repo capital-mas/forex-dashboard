@@ -1016,7 +1016,8 @@ def _render_alertas(alertas):
         <div style="background:rgba(63,185,80,0.08);border:1px solid rgba(63,185,80,0.3);
              border-radius:10px;padding:14px 18px;margin-bottom:16px;color:#7ee787;font-size:13px">
           ✅ Sin alertas activas por el momento — el motor de reglas no detectó ninguna de las
-          3 condiciones de divergencia, inversión de curva o régimen Risk-On extremo.
+          6 condiciones (divergencias de crédito y consumo, curva invertida, ralentización
+          industrial, exceso de especulación o régimen Risk-On extremo).
         </div>
         """, unsafe_allow_html=True)
         return
@@ -1412,7 +1413,8 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
         _tab_grupo_avanzado(
             df_ratios,
             ['Sensibilidad al Consumo (XLY/XLP)', 'Salud Economía Real (XLI/XLU)',
-             'Apetito Innovación/Especulación (ARKK/QQQ)'],
+             'Apetito Innovación/Especulación (ARKK/QQQ)',
+             'Especulación Alta Beta (ARKK/SPY)', 'Small Caps vs Mercado (IWM/SPY)'],
             'Rotación Sectorial', C_LRED,
         )
 
