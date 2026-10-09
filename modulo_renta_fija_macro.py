@@ -1149,40 +1149,65 @@ def _tab_salud_mercado(precios, df_ratios):
         st.plotly_chart(_fig_base100(series_b100, 'S&P 500 vs. Renta Fija — Base 100'),
                          use_container_width=True, config=_DEFAULT_PLOTLY_CONFIG, key='rf_fig_base100')
 
+ORDEN_RATIOS = [
+    ('Apetito Riesgo Crediticio (HYG/IEF)', 'Crédito'),
+    ('Riesgo de Crédito Puro (HYG/LQD)', 'Crédito'),
+    ('Liquidez Corporativa (VCSH/LQD)', 'Crédito'),
+    ('Spread Curva 10Y-3M (TNX-IRX)', 'Curva y Tasas'),
+    ('Spread Curva Larga (TYX-TNX)', 'Curva y Tasas'),
+    ('Sensibilidad a Tasas / Duration (TLT/SHY)', 'Curva y Tasas'),
+    ('Expectativa Inflacionaria (TIP/IEF)', 'Curva y Tasas'),
+    ('Estrés Monetario Emergente (EMLC/EMB)', 'Global y Emergentes'),
+    ('Flujo Global (EEM/VT)', 'Global y Emergentes'),
+    ('Rotación Crecimiento vs Refugio (SPY/TLT)', 'Acciones y Estilos'),
+    ('Liderazgo Tecnológico (QQQ/SPY)', 'Acciones y Estilos'),
+    ('Estilos de Inversión (IWF/IWD)', 'Acciones y Estilos'),
+    ('Estrés Volatilidad Táctica (VIX/VIX9D)', 'Volatilidad y Miedo'),
+    ('Miedo Crediticio vs Accionario (HYG_Vol/VIX)', 'Volatilidad y Miedo'),
+    ('Apetito Apalancamiento (SPHB/SPLV)', 'Liquidez y Apalancamiento'),
+    ('Sensibilidad al Consumo (XLY/XLP)', 'Rotación Sectorial'),
+    ('Salud Economía Real (XLI/XLU)', 'Rotación Sectorial'),
+    ('Apetito Innovación/Especulación (ARKK/QQQ)', 'Rotación Sectorial'),
+    ('Especulación Alta Beta (ARKK/SPY)', 'Rotación Sectorial'),
+    ('Small Caps vs Mercado (IWM/SPY)', 'Rotación Sectorial'),
+    ('Cobre/Oro — Doctor Copper (CPER/GLD)', 'Macro y Commodities'),
+    ('Energía vs Mercado (XLE/SPY)', 'Macro y Commodities'),
+]
+
 
 def _tab_matriz_ratios(df_ratios):
     st.markdown("""
     <div class="rf-info-banner">
-      Los <b>12 ratios estratégicos</b> que arma el módulo, con su último valor, su
-      variación reciente y el <b>estado actual</b> (qué significa hoy ese ratio), en
-      lenguaje simple.
+      <b>Matriz completa de ratios</b>: todos los ratios que calcula el módulo, agrupados por
+      tema, con su último valor, su variación reciente y el <b>estado actual</b> (qué significa
+      hoy ese ratio), en lenguaje simple.
     </div>
     """, unsafe_allow_html=True)
 
-    orden_12 = [
-        'Apetito Riesgo Crediticio (HYG/IEF)', 'Riesgo de Crédito Puro (HYG/LQD)',
-        'Liquidez Corporativa (VCSH/LQD)', 'Spread Curva 10Y-3M (TNX-IRX)',
-        'Spread Curva Larga (TYX-TNX)', 'Sensibilidad a Tasas / Duration (TLT/SHY)',
-        'Expectativa Inflacionaria (TIP/IEF)', 'Estrés Monetario Emergente (EMLC/EMB)',
-        'Flujo Global (EEM/VT)', 'Rotación Crecimiento vs Refugio (SPY/TLT)',
-        'Liderazgo Tecnológico (QQQ/SPY)', 'Estilos de Inversión (IWF/IWD)',
-    ]
+    # Todos los ratios definidos + cualquier columna extra que aparezca en df_ratios
+    nombres_def = [n for n, _ in ORDEN_RATIOS]
+    lista = [(n, g) for n, g in ORDEN_RATIOS if n in df_ratios.columns]
+    lista += [(c, 'Otros') for c in df_ratios.columns if c not in nombres_def]
 
     filas = []
-    estado_colors = {}  # nombre del ratio -> color del estado, para pintar la columna
-    for nombre in orden_12:
-        if nombre not in df_ratios.columns:
-            continue
+    estado_colors = {}
+    for nombre, grupo in lista:
         s = df_ratios[nombre].dropna()
         if s.empty:
             continue
         ultimo = float(s.iloc[-1])
-        var_5d = None
-        if len(s) > 5:
-            prev = float(s.iloc[-6])
-            var_5d = (ultimo / prev - 1) * 100 if prev else None
+        es_spread = nombre.startswith('Spread')
 
-        # ── Estado actual (el mismo cartel que antes iba superpuesto al gráfico) ──
+        def _var(d):
+            if len(s) <= d:
+                return None
+            prev = float(s.iloc[-1 - d])
+            if es_spread:
+                return ultimo - prev            # spreads: diferencia en puntos porcentuales
+            return (ultimo / prev - 1) * 100 if prev else None
+
+        v5, v20 = _var(5), _var(20)
+
         estado_info = _calcular_estado_serie(s, nombre=nombre, sma_ventana=20)
         if estado_info:
             estado_txt = f"{estado_info['flecha']} {estado_info['interpretacion']}"
@@ -1192,8 +1217,9 @@ def _tab_matriz_ratios(df_ratios):
             estado_colors[nombre] = C_MUTED
 
         filas.append({
-            'Ratio': nombre, 'Último valor': round(ultimo, 4),
-            'Var. 5 ruedas %': round(var_5d, 2) if var_5d is not None else None,
+            'Grupo': grupo, 'Ratio': nombre, 'Último valor': round(ultimo, 4),
+            'Var. 5 ruedas': round(v5, 2) if v5 is not None else None,
+            'Var. 20 ruedas': round(v20, 2) if v20 is not None else None,
             'Estado': estado_txt,
         })
 
@@ -1209,17 +1235,14 @@ def _tab_matriz_ratios(df_ratios):
 
         def _color_estado(row):
             color = estado_colors.get(row['Ratio'], C_MUTED)
-            return [
-                f'color:{color};font-weight:700' if col == 'Estado' else ''
-                for col in row.index
-            ]
+            return [f'color:{color};font-weight:700' if col == 'Estado' else '' for col in row.index]
 
         _map = 'map' if hasattr(df_tabla.style, 'map') else 'applymap'
         styled = (df_tabla.style
-                  .pipe(lambda s: getattr(s, _map)(_color_var, subset=['Var. 5 ruedas %']))
+                  .pipe(lambda s: getattr(s, _map)(_color_var, subset=['Var. 5 ruedas', 'Var. 20 ruedas']))
                   .apply(_color_estado, axis=1)
                   .set_properties(**{'background-color': C_BG1, 'color': C_TEXT, 'border': f'1px solid {C_GRID}'})
-                  .set_properties(subset=['Estado'], **{'text-align': 'left'})
+                  .set_properties(subset=['Estado', 'Ratio'], **{'text-align': 'left'})
                   .set_table_styles([
                       {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', C_TEXT),
                           ('font-weight', '700'), ('text-align', 'center'),
@@ -1227,18 +1250,19 @@ def _tab_matriz_ratios(df_ratios):
                       {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11.5px')]},
                   ]))
         st.dataframe(styled, use_container_width=True, hide_index=True,
-                     height=min(500, len(df_tabla) * 40 + 45))
+                     height=min(950, len(df_tabla) * 38 + 45))
+        st.caption(f'{len(df_tabla)} ratios calculados · las variaciones están en % salvo los '
+                   'spreads de curva, que van en puntos porcentuales.')
     else:
         st.info('No se pudieron calcular los ratios (datos insuficientes).')
 
     st.markdown('### 📈 Ver un ratio en detalle')
-    disponibles = [n for n in orden_12 if n in df_ratios.columns and not df_ratios[n].dropna().empty]
+    disponibles = [n for n, _ in lista if n in df_ratios.columns and not df_ratios[n].dropna().empty]
     if disponibles:
         sel = st.selectbox('Elegí un ratio', disponibles, key='rf_ratio_detalle_sel')
         fig = _fig_serie_simple(sel, df_ratios[sel].dropna(), sma_ventana=20)
         st.plotly_chart(fig, use_container_width=True, config=_DEFAULT_PLOTLY_CONFIG, key='rf_fig_detalle')
         _tarjeta_interp('¿Qué significa este ratio?', GLOSARIO_RATIOS.get(sel, 'Sin descripción.'), C_ACENT)
-
 
 def _tab_grupo_avanzado(df_ratios, ratios_grupo, titulo_grupo, color_grupo):
     """Renderiza un grupo de ratios avanzados (volatilidad, liquidez, rotación,
