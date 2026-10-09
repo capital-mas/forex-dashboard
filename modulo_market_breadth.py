@@ -1306,7 +1306,7 @@ def render_market_breadth(
     if chips_navegacion:
         chips_navegacion(df_detalle['Ticker'].tolist(), 'bd_detalle')
 
-   st.caption(
+    st.caption(
         '⚠️ Yahoo Finance no expone listas oficiales de constituyentes: el universo analizado es la lista '
         'cargada en el módulo para cada índice / ETF. Si hay cambios de composición, actualizá la lista '
         'correspondiente para mantener fiel la lectura de amplitud.'
