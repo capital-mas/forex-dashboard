@@ -314,6 +314,60 @@ INDICES_CONSTITUYENTES = {
     # 👉 Acá se suman más índices con la lista real de constituyentes,
     #    por ejemplo 'S&P 500 (500)', 'Nasdaq 100 (100)', 'Merval (Argentina)', etc.
 }
+# ==============================================================
+#  ETFs SECTORIALES — componentes (ticker del ETF = "índice")
+# ==============================================================
+ETFS_CONSTITUYENTES = {
+    'XLK — Technology Select Sector SPDR': {
+        'ticker_indice': 'XLK',
+        'constituyentes': list(dict.fromkeys([
+            'NVDA', 'AAPL', 'MSFT', 'AMD', 'AVGO', 'MU', 'INTC', 'CSCO', 'PLTR', 'AMAT',
+            'LRCX', 'PANW', 'CRWD', 'TXN', 'KLAC', 'MRVL', 'ORCL', 'ANET', 'APH', 'IBM',
+            'ADI', 'QCOM', 'CRM', 'STX', 'SNDK', 'ACN', 'CDNS', 'SNPS', 'MSI', 'MCHP',
+            'MPWR', 'TEL', 'GLW', 'IT', 'HPQ', 'WDC', 'FISV', 'FI', 'NOW', 'NTAP',
+            'KEYS', 'FFIV', 'SWKS', 'TER', 'TRMB', 'EPAM',
+        ])),
+    },
+    'XLF — Financial Select Sector SPDR': {
+        'ticker_indice': 'XLF',
+        'constituyentes': list(dict.fromkeys([
+            'BRK-B', 'JPM', 'V', 'MA', 'BAC', 'GS', 'WFC', 'MS', 'C', 'AXP',
+            'SCHW', 'BLK', 'PGR', 'COF', 'SPGI', 'CB', 'CME', 'BNY', 'BK', 'USB',
+            'PNC', 'HOOD', 'ICE', 'BX', 'MRSH', 'MMC', 'TRV', 'AON', 'MET', 'PRU',
+            'AJG', 'TROW', 'HIG', 'ALL', 'FITB', 'KEY', 'CFG', 'HBAN', 'RF', 'SYF',
+            'IBKR', 'NDAQ', 'MCO', 'AMP', 'RJF', 'MKTX', 'KKR', 'IVZ', 'DFS',
+        ])),
+    },
+    'XLV — Health Care Select Sector SPDR': {
+        'ticker_indice': 'XLV',
+        'constituyentes': list(dict.fromkeys([
+            'LLY', 'JNJ', 'ABBV', 'MRK', 'UNH', 'TMO', 'AMGN', 'GILD', 'ABT', 'PFE',
+            'ISRG', 'DHR', 'VRTX', 'BMY', 'CVS', 'MDT', 'MCK', 'SYK', 'ELV', 'CI',
+            'MRNA', 'REGN', 'HCA', 'COR', 'BSX', 'BDX', 'EW', 'ZTS', 'IQV', 'HUM',
+            'BIIB', 'IDXX', 'GEHC', 'CNC', 'A', 'WST', 'CAH', 'COO', 'DXCM', 'TECH',
+            'RVTY', 'HOLX', 'RMD', 'ALGN', 'VTRS', 'MTD',
+        ])),
+    },
+    'XLY — Consumer Discretionary Select Sector SPDR': {
+        'ticker_indice': 'XLY',
+        'constituyentes': list(dict.fromkeys([
+            'AMZN', 'TSLA', 'HD', 'TJX', 'MCD', 'BKNG', 'SBUX', 'LOW', 'MAR', 'ROST',
+            'HLT', 'DASH', 'GM', 'RCL', 'ORLY', 'ABNB', 'F', 'AZO', 'GRMN', 'CVNA',
+            'EBAY', 'NKE', 'CMG', 'YUM', 'DHI', 'LEN', 'PHM', 'NCLH', 'CCL', 'MGM',
+            'WYNN', 'EXPE', 'TPR', 'ULTA', 'BBY', 'TSCO', 'DRI', 'LVS', 'DPZ', 'HAS',
+            'MHK', 'DECK', 'POOL', 'LULU', 'RVLV',
+        ])),
+    },
+    'XLP — Consumer Staples Select Sector SPDR': {
+        'ticker_indice': 'XLP',
+        'constituyentes': list(dict.fromkeys([
+            'WMT', 'COST', 'PG', 'KO', 'PM', 'MO', 'CL', 'TGT', 'MDLZ', 'PEP',
+            'MNST', 'KDP', 'ADM', 'SYY', 'KR', 'KVUE', 'KMB', 'DG', 'VYLR', 'HSY',
+            'CASY', 'EL', 'CHD', 'DLTR', 'KHC', 'GIS', 'STZ', 'CLX', 'CAG', 'CPB',
+            'SJM', 'TAP', 'HRL', 'BF-B', 'LW',
+        ])),
+    },
+}
 
 # ==============================================================
 #  PALETA Y HELPERS DE FALLBACK (si no se inyectan desde la app)
