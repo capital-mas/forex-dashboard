@@ -1015,25 +1015,45 @@ def _render_alertas(alertas):
         st.markdown("""
         <div style="background:rgba(63,185,80,0.08);border:1px solid rgba(63,185,80,0.3);
              border-radius:10px;padding:14px 18px;margin-bottom:16px;color:#7ee787;font-size:13px">
-          ✅ Sin alertas activas por el momento — el motor de reglas no detectó ninguna de las
-          6 condiciones (divergencias de crédito y consumo, curva invertida, ralentización
-          industrial, exceso de especulación o régimen Risk-On extremo).
+          ✅ Sin alertas activas por el momento — el motor de reglas no detectó ninguna condición
+          de crédito, curva, volatilidad, rotación sectorial, tasas ni tendencia del S&amp;P 500.
         </div>
         """, unsafe_allow_html=True)
         return
-    for a in alertas:
-        color_map = {'alto': C_RED, 'positivo': C_GREEN, 'medio': C_YELL}
+
+    color_map = {'alto': C_RED, 'medio': C_YELL, 'positivo': C_GREEN, 'info': C_ACENT}
+    etiquetas = {'alto': 'Alto riesgo', 'medio': 'Vigilancia', 'positivo': 'Positivas', 'info': 'Informativas'}
+
+    chips = ''.join(
+        f'<span style="display:inline-block;margin:0 8px 6px 0;padding:4px 12px;border-radius:20px;'
+        f'border:1px solid {color_map[k]};color:{color_map[k]};font-size:12px;font-weight:700">'
+        f'{etiquetas[k]}: {sum(1 for a in alertas if a["nivel"] == k)}</span>'
+        for k in ('alto', 'medio', 'positivo', 'info')
+    )
+    st.markdown(f'<div style="margin-bottom:10px">{chips}</div>', unsafe_allow_html=True)
+
+    def _pintar(a):
         color = color_map.get(a['nivel'], C_ACENT)
         bg = f'rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.08)'
         st.markdown(f"""
         <div style="background:{bg};border:1px solid {color};border-radius:10px;
-             padding:14px 18px;margin-bottom:10px">
+             padding:12px 16px;margin-bottom:8px">
           <div style="font-size:14px;font-weight:700;color:{color};margin-bottom:4px">
             {a['icono']} {a['titulo']}
           </div>
           <div style="font-size:12.5px;color:#f5f7fa;line-height:1.6">{a['texto']}</div>
         </div>
         """, unsafe_allow_html=True)
+
+    principales = [a for a in alertas if a['nivel'] != 'info']
+    informativas = [a for a in alertas if a['nivel'] == 'info']
+
+    for a in principales:
+        _pintar(a)
+    if informativas:
+        with st.expander(f'Ver señales informativas ({len(informativas)})', expanded=False):
+            for a in informativas:
+                _pintar(a)
 
 
 def _tarjetas_categoria_bonos(precios, categoria, items):
