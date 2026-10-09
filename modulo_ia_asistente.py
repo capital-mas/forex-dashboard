@@ -146,6 +146,12 @@ _PATRONES_INTENCION = [
         r'\bagreg[aá]\s+(un\s+)?(gasto|ingreso|movimiento|deuda)', r'\bsum[aá]\s+(esto|este\s+gasto|este\s+ingreso)',
         r'\bmet[eé]lo\b', r'\bpon[eé]lo\s+en\s+mis?\s+finanzas\b',
     ]),
+    ('sectores_etfs', [
+        r'sectores?\s*(?:&|y|e)\s*etfs?', r'etfs?\s*(?:&|y|e)\s*sectores?',
+    ]),
+    ('salud_macro', [
+        r'\bsalud\s+(?:del?\s+)?mercado\b.*\bmacro\b', r'\bmercado\s*(?:&|y)\s*macro\b',
+    ]),
     ('plan_trading', [
         r'\bplan\s+(de\s+)?trading\b', r'\bscalping\b', r'\bday[\s\-]?trad', r'\bswing\b',
         r'\bstop[\s\-]?loss\b', r'\btake[\s\-]?profit\b', r'\bmarco\s+temporal\b',
