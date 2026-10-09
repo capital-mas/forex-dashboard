@@ -1265,3 +1265,189 @@ def render_market_breadth(
         'predefinida o lista manual) a modo de proxy representativo. Cuantos más activos incluyas, '
         'más fiel es la lectura de amplitud real del mercado que estás mirando.'
     )
+
+    # ==============================================================
+#  VERSIÓN TEXTO PARA EL ASISTENTE IA
+#  Misma lógica que render_market_breadth, sin dibujar nada.
+#  Devuelve dict(texto, score, salud, regimen, señal) o None.
+# ==============================================================
+import time as _time
+
+BREADTH_UNIVERSO_IA = 'S&P 500 (503)'   # cambialo a 'Nasdaq 100 (100)' si querés más velocidad
+_BD_IA_CACHE = {}                        # {(universo, periodo): (timestamp, resultado)}
+
+
+def _bd_fr(v):
+    """Ratio con soporte de infinito."""
+    return '∞' if (v is None or v == float('inf')) else f'{v:.2f}'
+
+
+def _bd_calcular_ia(universo=BREADTH_UNIVERSO_IA, periodo='1y',
+                    descargar_bulk=None, get_close_from_bulk=None):
+    clave = (universo, periodo)
+    hit = _BD_IA_CACHE.get(clave)
+    if hit and _time.time() - hit[0] < 600:
+        return hit[1]
+
+    info = INDICES_CONSTITUYENTES.get(universo)
+    if not info:
+        return None
+    tickers = list(dict.fromkeys(info['constituyentes']))
+    tk_idx = info.get('ticker_indice')
+    descarga = tickers + ([tk_idx] if tk_idx and tk_idx not in tickers else [])
+
+    usar_bulk = descargar_bulk is not None and get_close_from_bulk is not None
+    if usar_bulk:
+        data = descargar_bulk(descarga, period={'6mo': '6mo', '1y': '2y', '2y': '2y'}.get(periodo, '2y'))
+    else:
+        data = _bd_descargar_universo(tuple(descarga), periodo)
+    if data is None:
+        return None
+
+    def _ext(tk, campo):
+        if usar_bulk and campo == 'Close':
+            return get_close_from_bulk(data, tk)
+        return _bd_extraer_serie(data, tk, campo)
+
+    serie_idx_real = _ext(tk_idx, 'Close') if tk_idx else None
+    if serie_idx_real is None or len(serie_idx_real) < 25:
+        serie_idx_real = None
+
+    closes, vols = {}, {}
+    for tk in tickers:
+        c = _ext(tk, 'Close')
+        v = _ext(tk, 'Volume')
+        if c is not None and len(c) > 25:
+            closes[tk] = c
+            vols[tk] = v if v is not None else pd.Series(0, index=c.index)
+    if len(closes) < 5:
+        return None
+
+    df_close = pd.DataFrame(closes).sort_index().ffill().dropna(how='all')
+    df_vol = pd.DataFrame(vols).reindex(df_close.index).fillna(0)
+    n_dias = len(df_close)
+
+    caps = _bd_market_caps(tuple(closes.keys()))
+    snap = _bd_snapshot(df_close, df_vol)
+    if snap is None:
+        return None
+
+    snap_1m = _bd_snapshot(df_close, df_vol, hasta=max(0, n_dias - 22)) if n_dias > 30 else None
+    snap_1w = _bd_snapshot(df_close, df_vol, hasta=max(0, n_dias - 6)) if n_dias > 15 else None
+    snap_2w = _bd_snapshot(df_close, df_vol, hasta=max(0, n_dias - 11)) if n_dias > 20 else None
+
+    conc = _bd_concentracion(list(closes.keys()), caps, df_close)
+    b_hoy = _bd_breadth_score(snap, conc['conc_score'])
+    b_1m = _bd_breadth_score(snap_1m, conc['conc_score']) if snap_1m else None
+    b_1w = _bd_breadth_score(snap_1w, conc['conc_score']) if snap_1w else None
+    b_2w = _bd_breadth_score(snap_2w, conc['conc_score']) if snap_2w else None
+
+    mom_1m = (b_hoy - b_1m) if (b_hoy is not None and b_1m is not None) else None
+    mom_1w = (b_hoy - b_1w) if (b_hoy is not None and b_1w is not None) else None
+    mom_prev = (b_1w - b_2w) if (b_1w is not None and b_2w is not None) else None
+    acel = (mom_1w - mom_prev) if (mom_1w is not None and mom_prev is not None) else None
+
+    # Pesos / índice
+    if conc['pesos'] is not None and conc['pesos'].sum() > 0:
+        pesos = conc['pesos'].reindex(df_close.columns).fillna(0)
+        pesos = pesos / pesos.sum() if pesos.sum() > 0 else pd.Series(1 / df_close.shape[1], index=df_close.columns)
+    else:
+        pesos = pd.Series(1 / df_close.shape[1], index=df_close.columns)
+    idx_proxy = (df_close * pesos).sum(axis=1)
+    idx = serie_idx_real if serie_idx_real is not None else idx_proxy
+
+    def _ret(s, d):
+        return None if (s is None or len(s) <= d) else float(s.iloc[-1] / s.iloc[-d - 1] - 1) * 100
+
+    ret_1d, ret_1w, ret_1m, ret_3m = _ret(idx, 1), _ret(idx, 5), _ret(idx, 21), _ret(idx, 63)
+    ret_6m, ret_1y = _ret(idx, 126), _ret(idx, 252)
+    ret_1m_eq = _ret((df_close / df_close.iloc[0]).mean(axis=1), 21)
+    ew_div = (ret_1m - ret_1m_eq) if (ret_1m is not None and ret_1m_eq is not None) else None
+
+    estado, emo_est, _, desc_est = _bd_estado_mercado(ret_1m, b_hoy, b_1m, snap['ad_score'], snap['nhnl_score'])
+    emo_sc, lab_sc, _ = _bd_estado_por_score(b_hoy)
+    salud = _bd_market_health(b_hoy, mom_1m)
+    emo_rg, lab_rg, _ = _bd_regimen_mercado(b_hoy, mom_1m, snap['ad_score'], snap['trend_score'], ret_1m)
+
+    # Línea A/D
+    rm = df_close.pct_change()
+    ad_line = ((rm > 0).sum(axis=1) - (rm < 0).sum(axis=1)).cumsum()
+    vd = min(21, len(ad_line) - 1)
+    d_ad = (ad_line.iloc[-1] - ad_line.iloc[-vd - 1]) if vd > 0 else 0
+    ad_dir = 'up' if d_ad > 0 else ('down' if d_ad < 0 else 'flat')
+
+    emo_dg, lab_dg, dir_p, dir_b = _bd_matriz_diagnostico(ret_1m, mom_1m)
+    diverg = _bd_detectar_divergencias(dir_p, mom_1m, snap['ad_score'], snap['nh'],
+                                       snap_1m['nh'] if snap_1m else None, ad_dir)
+
+    # Contribución Top 5
+    contrib_t5 = contrib_rs = None
+    if conc['top5_tickers']:
+        r1 = snap['ret_1d_serie']
+        t5 = [t for t in conc['top5_tickers'] if t in r1.index]
+        contrib_t5 = float((pesos.reindex(t5).fillna(0) * r1.reindex(t5).fillna(0)).sum() * 100)
+        tot = float((pesos * r1.reindex(pesos.index).fillna(0)).sum() * 100)
+        contrib_rs = tot - contrib_t5
+
+    # ── Texto ──
+    sg = lambda v, d=1: 'N/D' if v is None else f'{v:+.{d}f}'
+    L = [f"**{emo_est} {estado}** — {desc_est}",
+         f"\n_Universo: **{universo}** · {len(closes)} activos con datos · "
+         f"{'índice real ' + tk_idx if serie_idx_real is not None else 'índice proxy ponderado por cap'}_",
+         "\n| Indicador | Valor |\n|---|---|",
+         f"| Score de Amplitud | **{b_hoy:.0f}/100** {emo_sc} {lab_sc} |",
+         f"| Score de Salud de Mercado | **{'N/D' if salud is None else f'{salud:.0f}/100'}** |",
+         f"| Régimen | {emo_rg} **{lab_rg}** |",
+         f"| Matriz Precio × Amplitud | {emo_dg} {lab_dg} |",
+         f"| Avance / Declive | {snap['adv']} / {snap['dec']} (ratio {_bd_fr(snap['ad_ratio'])} · neto {snap['ad_net']:+d}) |",
+         f"| Máx / Mín 52 sem. | {snap['nh']} / {snap['nl']} (NM−Nm {snap['nhnl_net']:+d} · ratio {_bd_fr(snap['nhnl_ratio'])}) |",
+         f"| Volumen alcista / bajista | {snap['up_vol_pct']:.0f}% / {snap['down_vol_pct']:.0f}% (ratio {_bd_fr(snap['up_down_vol_ratio'])}) |",
+         f"| Concentración Top 5 | {'N/D' if conc['top5_pct'] is None else str(conc['top5_pct']) + '%'}"
+         f" (score {conc['conc_score']:.0f}/100) |"]
+
+    L.append("\n**📐 Momentum de amplitud:** "
+             f"1S {sg(mom_1w)} · 1M {sg(mom_1m)} · aceleración {sg(acel)}"
+             + (" ⚠️ _deterioro acelerando_" if (acel is not None and acel < -1 and mom_1w is not None and mom_1w < 0) else "")
+             + (f" · pond. igualitaria vs índice {ew_div:+.2f}%"
+                + (" (⚠️ rally concentrado)" if ew_div > 1 else " (🟢 participación amplia)" if ew_div < -1 else "")
+                if ew_div is not None else ""))
+
+    L.append("\n**📊 Rendimiento del índice:** " + " · ".join(
+        f"{n} {v:+.2f}%" for n, v in (('1D', ret_1d), ('1S', ret_1w), ('1M', ret_1m),
+                                      ('3M', ret_3m), ('6M', ret_6m), ('1A', ret_1y)) if v is not None))
+
+    L.append("\n**🧩 Subíndices (peso):** "
+             f"Tendencia {snap['trend_score']:.0f} (25%) · Avance/Declive {snap['ad_score']:.0f} (20%) · "
+             f"Máx/Mín {snap['nhnl_score']:.0f} (15%) · Volumen {snap['vol_score']:.0f} (20%) · "
+             f"Concentración {conc['conc_score']:.0f} (20%)")
+    L.append(f"**Amplitud de tendencia:** {snap['pct20']:.0f}% sobre SMA20 · "
+             f"{snap['pct50']:.0f}% sobre SMA50 · {snap['pct200']:.0f}% sobre SMA200")
+
+    if contrib_t5 is not None:
+        L.append(f"**🏗️ Contribución al movimiento de hoy:** Top 5 {contrib_t5:+.2f}% · resto {contrib_rs:+.2f}% → "
+                 + ("altamente concentrado en pocas empresas." if abs(contrib_t5) > abs(contrib_rs)
+                    else "ampliamente distribuido."))
+    if snap_1m:
+        d_nl = snap['nl'] - snap_1m['nl']
+        L.append(f"**🏔️ Nuevos mínimos vs. hace 1 mes:** {d_nl:+d} → "
+                 + ("🟢 disminuyen" if d_nl < 0 else "🔴 aumentan" if d_nl > 0 else "sin cambios"))
+
+    L.append("\n**🔎 Divergencias:**")
+    L.extend(f"- {e} {t}" for e, t in diverg)
+
+    señal = True if b_hoy >= 60 else (False if b_hoy <= 40 else None)
+    res = dict(texto="\n".join(L), score=b_hoy, salud=salud, regimen=lab_rg, señal=señal)
+    _BD_IA_CACHE[clave] = (_time.time(), res)
+    return res
+
+
+def crear_breadth_ia(descargar_bulk=None, get_close_from_bulk=None, universo=BREADTH_UNIVERSO_IA):
+    """Devuelve el dict para sumar a CTX_IA."""
+    def _datos():
+        return _bd_calcular_ia(universo, '1y', descargar_bulk, get_close_from_bulk)
+
+    def _texto():
+        r = _datos()
+        return r['texto'] if r else None
+
+    return {'breadth_datos': _datos, 'resumen_breadth': _texto}
