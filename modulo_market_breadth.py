@@ -804,14 +804,12 @@ def render_market_breadth(
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Selección de universo ──────────────────────────────────────────
-    opciones_modo = ['Lista manual de tickers']
-    if INDICES_CONSTITUYENTES:
-        opciones_modo.insert(0, 'Índice real (constituyentes)')
-    if ACCIONES_POR_INDUSTRIA:
-        opciones_modo.insert(0 if not INDICES_CONSTITUYENTES else 1, 'Industria predefinida')
-
-    modo = st.radio('Universo a analizar', opciones_modo, horizontal=True, key='bd_modo')
+   # ── Selección de universo ──────────────────────────────────────────
+    modo = st.radio(
+        'Universo a analizar',
+        ['Índice real (constituyentes)', 'ETFs (sectores)'],
+        horizontal=True, key='bd_modo',
+    )
 
     tickers_universo, nombre_universo, ticker_indice_real = [], '', None
 
@@ -822,18 +820,13 @@ def render_market_breadth(
         ticker_indice_real = info_idx.get('ticker_indice')
         nombre_universo = idx_sel
         st.caption(f'📌 {len(tickers_universo)} constituyentes reales del índice.')
-    elif modo == 'Industria predefinida' and ACCIONES_POR_INDUSTRIA:
-        ind_sel = st.selectbox('Industria', list(ACCIONES_POR_INDUSTRIA.keys()), key='bd_industria')
-        tickers_universo = list(ACCIONES_POR_INDUSTRIA[ind_sel])
-        nombre_universo = ind_sel
     else:
-        txt = st.text_area(
-            'Tickers separados por coma',
-            'AAPL,MSFT,GOOGL,AMZN,META,NVDA,TSLA,AVGO,ORCL,CRM,ADBE,AMD,QCOM,INTC,IBM',
-            key='bd_manual', height=80,
-        )
-        tickers_universo = sorted(set(t.strip().upper() for t in txt.split(',') if t.strip()))
-        nombre_universo = 'Lista manual'
+        etf_sel = st.selectbox('ETF', list(ETFS_CONSTITUYENTES.keys()), key='bd_etf')
+        info_etf = ETFS_CONSTITUYENTES[etf_sel]
+        tickers_universo = list(info_etf['constituyentes'])
+        ticker_indice_real = info_etf.get('ticker_indice')
+        nombre_universo = etf_sel
+        st.caption(f'📌 {len(tickers_universo)} componentes del ETF.')
 
     c_p1, c_p2 = st.columns([1, 3])
     with c_p1:
@@ -1313,14 +1306,13 @@ def render_market_breadth(
     if chips_navegacion:
         chips_navegacion(df_detalle['Ticker'].tolist(), 'bd_detalle')
 
-    st.caption(
-        '⚠️ Al no existir en Yahoo Finance una lista pública de constituyentes reales de un índice, '
-        'este módulo usa como "universo de mercado" el grupo de tickers que elegiste arriba (industria '
-        'predefinida o lista manual) a modo de proxy representativo. Cuantos más activos incluyas, '
-        'más fiel es la lectura de amplitud real del mercado que estás mirando.'
+   st.caption(
+        '⚠️ Yahoo Finance no expone listas oficiales de constituyentes: el universo analizado es la lista '
+        'cargada en el módulo para cada índice / ETF. Si hay cambios de composición, actualizá la lista '
+        'correspondiente para mantener fiel la lectura de amplitud.'
     )
 
-    # ==============================================================
+# ==============================================================
 #  VERSIÓN TEXTO PARA EL ASISTENTE IA
 #  Misma lógica que render_market_breadth, sin dibujar nada.
 #  Devuelve dict(texto, score, salud, regimen, señal) o None.
