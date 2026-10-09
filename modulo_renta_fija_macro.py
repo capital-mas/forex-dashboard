@@ -640,7 +640,7 @@ ESTADO_INTERPRETACION = {
     'Sensibilidad al Consumo (XLY/XLP)': dict(
         modo='sma',
         arriba='Consumidor gastando con confianza en bienes no esenciales',
-        abajo='Consumidor recortando gasto discrecional',
+        abajo='Rotación hacia consumo básico / Menor confianza del consumidor',
     ),
     'Salud Economía Real (XLI/XLU)': dict(
         modo='sma',
@@ -651,6 +651,16 @@ ESTADO_INTERPRETACION = {
         modo='sma',
         arriba='Apetito especulativo real por innovación disruptiva',
         abajo='Refugio en calidad dentro del sector tecnológico',
+    ),
+    'Especulación Alta Beta (ARKK/SPY)': dict(
+        modo='sma',
+        arriba='Apetito especulativo elevado (posible euforia)',
+        abajo='Pérdida de apetito especulativo / Preferencia por Megacaps',
+    ),
+    'Small Caps vs Mercado (IWM/SPY)': dict(
+        modo='sma',
+        arriba='Rally ampliándose hacia small caps (apetito por riesgo doméstico)',
+        abajo='Pérdida de apetito por riesgo doméstico / Preferencia por Megacaps',
     ),
     'Cobre/Oro — Doctor Copper (CPER/GLD)': dict(
         modo='sma',
