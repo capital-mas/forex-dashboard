@@ -1819,6 +1819,7 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
     _render_alertas(alertas)
 
     tabs = st.tabs([
+        '📝 Resumen',
         '💵 Renta Fija', '🏥 Salud del Mercado', '📊 Matriz de Ratios',
         '🌪️ Volatilidad y Miedo', '💧 Liquidez y Apalancamiento',
         '🔄 Rotación Sectorial', '🪙 Valuación Macro y Commodities',
@@ -1826,15 +1827,18 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
     ])
 
     with tabs[0]:
-        _tab_renta_fija(precios)
+        _tab_resumen(precios, df_ratios, alertas)
 
     with tabs[1]:
-        _tab_salud_mercado(precios, df_ratios)
+        _tab_renta_fija(precios)
 
     with tabs[2]:
-        _tab_matriz_ratios(df_ratios)
+        _tab_salud_mercado(precios, df_ratios)
 
     with tabs[3]:
+        _tab_matriz_ratios(df_ratios)
+
+    with tabs[4]:
         st.markdown("""
         <div class="rf-info-banner">
           Ratios de <b>volatilidad y miedo institucional</b>: miden el nivel de cobertura
@@ -1847,7 +1851,7 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
             'Volatilidad y Miedo', C_RED,
         )
 
-    with tabs[4]:
+    with tabs[5]:
         st.markdown("""
         <div class="rf-info-banner">
           Ratios de <b>liquidez y apalancamiento sistémico</b>: rastrean la disponibilidad
@@ -1858,7 +1862,7 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
             df_ratios, ['Apetito Apalancamiento (SPHB/SPLV)'], 'Liquidez y Apalancamiento', '#bc8cff',
         )
 
-    with tabs[5]:
+    with tabs[6]:
         st.markdown("""
         <div class="rf-info-banner">
           Ratios de <b>rotación sectorial profunda</b>: permiten saber en qué fase del
@@ -1873,7 +1877,7 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
             'Rotación Sectorial', C_LRED,
         )
 
-    with tabs[6]:
+    with tabs[7]:
         st.markdown("""
         <div class="rf-info-banner">
           Ratios de <b>valuación macro y commodities</b>: relacionan materias primas
@@ -1888,7 +1892,7 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
             'Valuación Macro y Commodities', '#cd7f32',
         )
    
-    with tabs[7]:
+    with tabs[8]:
         st.markdown("""
         <div class="rf-info-banner">
           Ratios de <b>flujos globales y países</b>: muestran hacia dónde rota el capital entre
