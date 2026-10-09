@@ -129,6 +129,7 @@ FACTORES_AVANZADOS = {
     'ARK Innovation (ARKK)':      ('ARKK',  'Rotación Sectorial', '#d2a8ff'),
     'Cobre (CPER)':               ('CPER',  'Macro Valuación', '#cd7f32'),
     'Oro (GLD)':                  ('GLD',   'Macro Valuación', '#e3b341'),
+    'Petróleo (USO)':             ('USO',  'Macro Commodities', '#ffa657'),
     'Energía (XLE)':              ('XLE',   'Macro Valuación', '#ffa657'),
     'Desarrollados ex-US (EFA)':  ('EFA',  'Global y Países', '#3a7bd5'),
     'Commodities (DBC)':          ('DBC',  'Macro Commodities', '#cd7f32'),
@@ -281,6 +282,8 @@ def calcular_matriz_ratios_macro(precios):
     ratios['Rotación Crecimiento vs Refugio (SPY/TLT)']    = r('SPY', 'TLT')
     ratios['Liderazgo Tecnológico (QQQ/SPY)']              = r('QQQ', 'SPY')
     ratios['Estilos de Inversión (IWF/IWD)']               = r('IWF', 'IWD')
+    ratios['Europa vs Mercado (VGK/SPY)']      = r('VGK', 'SPY')
+    ratios['Petróleo vs Mercado (USO/SPY)']    = r('USO', 'SPY')
 
     # ── Ratios avanzados: Volatilidad y Miedo Institucional ─────────────
     vix = precios['^VIX'].dropna() if '^VIX' in precios.columns else None
@@ -638,6 +641,10 @@ GLOSARIO_RATIOS = {
         'Compara el ETF de acero y metales (SLX) contra el S&P 500 (SPY). Mide el impulso de la '
         'construcción, el acero y la infraestructura pesada. Si sube, hay demanda de insumos '
         'básicos de construcción; si cae, esa demanda se contrae.',
+    'Europa vs Mercado (VGK/SPY)':
+        'Compara Europa (VGK) contra el S&P 500 (SPY). Si sube, el capital rota hacia Europa; si cae, domina EE.UU.',
+    'Petróleo vs Mercado (USO/SPY)':
+        'Compara el petróleo (USO) contra el S&P 500 (SPY). Si sube, hay presión inflacionaria por energía; si cae, alivio en costos.',
 }
 
 
@@ -1344,6 +1351,7 @@ ORDEN_RATIOS = [
     ('Japón vs Desarrollados (EWJ/EFA)', 'Global y Países'),
     ('Estrés Monetario Emergente (EMLC/EMB)', 'Global y Países'),
     ('Flujo Global (EEM/VT)', 'Global y Países'),
+    ('Europa vs Mercado (VGK/SPY)', 'Global y Países'),
     ('Riesgo Soberano Emergente (EMB/IEF)', 'Global y Deuda'),
     ('Rotación Crecimiento vs Refugio (SPY/TLT)', 'Acciones y Estilos'),
     ('Liderazgo Tecnológico (QQQ/SPY)', 'Acciones y Estilos'),
@@ -1359,6 +1367,7 @@ ORDEN_RATIOS = [
     ('Commodities vs Mercado (DBC/SPY)', 'Macro y Commodities'),
     ('Cobre/Oro — Doctor Copper (CPER/GLD)', 'Macro y Commodities'),
     ('Demanda Industrial Plata/Oro (SLV/GLD)', 'Macro y Commodities'),
+    ('Petróleo vs Mercado (USO/SPY)', 'Macro y Commodities'),
     ('Energía vs Mercado (XLE/SPY)', 'Macro y Commodities'),
     ('Inflación de Alimentos (DBA/SPY)', 'Macro y Commodities'),
     ('Metales de Infraestructura (SLX/SPY)', 'Macro y Commodities'),
@@ -1416,43 +1425,69 @@ def _tab_matriz_ratios(df_ratios):
     if filas:
         df_tabla = pd.DataFrame(filas)
 
-        def _color_var(val):
-            try:
-                v = float(val)
-                return f'color:{"#3fb950" if v >= 0 else "#f85149"};font-weight:700'
-            except Exception:
-                return ''
+        # ── Filtros ──
+        f1, f2, f3 = st.columns([2, 1.2, 1.6])
+        with f1:
+            grupos_sel = st.multiselect('Grupo', sorted(df_tabla['Grupo'].unique()),
+                                        key='rf_filtro_grupo', placeholder='Todos los grupos')
+        with f2:
+            dir_sel = st.selectbox('Estado', ['Todos', '▲ Alcistas', '▼ Bajistas'],
+                                   key='rf_filtro_estado')
+        with f3:
+            texto = st.text_input('Buscar', key='rf_filtro_texto',
+                                  placeholder='Ej: SPY, crédito, oro...')
 
-        def _color_estado(row):
-            color = estado_colors.get(row['Ratio'], C_MUTED)
-            return [f'color:{color};font-weight:700' if col == 'Estado' else '' for col in row.index]
+        if grupos_sel:
+            df_tabla = df_tabla[df_tabla['Grupo'].isin(grupos_sel)]
+        if dir_sel.startswith('▲'):
+            df_tabla = df_tabla[df_tabla['Estado'].str.startswith('▲')]
+        elif dir_sel.startswith('▼'):
+            df_tabla = df_tabla[df_tabla['Estado'].str.startswith('▼')]
+        if texto:
+            m = (df_tabla['Ratio'].str.contains(texto, case=False, regex=False) |
+                 df_tabla['Estado'].str.contains(texto, case=False, regex=False))
+            df_tabla = df_tabla[m]
+        df_tabla = df_tabla.reset_index(drop=True)
 
-        _map = 'map' if hasattr(df_tabla.style, 'map') else 'applymap'
-        styled = (df_tabla.style
-                  .pipe(lambda s: getattr(s, _map)(_color_var, subset=['Var. 5 ruedas', 'Var. 20 ruedas']))
-                  .apply(_color_estado, axis=1)
-                  .set_properties(**{'background-color': C_BG1, 'color': C_TEXT, 'border': f'1px solid {C_GRID}'})
-                  .set_properties(subset=['Estado', 'Ratio'], **{'text-align': 'left'})
-                  .set_table_styles([
-                      {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', C_TEXT),
-                          ('font-weight', '700'), ('text-align', 'center'),
-                          ('border-bottom', f'2px solid {C_ACENT}'), ('font-size', '11px')]},
-                      {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11.5px')]},
-                  ]))
-        st.dataframe(styled, use_container_width=True, hide_index=True,
-                     height=min(950, len(df_tabla) * 38 + 45))
-        st.caption(f'{len(df_tabla)} ratios calculados · las variaciones están en % salvo los '
-                   'spreads de curva, que van en puntos porcentuales.')
+        if df_tabla.empty:
+            st.info('Ningún ratio coincide con los filtros elegidos.')
+        else:
+            def _color_var(val):
+                try:
+                    v = float(val)
+                    return f'color:{"#3fb950" if v >= 0 else "#f85149"};font-weight:700'
+                except Exception:
+                    return ''
+
+            def _color_estado(row):
+                color = estado_colors.get(row['Ratio'], C_MUTED)
+                return [f'color:{color};font-weight:700' if col == 'Estado' else '' for col in row.index]
+
+            _map = 'map' if hasattr(df_tabla.style, 'map') else 'applymap'
+            styled = (df_tabla.style
+                      .pipe(lambda s: getattr(s, _map)(_color_var, subset=['Var. 5 ruedas', 'Var. 20 ruedas']))
+                      .apply(_color_estado, axis=1)
+                      .set_properties(**{'background-color': C_BG1, 'color': C_TEXT, 'border': f'1px solid {C_GRID}'})
+                      .set_properties(subset=['Estado', 'Ratio'], **{'text-align': 'left'})
+                      .set_table_styles([
+                          {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', C_TEXT),
+                              ('font-weight', '700'), ('text-align', 'center'),
+                              ('border-bottom', f'2px solid {C_ACENT}'), ('font-size', '11px')]},
+                          {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11.5px')]},
+                      ]))
+            st.dataframe(styled, use_container_width=True, hide_index=True,
+                         height=min(950, len(df_tabla) * 38 + 45))
+            st.caption(f'{len(df_tabla)} ratios mostrados · las variaciones están en % salvo los '
+                       'spreads de curva, que van en puntos porcentuales.')
+
+            st.markdown('### 📈 Ver un ratio en detalle')
+            disponibles = list(df_tabla['Ratio'])
+            sel = st.selectbox('Elegí un ratio', disponibles, key='rf_ratio_detalle_sel')
+            fig = _fig_serie_simple(sel, df_ratios[sel].dropna(), sma_ventana=20)
+            st.plotly_chart(fig, use_container_width=True, config=_DEFAULT_PLOTLY_CONFIG, key='rf_fig_detalle')
+            _tarjeta_interp('¿Qué significa este ratio?', GLOSARIO_RATIOS.get(sel, 'Sin descripción.'), C_ACENT)
     else:
         st.info('No se pudieron calcular los ratios (datos insuficientes).')
-
-    st.markdown('### 📈 Ver un ratio en detalle')
-    disponibles = [n for n, _ in lista if n in df_ratios.columns and not df_ratios[n].dropna().empty]
-    if disponibles:
-        sel = st.selectbox('Elegí un ratio', disponibles, key='rf_ratio_detalle_sel')
-        fig = _fig_serie_simple(sel, df_ratios[sel].dropna(), sma_ventana=20)
-        st.plotly_chart(fig, use_container_width=True, config=_DEFAULT_PLOTLY_CONFIG, key='rf_fig_detalle')
-        _tarjeta_interp('¿Qué significa este ratio?', GLOSARIO_RATIOS.get(sel, 'Sin descripción.'), C_ACENT)
 
 def _tab_grupo_avanzado(df_ratios, ratios_grupo, titulo_grupo, color_grupo):
     """Renderiza un grupo de ratios avanzados (volatilidad, liquidez, rotación,
