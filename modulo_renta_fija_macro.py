@@ -305,6 +305,7 @@ def calcular_matriz_ratios_macro(precios):
     ratios['Salud Economía Real (XLI/XLU)']            = r('XLI', 'XLU')
     ratios['Especulación Alta Beta (ARKK/SPY)']          = r('ARKK', 'SPY')
     ratios['Small Caps vs Mercado (IWM/SPY)']            = r('IWM', 'SPY')
+    ratios['Apetito Innovación/Especulación (ARKK/QQQ)'] = r('ARKK', 'QQQ')
 
     # ── Ratios avanzados: Valuación Macro y Commodities ────────────────
     ratios['Cobre/Oro — Doctor Copper (CPER/GLD)'] = r('CPER', 'GLD')
