@@ -1581,6 +1581,7 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
         '💵 Renta Fija', '🏥 Salud del Mercado', '📊 Matriz de Ratios',
         '🌪️ Volatilidad y Miedo', '💧 Liquidez y Apalancamiento',
         '🔄 Rotación Sectorial', '🪙 Valuación Macro y Commodities',
+        '🌍 Global y Países',
     ])
 
     with tabs[0]:
@@ -1640,10 +1641,28 @@ def modulo_renta_fija_macro(PLOTLY_CONFIG=None, descargar_bulk=None, get_close_f
         """, unsafe_allow_html=True)
         _tab_grupo_avanzado(
             df_ratios,
-            ['Cobre/Oro — Doctor Copper (CPER/GLD)', 'Energía vs Mercado (XLE/SPY)'],
-            'Valuación Macro y Commodities', C_YELL,
+            ['Commodities vs Mercado (DBC/SPY)', 'Cobre/Oro — Doctor Copper (CPER/GLD)',
+             'Demanda Industrial Plata/Oro (SLV/GLD)', 'Energía vs Mercado (XLE/SPY)',
+             'Inflación de Alimentos (DBA/SPY)', 'Metales de Infraestructura (SLX/SPY)'],
         )
-
+    with tabs[7]:
+        st.markdown("""
+        <div class="rf-info-banner">
+          Ratios de <b>flujos globales y países</b>: muestran hacia dónde rota el capital entre
+          EE.UU., desarrollados, emergentes, China, Latinoamérica, Brasil y Japón, y cómo está
+          el riesgo soberano emergente.
+        </div>
+        """, unsafe_allow_html=True)
+        _tab_grupo_avanzado(
+            df_ratios,
+            ['Flujo Global a Desarrollados (EFA/VT)', 'Emergentes vs Desarrollados (EEM/EFA)',
+             'China vs EE. UU. (FXI/SPY)', 'Latinoamérica vs Mercado (ILF/SPY)',
+             'Brasil vs Mercado Global (EWZ/VT)', 'Japón vs Desarrollados (EWJ/EFA)',
+             'Estrés Monetario Emergente (EMLC/EMB)', 'Flujo Global (EEM/VT)',
+             'Riesgo Soberano Emergente (EMB/IEF)'],
+            'Global y Países', C_ACENT,
+        )
+        
     st.markdown(f"""
     <div style='text-align:center;color:#3a4a5a;font-size:10px;padding:14px;
          border-top:1px solid #21262d;margin-top:12px'>
