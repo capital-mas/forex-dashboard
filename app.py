@@ -7704,6 +7704,67 @@ def _pares_fig_ratio(nombre, df, z_entry):
     fig.update_annotations(font=dict(color=C_TEXT, size=12))
     return fig
 
+# ── Nombres legibles de los activos del scanner ──────────────────────
+NOMBRES_PARES_FIJOS = {
+    # Índices
+    '^GSPC': 'S&P 500', '^IXIC': 'Nasdaq Composite', '^DJI': 'Dow Jones', '^RUT': 'Russell 2000',
+    '^BVSP': 'Bovespa (Brasil)', '^MERV': 'Merval (Argentina)', '^N225': 'Nikkei 225 (Japón)',
+    '^HSI': 'Hang Seng (Hong Kong)', '^KS11': 'KOSPI (Corea del Sur)', '^NSEI': 'Nifty 50 (India)',
+    '^GDAXI': 'DAX (Alemania)', '^STOXX50E': 'Euro Stoxx 50', '^FTSE': 'FTSE 100 (R. Unido)',
+    '^FCHI': 'CAC 40 (Francia)', 'ACWI': 'Mercado mundial (ACWI)',
+    # Cripto
+    'BTC': 'Bitcoin', 'ETH': 'Ethereum', 'SOL': 'Solana', 'BNB': 'BNB', 'XRP': 'XRP', 'ADA': 'Cardano',
+    'DOGE': 'Dogecoin', 'AVAX': 'Avalanche', 'DOT': 'Polkadot', 'LINK': 'Chainlink', 'LTC': 'Litecoin',
+    'ATOM': 'Cosmos', 'ETC': 'Ethereum Classic', 'XLM': 'Stellar', 'FIL': 'Filecoin',
+    'ICP': 'Internet Computer', 'HBAR': 'Hedera', 'NEAR': 'NEAR Protocol', 'ARB': 'Arbitrum',
+    # Metales / commodities
+    'GLD': 'ETF Oro', 'SLV': 'ETF Plata', 'GDX': 'ETF Mineras de oro', 'B': 'Barrick Gold',
+    'NG': 'NovaGold', 'DBC': 'ETF Commodities (canasta)', 'USO': 'ETF Petróleo', 'UNG': 'ETF Gas natural',
+    'PPLT': 'ETF Platino', 'PALL': 'ETF Paladio', 'CPER': 'ETF Cobre', 'DBA': 'ETF Agricultura',
+    'CORN': 'ETF Maíz', 'WEAT': 'ETF Trigo', 'SOYB': 'ETF Soja', 'UGA': 'ETF Gasolina',
+    # Argentina / Brasil
+    'IRS': 'IRSA', 'CRESY': 'Cresud', 'ARGT': 'ETF Argentina', 'EWZ': 'ETF Brasil',
+    # ETFs sectoriales SPDR
+    'SPY': 'ETF S&P 500', 'XLK': 'Sector Tecnología', 'XLF': 'Sector Financiero', 'XLE': 'Sector Energía',
+    'XLV': 'Sector Salud', 'XLY': 'Sector Consumo Discrecional', 'XLP': 'Sector Consumo Básico',
+    'XLI': 'Sector Industriales', 'XLU': 'Sector Utilities', 'XLRE': 'Sector Real Estate',
+    'XLC': 'Sector Comunicaciones', 'XLB': 'Sector Materiales',
+    # ETFs benchmark de sub-sectores
+    'SOXX': 'ETF Semiconductores', 'SKYY': 'ETF Cloud', 'IGV': 'ETF Software', 'CIBR': 'ETF Ciberseguridad',
+    'FINX': 'ETF Fintech', 'FDN': 'ETF Internet', 'IBUY': 'ETF E-commerce', 'XBI': 'ETF Biotecnología',
+    'PPH': 'ETF Farmacéuticas', 'IHI': 'ETF Equipos médicos', 'IHF': 'ETF Servicios de salud',
+    'KIE': 'ETF Seguros', 'KCE': 'ETF Mercados capitales', 'KRE': 'ETF Bancos regionales',
+    'IYG': 'ETF Finanzas diversificadas', 'XOP': 'ETF Petróleo y gas', 'FCG': 'ETF Gas natural',
+    'ICLN': 'ETF Energía limpia', 'TAN': 'ETF Energía solar', 'LIT': 'ETF Litio y baterías',
+    'ITA': 'ETF Aeroespacial y defensa', 'XAR': 'ETF Defensa', 'IYT': 'ETF Transporte', 'XRT': 'ETF Retail',
+    'CARZ': 'ETF Autos', 'PEJ': 'ETF Ocio y viajes', 'PBJ': 'ETF Alimentos', 'COPX': 'ETF Mineras de cobre',
+    'SLX': 'ETF Acero', 'PHO': 'ETF Agua', 'INDS': 'ETF REIT Industrial', 'REZ': 'ETF REIT Residencial',
+    'IYZ': 'ETF Telecomunicaciones', 'FXI': 'ETF China', 'INDA': 'ETF India', 'VGK': 'ETF Europa',
+}
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _pares_nombres(tickers_items):
+    """tickers_items: tupla de (codigo, symbol_yahoo). Devuelve {codigo: nombre legible}.
+    Usa el diccionario fijo y, si falta, pide el nombre a Yahoo (en paralelo, cacheado 24h)."""
+    def _uno(item):
+        codigo, symbol = item
+        if codigo in NOMBRES_PARES_FIJOS:
+            return codigo, NOMBRES_PARES_FIJOS[codigo]
+        try:
+            import yfinance as yf
+            info = yf.Ticker(symbol).info or {}
+            nombre = info.get('shortName') or info.get('longName')
+            return codigo, (nombre or codigo)
+        except Exception:
+            return codigo, codigo
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return dict(ex.map(_uno, tickers_items))
+
+
+def _pares_etiqueta(codigo, nombres):
+    n = nombres.get(codigo, codigo)
+    return codigo if n == codigo else f'{codigo} · {n}'
 
 def modulo_scanner_pares():
     st.markdown("""
@@ -7816,7 +7877,8 @@ def modulo_scanner_pares():
         ('⚪ Neutros', str(n_neutro), f'|Z| < {z_exit}', '#e3b341'),
     ])
 
-    fc1, fc2, fc3 = st.columns(3)
+    # ── FILTROS: Sector · Señal · Activo · Rango |Z| ─────────────────────
+    fc1, fc2, fc3, fc4 = st.columns(4)
     with fc1:
         sec_u = ['Todos'] + sorted(df_res['Sector'].unique().tolist())
         f_sec = st.selectbox('Sector', sec_u, key='pares_f_sector')
@@ -7824,6 +7886,13 @@ def modulo_scanner_pares():
         sen_u = ['Todas'] + sorted(df_res['Señal'].unique().tolist())
         f_sen = st.selectbox('Señal', sen_u, key='pares_f_senal')
     with fc3:
+        codigos_res = sorted(set(df_res['Numerador']) | set(df_res['Denominador']))
+        f_act = st.selectbox(
+            'Activo', ['Todos'] + codigos_res, key='pares_f_activo',
+            format_func=lambda c: 'Todos' if c == 'Todos' else _pares_etiqueta(c, nombres),
+            help='Mostrá solo las parejas donde aparece este activo (como numerador o denominador).',
+        )
+    with fc4:
         max_z_data = float(max(3.0, df_res['Z-Score'].abs().max()))
         if 'pares_f_z' not in st.session_state:
             st.session_state['pares_f_z'] = (0.0, max_z_data)
@@ -7836,7 +7905,34 @@ def modulo_scanner_pares():
     df_f = df_res.copy()
     if f_sec != 'Todos': df_f = df_f[df_f['Sector'] == f_sec]
     if f_sen != 'Todas': df_f = df_f[df_f['Señal'] == f_sen]
-    df_f = df_f[df_f['Z-Score'].abs().between(*f_z)]
+    if f_act != 'Todos':
+        df_f = df_f[(df_f['Numerador'] == f_act) | (df_f['Denominador'] == f_act)]
+    df_f = df_f[df_f['Z-Score'].abs().between(*f_z)].copy()
+
+    cols_tabla = ['Sector', 'Pareja', 'Activos', 'Ratio', 'Media', 'Z-Score', 'Señal']
+
+    # Si hay un activo elegido: resumen corto + columna con el sesgo para ESE activo
+    if f_act != 'Todos':
+        def _sesgo_activo(fila):
+            z = fila['Z-Score']
+            if abs(z) < z_entry:
+                return '⚪ Sin señal'
+            es_num = fila['Numerador'] == f_act
+            favorece_compra = (z < -z_entry) if es_num else (z > z_entry)
+            return '🟢 Favorece comprar' if favorece_compra else '🔴 Favorece vender'
+
+        if not df_f.empty:
+            df_f['Sesgo del activo'] = df_f.apply(_sesgo_activo, axis=1)
+            cols_tabla.append('Sesgo del activo')
+            n_c = int((df_f['Sesgo del activo'] == '🟢 Favorece comprar').sum())
+            n_v = int((df_f['Sesgo del activo'] == '🔴 Favorece vender').sum())
+            st.markdown(
+                f'<div class="info-banner"><b>{escape_html(_pares_etiqueta(f_act, nombres))}</b> aparece en '
+                f'<b>{len(df_f)}</b> pareja(s) con estos filtros: '
+                f'🟢 {n_c} favorecen comprarlo · 🔴 {n_v} favorecen venderlo. '
+                f'<span style="color:#6b7d9a">(Es una señal relativa al otro activo de la pareja, no absoluta.)</span></div>',
+                unsafe_allow_html=True,
+            )
 
     def _color_z(val):
         try:
@@ -7847,7 +7943,7 @@ def modulo_scanner_pares():
         except: return ''
 
     _map = 'map' if hasattr(df_f.style, 'map') else 'applymap'
-    styled = (df_f[['Sector','Pareja','Ratio','Media','Z-Score','Señal']].style
+    styled = (df_f[cols_tabla].style
               .pipe(lambda s: getattr(s, _map)(_color_z, subset=['Z-Score']))
               .set_properties(**{'background-color':'#0d1117','color':'#e6edf3','border':'1px solid #21262d'})
               .set_table_styles([
@@ -7859,70 +7955,22 @@ def modulo_scanner_pares():
     st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
     st.caption(f'{len(df_f)} pares mostrados de {len(df_res)} totales')
 
-    # ── BUSCAR SEÑALES POR ACTIVO ──────────────────────────────────────
-    st.markdown('---')
-    st.markdown('### 🔎 Buscar señales por activo')
-    st.caption('Elegí un activo puntual y mirá TODAS las parejas donde aparece (como numerador o denominador), con su sector, Z-Score y señal.')
-
-    activos_disponibles = sorted(tickers_codigos.keys())
-    activo_sel = st.selectbox('Activo', activos_disponibles, key='pares_activo_sel')
-
-    if activo_sel:
-        df_activo = df_res[
-            (df_res['Numerador'] == activo_sel) | (df_res['Denominador'] == activo_sel)
-        ].copy()
-        df_activo = df_activo.sort_values(
-            'Z-Score', key=lambda s: s.abs(), ascending=False
-        ).reset_index(drop=True)
-
-        if df_activo.empty:
-            st.info(f'No hay parejas calculadas para {activo_sel} con los sectores/parámetros elegidos arriba.')
-        else:
-            n_compra_act = int((df_activo['Z-Score'] < -z_entry).sum())
-            n_venta_act  = int((df_activo['Z-Score'] > z_entry).sum())
-            n_neutro_act = int((df_activo['Z-Score'].abs() < z_exit).sum())
-            kpi_cards_4([
-                ('Parejas encontradas', str(len(df_activo)), activo_sel, '#3a7bd5'),
-                ('🟢 Señal compra', str(n_compra_act), f'Z < -{z_entry}', '#3fb950'),
-                ('🔴 Señal venta', str(n_venta_act), f'Z > {z_entry}', '#f85149'),
-                ('⚪ Neutros', str(n_neutro_act), f'|Z| < {z_exit}', '#e3b341'),
-            ])
-
-            styled_act = (
-                df_activo[['Sector', 'Pareja', 'Ratio', 'Media', 'Z-Score', 'Señal']].style
-                .pipe(lambda s: getattr(s, _map)(_color_z, subset=['Z-Score']))
-                .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
-                .set_table_styles([
-                    {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
-                        ('font-weight', '700'), ('text-align', 'center'),
-                        ('border-bottom', '2px solid #79c0ff'), ('font-size', '11px')]},
-                    {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
-                ])
-            )
-            st.dataframe(styled_act, use_container_width=True,
-                         height=min(500, max(150, len(df_activo) * 38 + 45)))
-
-            with st.expander(f'📝 Lectura detallada de cada pareja de {activo_sel}', expanded=False):
-                for _, fila_act in df_activo.iterrows():
-                    st.markdown(f"""
-                    <div class="interp-card">
-                      <div class="interp-header">{fila_act['Pareja']} · Sector: {fila_act['Sector']} · Z-Score: {fila_act['Z-Score']:+.2f}</div>
-                      {fila_act['Lectura']}<br>
-                      <span style="color:#6b7d9a;font-size:11px">Señal actual: {fila_act['Señal']}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-
+    # ── DETALLE DE UN PAR ────────────────────────────────────────────────
     st.markdown('---')
     st.markdown('### 📈 Detalle de un par')
     pares_disp = df_f['Pareja'].tolist()
     if pares_disp:
-        par_sel = st.selectbox('Elegí un par para ver el gráfico', pares_disp, key='pares_detalle_sel')
+        desc_par = dict(zip(df_res['Pareja'], df_res['Activos']))
+        par_sel = st.selectbox(
+            'Elegí un par para ver el gráfico', pares_disp, key='pares_detalle_sel',
+            format_func=lambda p: f'{p}  —  {desc_par.get(p, "")}',
+        )
         fila = df_res[df_res['Pareja'] == par_sel].iloc[0]
         st.plotly_chart(_pares_fig_ratio(par_sel, dataframes[par_sel], z_entry),
                          use_container_width=True, key=f'pares_fig_{par_sel}')
         st.markdown(f"""
         <div class="interp-card">
-          <div class="interp-header">{par_sel} · Sector: {fila['Sector']} · Z-Score: {fila['Z-Score']:+.2f}</div>
+          <div class="interp-header">{escape_html(par_sel)} · {escape_html(fila['Activos'])} · Sector: {escape_html(fila['Sector'])} · Z-Score: {fila['Z-Score']:+.2f}</div>
           {fila['Lectura']}<br>
           <span style="color:#6b7d9a;font-size:11px">Señal actual: {fila['Señal']}</span>
         </div>
