@@ -6619,30 +6619,22 @@ def modulo_optimizador():
         st.info('Agregá al menos 2 activos para poder optimizar la cartera.')
         return
 
-    moneda_opt = _opt_detectar_moneda(st.session_state['opt_tickers'])
-    if moneda_opt == 'MIXTA':
-        st.error('⚠️ Estás mezclando activos en pesos (.BA) con activos en USD. Los retornos quedarían en '
-                 'monedas distintas y las correlaciones/volatilidades no serían comparables. '
-                 'Dejá solo tickers .BA (simulación en ARS) o solo tickers en USD.')
-        return
+    st.markdown('---')
+    moneda_opt = st.radio(
+        'Moneda de la cartera y del capital', ['USD', 'ARS'], horizontal=True, key='opt_moneda_sel',
+        help='La optimización siempre se calcula en USD. Esta moneda define en qué se muestran tu cartera '
+             'actual, el capital inicial y los resultados en plata (capital final, VaR, crisis, etc.).',
+    )
     st.session_state['opt_moneda'] = moneda_opt
 
-    st.markdown('---')
     cb1, cb2, cb3 = st.columns(3)
     with cb1:
-        if moneda_opt == 'ARS':
-            bench_opciones = {
-                'Merval (^MERV)': '^MERV',
-                'S&P 500 CEDEAR (SPY.BA)': 'SPY.BA',
-                'Nasdaq 100 CEDEAR (QQQ.BA)': 'QQQ.BA',
-            }
-        else:
-            bench_opciones = {
-                'S&P 500 (SPY)': 'SPY', 'Nasdaq 100 (QQQ)': 'QQQ', 'Dow Jones (DIA)': 'DIA',
-                'Russell 2000 (IWM)': 'IWM', 'Mercado total EE.UU. (VTI)': 'VTI',
-                'Innovación / growth (ARKK)': 'ARKK', 'Mercados emergentes (EEM)': 'EEM',
-            }
-        bench_label = st.selectbox('Benchmark', list(bench_opciones.keys()), key=f'opt_bench_sel_{moneda_opt}')
+        bench_opciones = {
+            'S&P 500 (SPY)': 'SPY', 'Nasdaq 100 (QQQ)': 'QQQ', 'Dow Jones (DIA)': 'DIA',
+            'Russell 2000 (IWM)': 'IWM', 'Mercado total EE.UU. (VTI)': 'VTI',
+            'Innovación / growth (ARKK)': 'ARKK', 'Mercados emergentes (EEM)': 'EEM',
+        }
+        bench_label = st.selectbox('Benchmark', list(bench_opciones.keys()), key='opt_bench_sel')
         benchmark_opt = bench_opciones[bench_label]
     with cb2:
         if moneda_opt == 'ARS':
