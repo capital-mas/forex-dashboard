@@ -774,7 +774,7 @@ def _bd_regimen_mercado(breadth_hoy, momentum_1m, ad_score, trend_score, ret_1m)
 #  RENDER PRINCIPAL
 # ==============================================================
 
-def render_market_breadth(
+def _bd_render_detalle(
     ACCIONES_POR_INDUSTRIA=None,
     PLOTLY_CONFIG=None,
     kpi_cards_4=None,
@@ -1312,6 +1312,314 @@ def render_market_breadth(
         'correspondiente para mantener fiel la lectura de amplitud.'
     )
 
+# ==============================================================
+#  RESUMEN GENERAL — todos los índices y ETFs en una sola vista
+# ==============================================================
+
+_BD_ESTADOS_POSITIVOS = ('CONFIRMACIÓN ALCISTA', 'ACUMULACIÓN / RECUPERACIÓN')
+_BD_ESTADOS_ALERTA = ('DIVERGENCIA', 'CONCENTRACIÓN', 'DETERIORO GENERALIZADO')
+
+
+def _bd_todos_los_universos():
+    """{nombre: (tipo, info)} con todos los índices y ETFs cargados."""
+    out = {}
+    for n, info in INDICES_CONSTITUYENTES.items():
+        out[n] = ('Índice', info)
+    for n, info in ETFS_CONSTITUYENTES.items():
+        out[n] = ('ETF', info)
+    return out
+
+
+def _bd_nombre_corto(nombre):
+    return nombre.split(' — ')[0].split(' (')[0][:24]
+
+
+def _bd_resumen_universo(info, periodo='1y', descargar_bulk=None, get_close_from_bulk=None):
+    """Calcula las métricas clave de UN universo (misma lógica que el detalle)
+    y devuelve un dict liviano, o None si no hay datos suficientes."""
+    tickers = list(dict.fromkeys(info['constituyentes']))
+    tk_idx = info.get('ticker_indice')
+    descarga = tickers + ([tk_idx] if tk_idx and tk_idx not in tickers else [])
+
+    usar_bulk = descargar_bulk is not None and get_close_from_bulk is not None
+    if usar_bulk:
+        data = descargar_bulk(descarga, period={'6mo': '6mo', '1y': '2y', '2y': '2y'}.get(periodo, '2y'))
+    else:
+        data = _bd_descargar_universo(tuple(descarga), periodo)
+    if data is None:
+        return None
+
+    def _ext(tk, campo):
+        if usar_bulk and campo == 'Close':
+            return get_close_from_bulk(data, tk)
+        return _bd_extraer_serie(data, tk, campo)
+
+    serie_idx = _ext(tk_idx, 'Close') if tk_idx else None
+    if serie_idx is None or len(serie_idx) < 25:
+        serie_idx = None
+
+    closes, vols = {}, {}
+    for tk in tickers:
+        c = _ext(tk, 'Close')
+        v = _ext(tk, 'Volume')
+        if c is not None and len(c) > 25:
+            closes[tk] = c
+            vols[tk] = v if v is not None else pd.Series(0, index=c.index)
+    if len(closes) < 5:
+        return None
+
+    df_close = pd.DataFrame(closes).sort_index().ffill().dropna(how='all')
+    df_vol = pd.DataFrame(vols).reindex(df_close.index).fillna(0)
+    n_dias = len(df_close)
+
+    snap = _bd_snapshot(df_close, df_vol)
+    if snap is None:
+        return None
+    snap_1m = _bd_snapshot(df_close, df_vol, hasta=max(0, n_dias - 22)) if n_dias > 30 else None
+    snap_1w = _bd_snapshot(df_close, df_vol, hasta=max(0, n_dias - 6)) if n_dias > 15 else None
+
+    caps = _bd_market_caps(tuple(closes.keys()))
+    conc = _bd_concentracion(list(closes.keys()), caps, df_close)
+    b_hoy = _bd_breadth_score(snap, conc['conc_score'])
+    b_1m = _bd_breadth_score(snap_1m, conc['conc_score']) if snap_1m else None
+    b_1w = _bd_breadth_score(snap_1w, conc['conc_score']) if snap_1w else None
+    mom_1m = (b_hoy - b_1m) if (b_hoy is not None and b_1m is not None) else None
+    mom_1w = (b_hoy - b_1w) if (b_hoy is not None and b_1w is not None) else None
+
+    if conc['pesos'] is not None and conc['pesos'].sum() > 0:
+        pesos = conc['pesos'].reindex(df_close.columns).fillna(0)
+        pesos = pesos / pesos.sum() if pesos.sum() > 0 else pd.Series(1 / df_close.shape[1], index=df_close.columns)
+    else:
+        pesos = pd.Series(1 / df_close.shape[1], index=df_close.columns)
+    idx = serie_idx if serie_idx is not None else (df_close * pesos).sum(axis=1)
+
+    def _ret(s, d):
+        return None if (s is None or len(s) <= d) else float(s.iloc[-1] / s.iloc[-d - 1] - 1) * 100
+
+    ret_1d, ret_1m = _ret(idx, 1), _ret(idx, 21)
+
+    estado, emo_est, color_est, _ = _bd_estado_mercado(ret_1m, b_hoy, b_1m, snap['ad_score'], snap['nhnl_score'])
+    salud = _bd_market_health(b_hoy, mom_1m)
+    emo_rg, lab_rg, color_rg = _bd_regimen_mercado(b_hoy, mom_1m, snap['ad_score'], snap['trend_score'], ret_1m)
+
+    rm = df_close.pct_change()
+    ad_line = ((rm > 0).sum(axis=1) - (rm < 0).sum(axis=1)).cumsum()
+    vd = min(21, len(ad_line) - 1)
+    d_ad = (ad_line.iloc[-1] - ad_line.iloc[-vd - 1]) if vd > 0 else 0
+    ad_dir = 'up' if d_ad > 0 else ('down' if d_ad < 0 else 'flat')
+
+    _, _, dir_p, _ = _bd_matriz_diagnostico(ret_1m, mom_1m)
+    diverg = _bd_detectar_divergencias(dir_p, mom_1m, snap['ad_score'], snap['nh'],
+                                       snap_1m['nh'] if snap_1m else None, ad_dir)
+    diverg = [f'{e} {t}' for e, t in diverg if e != '⚪']
+
+    return dict(
+        n_activos=len(closes), indice_real=serie_idx is not None,
+        estado=estado, emo_estado=emo_est, color_estado=color_est,
+        score=b_hoy, salud=salud, regimen=f'{emo_rg} {lab_rg}', color_reg=color_rg,
+        mom_1m=mom_1m, mom_1w=mom_1w, ret_1d=ret_1d, ret_1m=ret_1m,
+        adv=snap['adv'], dec=snap['dec'], nh=snap['nh'], nl=snap['nl'],
+        top5=conc['top5_pct'], divergencias=diverg,
+    )
+
+
+def _bd_render_resumen(PLOTLY_CONFIG=None, kpi_cards_4=None, descargar_bulk=None, get_close_from_bulk=None):
+    from datetime import datetime
+    PLOTLY_CONFIG = PLOTLY_CONFIG or PLOTLY_CONFIG_BD
+    kpi_cards_4 = kpi_cards_4 or _kpi_cards_4_bd
+
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#0d1c20 0%,#0a2530 50%,#0d1117 100%);
+         border:1px solid {C_GRID}; border-top:2px solid {C_ACENT};
+         border-radius:14px; padding:22px 28px; margin-bottom:18px;">
+      <div style="font-size:18px;font-weight:700;color:{C_TEXT};margin-bottom:6px">
+        📋 Resumen General de Salud de Mercados
+      </div>
+      <div style="font-size:12px;color:{C_MUTED};line-height:1.7">
+        Una fila por cada índice y ETF cargado: estado de participación, Score de Amplitud,
+        Salud, régimen, momentum y divergencias. Para ver el análisis completo de uno,
+        andá a la pestaña <b style="color:{C_TEXT}">Detalle por Mercado</b>.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    universos = _bd_todos_los_universos()
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        sel = st.multiselect('Mercados a incluir', list(universos.keys()),
+                             default=list(universos.keys()), key='bd_res_sel')
+    with c2:
+        periodo = st.selectbox('Historial', ['6mo', '1y', '2y'], index=1, key='bd_res_periodo')
+
+    if st.button('▶ Calcular resumen de todos los mercados', key='bd_res_run', type='primary'):
+        if not sel:
+            st.warning('Elegí al menos un mercado.')
+        else:
+            res, errores = {}, []
+            barra = st.progress(0.0)
+            for i, nombre in enumerate(sel):
+                barra.progress(i / len(sel), text=f'Procesando {nombre} ({i + 1}/{len(sel)})...')
+                try:
+                    r = _bd_resumen_universo(universos[nombre][1], periodo, descargar_bulk, get_close_from_bulk)
+                except Exception:
+                    r = None
+                if r:
+                    r['tipo'] = universos[nombre][0]
+                    res[nombre] = r
+                else:
+                    errores.append(nombre)
+            barra.empty()
+            st.session_state['bd_resumen'] = res
+            st.session_state['bd_resumen_errores'] = errores
+            st.session_state['bd_resumen_ts'] = datetime.now().strftime('%d/%m/%Y %H:%M')
+
+    resumen = st.session_state.get('bd_resumen')
+    if not resumen:
+        st.markdown(f"""
+        <div style='background:{C_BG1};border:1px dashed {C_GRID};border-radius:10px;padding:40px;text-align:center'>
+          <div style='font-size:40px;margin-bottom:12px'>📋</div>
+          <div style='color:{C_TEXT};font-size:14px;font-weight:600;margin-bottom:6px'>Resumen de mercados</div>
+          <div style='color:{C_MUTED};font-size:12px'>Presioná "Calcular resumen de todos los mercados".
+          La primera vez tarda porque descarga todos los universos; después queda guardado hasta que lo recalcules.</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    errores = st.session_state.get('bd_resumen_errores') or []
+    if errores:
+        st.caption('⚠️ Sin datos suficientes, no se incluyen: ' + ', '.join(errores))
+
+    # ── KPIs globales ────────────────────────────────────────────────────
+    scores = {n: r['score'] for n, r in resumen.items()}
+    mejor = max(scores, key=scores.get)
+    peor = min(scores, key=scores.get)
+    prom = sum(scores.values()) / len(scores)
+    n_pos = sum(1 for r in resumen.values() if r['estado'] in _BD_ESTADOS_POSITIVOS)
+    n_ale = sum(1 for r in resumen.values() if r['estado'] in _BD_ESTADOS_ALERTA)
+    kpi_cards_4([
+        ('Mercados analizados', str(len(resumen)),
+         f"{n_pos} con señal positiva · {n_ale} en alerta · {st.session_state.get('bd_resumen_ts', '')}", C_ACENT),
+        ('Score promedio', f'{prom:.0f}/100', 'Amplitud media de todos los mercados', _bd_color_score(prom)),
+        ('Mayor participación', _bd_nombre_corto(mejor), f'Score {scores[mejor]:.0f}/100', C_GREEN),
+        ('Menor participación', _bd_nombre_corto(peor), f'Score {scores[peor]:.0f}/100', C_RED),
+    ])
+
+    # ── Tabla resumen ────────────────────────────────────────────────────
+    filas = []
+    for nombre, r in sorted(resumen.items(), key=lambda kv: kv[1]['score'], reverse=True):
+        filas.append({
+            'Tipo': r['tipo'], 'Universo': nombre, 'Activos': r['n_activos'],
+            'Estado': f"{r['emo_estado']} {r['estado']}",
+            'Score': round(r['score'], 0),
+            'Salud': round(r['salud'], 0) if r['salud'] is not None else None,
+            'Régimen': r['regimen'],
+            'Mom 1M': round(r['mom_1m'], 1) if r['mom_1m'] is not None else None,
+            'Rend 1M %': round(r['ret_1m'], 2) if r['ret_1m'] is not None else None,
+            'A/D': f"{r['adv']}/{r['dec']}",
+            'NM/Nm': f"{r['nh']}/{r['nl']}",
+            'Alertas': len(r['divergencias']),
+        })
+    df_res = pd.DataFrame(filas)
+
+    def _estilo(row):
+        r = resumen.get(row['Universo'], {})
+        out = []
+        for col in row.index:
+            v = row[col]
+            if col == 'Estado':
+                out.append(f"color:{r.get('color_estado', C_MUTED)};font-weight:700")
+            elif col == 'Régimen':
+                out.append(f"color:{r.get('color_reg', C_MUTED)};font-weight:700")
+            elif col in ('Score', 'Salud'):
+                out.append(f"color:{_bd_color_score(v)};font-weight:700")
+            elif col in ('Mom 1M', 'Rend 1M %'):
+                try:
+                    out.append(f"color:{C_GREEN if float(v) >= 0 else C_RED};font-weight:700")
+                except Exception:
+                    out.append('')
+            else:
+                out.append('')
+        return out
+
+    styled = (df_res.style
+              .apply(_estilo, axis=1)
+              .set_properties(**{'background-color': C_BG1, 'color': C_TEXT, 'border': f'1px solid {C_GRID}'})
+              .set_properties(subset=['Universo', 'Estado', 'Régimen'], **{'text-align': 'left'})
+              .set_table_styles([
+                  {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', C_TEXT),
+                      ('font-weight', '700'), ('text-align', 'center'),
+                      ('border-bottom', f'2px solid {C_ACENT}'), ('font-size', '11px')]},
+                  {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11.5px')]},
+              ]))
+    st.dataframe(styled, use_container_width=True, hide_index=True,
+                 height=min(900, len(df_res) * 38 + 45))
+
+    # ── Ranking de Score de Amplitud ─────────────────────────────────────
+    orden = sorted(resumen.items(), key=lambda kv: kv[1]['score'])
+    fig = go.Figure(go.Bar(
+        x=[r['score'] for _, r in orden], y=[_bd_nombre_corto(n) for n, _ in orden], orientation='h',
+        marker_color=[_bd_color_score(r['score']) for _, r in orden],
+        text=[f"{r['score']:.0f}" for _, r in orden], textposition='outside',
+    ))
+    fig.add_vline(x=50, line_dash='dash', line_color=C_MUTED, opacity=0.5)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE_BD, height=max(320, len(orden) * 30 + 90),
+        xaxis=dict(range=[0, 110], gridcolor=C_GRID, title='Score de Amplitud'),
+        yaxis=dict(gridcolor=C_GRID),
+        title=dict(text='Ranking de Participación (Score de Amplitud)', font=dict(color=C_TEXT, size=13)),
+        margin=dict(l=10, r=10, t=45, b=10),
+    )
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key='bd_res_fig')
+
+    # ── Divergencias detectadas ──────────────────────────────────────────
+    con_div = [(n, r) for n, r in resumen.items() if r['divergencias']]
+    st.markdown('### 🔎 Divergencias detectadas')
+    if not con_div:
+        st.markdown(f"""
+        <div style="background:{C_BG1};border:1px solid {C_GRID};border-radius:8px;
+             padding:10px 14px;font-size:13px;color:{C_TEXT}">
+          ⚪ No se detectan divergencias relevantes en ninguno de los mercados.
+        </div>
+        """, unsafe_allow_html=True)
+    for n, r in con_div:
+        lineas = '<br>'.join(r['divergencias'])
+        st.markdown(f"""
+        <div style="background:{C_BG1};border:1px solid {C_GRID};border-left:3px solid {r['color_estado']};
+             border-radius:8px;padding:10px 14px;margin-bottom:6px;font-size:13px;color:{C_TEXT}">
+          <b>{n}</b><br>{lineas}
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.caption('Mom 1M = cambio del Score de Amplitud vs. hace 1 mes. Rend 1M % = rendimiento del índice o ETF. '
+               'A/D = avanzan/declinan hoy. NM/Nm = nuevos máximos/mínimos de 52 semanas.')
+
+
+# ==============================================================
+#  PUNTO DE ENTRADA — Resumen + Detalle en pestañas
+# ==============================================================
+
+def render_market_breadth(
+    ACCIONES_POR_INDUSTRIA=None,
+    PLOTLY_CONFIG=None,
+    kpi_cards_4=None,
+    fmt_precio=None,
+    chips_navegacion=None,
+    descargar_bulk=None,
+    get_close_from_bulk=None,
+):
+    tab_res, tab_det = st.tabs(['📋 Resumen General', '🔍 Detalle por Mercado'])
+    with tab_res:
+        _bd_render_resumen(
+            PLOTLY_CONFIG=PLOTLY_CONFIG, kpi_cards_4=kpi_cards_4,
+            descargar_bulk=descargar_bulk, get_close_from_bulk=get_close_from_bulk,
+        )
+    with tab_det:
+        _bd_render_detalle(
+            ACCIONES_POR_INDUSTRIA=ACCIONES_POR_INDUSTRIA, PLOTLY_CONFIG=PLOTLY_CONFIG,
+            kpi_cards_4=kpi_cards_4, fmt_precio=fmt_precio, chips_navegacion=chips_navegacion,
+            descargar_bulk=descargar_bulk, get_close_from_bulk=get_close_from_bulk,
+        )
+        
 # ==============================================================
 #  VERSIÓN TEXTO PARA EL ASISTENTE IA
 #  Misma lógica que render_market_breadth, sin dibujar nada.
