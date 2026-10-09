@@ -7830,6 +7830,8 @@ def modulo_scanner_pares():
     if precios is None or precios.empty:
         st.error('No se pudieron descargar precios. Revisá la fecha de inicio o probá con otros sectores.')
         return
+    with st.spinner('Cargando nombres de los activos...'):
+        nombres = _pares_nombres(tickers_items)
 
     resumen = []
     dataframes = {}
@@ -7848,6 +7850,7 @@ def modulo_scanner_pares():
             z = float(ultimo['Z'])
             resumen.append({
                 'Sector': sector, 'Pareja': nombre_ratio, 'Numerador': num, 'Denominador': den,
+                'Activos': f'{nombres.get(num, num)} / {nombres.get(den, den)}',
                 'Ratio': round(float(ultimo['RATIO']), 4), 'Media': round(float(ultimo['MEDIA']), 4),
                 'Z-Score': round(z, 2), 'Señal': ultimo['SEÑAL'],
                 'Lectura': _pares_interpretar(z, z_entry, z_exit),
