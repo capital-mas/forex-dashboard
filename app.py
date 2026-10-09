@@ -6426,7 +6426,7 @@ def _opt_render_ajuste_inflacion(tickers_opt, retornos_opt, benchmark_opt,
             }
             carteras_infl['Mi Cartera Actual'] = pesos_actual
 
-    tasa_default_bench = tasas_por_anio_pais.get('Argentina' if _opt_mon() == 'ARS' else 'Estados Unidos', {})
+    tasa_default_bench = tasas_por_anio_pais.get('Estados Unidos', {})
 
     filas_infl, equities_reales = [], {}
     for nombre, ret_s in series_ret.items():
@@ -6588,8 +6588,6 @@ def modulo_optimizador():
     if 'opt_tickers' not in st.session_state:
         st.session_state['opt_tickers'] = []
 
-    st.caption('💡 Para simular en pesos argentinos usá tickers con sufijo .BA (ej: AAPL.BA, GGAL.BA, YPFD.BA). '
-               'No mezcles activos .BA con activos en USD.')
 
     c_add, c_btn = st.columns([4, 1])
     with c_add:
