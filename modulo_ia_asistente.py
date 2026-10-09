@@ -3710,10 +3710,10 @@ def _render_botones_rapidos(pares, turno):
 
 # Labels cortos para que no se corten con "..." en el panel flotante
 _SUGERENCIAS_RAPIDAS = [
-    "📉 Sectores Baratos",
-    "🏦 Analizar ETFs",
+    "📉 Sectores & ETFs",
     "📊 Analizar Acción",
     "🧩 Armar Cartera",
+    "🩺 Salud de Mercado & Macro",
     "✍️ Registrar",
 ]
 
@@ -3728,12 +3728,14 @@ _CSS_CHIPS_IA = """
 html body div[class*="st-key-ia_sug_"] .stButton > button {
     padding: 4px 4px !important;
     min-height: 30px !important;
-    white-space: nowrap !important;
+    white-space: normal !important;
+    line-height: 1.1 !important;
 }
 html body div[class*="st-key-ia_sug_"] .stButton > button p,
 html body div[class*="st-key-ia_sug_"] .stButton > button div {
     font-size: 10px !important;
-    white-space: nowrap !important;
+    white-space: normal !important;
+    line-height: 1.1 !important;
     overflow: visible !important;
     text-overflow: clip !important;
 }
