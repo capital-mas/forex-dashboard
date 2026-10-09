@@ -1706,21 +1706,6 @@ def _tab_resumen(precios, df_ratios, alertas):
         })
     st.dataframe(pd.DataFrame(tabla), use_container_width=True, hide_index=True)
 
-    # ── Prompt + datos para pegar en una IA (opcional) ──
-    with st.expander('📋 Copiar prompt + datos para analizar con una IA', expanded=False):
-        resumen_datos = '\n'.join(
-            f"{d['nombre']}: {d['ultimo']:.4f} | 5r {d['v5'] if d['v5'] is None else round(d['v5'],2)} | "
-            f"20r {d['v20'] if d['v20'] is None else round(d['v20'],2)} | {d['flecha']} {d['interp']}"
-            for d in lect.values())
-        prompt = (
-            'Por favor, realiza un informe macroeconómico e intermercado de nivel institucional '
-            'con estos datos actualizados de mi dashboard. Secciones: 1) Renta Fija, Crédito y '
-            'Estructura de Tasas; 2) Rotación Sectorial y Estilos; 3) Flujos Geográficos; '
-            '4) Commodities y Activos Reales; 5) Conclusión Operativa y Matriz de Riesgo '
-            '(veredicto: Alcista Sano, Rally Concentrado, Divergencia Crítica o Mercado Defensivo, '
-            'con gestión de riesgo/stop-loss). Incluye highlights de 3 oraciones al inicio, alertas '
-            'activas y una tabla final con semáforo 🟢/🟡/🔴.\n\nDATOS:\n' + resumen_datos)
-        st.text_area('Prompt', prompt, height=260)
         
 # ==============================================================
 #  9. ESTILOS LOCALES (inyectados una sola vez)
