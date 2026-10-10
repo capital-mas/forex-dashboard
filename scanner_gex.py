@@ -13,11 +13,13 @@
 # ==============================================================
 
 import re
+import time
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 import modulo_gex as gx
 
@@ -150,7 +152,27 @@ def _escanear(lista, n_vtos, rango_pct, r, q):
             errores[t] = f"{type(e).__name__}: {e}"
     barra.empty()
     return {"filas": filas, "errores": errores, "hora": datetime.now().strftime("%H:%M:%S"),
-            "n_vtos": n_vtos, "rango": rango_pct}
+            "ts": time.time(), "n_vtos": n_vtos, "rango": rango_pct, "cambios": []}
+
+
+def _detectar_cambios(prev, nuevo):
+    """Compara dos escaneos y devuelve los avisos: cruces de régimen y nuevos squeeze inminentes."""
+    if not prev:
+        return []
+    antes = {f["ticker"]: f for f in prev["filas"]}
+    msgs = []
+    for f in nuevo["filas"]:
+        a = antes.get(f["ticker"])
+        if a is None:
+            continue
+        t = f["ticker"]
+        if a["regimen"] != "negativo" and f["regimen"] == "negativo":
+            msgs.append(f"🔴 {t}: pasó a gamma NEGATIVA")
+        elif a["regimen"] == "negativo" and f["regimen"] != "negativo":
+            msgs.append(f"🟢 {t}: volvió a gamma positiva")
+        if not a["sq_inminente"] and f["sq_inminente"]:
+            msgs.append(f"🚨 {t}: entró en Zona de Squeeze Inminente (score {f['squeeze']:.0f})")
+    return msgs
 
 
 # ==============================================================
@@ -289,8 +311,24 @@ def render_scanner_gex(on_cargar):
             q = st.number_input("Rendimiento por dividendos (decimal)", 0.0, 0.5, 0.0, 0.005,
                                 format="%.4f", key="sen_scan_q")
 
-    if escanear:
-        st.session_state[CLAVE_RES] = _escanear(lista, n_vtos, rango_pct, r, q)
+    auto = st.checkbox("🔔 Auto-actualizar cada 5 min y avisar cuando un activo pase a gamma negativa "
+                       "o entre en Zona de Squeeze Inminente", value=False, key="sen_scan_auto",
+                       help="Vuelve a descargar y analizar toda la lista cada 5 minutos mientras "
+                            "estés en el modo Scanner. Necesitás haber hecho un primer escaneo.")
+    if auto:
+        st_autorefresh(interval=5 * 60 * 1000, key="sen_scan_autorefresh")
+
+    prev = st.session_state.get(CLAVE_RES)
+    toca_auto = (auto and prev is not None and bool(lista)
+                 and (time.time() - prev.get("ts", 0)) >= 290)
+    if escanear or toca_auto:
+        if toca_auto and not escanear:
+            gx._gex_descargar.clear()          # fuerza datos frescos (la caché dura 5 min)
+        nuevo = _escanear(lista, n_vtos, rango_pct, r, q)
+        nuevo["cambios"] = _detectar_cambios(prev, nuevo)
+        for msg in nuevo["cambios"][:5]:
+            st.toast(msg)
+        st.session_state[CLAVE_RES] = nuevo
 
     res = st.session_state.get(CLAVE_RES)
     if not res:
@@ -302,7 +340,10 @@ def render_scanner_gex(on_cargar):
         return
 
     st.caption(f"📡 Último escaneo a las {res['hora']} · {len(res['filas'])} activos analizados · "
-               f"{res['n_vtos']} vencimientos · rango ±{res['rango']}%")
+               f"{res['n_vtos']} vencimientos · rango ±{res['rango']}%"
+               + (" · se vuelve a escanear solo cada 5 min" if auto else ""))
+    if res.get("cambios"):
+        st.info("**Cambios desde el escaneo anterior:**\n\n" + "\n".join(f"- {m}" for m in res["cambios"]))
     df = pd.DataFrame(res["filas"])
 
     n_neg = int((df["regimen"] == "negativo").sum())
