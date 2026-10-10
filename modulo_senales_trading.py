@@ -13,20 +13,15 @@
 #     render_senales_trading(..., tiene_acceso_pro=...).
 #
 #  PUBLICAR (solo admin), dos modos:
-#   - Manual: calculadora del Promediador. Cargás capital total, % de riesgo,
-#     apalancamiento, precio(s) de entrada, Stop Loss (Manual / ATR / % Fijo) y
-#     Take Profit. El margen se calcula solo para que, si salta el SL, pierdas
-#     exactamente tu % de riesgo. Muestra ganancia estimada, pérdida máxima,
-#     ratio Riesgo/Beneficio, margen requerido y precio de liquidación.
-#   - Scanner GEX: cargás una lista de tickers (~40), el módulo scanner_gex.py
-#     los escanea (CBOE / Deribit) y te muestra un panel con filtros para ver
-#     cuáles están en gamma negativa y sus niveles. Desde ahí cargás el activo
-#     en el formulario manual (ticker, entrada, SL, TP y notas precargados).
+#   - Manual: cargás ticker, precio(s) de entrada y gestión de salida
+#     (Stop Loss Manual / ATR / % Fijo y Take Profit). Sin capital,
+#     riesgo ni apalancamiento.
+#   - Scanner GEX: cargás una lista de tickers, el módulo scanner_gex.py
+#     los escanea y desde ahí cargás el activo en el formulario manual.
 #   Requiere scanner_gex.py y modulo_gex.py en la misma carpeta.
 #
 #  FUNCIONALIDADES:
-#   - Varias entradas por señal → precio promedio real, apalancamiento
-#     y precio de liquidación.
+#   - Varias entradas por señal → precio promedio.
 #   - Órdenes pendientes (entrada límite) que se activan solas cuando el
 #     precio toca la entrada; TP/SL se evalúa desde la activación.
 #   - Evaluación automática de TP/SL con velas horarias + diarias.
@@ -34,7 +29,7 @@
 #     se GUARDA cuando el admin abre la app. Los demás usuarios la ven
 #     calculada en pantalla pero no pueden persistirla.
 #   - P&L en vivo (cada 5 min) para señales abiertas.
-#   - Réplica de la posición a tu margen, y Simulador de Capital.
+#   - Simulador de Capital.
 # ==============================================================
 
 import streamlit as st
@@ -60,17 +55,6 @@ TABLA_SENALES = "senales_trading"
 MODO_MANUAL = "✍️ Cargar señal manual"
 MODO_SCANNER = "🧲 Scanner GEX (lista de activos)"
 
-# ── Límites por plan ──────────────────────────────────────────
-# Plan Pro / Admin: ven TODAS las señales.
-# Plan Básico / Prueba: ven UNA sola señal, la que el admin marque como
-# "señal gratuita" (columna visible_basico). Solo puede haber una a la vez.
-
-# Margen de mantenimiento que exige el bróker, como % del tamaño
-# nominal de la posición. Se usa SOLO para calcular el precio de
-# liquidación. Con 0.0 se asume que te liquidan cuando el margen
-# (menos los costos de apertura) se consume por completo.
-MARGEN_MANTENIMIENTO_PCT = 0.0
-
 ESTADO_COLOR = {
     "PENDIENTE":            ("#a371f7", "rgba(163,113,247,0.12)", "🕓"),
     "ABIERTA":              ("#3a7bd5", "rgba(58,123,213,0.12)", "🔵"),
@@ -84,47 +68,11 @@ CATEGORIAS = [
     "₿ Cripto", "🏦 Bono/ETF", "🔹 Otro",
 ]
 
-DEFAULT_UNIDADES_LOTE = {
-    "💱 Forex":     100000.0,
-    "₿ Cripto":     1.0,
-    "📈 Acción":    100.0,
-    "📊 Índice":    10.0,
-    "🛢️ Commodity": 100.0,
-    "🏦 Bono/ETF":  100.0,
-    "🔹 Otro":      1.0,
-}
-
-LOTES_FOREX_PRESETS = {
-    "Estándar (1 lote = 100.000 unidades)": 100000.0,
-    "Mini (1 lote = 10.000 unidades)":      10000.0,
-    "Micro (1 lote = 1.000 unidades)":      1000.0,
-    "Nano (1 lote = 100 unidades)":         100.0,
-}
-
-PERFILES_RIESGO = {
-    "conservador": {
-        "label": "🟢 Conservador",
-        "default_pct": 1.0,
-        "desc": ("Prioriza cuidar el capital por sobre todo. Arriesga poco en cada "
-                 "operación para amortiguar rachas de pérdidas — a cambio, las "
-                 "ganancias en dólares también son más chicas."),
-    },
-    "moderado": {
-        "label": "🟡 Moderado",
-        "default_pct": 2.0,
-        "desc": ("Un punto medio entre cuidar el capital y buscar rendimiento. "
-                 "Asume más volatilidad que el conservador a cambio de un "
-                 "potencial de ganancia mayor."),
-    },
-    "agresivo": {
-        "label": "🔴 Agresivo",
-        "default_pct": 3.0,
-        "desc": ("Busca maximizar el retorno asumiendo el mayor riesgo por "
-                 "operación. Tanto las pérdidas como las ganancias en dólares son "
-                 "más grandes."),
-    },
-}
-PERFILES_LABEL_A_KEY = {v["label"]: k for k, v in PERFILES_RIESGO.items()}
+# Valores por defecto que se guardan en las columnas de riesgo (la tabla las espera,
+# pero ya no se cargan desde el formulario).
+RIESGO_DEFAULT_CONSERVADOR = 1.0
+RIESGO_DEFAULT_MODERADO = 2.0
+RIESGO_DEFAULT_AGRESIVO = 3.0
 
 
 def _es_admin(user_email):
@@ -183,29 +131,17 @@ def fmt_precio_exacto(p):
     return f"${p:.5f}"
 
 
-def fmt_apal(x):
-    try:
-        return f"{round(float(x), 2):g}x"
-    except (TypeError, ValueError):
-        return "S/D"
-
-
-def fmt_unidades(u):
-    s = f"{float(u):,.6f}".rstrip("0").rstrip(".")
-    return s or "0"
-
-
 def _md_dolar(texto):
     """Escapa los '$' para que Streamlit no los interprete como LaTeX."""
     return texto.replace("$", r"\$")
 
 
 # ==============================================================
-#  ENTRADAS MÚLTIPLES — helpers de posición
+#  ENTRADAS MÚLTIPLES — helpers
 # ==============================================================
 
 def _entradas_de_senal(senal):
-    """Lista de entradas normalizada. 'margen' = 0 significa señal vieja."""
+    """Lista de entradas normalizada."""
     apal_senal = float(senal.get("apalancamiento") or 1.0) or 1.0
     default_activada = senal.get("estado") != "PENDIENTE"
     entradas = senal.get("entradas")
@@ -222,7 +158,6 @@ def _entradas_de_senal(senal):
                     "apalancamiento": float(e.get("apalancamiento") or apal_senal) or 1.0,
                     "margen": float(e.get("margen") or 0.0),
                     "margen_extra": float(e.get("margen_extra") or 0.0),
-                    "peso": float(e.get("peso") or 1.0),
                     "activada": bool(e.get("activada", default_activada)),
                     "fecha_activacion": e.get("fecha_activacion"),
                     "hora_activacion": e.get("hora_activacion"),
@@ -235,110 +170,41 @@ def _entradas_de_senal(senal):
     if precio_unico > 0:
         return [{"precio": precio_unico, "costo_apertura": 0.0,
                  "apalancamiento": apal_senal, "margen": 0.0,
-                 "margen_extra": 0.0, "peso": 1.0,
+                 "margen_extra": 0.0,
                  "activada": default_activada, "fecha_activacion": None,
                  "hora_activacion": None}]
     return []
 
 
-def _resumen_posicion(entradas, es_largo, mantenimiento_pct=MARGEN_MANTENIMIENTO_PCT):
-    """Calcula la posición total a partir de las entradas.
-
-    nominal_i  = margen_i × apalancamiento_i (solo el margen de apertura define tamaño)
-    unidades_i = nominal_i / precio_i
-    precio promedio = Σ nominal / Σ unidades
-    margen total = Σ margen apertura + Σ margen extra
-    LARGO : liquidación = promedio − colchón / unidades
-    CORTO : liquidación = promedio + colchón / unidades
-    colchón = margen total − costos apertura − mantenimiento
-    Devuelve None si no hay entradas válidas."""
-    validas = [e for e in entradas
-               if float(e.get("precio") or 0) > 0
-               and float(e.get("margen") or 0) > 0
-               and float(e.get("apalancamiento") or 0) > 0]
+def _promedio_de_entradas(entradas):
+    """Precio promedio de una lista de entradas.
+    Señales viejas (con margen y apalancamiento): promedio ponderado por tamaño.
+    Señales nuevas (sin margen): promedio simple de los precios."""
+    validas = [e for e in entradas if float(e.get("precio") or 0) > 0]
     if not validas:
-        return None
-
-    nominal = sum(e["margen"] * e["apalancamiento"] for e in validas)
-    unidades = sum(e["margen"] * e["apalancamiento"] / e["precio"] for e in validas)
-    margen_apertura_total = sum(e["margen"] for e in validas)
-    margen_extra_total = sum(float(e.get("margen_extra") or 0.0) for e in validas)
-    margen_total = margen_apertura_total + margen_extra_total
-    costos_total = sum(float(e.get("costo_apertura") or 0.0) for e in validas)
-    precio_prom = nominal / unidades
-    apal_ef = nominal / margen_total
-    apal_apertura = (nominal / margen_apertura_total) if margen_apertura_total else apal_ef
-
-    mantenimiento_usd = nominal * mantenimiento_pct / 100.0
-    colchon = margen_total - costos_total - mantenimiento_usd
-    liquidada_al_abrir = colchon <= 0
-    distancia = max(colchon, 0.0) / unidades
-
-    if es_largo:
-        liq_raw = precio_prom - distancia
-        sin_liquidacion = liq_raw <= 0
-        precio_liq = max(liq_raw, 0.0)
-    else:
-        precio_liq = precio_prom + distancia
-        sin_liquidacion = False
-
-    dist_pct = (precio_liq - precio_prom) / precio_prom * 100.0
-
-    return dict(
-        precio_promedio=precio_prom, unidades=unidades, nominal=nominal,
-        margen_total=margen_total, margen_apertura=margen_apertura_total,
-        margen_extra=margen_extra_total, costos_total=costos_total,
-        apalancamiento_apertura=apal_apertura, apalancamiento_efectivo=apal_ef,
-        colchon=colchon,
-        precio_liquidacion=precio_liq, dist_liq_pct=dist_pct,
-        sin_liquidacion=sin_liquidacion, liquidada_al_abrir=liquidada_al_abrir,
-        n_entradas=len(validas),
-    )
-
-
-def _resumen_de_senal(senal):
-    entradas = _entradas_de_senal(senal)
-    if not entradas or not all(e["margen"] > 0 for e in entradas):
-        return None
-    es_largo = "LARGO" in str(senal.get("tipo", "")).upper()
-    return _resumen_posicion(entradas, es_largo)
-
-
-def _apalancamiento_apertura_de_senal(senal):
-    """Apalancamiento realmente usado para ABRIR la posición (sin diluir por margen extra)."""
-    res = _resumen_de_senal(senal)
-    if res:
-        return res["apalancamiento_apertura"]
-    return float(senal.get("apalancamiento") or 1.0) or 1.0
-
-
-def _sl_mas_alla_de_liquidacion(res, es_largo, stop_loss):
-    if not res or not stop_loss or stop_loss <= 0 or res["sin_liquidacion"]:
-        return False
-    liq = res["precio_liquidacion"]
-    return (stop_loss <= liq) if es_largo else (stop_loss >= liq)
-
-
-def _precio_promedio_simple(senal):
-    entradas = _entradas_de_senal(senal)
-    if not entradas:
-        return float(senal.get("precio_entrada") or 0)
-    precios = [e["precio"] for e in entradas]
-    return sum(precios) / len(precios)
+        return 0.0
+    if all(float(e.get("margen") or 0) > 0 and float(e.get("apalancamiento") or 0) > 0
+           for e in validas):
+        nominal = sum(e["margen"] * e["apalancamiento"] for e in validas)
+        unidades = sum(e["margen"] * e["apalancamiento"] / e["precio"] for e in validas)
+        if unidades > 0:
+            return nominal / unidades
+    return sum(float(e["precio"]) for e in validas) / len(validas)
 
 
 def _precio_promedio_ponderado(senal):
     entradas = _entradas_de_senal(senal)
     if not entradas:
         return float(senal.get("precio_entrada") or 0)
-    if all(e["margen"] > 0 for e in entradas):
-        res = _resumen_posicion(entradas, True)
-        if res:
-            return res["precio_promedio"]
-    suma_peso = sum(e["peso"] for e in entradas)
-    if suma_peso <= 0:
-        return _precio_promedio_simple(senal)
-    return sum(e["precio"] * e["peso"] for e in entradas) / suma_peso
+    return _promedio_de_entradas(entradas)
+
+
+def _apalancamiento_de_senal(senal):
+    """Las señales nuevas se guardan con 1x; las viejas conservan su apalancamiento."""
+    try:
+        return float(senal.get("apalancamiento") or 1.0) or 1.0
+    except (TypeError, ValueError):
+        return 1.0
 
 
 def _senal_con_precio_entrada(senal, precio_entrada):
@@ -348,19 +214,8 @@ def _senal_con_precio_entrada(senal, precio_entrada):
 
 
 def _texto_entradas(entradas):
-    partes = []
-    for i, e in enumerate(entradas):
-        t = f"Entrada {i + 1}: {fmt_precio_exacto(e['precio'])}"
-        if e["margen"] > 0:
-            t += f" · margen ${e['margen']:,.2f} · {fmt_apal(e['apalancamiento'])}"
-            if e.get("margen_extra", 0) > 0:
-                t += f" · +${e['margen_extra']:,.2f} extra"
-            if e["costo_apertura"] > 0:
-                t += f" · costo ${e['costo_apertura']:,.2f}"
-        elif abs(e["peso"] - 1.0) > 1e-9:
-            t += f" (peso {e['peso']:.2f})"
-        partes.append(t)
-    return " | ".join(partes)
+    return " | ".join(f"Entrada {i + 1}: {fmt_precio_exacto(e['precio'])}"
+                      for i, e in enumerate(entradas))
 
 
 def _texto_cierre(estado, fecha_cierre, hora_cierre):
@@ -386,93 +241,25 @@ def _cierre_manual_fue_ganador(senal):
     return ret_apalancado > 0
 
 
-def _render_resumen_posicion(res, es_largo, stop_loss=None):
-    st.markdown("##### 🧮 Posición total y precio de liquidación")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Precio promedio", fmt_precio_exacto(res["precio_promedio"]))
-    m2.metric("Margen de apertura", f"${res['margen_apertura']:,.2f}")
-    m3.metric("Tamaño (nominal)", f"${res['nominal']:,.2f}")
-    m4.metric("Apalancamiento usado", fmt_apal(res["apalancamiento_apertura"]))
-
-    if res.get("margen_extra", 0) > 0:
-        e1, e2, e3 = st.columns(3)
-        e1.metric("Margen extra agregado", f"${res['margen_extra']:,.2f}")
-        e2.metric("Margen total (apertura + extra)", f"${res['margen_total']:,.2f}")
-        e3.metric("Apalanc. efectivo (con extra)", fmt_apal(res["apalancamiento_efectivo"]))
-        st.caption(
-            "El margen extra no suma tamaño a la posición (el nominal y las unidades se "
-            "calculan solo con el margen de apertura): solo agranda el colchón contra la "
-            "liquidación. Por eso el apalancamiento EFECTIVO queda más bajo que el que usaste "
-            "al abrirla."
-        )
-
-    n1, n2, n3, n4 = st.columns(4)
-    n1.metric("Unidades", fmt_unidades(res["unidades"]))
-    n2.metric("Costos de apertura", f"${res['costos_total']:,.2f}")
-    if res["liquidada_al_abrir"]:
-        n3.metric("💀 Precio de liquidación", fmt_precio_exacto(res["precio_promedio"]))
-        n4.metric("Distancia a liquidación", "0.00%")
-    elif res["sin_liquidacion"]:
-        n3.metric("💀 Precio de liquidación", "Sin liquidación")
-        n4.metric("Distancia a liquidación", "—")
+def _render_niveles(senal, entradas_lista):
+    """Entrada, Stop Loss, Take Profit y (si hay más de una entrada) Precio promedio."""
+    multiples = len(entradas_lista) > 1
+    cols = st.columns(4 if multiples else 3)
+    if entradas_lista:
+        precio_primera = entradas_lista[0]["precio"]
     else:
-        n3.metric("💀 Precio de liquidación", fmt_precio_exacto(res["precio_liquidacion"]))
-        n4.metric("Distancia a liquidación", f"{res['dist_liq_pct']:+.2f}%")
-
-    if res["liquidada_al_abrir"]:
-        st.error("🚨 Los costos de apertura (más el margen de mantenimiento) igualan o superan el "
-                 "margen total: la posición nacería liquidada.")
-    elif res["sin_liquidacion"]:
-        st.caption("Con este margen y apalancamiento el activo tendría que llegar a $0 para "
-                   "liquidarte (efectivamente, no hay liquidación en un largo).")
-
-    if _sl_mas_alla_de_liquidacion(res, es_largo, stop_loss):
-        st.warning(_md_dolar(
-            f"⚠️ El Stop Loss ({fmt_precio_exacto(stop_loss)}) queda más allá del precio de "
-            f"liquidación ({fmt_precio_exacto(res['precio_liquidacion'])}): te liquidarían antes "
-            "de que el SL se ejecute."))
-
-    st.caption(
-        "Fórmula: liquidación = precio promedio "
-        f"{'−' if es_largo else '+'} (margen total [apertura + extra] − costos de apertura − "
-        f"mantenimiento {MARGEN_MANTENIMIENTO_PCT:g}%) / unidades. Es una estimación con margen "
-        "aislado; no incluye funding/swap ni comisión de cierre."
-    )
+        precio_primera = senal.get("precio_entrada")
+    cols[0].metric("Primera entrada" if multiples else "Entrada", fmt_precio_exacto(precio_primera))
+    cols[1].metric("Stop Loss", fmt_precio_exacto(senal.get("stop_loss")))
+    cols[2].metric("Take Profit", fmt_precio_exacto(senal.get("take_profit")))
+    if multiples:
+        cols[3].metric("Precio promedio", fmt_precio_exacto(_precio_promedio_ponderado(senal)))
+        st.caption(_md_dolar(f"🧩 {len(entradas_lista)} entradas → {_texto_entradas(entradas_lista)}"))
 
 
 # ----------------------------------------------------------------
-#  Calculadora de riesgo (traída del Módulo Promediador)
+#  Helpers de stop
 # ----------------------------------------------------------------
-
-_NIVELES_UI = {
-    'ok':     ('#3fb950', '🟢'),
-    'warn':   ('#f0883e', '🟠'),
-    'danger': ('#f85149', '🔴'),
-    'info':   ('#3a7bd5', 'ℹ️'),
-}
-
-
-def _h(texto):
-    """Escapa '$' dentro de bloques HTML para que Streamlit no los lea como LaTeX."""
-    return str(texto).replace("$", "&#36;")
-
-
-def _banner_calc(nivel, texto):
-    color, icono = _NIVELES_UI[nivel]
-    return (f'<div style="background:{color}22;border:1px solid {color};border-left:5px solid {color};'
-            f'border-radius:10px;padding:14px 18px;margin-bottom:14px;font-size:14px;font-weight:600;'
-            f'color:#e6edf3;line-height:1.5">{icono} {_h(texto)}</div>')
-
-
-def _kpi_card(titulo, valor, detalle='', color='#e6edf3', destacado=False):
-    borde = f'2px solid {color}' if destacado else '1px solid #21262d'
-    tam = '28px' if destacado else '19px'
-    return (f'<div style="background:#0d1117;border:{borde};border-radius:10px;padding:12px 14px;'
-            f'min-height:98px;margin-bottom:10px">'
-            f'<div style="font-size:11px;color:#6b7d9a;margin-bottom:4px">{_h(titulo)}</div>'
-            f'<div style="font-size:{tam};font-weight:700;color:{color};line-height:1.2">{_h(valor)}</div>'
-            f'<div style="font-size:11px;color:#8b949e;margin-top:4px">{_h(detalle)}</div></div>')
-
 
 def _set_state(clave, valor):
     """Callback para botones: pisa el valor de un input antes del próximo rerun."""
@@ -493,29 +280,6 @@ def sugerir_stop_pct(precio_entrada, pct, direccion='long'):
     if direccion == 'long':
         return precio_entrada * (1 - pct / 100)
     return precio_entrada * (1 + pct / 100)
-
-
-def calcular_margen_por_riesgo(precios, precio_stop, apalancamiento, es_largo, riesgo_usd):
-    """
-    Margen (USD) que hay que poner en CADA entrada (mismo margen en todas) para que,
-    si salta el stop, la pérdida total sea exactamente riesgo_usd.
-        pérdida = Σ margen · apal · (1 − SL/precio_i)      (largo)
-        pérdida = Σ margen · apal · (SL/precio_i − 1)      (corto)
-    Devuelve None si algún precio queda del lado equivocado del stop.
-    """
-    if not precios or precio_stop <= 0 or apalancamiento < 1 or riesgo_usd <= 0:
-        return None
-    if es_largo:
-        if any(p <= precio_stop for p in precios):
-            return None
-        factor = sum(1 - precio_stop / p for p in precios)
-    else:
-        if any(p >= precio_stop for p in precios):
-            return None
-        factor = sum(precio_stop / p - 1 for p in precios)
-    if factor <= 0:
-        return None
-    return riesgo_usd / (apalancamiento * factor)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -547,7 +311,7 @@ def _atr_y_precio_actual(ticker, periodo=14):
 
 
 # ----------------------------------------------------------------
-#  Formulario dinámico de entradas (ahora solo precio)
+#  Formulario dinámico de entradas (solo precio)
 # ----------------------------------------------------------------
 
 def _entrada_vacia(_id):
@@ -571,12 +335,11 @@ def _reset_entradas_state():
     st.session_state["sen_entrada_next_id"] = 1
 
 
-def _entradas_con_margen(precios, margen_por_entrada, apalancamiento, es_pendiente=False):
-    """Arma las entradas en el formato que ya guarda el módulo (margen calculado, sin costo ni extra)."""
+def _entradas_para_guardar(precios, es_pendiente=False):
+    """Arma las entradas en el formato que guarda el módulo (sin margen ni costos)."""
     return [
         {"precio": float(p), "costo_apertura": 0.0,
-         "apalancamiento": float(apalancamiento),
-         "margen": float(margen_por_entrada), "margen_extra": 0.0,
+         "apalancamiento": 1.0, "margen": 0.0, "margen_extra": 0.0,
          "activada": not es_pendiente,
          "fecha_activacion": None, "hora_activacion": None}
         for p in precios
@@ -592,8 +355,7 @@ def _render_entradas_form(es_pendiente=False, precio_actual=None):
         st.caption("Como marcaste **orden pendiente**, cada precio es un precio OBJETIVO (entrada "
                    "límite): la posición todavía no está abierta y se activa sola cuando el precio lo toque.")
     else:
-        st.caption("Cargá una entrada por cada compra/venta si vas a promediar. El margen de cada una "
-                   "se calcula solo según tu riesgo.")
+        st.caption("Cargá una entrada por cada compra/venta si vas a promediar.")
 
     a_borrar = None
     for i, ent in enumerate(entradas):
@@ -628,137 +390,52 @@ def _render_entradas_form(es_pendiente=False, precio_actual=None):
     return [float(e["precio"]) for e in entradas if e["precio"] > 0]
 
 
-# ----------------------------------------------------------------
-#  Panel de resultados (derecha): banner + KPIs
-# ----------------------------------------------------------------
-
-def _panel_resultados_pub(precios, stop_loss, take_profit, apal, es_largo, es_pendiente,
-                          capital, pct_riesgo):
-    """Muestra la calculadora y devuelve (resumen_posicion, entradas_para_guardar)."""
+def _validar_niveles_pub(precios, stop_loss, take_profit, es_largo):
+    """Valida entradas / SL / TP y muestra un resumen simple.
+    Devuelve el precio promedio de las entradas (0.0 si todavía no se puede calcular)."""
     faltan = []
     if not precios:
         faltan.append("al menos un precio de entrada")
     if stop_loss <= 0:
         faltan.append("el Stop Loss")
     if faltan:
-        st.markdown(_banner_calc("info", "Cargá " + " y ".join(faltan) + " para ver los resultados."),
-                    unsafe_allow_html=True)
-        return None, []
+        st.info("Cargá " + " y ".join(faltan) + " para ver el resumen.")
+        return 0.0
 
     if es_largo and any(p <= stop_loss for p in precios):
-        st.markdown(_banner_calc("danger", "En una señal LARGO el Stop Loss debe estar por DEBAJO de "
-                                           "todas las entradas."), unsafe_allow_html=True)
-        return None, []
+        st.error("En una señal LARGO el Stop Loss debe estar por DEBAJO de todas las entradas.")
+        return 0.0
     if (not es_largo) and any(p >= stop_loss for p in precios):
-        st.markdown(_banner_calc("danger", "En una señal CORTO el Stop Loss debe estar por ENCIMA de "
-                                           "todas las entradas."), unsafe_allow_html=True)
-        return None, []
+        st.error("En una señal CORTO el Stop Loss debe estar por ENCIMA de todas las entradas.")
+        return 0.0
 
     dist_max = max(abs(p - stop_loss) / p * 100 for p in precios)
     if dist_max > 85:
-        st.markdown(_banner_calc("danger", f"Tu stop está a {dist_max:.1f}% de una entrada. Parece un "
-                                           "error de tipeo o de decimales; corregilo."),
-                    unsafe_allow_html=True)
-        return None, []
+        st.error(f"Tu stop está a {dist_max:.1f}% de una entrada. Parece un error de tipeo "
+                 "o de decimales; corregilo.")
+        return 0.0
 
-    riesgo_usd = capital * pct_riesgo / 100
-    m = calcular_margen_por_riesgo(precios, stop_loss, apal, es_largo, riesgo_usd)
-    if m is None or m <= 0:
-        st.markdown(_banner_calc("danger", "No se pudo dimensionar la posición con estos datos."),
-                    unsafe_allow_html=True)
-        return None, []
+    prom = sum(precios) / len(precios)
+    dist_sl = abs(prom - stop_loss) / prom * 100
 
-    entradas_guardar = _entradas_con_margen(precios, round(m, 6), apal, es_pendiente)
-    res = _resumen_posicion(entradas_guardar, es_largo)
-    if res is None:
-        st.markdown(_banner_calc("danger", "No se pudo calcular la posición."), unsafe_allow_html=True)
-        return None, []
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Precio promedio", fmt_precio_exacto(prom))
+    c2.metric("Stop Loss", f"{dist_sl:.2f}%", help="Distancia del stop al precio promedio")
 
-    prom, unidades = res["precio_promedio"], res["unidades"]
-    perdida = abs(prom - stop_loss) * unidades
-    margen_total = res["margen_total"]
-    sl_pasa_liq = _sl_mas_alla_de_liquidacion(res, es_largo, stop_loss)
-
-    # ── Banner ──
-    if sl_pasa_liq:
-        lado = "por debajo" if es_largo else "por encima"
-        st.markdown(_banner_calc("danger", f"Peligro: el Stop Loss está {lado} del precio de liquidación"),
-                    unsafe_allow_html=True)
-    elif margen_total > capital:
-        st.markdown(_banner_calc(
-            "warn", f"Para arriesgar solo ${perdida:,.2f} necesitás ${margen_total:,.2f} de margen, más que "
-                    f"tu capital total (${capital:,.2f}). Subí el apalancamiento o acercá el stop."),
-            unsafe_allow_html=True)
-    else:
-        st.markdown(_banner_calc(
-            "ok", f"Posición dimensionada: si salta el stop perdés ${perdida:,.2f} "
-                  f"({perdida / capital * 100:.1f}% de la cuenta)"), unsafe_allow_html=True)
-
-    # ── KPIs ──
-    gan = rr = None
     if take_profit and take_profit > 0:
-        gan = (take_profit - prom) * unidades if es_largo else (prom - take_profit) * unidades
-        rr = gan / perdida if perdida > 0 else None
-
-    if gan is None:
-        card_gan = _kpi_card("Ganancia estimada (Take Profit)", "—",
-                             "Poné un precio en Take Profit para calcularla", "#6b7d9a", True)
-    elif gan <= 0:
-        card_gan = _kpi_card("Ganancia estimada (Take Profit)", "—",
-                             "⚠️ El Take Profit está del lado equivocado de la entrada "
-                             "(en Largo va por encima, en Corto por debajo)", "#f0883e", True)
-    else:
-        dist_tp = abs(take_profit - prom) / prom * 100
-        card_gan = _kpi_card("Ganancia estimada (Take Profit)", f"+${gan:,.2f}",
-                             f"+{gan / capital * 100:.1f}% de la cuenta · TP a {dist_tp:.2f}% de la entrada",
-                             "#3fb950", True)
-
-    card_perd = _kpi_card("Pérdida máxima (si salta el Stop)", f"-${perdida:,.2f}",
-                          f"{perdida / capital * 100:.1f}% de la cuenta · stop a "
-                          f"{abs(prom - stop_loss) / prom * 100:.2f}% del promedio",
-                          "#e6edf3")
-
-    if rr is None or (gan is not None and gan <= 0):
-        card_rr = _kpi_card("Ratio Riesgo / Beneficio", "—",
-                            "Definí un Take Profit válido para calcularlo", "#6b7d9a")
-    else:
-        col_rr = "#3fb950" if rr >= 2 else ("#e3b341" if rr >= 1 else "#f85149")
-        txt_rr = ("Relación favorable" if rr >= 2 else
-                  ("Aceptable, ideal ≥ 1:2" if rr >= 1 else "Arriesgás más de lo que buscás ganar"))
-        card_rr = _kpi_card("Ratio Riesgo / Beneficio", f"1:{rr:.1f}", txt_rr, col_rr)
-
-    col_m = "#f0883e" if margen_total > capital else "#e6edf3"
-    card_marg = _kpi_card("Margen requerido", f"${margen_total:,.2f}",
-                          f"{margen_total / capital * 100:.1f}% de la cuenta · "
-                          f"${margen_total / res['n_entradas']:,.2f} por entrada · {fmt_apal(apal)}", col_m)
-
-    if apal > 1 and not res["sin_liquidacion"]:
-        card_liq = _kpi_card("Precio de liquidación aprox.", fmt_precio_exacto(res["precio_liquidacion"]),
-                             f"a {abs(res['dist_liq_pct']):.2f}% del precio promedio",
-                             "#f85149" if sl_pasa_liq else "#e6edf3")
-    else:
-        card_liq = _kpi_card("Precio de liquidación aprox.", "No aplica",
-                             "Sin apalancamiento (1x) nadie te puede liquidar", "#6b7d9a")
-
-    card_pos = _kpi_card("Posición total", fmt_precio_exacto(prom),
-                         f"precio promedio · {fmt_unidades(unidades)} unidades · "
-                         f"nominal ${res['nominal']:,.2f}")
-
-    fila1, fila2, fila3 = st.columns(2), st.columns(2), st.columns(2)
-    for col, card in zip(fila1 + fila2 + fila3,
-                         [card_gan, card_perd, card_rr, card_marg, card_liq, card_pos]):
-        with col:
-            st.markdown(card, unsafe_allow_html=True)
-
-    if rr is not None and gan is not None and gan > 0:
-        if rr < 1:
-            st.caption(_md_dolar(f"⚠️ Por cada $1 que arriesgás, buscás ganar ${rr:.2f}: "
-                                 "arriesgás más de lo que buscás ganar."))
-        elif rr < 1.5:
-            st.caption(_md_dolar(f"Por cada $1 que arriesgás, buscás ganar ${rr:.2f}. "
-                                 "Lo ideal es apuntar a $2 o más."))
-
-    return res, entradas_guardar
+        tp_ok = (take_profit > prom) if es_largo else (take_profit < prom)
+        if not tp_ok:
+            st.warning("⚠️ El Take Profit está del lado equivocado de la entrada "
+                       "(en LARGO va por encima, en CORTO por debajo).")
+        else:
+            dist_tp = abs(take_profit - prom) / prom * 100
+            c3.metric("Take Profit", f"{dist_tp:.2f}%", help="Distancia del TP al precio promedio")
+            rr = dist_tp / dist_sl if dist_sl > 0 else None
+            if rr is not None:
+                c4.metric("Riesgo / Beneficio", f"1:{rr:.1f}")
+                if rr < 1:
+                    st.caption("⚠️ Arriesgás más de lo que buscás ganar.")
+    return prom
 
 
 # ==============================================================
@@ -786,10 +463,10 @@ def _guardar_senal(supabase, datos, user_id, user_email):
         "precio_entrada": datos["precio_entrada"],
         "entradas": datos.get("entradas", []),
         "stop_loss": datos["stop_loss"], "take_profit": datos["take_profit"],
-        "apalancamiento": datos["apalancamiento"],
-        "riesgo_conservador": datos.get("riesgo_conservador", PERFILES_RIESGO["conservador"]["default_pct"]),
-        "riesgo_moderado": datos.get("riesgo_moderado", PERFILES_RIESGO["moderado"]["default_pct"]),
-        "riesgo_agresivo": datos.get("riesgo_agresivo", PERFILES_RIESGO["agresivo"]["default_pct"]),
+        "apalancamiento": datos.get("apalancamiento", 1.0),
+        "riesgo_conservador": RIESGO_DEFAULT_CONSERVADOR,
+        "riesgo_moderado": RIESGO_DEFAULT_MODERADO,
+        "riesgo_agresivo": RIESGO_DEFAULT_AGRESIVO,
         "notas": datos.get("notas", ""),
         "estado": datos.get("estado", "ABIERTA"),
         "visible_basico": bool(datos.get("visible_basico", False)),
@@ -888,8 +565,6 @@ def _historial_intradia_desde(ticker, fecha_str, hora_str):
         if df.empty:
             return None
         df = df.copy()
-        # El índice se pasa a hora de Argentina (si viene sin zona, se asume UTC),
-        # para compararlo con la fecha/hora de la señal, que también está en hora AR.
         if df.index.tz is None:
             df.index = df.index.tz_localize("UTC")
         df.index = df.index.tz_convert(TZ_AR).tz_localize(None)
@@ -961,7 +636,7 @@ def _pnl_vivo_senal(senal, precio_actual):
     entrada = _precio_promedio_ponderado(senal)
     if not entrada or entrada <= 0:
         return None
-    apalancamiento = _apalancamiento_apertura_de_senal(senal)
+    apalancamiento = _apalancamiento_de_senal(senal)
     es_largo = "LARGO" in str(senal.get("tipo", "")).upper()
     ret_precio = (precio_actual - entrada) / entrada
     if not es_largo:
@@ -1094,17 +769,13 @@ def _sincronizar_estados(supabase, senales):
             entradas_act, todas, f_act, h_act = _evaluar_pendiente(s)
             entradas_fmt = _entradas_a_formato_guardado(entradas_act)
             if todas:
-                es_largo_s = "LARGO" in str(s.get("tipo", "")).upper()
-                res_final = _resumen_posicion(entradas_fmt, es_largo_s)
+                promedio = _promedio_de_entradas(entradas_fmt)
                 supabase.table(TABLA_SENALES).update({
                     "entradas": entradas_fmt,
                     "estado": "ABIERTA",
                     "fecha_activacion": f_act,
                     "hora_activacion": h_act,
-                    "precio_entrada": (res_final["precio_promedio"] if res_final
-                                       else s.get("precio_entrada")),
-                    "apalancamiento": (res_final["apalancamiento_apertura"] if res_final
-                                       else s.get("apalancamiento")),
+                    "precio_entrada": promedio if promedio > 0 else s.get("precio_entrada"),
                 }).eq("id", s["id"]).execute()
                 actualizadas = True
             elif any(e.get("activada") for e in entradas_act):
@@ -1127,12 +798,12 @@ def _sincronizar_estados(supabase, senales):
 
 
 # ==============================================================
-#  CÁLCULO DE RETORNO / P&L
+#  CÁLCULO DE RETORNO
 # ==============================================================
 
 def _calcular_retorno(senal, precio_salida):
     entrada = float(senal["precio_entrada"])
-    apalancamiento = _apalancamiento_apertura_de_senal(senal)
+    apalancamiento = _apalancamiento_de_senal(senal)
     es_largo = "LARGO" in senal["tipo"].upper()
     if entrada == 0:
         return 0.0, 0.0
@@ -1141,34 +812,6 @@ def _calcular_retorno(senal, precio_salida):
         ret_precio = -ret_precio
     ret_apalancado = ret_precio * apalancamiento
     return ret_precio * 100, ret_apalancado * 100
-
-
-def _calcular_pnl_lotes(senal, precio_salida, unidades):
-    entrada = float(senal["precio_entrada"])
-    apalancamiento = _apalancamiento_apertura_de_senal(senal)
-    es_largo = "LARGO" in senal["tipo"].upper()
-    if entrada == 0 or unidades <= 0:
-        return 0.0, 0.0, 0.0
-    diff = (precio_salida - entrada) if es_largo else (entrada - precio_salida)
-    pnl_usd = diff * unidades
-    nominal = entrada * unidades
-    margen = nominal / apalancamiento if apalancamiento else nominal
-    ret_pct_margen = (pnl_usd / margen * 100) if margen else 0.0
-    return pnl_usd, margen, ret_pct_margen
-
-
-def _tamano_posicion_por_riesgo(senal, capital, pct_riesgo):
-    entrada = float(senal.get("precio_entrada") or 0)
-    sl = float(senal.get("stop_loss") or 0)
-    apalancamiento = _apalancamiento_apertura_de_senal(senal)
-    distancia_precio = abs(entrada - sl)
-    if entrada <= 0 or distancia_precio <= 0:
-        return None
-    riesgo_usd = capital * pct_riesgo / 100
-    unidades = riesgo_usd / distancia_precio
-    nominal = unidades * entrada
-    margen = nominal / apalancamiento
-    return dict(riesgo_usd=riesgo_usd, unidades=unidades, nominal=nominal, margen=margen)
 
 
 # ==============================================================
@@ -1191,7 +834,7 @@ def _cargar_desde_scanner(fila, lado):
     st.session_state["sen_sl"] = inf if es_largo else sup
     st.session_state["sen_tp"] = sup if es_largo else inf
 
-    # Precio de la 1ª entrada = precio actual (el riesgo y el apalancamiento los cargás vos)
+    # Precio de la 1ª entrada = precio actual
     _init_entradas_state()
     ent0 = st.session_state["sen_entradas"][0]
     ent0["precio"] = float(fila["precio"])
@@ -1208,128 +851,95 @@ def _cargar_desde_scanner(fila, lado):
 
 
 def _form_publicar_manual(supabase, user_id, user_email):
-    col_in, col_out = st.columns([1, 1.25], gap="large")
+    st.markdown("#### 📥 Parámetros de la señal")
 
-    # ══════════════════ IZQUIERDA: INPUTS ══════════════════
-    with col_in:
-        st.markdown("#### 📥 Parámetros de la señal")
+    with st.container(border=True):
+        st.markdown("**① Activo y publicación**")
+        c1, c2 = st.columns(2)
+        with c1:
+            ticker = st.text_input("🎯 Ticker", key="sen_ticker",
+                                   placeholder="Ej: NVDA, BTC-USD, EURUSD=X")
+        with c2:
+            categoria = st.selectbox("🏷️ Categoría del activo", CATEGORIAS, key="sen_categoria")
+        tipo = st.selectbox("Tipo de operación", ["🟢 LARGO (Compra)", "🔴 CORTO (Venta)"],
+                            key="sen_tipo")
+        es_largo_pub = "LARGO" in tipo.upper()
+        direccion = "long" if es_largo_pub else "short"
 
-        with st.container(border=True):
-            st.markdown("**① Activo y publicación**")
-            c1, c2 = st.columns(2)
-            with c1:
-                ticker = st.text_input("🎯 Ticker", key="sen_ticker",
-                                       placeholder="Ej: NVDA, BTC-USD, EURUSD=X")
-            with c2:
-                categoria = st.selectbox("🏷️ Categoría del activo", CATEGORIAS, key="sen_categoria")
-            tipo = st.selectbox("Tipo de operación", ["🟢 LARGO (Compra)", "🔴 CORTO (Venta)"],
-                                key="sen_tipo")
-            es_largo_pub = "LARGO" in tipo.upper()
-            direccion = "long" if es_largo_pub else "short"
+        f1, f2 = st.columns(2)
+        with f1:
+            fecha = st.date_input("📅 Fecha", value=_ahora_ar().date(), key="sen_fecha")
+        with f2:
+            hora = st.time_input("🕐 Hora", value=_ahora_ar().time().replace(microsecond=0),
+                                 key="sen_hora")
 
-            f1, f2 = st.columns(2)
-            with f1:
-                fecha = st.date_input("📅 Fecha", value=_ahora_ar().date(), key="sen_fecha")
-            with f2:
-                hora = st.time_input("🕐 Hora", value=_ahora_ar().time().replace(microsecond=0),
-                                     key="sen_hora")
+        es_pendiente_pub = st.checkbox(
+            "🕓 Dejar como orden pendiente (se activa sola cuando el precio toque la entrada)",
+            key="sen_es_pendiente",
+            help="La señal queda PENDIENTE y no evalúa TP/SL hasta que TODAS las entradas se "
+                 "activen. Ahí pasa sola a ABIERTA y el TP/SL se evalúa desde esa activación.")
+        es_gratis_pub = st.checkbox(
+            "⭐ Marcar como señal gratuita (la ven los planes Básico y Prueba)",
+            key="sen_es_gratis",
+            help="Solo puede haber una señal gratuita a la vez: si marcás esta, la anterior deja "
+                 "de serlo. Los usuarios Pro ven todas las señales igual.")
 
-            es_pendiente_pub = st.checkbox(
-                "🕓 Dejar como orden pendiente (se activa sola cuando el precio toque la entrada)",
-                key="sen_es_pendiente",
-                help="La señal queda PENDIENTE y no evalúa TP/SL hasta que TODAS las entradas se "
-                     "activen. Ahí pasa sola a ABIERTA y el TP/SL se evalúa desde esa activación.")
-            es_gratis_pub = st.checkbox(
-                "⭐ Marcar como señal gratuita (la ven los planes Básico y Prueba)",
-                key="sen_es_gratis",
-                help="Solo puede haber una señal gratuita a la vez: si marcás esta, la anterior deja "
-                     "de serlo. Los usuarios Pro ven todas las señales igual.")
+    ticker_u = (ticker or "").strip().upper()
+    atr_val, px_actual = None, None
+    if ticker_u:
+        with st.spinner(f"Analizando {ticker_u}..."):
+            atr_val, px_actual = _atr_y_precio_actual(ticker_u)
 
-        ticker_u = (ticker or "").strip().upper()
-        atr_val, px_actual = None, None
-        if ticker_u:
-            with st.spinner(f"Analizando {ticker_u}..."):
-                atr_val, px_actual = _atr_y_precio_actual(ticker_u)
+    with st.container(border=True):
+        st.markdown("**② Entradas**")
+        precios = _render_entradas_form(es_pendiente_pub, px_actual)
+    precio_ref_stop = (sum(precios) / len(precios)) if precios else 0.0
 
-        with st.container(border=True):
-            st.markdown("**② Cuenta y riesgo**")
-            r1, r2 = st.columns(2)
-            with r1:
-                capital_cuenta = st.number_input(
-                    "💰 Capital total (USD)", min_value=1.0, value=1000.0, step=100.0,
-                    key="sen_capital",
-                    help="Tu capital de referencia para dimensionar la señal. No se guarda ni se "
-                         "descuenta: es solo la base del cálculo del riesgo.")
-            with r2:
-                pct_riesgo = st.number_input(
-                    "% de riesgo deseado", min_value=0.1, max_value=25.0, value=2.0, step=0.5,
-                    key="sen_pct_riesgo",
-                    help="% del capital total que aceptás perder si salta el stop. Regla clásica: 1-2%.")
-            apal = st.number_input("Apalancamiento (x)", min_value=1.0, max_value=125.0, value=1.0,
-                                   step=1.0, key="sen_apal",
-                                   help="Mismo apalancamiento para todas las entradas.")
-            st.caption(_md_dolar(f"Máximo a perder: **${capital_cuenta * pct_riesgo / 100:,.2f}**")
-                       + (" · ⚠️ por encima del 5% que suele recomendarse" if pct_riesgo > 5 else ""))
+    with st.container(border=True):
+        st.markdown("**③ Gestión de salida**")
+        modo_stop = st.radio("Modo de Stop Loss", ["Manual", "Por ATR / Volatilidad", "% Fijo"],
+                             horizontal=True, key="sen_modo_stop")
+        stop_loss = 0.0
 
-        with st.container(border=True):
-            st.markdown("**③ Entradas**")
-            precios = _render_entradas_form(es_pendiente_pub, px_actual)
-        precio_ref_stop = (sum(precios) / len(precios)) if precios else 0.0
+        if modo_stop == "Manual":
+            stop_loss = st.number_input("🛑 Stop Loss", min_value=0.0, format="%.5f", key="sen_sl")
 
-        with st.container(border=True):
-            st.markdown("**④ Gestión de salida**")
-            modo_stop = st.radio("Modo de Stop Loss", ["Manual", "Por ATR / Volatilidad", "% Fijo"],
-                                 horizontal=True, key="sen_modo_stop")
-            stop_loss = 0.0
-
-            if modo_stop == "Manual":
-                stop_loss = st.number_input("🛑 Stop Loss", min_value=0.0, format="%.5f", key="sen_sl")
-
-            elif modo_stop == "Por ATR / Volatilidad":
-                mult = st.select_slider("Múltiplo de ATR", options=[1.0, 1.5, 2.0, 3.0], value=1.5,
-                                        key="sen_mult_atr", format_func=lambda m_: f"{m_:g}× ATR",
-                                        help="Cuántas volatilidades diarias normales separan el stop "
-                                             "de tu entrada. Más alto = stop más holgado.")
-                if not ticker_u:
-                    st.info("Ingresá un ticker para calcular el ATR.")
-                elif not atr_val:
-                    st.warning("No hay ATR disponible para este activo. Usá el modo Manual o % Fijo.")
-                elif precio_ref_stop <= 0:
-                    st.info("Cargá el precio de entrada para calcular el stop por ATR.")
+        elif modo_stop == "Por ATR / Volatilidad":
+            mult = st.select_slider("Múltiplo de ATR", options=[1.0, 1.5, 2.0, 3.0], value=1.5,
+                                    key="sen_mult_atr", format_func=lambda m_: f"{m_:g}× ATR",
+                                    help="Cuántas volatilidades diarias normales separan el stop "
+                                         "de tu entrada. Más alto = stop más holgado.")
+            if not ticker_u:
+                st.info("Ingresá un ticker para calcular el ATR.")
+            elif not atr_val:
+                st.warning("No hay ATR disponible para este activo. Usá el modo Manual o % Fijo.")
+            elif precio_ref_stop <= 0:
+                st.info("Cargá el precio de entrada para calcular el stop por ATR.")
+            else:
+                sug = sugerir_stop_atr(precio_ref_stop, atr_val, direccion, mult)
+                if sug and sug > 0:
+                    stop_loss = round(sug, 5)
+                    st.success(_md_dolar(f"🛑 Stop calculado: **${stop_loss:,.5f}** "
+                                         f"({mult:g} × ATR de {atr_val:,.5f})"))
                 else:
-                    sug = sugerir_stop_atr(precio_ref_stop, atr_val, direccion, mult)
-                    if sug and sug > 0:
-                        stop_loss = round(sug, 5)
-                        st.success(_md_dolar(f"🛑 Stop calculado: **${stop_loss:,.5f}** "
-                                             f"({mult:g} × ATR de {atr_val:,.5f})"))
-                    else:
-                        st.warning("El stop por ATR quedaría en un precio inválido (≤ 0). "
-                                   "Probá un múltiplo menor.")
+                    st.warning("El stop por ATR quedaría en un precio inválido (≤ 0). "
+                               "Probá un múltiplo menor.")
 
-            else:  # % Fijo
-                pct_stop = st.radio("Distancia del stop", [2, 3, 5], horizontal=True, key="sen_pct_stop",
-                                    format_func=lambda p: f"-{p}%" if es_largo_pub else f"+{p}%")
-                if precio_ref_stop <= 0:
-                    st.info("Cargá el precio de entrada para calcular el stop.")
-                else:
-                    stop_loss = round(sugerir_stop_pct(precio_ref_stop, pct_stop, direccion), 5)
-                    st.success(_md_dolar(
-                        f"🛑 Stop calculado: **${stop_loss:,.5f}** ({pct_stop}% "
-                        f"{'por debajo' if es_largo_pub else 'por encima'} de la entrada)"))
+        else:  # % Fijo
+            pct_stop = st.radio("Distancia del stop", [2, 3, 5], horizontal=True, key="sen_pct_stop",
+                                format_func=lambda p: f"-{p}%" if es_largo_pub else f"+{p}%")
+            if precio_ref_stop <= 0:
+                st.info("Cargá el precio de entrada para calcular el stop.")
+            else:
+                stop_loss = round(sugerir_stop_pct(precio_ref_stop, pct_stop, direccion), 5)
+                st.success(_md_dolar(
+                    f"🛑 Stop calculado: **${stop_loss:,.5f}** ({pct_stop}% "
+                    f"{'por debajo' if es_largo_pub else 'por encima'} de la entrada)"))
 
-            take_profit = st.number_input(
-                "🎯 Take Profit", min_value=0.0, format="%.5f", key="sen_tp",
-                help="Habilita la ganancia estimada y el ratio Riesgo/Beneficio.")
+        take_profit = st.number_input("🎯 Take Profit", min_value=0.0, format="%.5f", key="sen_tp")
 
-    # ══════════════════ DERECHA: RESULTADOS EN VIVO ══════════════════
-    with col_out:
-        st.markdown("#### 📊 Resultados en tiempo real")
-        resumen_pub, entradas_guardar = _panel_resultados_pub(
-            precios, stop_loss, take_profit, apal, es_largo_pub, es_pendiente_pub,
-            capital_cuenta, pct_riesgo)
-
-    precio_entrada_pos = resumen_pub["precio_promedio"] if resumen_pub else 0.0
-    apal_apertura_pub = resumen_pub["apalancamiento_apertura"] if resumen_pub else 1.0
+    # ── Resumen / validación de niveles ──
+    precio_entrada_pos = _validar_niveles_pub(precios, stop_loss, take_profit, es_largo_pub)
 
     # ══════════════════ NOTAS Y PUBLICAR ══════════════════
     st.divider()
@@ -1343,21 +953,16 @@ def _form_publicar_manual(supabase, user_id, user_email):
             st.warning("⚠️ Revisá los niveles: para LARGO, SL < Entrada < TP. Para CORTO, TP < Entrada < SL. "
                        "(Se valida contra el precio promedio de las entradas.)")
 
-    riesgo_conservador = PERFILES_RIESGO["conservador"]["default_pct"]
-    riesgo_moderado = PERFILES_RIESGO["moderado"]["default_pct"]
-    riesgo_agresivo = PERFILES_RIESGO["agresivo"]["default_pct"]
-
     label_btn_pub = "🕓 Dejar orden pendiente" if es_pendiente_pub else "📢 Publicar señal"
     if st.button(label_btn_pub, type="primary", key="sen_btn_publicar"):
-        if not ticker or not resumen_pub or stop_loss <= 0 or take_profit <= 0:
+        if not ticker or precio_entrada_pos <= 0 or stop_loss <= 0 or take_profit <= 0:
             st.warning("⚠️ Completá ticker, al menos una entrada válida, stop loss y take profit.")
         else:
             datos = dict(ticker=ticker, categoria=categoria, tipo=tipo, fecha=fecha, hora=hora,
-                         precio_entrada=precio_entrada_pos, entradas=entradas_guardar,
+                         precio_entrada=precio_entrada_pos,
+                         entradas=_entradas_para_guardar(precios, es_pendiente_pub),
                          stop_loss=stop_loss, take_profit=take_profit,
-                         apalancamiento=apal_apertura_pub, notas=notas,
-                         riesgo_conservador=riesgo_conservador, riesgo_moderado=riesgo_moderado,
-                         riesgo_agresivo=riesgo_agresivo,
+                         apalancamiento=1.0, notas=notas,
                          estado="PENDIENTE" if es_pendiente_pub else "ABIERTA",
                          visible_basico=es_gratis_pub)
             try:
@@ -1432,26 +1037,13 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                   f"{categoria_row} · {row.get('tipo','')} · {estado_row}"
                   + (" · ⭐ GRATIS" if _es_gratis(row) else ""))
         with st.expander(f"{emoji} {titulo}"):
-            entradas_lista = _entradas_de_senal(row.to_dict())
-            v1, v2, v3, v4 = st.columns(4)
-            v1.metric("Entrada (prom. ponderado)" if len(entradas_lista) > 1 else "Entrada",
-                      fmt_precio_local(row.get("precio_entrada")))
-            v2.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
-            v3.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
-            v4.metric("Apalancamiento", fmt_apal(_apalancamiento_apertura_de_senal(row.to_dict())))
+            senal_row = row.to_dict()
+            entradas_lista = _entradas_de_senal(senal_row)
+            _render_niveles(senal_row, entradas_lista)
 
             if estado_row == "PENDIENTE":
                 n_act = sum(1 for e in entradas_lista if e.get("activada"))
                 st.caption(f"🕓 Orden pendiente — {n_act}/{len(entradas_lista)} entradas activadas.")
-
-            if len(entradas_lista) > 1:
-                st.caption(_md_dolar(f"🧩 {len(entradas_lista)} entradas → {_texto_entradas(entradas_lista)}"))
-
-            es_largo_row = "LARGO" in str(row.get("tipo", "")).upper()
-            res_row = _resumen_de_senal(row.to_dict())
-            if res_row:
-                _render_resumen_posicion(res_row, es_largo_row,
-                                          stop_loss=float(row.get("stop_loss") or 0))
 
             if row.get("precio_cierre") is not None:
                 hora_cierre_txt = row.get("hora_cierre")
@@ -1466,11 +1058,8 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
             if estado_row == "ABIERTA":
                 st.divider()
                 with st.expander("➕ Agregar otra entrada a esta posición"):
-                    st.caption(
-                        "Cargá solo el precio de la nueva entrada. Usa el mismo apalancamiento y el "
-                        "mismo margen que las entradas anteriores, y se recalcula el precio promedio "
-                        "y la liquidación de toda la posición."
-                    )
+                    st.caption("Cargá el precio de la nueva entrada. Se recalcula el precio "
+                               "promedio de la posición.")
                     nueva_precio = st.number_input(
                         "Precio de la nueva entrada", min_value=0.0, format="%.5f",
                         key=f"sen_add_precio_{row['id']}")
@@ -1482,32 +1071,25 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                             entradas_actuales_fmt = _entradas_a_formato_guardado(entradas_lista)
                             margenes_previos = [e["margen"] for e in entradas_actuales_fmt
                                                 if e["margen"] > 0]
-                            if not margenes_previos:
-                                st.error("❌ Esta señal es anterior al cálculo por margen y no tiene "
-                                         "margen cargado, así que no se puede agregar la entrada "
-                                         "automáticamente.")
-                            else:
-                                margen_nuevo = sum(margenes_previos) / len(margenes_previos)
-                                apal_nueva = _apalancamiento_apertura_de_senal(row.to_dict())
-                                entradas_nuevas = entradas_actuales_fmt + [{
-                                    "precio": float(nueva_precio), "costo_apertura": 0.0,
-                                    "apalancamiento": apal_nueva, "margen": margen_nuevo,
-                                    "margen_extra": 0.0,
-                                    "activada": True, "fecha_activacion": None,
-                                    "hora_activacion": None,
-                                }]
-                                resumen_nuevo = _resumen_posicion(entradas_nuevas, es_largo_row)
-                                if resumen_nuevo is None:
-                                    st.error("❌ No se pudo calcular la posición con esta entrada.")
-                                else:
-                                    _agregar_entrada_senal(
-                                        supabase, row["id"], entradas_nuevas,
-                                        resumen_nuevo["precio_promedio"],
-                                        resumen_nuevo["apalancamiento_apertura"])
-                                    _obtener_senales.clear()
-                                    st.success("✅ Entrada agregada. Se recalculó el precio promedio "
-                                               "y la liquidación.")
-                                    st.rerun()
+                            # Señales viejas con margen: la nueva entrada usa el margen promedio.
+                            # Señales nuevas (sin margen): queda en 0 y el promedio es simple.
+                            margen_nuevo = (sum(margenes_previos) / len(margenes_previos)
+                                            if len(margenes_previos) == len(entradas_actuales_fmt)
+                                            else 0.0)
+                            apal_nueva = _apalancamiento_de_senal(senal_row)
+                            entradas_nuevas = entradas_actuales_fmt + [{
+                                "precio": float(nueva_precio), "costo_apertura": 0.0,
+                                "apalancamiento": apal_nueva, "margen": margen_nuevo,
+                                "margen_extra": 0.0,
+                                "activada": True, "fecha_activacion": None,
+                                "hora_activacion": None,
+                            }]
+                            promedio_nuevo = _promedio_de_entradas(entradas_nuevas)
+                            _agregar_entrada_senal(supabase, row["id"], entradas_nuevas,
+                                                   promedio_nuevo, apal_nueva)
+                            _obtener_senales.clear()
+                            st.success("✅ Entrada agregada. Se recalculó el precio promedio.")
+                            st.rerun()
 
                 st.divider()
                 precio_cierre_manual = st.number_input(
@@ -1546,43 +1128,6 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                 _obtener_senales.clear()
                 st.success("Señal eliminada.")
                 st.rerun()
-
-
-# ==============================================================
-#  HELPERS DE RÉPLICA (usados en Señales y Resultados)
-# ==============================================================
-
-REPLICA_REF_PRIMERA = "Margen de la 1ª entrada (apertura + extra)"
-REPLICA_REF_TOTAL = "Margen total de la posición"
-MODO_REPLICA = "🔁 Replicar la posición del publicador (escalada a tu margen)"
-
-
-def _factor_replica(res, entradas, base_usuario, referencia):
-    if referencia == REPLICA_REF_PRIMERA:
-        primera = entradas[0]
-        ref = primera["margen"] + float(primera.get("margen_extra") or 0.0)
-    else:
-        ref = res["margen_total"]
-    return (base_usuario / ref) if ref and ref > 0 else 0.0
-
-
-def _filas_detalle_replica(s, entradas, factor):
-    filas = []
-    for i, e in enumerate(entradas):
-        margen = e["margen"] * factor
-        margen_extra = float(e.get("margen_extra") or 0.0) * factor
-        nominal = margen * e["apalancamiento"]
-        filas.append({
-            "Fecha": s.get("fecha"), "Ticker": s.get("ticker"), "Entrada": i + 1,
-            "Precio": fmt_precio_exacto(e["precio"]),
-            "Apalanc.": fmt_apal(e["apalancamiento"]),
-            "Tu margen apertura (USD)": round(margen, 2),
-            "Tu margen extra (USD)": round(margen_extra, 2),
-            "Tu costo de apertura (USD)": round(e["costo_apertura"] * factor, 4),
-            "Tamaño nominal (USD)": round(nominal, 2),
-            "Unidades": round(nominal / e["precio"], 6),
-        })
-    return filas
 
 
 # ==============================================================
@@ -1699,16 +1244,7 @@ def _tab_senales(supabase, es_admin, es_pro=True):
     for _, row in df_f.iterrows():
         estado = row.get("estado", "ABIERTA")
         col, bg, emoji = ESTADO_COLOR.get(estado, ("#8b949e", "rgba(139,148,158,0.12)", "⚪"))
-
-        if estado != "PENDIENTE":
-            precio_ref = row.get("precio_cierre") if row.get("precio_cierre") is not None else None
-            if precio_ref is None:
-                ev = _evaluar_senal(row.to_dict())
-                precio_ref = ev["precio_ref"]
-            ret_precio, ret_apalancado = _calcular_retorno(row.to_dict(), precio_ref) if precio_ref else (0, 0)
-        else:
-            precio_ref = None
-            ret_precio = ret_apalancado = 0
+        senal_row = row.to_dict()
 
         categoria_row = row.get("categoria") or "🔹 Otro"
         titulo = (f"{row.get('fecha','')} {row.get('hora','')} · {row.get('ticker','')} · "
@@ -1723,7 +1259,7 @@ def _tab_senales(supabase, es_admin, es_pro=True):
             )
 
             if estado == "CERRADA MANUAL":
-                gano_manual = _cierre_manual_fue_ganador(row.to_dict())
+                gano_manual = _cierre_manual_fue_ganador(senal_row)
                 if gano_manual is True:
                     st.caption("✅ Este cierre manual se contabiliza como **acierto** en el Win "
                                "Rate (cerró con ganancia).")
@@ -1731,8 +1267,9 @@ def _tab_senales(supabase, es_admin, es_pro=True):
                     st.caption("❌ Este cierre manual se contabiliza como **desacierto** en el "
                                "Win Rate (cerró con pérdida).")
 
+            entradas_lista = _entradas_de_senal(senal_row)
+
             if estado == "PENDIENTE":
-                entradas_lista = _entradas_de_senal(row.to_dict())
                 n_act = sum(1 for e in entradas_lista if e.get("activada"))
                 st.info(f"🕓 Orden pendiente — {n_act}/{len(entradas_lista)} entradas activadas. "
                         "Se activa sola en cuanto el precio de mercado toque el precio de cada "
@@ -1748,32 +1285,18 @@ def _tab_senales(supabase, es_admin, es_pro=True):
                     else:
                         st.caption(f"⏳ Entrada {i+1} ({fmt_precio_exacto(e['precio'])}) "
                                    "esperando que el precio la toque.")
-                v1, v2 = st.columns(2)
-                v1.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
-                v2.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
-                es_largo_row = "LARGO" in str(row.get("tipo", "")).upper()
-                res_preview = _resumen_de_senal(row.to_dict())
-                if res_preview:
-                    st.caption("Vista previa de la posición una vez que se activen todas las "
-                               "entradas (con el margen y apalancamiento que se cargaron):")
-                    _render_resumen_posicion(res_preview, es_largo_row,
-                                              stop_loss=float(row.get("stop_loss") or 0))
+                _render_niveles(senal_row, entradas_lista)
                 if row.get("notas"):
                     st.markdown(f"**Notas:** {row['notas']}")
                 continue
 
             if estado == "ABIERTA":
                 precio_vivo_row, ts_vivo_row = _precio_en_vivo(row.get("ticker"))
-                pnl_vivo_row = _pnl_vivo_senal(row.to_dict(), precio_vivo_row)
+                pnl_vivo_row = _pnl_vivo_senal(senal_row, precio_vivo_row)
                 _render_badge_pnl_vivo(pnl_vivo_row, ts_vivo_row)
 
-            entradas_lista = _entradas_de_senal(row.to_dict())
-            v1, v2, v3, v4 = st.columns(4)
-            v1.metric("Entrada (prom. ponderado)" if len(entradas_lista) > 1 else "Entrada",
-                      fmt_precio_local(row.get("precio_entrada")))
-            v2.metric("Stop Loss", fmt_precio_local(row.get("stop_loss")))
-            v3.metric("Take Profit", fmt_precio_local(row.get("take_profit")))
-            v4.metric("Apalancamiento", fmt_apal(_apalancamiento_apertura_de_senal(row.to_dict())))
+            # Entrada, Stop Loss, Take Profit y Precio promedio (si hay más de una entrada)
+            _render_niveles(senal_row, entradas_lista)
 
             if row.get("fecha_activacion"):
                 detalle_act = f"{row.get('fecha_activacion')}"
@@ -1781,22 +1304,6 @@ def _tab_senales(supabase, es_admin, es_pro=True):
                     detalle_act += f" {row.get('hora_activacion')}"
                 st.caption(f"🕓 Esta posición venía de una orden pendiente: se activó el {detalle_act}. "
                            "El Take Profit / Stop Loss se evalúa desde ese momento en adelante.")
-
-            if len(entradas_lista) > 1:
-                st.caption(_md_dolar(f"🧩 {len(entradas_lista)} entradas cargadas → {_texto_entradas(entradas_lista)}"))
-                st.caption("El precio de entrada de arriba es el promedio real de la posición "
-                           "(ponderado por el tamaño de cada entrada).")
-
-            es_largo_row = "LARGO" in str(row.get("tipo", "")).upper()
-            res_row = _resumen_de_senal(row.to_dict())
-            if res_row:
-                _render_resumen_posicion(res_row, es_largo_row,
-                                          stop_loss=float(row.get("stop_loss") or 0))
-
-            v5, v6 = st.columns(2)
-            v5.metric("Precio actual / cierre", fmt_precio_local(precio_ref))
-            v6.metric("Retorno apalancado", f"{ret_apalancado:+.1f}%",
-                      delta=f"{ret_precio:+.2f}% precio", delta_color="off")
 
             if row.get("precio_cierre") is not None:
                 hora_cierre_txt = row.get("hora_cierre")
@@ -1809,125 +1316,31 @@ def _tab_senales(supabase, es_admin, es_pro=True):
             if row.get("notas"):
                 st.markdown(f"**Notas:** {row['notas']}")
 
-            if estado == "ABIERTA" and res_row:
-                st.divider()
-                st.markdown("##### 🔁 Replicá la posición")
-                st.caption(
-                    "Poné un solo número (tu margen) y la app copia la posición del publicador "
-                    "tal cual: mismas entradas, mismos precios y el mismo apalancamiento en cada "
-                    "una. El margen de apertura y el margen extra se escalan en la misma "
-                    "proporción, y el precio de liquidación te queda igual."
-                )
-                base_replica_row = st.number_input(
-                    "Tu margen (USD) — margen de la 1ª entrada (apertura + extra)",
-                    min_value=0.01, value=10.0, step=1.0, format="%.2f",
-                    key=f"sen_hist_replica_base_{row['id']}")
-
-                entradas_replica = _entradas_de_senal(row.to_dict())
-                factor_replica_row = _factor_replica(res_row, entradas_replica, base_replica_row,
-                                                       REPLICA_REF_PRIMERA)
-                if factor_replica_row <= 0:
-                    st.caption("Cargá un número mayor a 0 para calcular tu posición.")
-                else:
-                    rrm1, rrm2, rrm3, rrm4 = st.columns(4)
-                    rrm1.metric("Margen de apertura a poner",
-                                f"${res_row['margen_apertura'] * factor_replica_row:,.2f}")
-                    rrm2.metric("Margen extra a poner",
-                                f"${res_row['margen_extra'] * factor_replica_row:,.2f}")
-                    rrm3.metric("Margen total a poner",
-                                f"${res_row['margen_total'] * factor_replica_row:,.2f}")
-                    rrm4.metric("Apalancamiento", fmt_apal(res_row["apalancamiento_apertura"]))
-
-                    if res_row["liquidada_al_abrir"]:
-                        st.error("🚨 Con este margen la posición nacería liquidada (los costos "
-                                 "de apertura superan el margen total).")
-                    elif res_row["sin_liquidacion"]:
-                        st.caption("Con este apalancamiento y margen, el activo tendría que "
-                                   "llegar a $0 para liquidarte.")
-                    else:
-                        rrl1, rrl2 = st.columns(2)
-                        rrl1.metric("💀 Precio de liquidación",
-                                    fmt_precio_exacto(res_row["precio_liquidacion"]))
-                        rrl2.metric("Distancia a liquidación",
-                                    f"{res_row['dist_liq_pct']:+.2f}%")
-
-                    if _sl_mas_alla_de_liquidacion(res_row, es_largo_row,
-                                                    float(row.get("stop_loss") or 0)):
-                        st.warning("⚠️ Con este margen, el Stop Loss queda más allá del precio de "
-                                   "liquidación: te liquidarían antes de que el SL se ejecute.")
-
-                    detalle_replica_row = _filas_detalle_replica(row.to_dict(), entradas_replica,
-                                                                   factor_replica_row)
-                    if len(detalle_replica_row) > 1:
-                        with st.expander("🔍 Ver el detalle por entrada"):
-                            st.dataframe(pd.DataFrame(detalle_replica_row),
-                                         use_container_width=True, hide_index=True)
-
 
 # ==============================================================
 #  HELPERS COMPARTIDOS DEL SIMULADOR
 # ==============================================================
 
-def _calcular_fila_simulacion(s, precio_ref, capital_total, modo_calculo,
-                               monto_por_senal=None, pct_por_senal=None, riesgo_pct=None,
-                               unidades_por_lote=None, cantidad_lotes=None,
-                               fecha_cierre=None, hora_cierre=None):
+def _calcular_fila_simulacion(s, precio_ref, monto, fecha_cierre=None, hora_cierre=None):
     estado = s.get("estado", "ABIERTA")
     cat = s.get("categoria") or "🔹 Otro"
     ret_precio, ret_apalancado_signal = _calcular_retorno(s, precio_ref)
-    extra_cols = {}
 
-    if modo_calculo == "lotes":
-        unidades = (unidades_por_lote or 1.0) * (cantidad_lotes or 0)
-        pnl_usd, margen, ret_pct = _calcular_pnl_lotes(s, precio_ref, unidades)
-        capital_asignado = margen
-        liquidada = ret_pct <= -100
-        if liquidada:
-            pnl_usd = -capital_asignado
-            ret_pct = -100.0
-        capital_final = capital_asignado + pnl_usd
-        extra_cols = {"Lotes": round(cantidad_lotes or 0, 2), "Unidades": round(unidades, 2)}
-        ret_mostrar = ret_pct
+    liquidada = ret_apalancado_signal <= -100
+    ret_mostrar = max(ret_apalancado_signal, -100)
+    pnl_usd = monto * (ret_mostrar / 100)
+    capital_final = monto + pnl_usd
 
-    elif modo_calculo == "riesgo":
-        if riesgo_pct is None:
-            return None
-        calc = _tamano_posicion_por_riesgo(s, capital_total, riesgo_pct)
-        if calc is None:
-            return None
-        pnl_usd, margen, ret_pct = _calcular_pnl_lotes(s, precio_ref, calc["unidades"])
-        capital_asignado = margen
-        liquidada = ret_pct <= -100
-        if liquidada:
-            pnl_usd = -calc["riesgo_usd"]
-            ret_pct = (pnl_usd / margen * 100) if margen else -100.0
-        capital_final = capital_asignado + pnl_usd
-        extra_cols = {"% Riesgo": round(riesgo_pct, 2)}
-        ret_mostrar = ret_pct
-
-    else:
-        capital_asignado = monto_por_senal if monto_por_senal is not None else capital_total * (pct_por_senal / 100)
-        liquidada = ret_apalancado_signal <= -100
-        ret_mostrar = max(ret_apalancado_signal, -100)
-        pnl_usd = capital_asignado * (ret_mostrar / 100)
-        capital_final = capital_asignado + pnl_usd
-
-    fila = {
+    return {
         "Fecha": s.get("fecha"), "Ticker": s.get("ticker"), "Categoría": cat, "Tipo": s.get("tipo"),
-        "Entrada usada (ponderada)": fmt_precio_local(s.get("precio_entrada")),
+        "Entrada usada": fmt_precio_local(s.get("precio_entrada")),
         "Estado": "💀 LIQUIDADA" if liquidada else estado,
         "Cierre": _texto_cierre(estado, fecha_cierre, hora_cierre),
-        "Apalanc.": fmt_apal(_apalancamiento_apertura_de_senal(s)),
-    }
-    fila.update(extra_cols)
-    fila.update({
-        "Ret. Precio %": round(ret_precio, 2),
-        "Ret. Apalancado %": round(ret_mostrar, 2),
-        "Capital Asignado": round(capital_asignado, 2),
+        "Retorno %": round(ret_mostrar, 2),
+        "Capital Asignado": round(monto, 2),
         "P&L (USD)": round(pnl_usd, 2),
         "Capital Final": round(capital_final, 2),
-    })
-    return fila
+    }
 
 
 def _mostrar_metricas_sim(df_sim, label_capital):
@@ -1960,22 +1373,13 @@ def _mostrar_tabla_estilizada(df_sim):
             col = "#f85149"
         return f"color:{col};font-weight:700"
 
-    format_dict = {"Ret. Precio %": "{:+.2f}%", "Ret. Apalancado %": "{:+.2f}%",
+    format_dict = {"Retorno %": "{:+.2f}%",
                    "Capital Asignado": "${:,.2f}", "P&L (USD)": "${:+,.2f}",
                    "Capital Final": "${:,.2f}"}
-    if "Lotes" in df_sim.columns:
-        format_dict["Lotes"] = "{:.2f}"
-        format_dict["Unidades"] = "{:,.2f}"
-    if "% Riesgo" in df_sim.columns:
-        format_dict["% Riesgo"] = "{:.2f}%"
-    if "Costos apertura" in df_sim.columns:
-        format_dict["Costos apertura"] = "${:,.2f}"
-    if "Margen extra (según tu monto)" in df_sim.columns:
-        format_dict["Margen extra (según tu monto)"] = "${:,.2f}"
 
     _map = "map" if hasattr(df_sim.style, "map") else "applymap"
     styled = (df_sim.style
-              .pipe(lambda s: getattr(s, _map)(_color_pnl, subset=["P&L (USD)", "Ret. Apalancado %"]))
+              .pipe(lambda s: getattr(s, _map)(_color_pnl, subset=["P&L (USD)", "Retorno %"]))
               .pipe(lambda s: getattr(s, _map)(_color_estado_sim, subset=["Estado"]))
               .format(format_dict)
               .set_properties(**{"background-color": "#0d1117", "color": "#e6edf3", "border": "1px solid #21262d"})
@@ -2029,12 +1433,11 @@ def _mostrar_mejor_peor(df_sim):
 def _tab_simulador(supabase, es_pro=True, es_admin=False):
     st.caption(
         "Simulá cuánto hubieras ganado o perdido con las señales que elijas, asignándole a cada "
-        "una el monto que quieras — siempre con el apalancamiento real con el que se publicó."
+        "una el monto que quieras."
     )
     st.caption(
-        "🧩 Para señales con varias entradas, acá se usa el precio promedio real de la posición "
-        "(ponderado por el tamaño de cada entrada). Las órdenes pendientes (todavía no "
-        "activadas) no se incluyen acá."
+        "🧩 Para señales con varias entradas, acá se usa el precio promedio de la posición. "
+        "Las órdenes pendientes (todavía no activadas) no se incluyen acá."
     )
 
     senales, ocultas = _filtrar_senales_por_plan(_obtener_senales(supabase, 200), es_pro)
@@ -2110,7 +1513,6 @@ def _tab_simulador(supabase, es_pro=True, es_admin=False):
                 key=f"sim_monto_ind_{row['id']}")
 
     filas = []
-    margen_extra_total_usuario = 0.0
     for _, row in df_base.iterrows():
         s = row.to_dict()
         s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
@@ -2124,19 +1526,10 @@ def _tab_simulador(supabase, es_pro=True, es_admin=False):
         if monto_signal <= 0:
             continue
 
-        res_signal = _resumen_de_senal(s)
-        margen_extra_usuario = 0.0
-        if res_signal and res_signal.get("margen_apertura", 0) > 0:
-            factor_monto = monto_signal / res_signal["margen_apertura"]
-            margen_extra_usuario = res_signal["margen_extra"] * factor_monto
-        margen_extra_total_usuario += margen_extra_usuario
-
-        fila = _calcular_fila_simulacion(s, precio_ref, monto_signal, "monto_pct",
-                                          monto_por_senal=monto_signal,
+        fila = _calcular_fila_simulacion(s, precio_ref, monto_signal,
                                           fecha_cierre=s.get("fecha_cierre"),
                                           hora_cierre=s.get("hora_cierre"))
         if fila:
-            fila["Margen extra (según tu monto)"] = round(margen_extra_usuario, 2)
             filas.append(fila)
 
     if not filas:
@@ -2146,18 +1539,11 @@ def _tab_simulador(supabase, es_pro=True, es_admin=False):
     df_sim = pd.DataFrame(filas)
     st.divider()
     _mostrar_metricas_sim(df_sim, "Capital total usado")
-    st.metric("➕ Margen extra agregado (según el monto que pusiste)",
-              f"USD {margen_extra_total_usuario:,.2f}")
-    st.caption(
-        "Si replicaras cada posición con el monto que elegiste —manteniendo la misma proporción "
-        "que usó el publicador entre margen de apertura y margen extra— este sería el margen "
-        "extra que te correspondería agregar. Es informativo: no afecta el P&L calculado."
-    )
     _mostrar_tabla_estilizada(df_sim)
     _mostrar_mejor_peor(df_sim)
 
-    st.caption("⚠️ Simulación educativa. No contempla comisiones, spread, financiamiento por "
-               "apalancamiento, swap ni slippage. Cuando TP y SL se tocan en la misma vela se "
+    st.caption("⚠️ Simulación educativa. No contempla comisiones, spread, financiamiento, "
+               "swap ni slippage. Cuando TP y SL se tocan en la misma vela se "
                "asume el peor caso (SL). No constituye asesoramiento financiero.")
 
 
@@ -2185,10 +1571,10 @@ def render_senales_trading(supabase, user_id, user_email, tiene_acceso_pro=False
         🎯 Señales de Trading
       </div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.6">
-        Señales publicadas con fecha, hora, una o varias entradas, precio de liquidación,
-        stop loss y take profit — o cargadas como órdenes pendientes (🕓) que se activan solas
-        cuando el precio toca la entrada. Evaluación automática de aciertos/desaciertos, P&L en
-        vivo para las abiertas, réplica de la posición a tu margen y simulador de capital.
+        Señales publicadas con fecha, hora, una o varias entradas, stop loss y take profit
+        — o cargadas como órdenes pendientes (🕓) que se activan solas cuando el precio toca
+        la entrada. Evaluación automática de aciertos/desaciertos, P&L en vivo para las
+        abiertas y simulador de capital.
         Plan Pro: señales ilimitadas · Plan Básico/Prueba: 1 señal destacada.
       </div>
     </div>
