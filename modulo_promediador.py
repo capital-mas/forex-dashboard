@@ -1040,10 +1040,6 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                         step=paso_cant, format=fmt_cant, disabled=True,
                         help='Se calcula sola: capital para la operación × apalancamiento ÷ precio de entrada '
                              '(redondeada hacia abajo).')
-                if capital_op > 0 and precio_nuevo > 0:
-                    st.caption(f'🧮 ${capital_op:,.2f} × {apalancamiento:g}x = exposición de '
-                               f'**${capital_op * apalancamiento:,.2f}** → **{cant_calc:,.{dec_c}f}** '
-                               f'{"unidades/tokens" if dec_c else "unidades"}')
 
             if info_tend:
                 px = info_tend['precio_actual']
@@ -1161,8 +1157,8 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                                'operable. Subí el capital o el apalancamiento.')
                 else:
                     if capital_op > capital_cuenta:
-                        st.warning(f'⚠️ El capital de la operación (${capital_op:,.2f}) supera el capital '
-                                   f'total de tu cuenta (${capital_cuenta:,.2f}).')
+                        st.warning(f'⚠️ El capital de la operación (\\${capital_op:,.2f}) supera el capital '
+                                   f'total de tu cuenta (\\${capital_cuenta:,.2f}).')
                     if precio_stop > 0 and not (cant_actual_u > 0 and precio_prom_actual <= 0):
                         try:
                             prom_l = calcular_promedio(cant_actual_u, precio_prom_actual, cant_op, precio_nuevo)
@@ -1171,19 +1167,14 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                             if lado_ok:
                                 perd = abs(p_avg - precio_stop) * prom_l['cantidad_final']
                                 perd_pct = perd / capital_cuenta * 100
-                                tope = (f' Capital máximo para respetarlo: **${cap_rec:,.2f}**.'
+                                tope = (f' Capital máximo para respetarlo: **\\${cap_rec:,.2f}**.'
                                         if cap_rec else '')
                                 if perd > dinero_max_op * 1.0001:
-                                    msg = (f'🚨 Con **${capital_op:,.2f}** de capital ({apalancamiento:g}x) '
+                                    msg = (f'🚨 Con **\\${capital_op:,.2f}** de capital ({apalancamiento:g}x) '
                                            f'te pasás de tu riesgo deseado: si salta el stop perdés '
-                                           f'**${perd:,.2f}** ({perd_pct:.1f}% de tu cuenta) y tu límite es '
-                                           f'**${dinero_max_op:,.2f}** ({pct_riesgo_max:g}%).' + tope)
+                                           f'**\\${perd:,.2f}** ({perd_pct:.1f}% de tu cuenta) y tu límite es '
+                                           f'**\\${dinero_max_op:,.2f}** ({pct_riesgo_max:g}%).' + tope)
                                     (st.error if perd > dinero_max_op * 2 else st.warning)(msg)
-                                else:
-                                    st.success(f'✅ Con **${capital_op:,.2f}** de capital estás dentro de tu '
-                                               f'riesgo deseado: si salta el stop perdés ${perd:,.2f} '
-                                               f'({perd_pct:.1f}% de tu cuenta) de un máximo de '
-                                               f'${dinero_max_op:,.2f} ({pct_riesgo_max:g}%).')
                         except ValueError:
                             pass
 
@@ -1194,16 +1185,8 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
             elif not cfg['es_lotes']:
                 # Exchange: se recomienda el CAPITAL; la cantidad sale sola
                 if cap_rec and cap_rec > 0:
-                    cant_rec = _floor_dec(cap_rec * apalancamiento / precio_nuevo, dec_c)
-                    r1, r2 = st.columns([1, 1.6])
-                    with r1:
-                        st.button('⚡ Usar capital recomendado', key='prom_usar_sugerida',
-                                  on_click=_set_state, args=('prom_capital_op', cap_rec),
-                                  use_container_width=True)
-                    with r2:
-                        st.caption(f'Recomendado: **${cap_rec:,.2f}** de capital ({apalancamiento:g}x) → '
-                                   f'**{cant_rec:,.{dec_c}f}** unidades, para arriesgar como máximo '
-                                   f'${dinero_max_op:,.2f}')
+                    st.button('⚡ Usar capital recomendado', key='prom_usar_sugerida',
+                              on_click=_set_state, args=('prom_capital_op', cap_rec))
                 else:
                     st.caption('Con este stop y tu % de riesgo no alcanza ni para la mínima '
                                'cantidad operable. Acercá el stop o subí el % de riesgo.')
