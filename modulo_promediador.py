@@ -783,38 +783,52 @@ def _panel_resultados(capital, pct_max, horizonte, direccion, apal, precio, cant
                             f'({perdida_pct:.1f}% de tu cuenta) de un máximo de ${dinero_max:,.2f}'),
                     unsafe_allow_html=True)
 
-    # ── Grilla de KPIs (2×2) ────────────────────────────────────────
-    # 1) Ratio R/B (destacado) — la ganancia potencial va en el detalle
+    # ── Grilla de KPIs ────────────────────────────────────────
     rr = stop_info['rr_ratio']
     gan = stop_info['ganancia_potencial']
+
+    # 1) Ganancia estimada al Take Profit (nueva)
+    if gan is None:
+        card_gan = _kpi_card('Ganancia estimada (Take Profit)', '—',
+                             'Poné un precio en Take Profit para calcularla', '#6b7d9a', True)
+    elif gan <= 0:
+        card_gan = _kpi_card('Ganancia estimada (Take Profit)', '—',
+                             '⚠️ El Take Profit está del lado equivocado de la entrada '
+                             '(en Long va por encima, en Short por debajo)', '#f0883e', True)
+    else:
+        dist_tp_pct = abs(precio_tp - prom['precio_promedio_final']) / prom['precio_promedio_final'] * 100
+        card_gan = _kpi_card(
+            'Ganancia estimada (Take Profit)', f'+${gan:,.2f}',
+            f'+{gan / capital * 100:.1f}% de tu cuenta · TP a {dist_tp_pct:.2f}% de la entrada · '
+            f'neto vs. pérdida del stop: +${gan - perdida_usd:,.2f}',
+            '#3fb950', True)
+
+    # 2) Ratio R/B
     if rr is None:
-        card_rr = _kpi_card('Ratio Riesgo / Beneficio', '—', 'Definí un Take Profit para calcularlo',
-                            '#6b7d9a', True)
+        card_rr = _kpi_card('Ratio Riesgo / Beneficio', '—', 'Definí un Take Profit para calcularlo', '#6b7d9a')
     elif gan is not None and gan <= 0:
         card_rr = _kpi_card('Ratio Riesgo / Beneficio', '—',
-                            '⚠️ El Take Profit está del lado equivocado de la entrada', '#f0883e', True)
+                            '⚠️ El Take Profit está del lado equivocado de la entrada', '#f0883e')
     else:
         col_rr = '#3fb950' if rr >= 2 else ('#e3b341' if rr >= 1 else '#f85149')
         txt_rr = 'Relación favorable' if rr >= 2 else ('Aceptable, ideal ≥ 1:2' if rr >= 1
                                                        else 'Arriesgás más de lo que buscás ganar')
-        card_rr = _kpi_card('Ratio Riesgo / Beneficio', f'1:{rr:.1f}',
-                            f'{txt_rr} · ganancia potencial +${gan:,.2f} ({gan / capital * 100:.1f}% de tu cuenta)',
-                            col_rr, True)
+        card_rr = _kpi_card('Ratio Riesgo / Beneficio', f'1:{rr:.1f}', txt_rr, col_rr)
 
-    # 2) Pérdida máxima
+    # 3) Pérdida máxima
     card_perd = _kpi_card('Pérdida máxima (si salta el Stop)', f'-${perdida_usd:,.2f}',
                           f'{perdida_pct:.1f}% de tu cuenta · límite ${dinero_max:,.2f} · '
                           f'stop a {stop_info["distancia_stop_pct"]:.2f}%',
                           '#f85149' if sobre else '#e6edf3')
 
-    # 3) Margen requerido
+    # 4) Margen requerido
     margen = stop_info['capital_propio']
     col_m = '#f85149' if margen > capital else '#e6edf3'
     det_m = (f'{margen / capital * 100:.1f}% de tu cuenta · exposición ${stop_info["exposicion_total"]:,.2f}'
              + (' · ⚠️ supera tu capital' if margen > capital else ''))
     card_marg = _kpi_card('Margen requerido', f'${margen:,.2f}', det_m, col_m)
 
-    # 4) Precio de liquidación
+    # 5) Precio de liquidación
     if apal > 1:
         col_l = '#e6edf3' if stop_info['stop_antes_de_liquidar'] else '#f85149'
         card_liq = _kpi_card('Precio de liquidación aprox.', f'${stop_info["precio_liquidacion"]:,.{dec_p}f}',
@@ -823,9 +837,14 @@ def _panel_resultados(capital, pct_max, horizonte, direccion, apal, precio, cant
         card_liq = _kpi_card('Precio de liquidación aprox.', 'No aplica',
                              'Sin apalancamiento (1x) nadie te puede liquidar', '#6b7d9a')
 
+    # Fila 1: Ganancia | Pérdida (lo que ganás vs. lo que arriesgás, lado a lado)
+    # Fila 2: Ratio R/B | Margen
+    # Fila 3: Liquidación
     fila1 = st.columns(2)
     fila2 = st.columns(2)
-    for col, card in zip(fila1 + fila2, [card_rr, card_perd, card_marg, card_liq]):
+    fila3 = st.columns(2)
+    for col, card in zip(fila1 + fila2 + fila3[:1],
+                         [card_gan, card_perd, card_rr, card_marg, card_liq]):
         with col:
             st.markdown(card, unsafe_allow_html=True)
 
