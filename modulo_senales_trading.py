@@ -29,8 +29,12 @@
 #     se GUARDA cuando el admin abre la app. Los demás usuarios la ven
 #     calculada en pantalla pero no pueden persistirla.
 #   - P&L en vivo (cada 5 min) para señales abiertas.
-#   - Simulador de Capital.
+#   - Simulador de Operación: el usuario elige una señal y simula la
+#     operación con su cuenta (plataforma, tipo de operación, capital
+#     total, % de riesgo, capital para la operación y apalancamiento).
 # ==============================================================
+
+import math
 
 import streamlit as st
 import pandas as pd
@@ -131,9 +135,31 @@ def fmt_precio_exacto(p):
     return f"${p:.5f}"
 
 
+def fmt_apal(x):
+    try:
+        return f"{round(float(x), 2):g}x"
+    except (TypeError, ValueError):
+        return "S/D"
+
+
+def fmt_unidades(u):
+    s = f"{float(u):,.6f}".rstrip("0").rstrip(".")
+    return s or "0"
+
+
 def _md_dolar(texto):
     """Escapa los '$' para que Streamlit no los interprete como LaTeX."""
     return texto.replace("$", r"\$")
+
+
+def _h(texto):
+    """Escapa '$' dentro de bloques HTML para que Streamlit no los lea como LaTeX."""
+    return str(texto).replace("$", "&#36;")
+
+
+def _set_state(clave, valor):
+    """Callback para botones: pisa el valor de un input antes del próximo rerun."""
+    st.session_state[clave] = valor
 
 
 # ==============================================================
@@ -207,25 +233,9 @@ def _apalancamiento_de_senal(senal):
         return 1.0
 
 
-def _senal_con_precio_entrada(senal, precio_entrada):
-    s2 = dict(senal)
-    s2["precio_entrada"] = precio_entrada
-    return s2
-
-
 def _texto_entradas(entradas):
     return " | ".join(f"Entrada {i + 1}: {fmt_precio_exacto(e['precio'])}"
                       for i, e in enumerate(entradas))
-
-
-def _texto_cierre(estado, fecha_cierre, hora_cierre):
-    if estado == "ABIERTA":
-        return "Sigue abierta"
-    if not fecha_cierre:
-        return "—"
-    if hora_cierre:
-        return f"{fecha_cierre} {hora_cierre}"
-    return str(fecha_cierre)
 
 
 def _cierre_manual_fue_ganador(senal):
@@ -281,11 +291,6 @@ def _render_niveles(senal, entradas_lista):
 # ----------------------------------------------------------------
 #  Helpers de stop
 # ----------------------------------------------------------------
-
-def _set_state(clave, valor):
-    """Callback para botones: pisa el valor de un input antes del próximo rerun."""
-    st.session_state[clave] = valor
-
 
 def sugerir_stop_atr(precio_entrada, atr, direccion='long', multiplo=1.5):
     if not atr or atr <= 0 or not precio_entrada:
@@ -1005,7 +1010,7 @@ def _form_publicar_manual(supabase, user_id, user_email):
 def _tab_publicar(supabase, user_id, user_email, es_admin):
     if not es_admin:
         st.info("🔒 Solo el administrador puede publicar señales de trading. "
-                "Podés ver las señales y simular resultados en las otras pestañas.")
+                "Podés ver las señales y simular operaciones en las otras pestañas.")
         return
 
     modo = st.radio("Cómo querés armar la señal", [MODO_MANUAL, MODO_SCANNER],
@@ -1294,8 +1299,7 @@ def _tab_senales(supabase, es_admin, es_pro=True):
                 n_act = sum(1 for e in entradas_lista if e.get("activada"))
                 st.info(f"🕓 Orden pendiente — {n_act}/{len(entradas_lista)} entradas activadas. "
                         "Se activa sola en cuanto el precio de mercado toque el precio de cada "
-                        "entrada. Mientras está pendiente no cuenta para el Win Rate ni para el "
-                        "Simulador de Capital.")
+                        "entrada. Mientras está pendiente no cuenta para el Win Rate.")
                 for i, e in enumerate(entradas_lista):
                     if e.get("activada"):
                         detalle = f" el {e.get('fecha_activacion','')}"
@@ -1316,7 +1320,7 @@ def _tab_senales(supabase, es_admin, es_pro=True):
                 pnl_vivo_row = _pnl_vivo_senal(senal_row, precio_vivo_row)
                 _render_badge_pnl_vivo(pnl_vivo_row, ts_vivo_row)
 
-            # Entrada, Stop Loss, Take Profit y Precio promedio (si hay más de una entrada)
+            # Entrada, Stop Loss, Take Profit, R/B y Precio promedio (si hay más de una entrada)
             _render_niveles(senal_row, entradas_lista)
 
             if row.get("fecha_activacion"):
@@ -1339,126 +1343,260 @@ def _tab_senales(supabase, es_admin, es_pro=True):
 
 
 # ==============================================================
-#  HELPERS COMPARTIDOS DEL SIMULADOR
+#  SIMULADOR DE OPERACIÓN
+#  El usuario elige una señal publicada y simula la operación con SU
+#  cuenta: plataforma, tipo de operación, capital total, % de riesgo,
+#  capital para la operación y apalancamiento. Entrada, SL y TP vienen
+#  de la señal.
 # ==============================================================
 
-def _calcular_fila_simulacion(s, precio_ref, monto, fecha_cierre=None, hora_cierre=None):
-    estado = s.get("estado", "ABIERTA")
-    cat = s.get("categoria") or "🔹 Otro"
-    ret_precio, ret_apalancado_signal = _calcular_retorno(s, precio_ref)
+PLATAFORMAS = ["Exchange · unidades", "Broker · lotes"]
+TIPOS_OPERACION = ["Inversión", "Trade"]
 
-    liquidada = ret_apalancado_signal <= -100
-    ret_mostrar = max(ret_apalancado_signal, -100)
-    pnl_usd = monto * (ret_mostrar / 100)
-    capital_final = monto + pnl_usd
+CONTRATO_FOREX = 100_000.0  # 1 lote estándar = 100.000 unidades de la divisa base
 
-    return {
-        "Fecha": s.get("fecha"), "Ticker": s.get("ticker"), "Categoría": cat, "Tipo": s.get("tipo"),
-        "Entrada usada": fmt_precio_local(s.get("precio_entrada")),
-        "Estado": "💀 LIQUIDADA" if liquidada else estado,
-        "Cierre": _texto_cierre(estado, fecha_cierre, hora_cierre),
-        "Retorno %": round(ret_mostrar, 2),
-        "Capital Asignado": round(monto, 2),
-        "P&L (USD)": round(pnl_usd, 2),
-        "Capital Final": round(capital_final, 2),
-    }
+# Tamaño de contrato estándar (unidades por 1 lote) de los commodities más comunes.
+CONTRATOS_COMMODITY = {
+    "GC=F": 100.0, "XAUUSD=X": 100.0, "XAUUSD": 100.0, "MGC=F": 10.0,   # Oro (onzas)
+    "SI=F": 5000.0, "XAGUSD=X": 5000.0, "XAGUSD": 5000.0,               # Plata (onzas)
+    "CL=F": 1000.0, "BZ=F": 1000.0, "USOIL": 1000.0,                    # Petróleo (barriles)
+    "NG=F": 10000.0,                                                    # Gas natural
+    "HG=F": 25000.0,                                                    # Cobre (libras)
+    "PL=F": 50.0, "PA=F": 100.0,                                        # Platino / Paladio
+}
 
+# Techo absoluto: perder más que esto de TODA la cuenta en una operación siempre es ALTO.
+PERDIDA_PCT_CUENTA_ALTO_ABSOLUTO = 15.0
 
-def _mostrar_metricas_sim(df_sim, label_capital):
-    capital_asignado_total = df_sim["Capital Asignado"].sum()
-    pnl_total = df_sim["P&L (USD)"].sum()
-    n_ganadoras = int((df_sim["P&L (USD)"] > 0).sum())
-    n_total_sim = len(df_sim)
-    winrate_sim = (n_ganadoras / n_total_sim * 100) if n_total_sim else 0
-
-    k1, k2, k3, k4 = st.columns(4)
-    with k1: st.metric(label_capital, f"USD {capital_asignado_total:,.2f}")
-    with k2: st.metric("P&L total", f"USD {pnl_total:+,.2f}",
-                        delta=f"{(pnl_total/capital_asignado_total*100):+.1f}%" if capital_asignado_total else None)
-    with k3: st.metric("Operaciones ganadoras", f"{n_ganadoras}/{n_total_sim}")
-    with k4: st.metric("Win Rate simulado", f"{winrate_sim:.1f}%")
-    return capital_asignado_total, pnl_total
+_NIVELES_UI = {
+    "ok":     ("#3fb950", "🟢"),
+    "warn":   ("#f0883e", "🟠"),
+    "danger": ("#f85149", "🔴"),
+    "info":   ("#3a7bd5", "ℹ️"),
+}
 
 
-def _mostrar_tabla_estilizada(df_sim):
-    def _color_pnl(val):
-        try:
-            v = float(val)
-            return "color:#3fb950;font-weight:700" if v >= 0 else "color:#f85149;font-weight:700"
-        except Exception:
-            return ""
-
-    def _color_estado_sim(val):
-        col, _bg, _e = ESTADO_COLOR.get(val, ("#8b949e", "", ""))
-        if "LIQUIDADA" in str(val):
-            col = "#f85149"
-        return f"color:{col};font-weight:700"
-
-    format_dict = {"Retorno %": "{:+.2f}%",
-                   "Capital Asignado": "${:,.2f}", "P&L (USD)": "${:+,.2f}",
-                   "Capital Final": "${:,.2f}"}
-
-    _map = "map" if hasattr(df_sim.style, "map") else "applymap"
-    styled = (df_sim.style
-              .pipe(lambda s: getattr(s, _map)(_color_pnl, subset=["P&L (USD)", "Retorno %"]))
-              .pipe(lambda s: getattr(s, _map)(_color_estado_sim, subset=["Estado"]))
-              .format(format_dict)
-              .set_properties(**{"background-color": "#0d1117", "color": "#e6edf3", "border": "1px solid #21262d"})
-              .set_table_styles([
-                  {"selector": "th", "props": [("background-color", "#161b22"), ("color", "#e6edf3"),
-                      ("font-weight", "700"), ("text-align", "center"),
-                      ("border-bottom", "2px solid #3a7bd5"), ("font-size", "11px")]},
-                  {"selector": "td", "props": [("text-align", "center"), ("font-size", "11px")]},
-              ]))
-    st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_sim) * 38 + 45)))
+def _banner_calc(nivel, texto):
+    color, icono = _NIVELES_UI[nivel]
+    return (f'<div style="background:{color}22;border:1px solid {color};border-left:5px solid {color};'
+            f'border-radius:10px;padding:14px 18px;margin-bottom:14px;font-size:14px;font-weight:600;'
+            f'color:#e6edf3;line-height:1.5">{icono} {_h(texto)}</div>')
 
 
-def _mostrar_mejor_peor(df_sim):
-    if df_sim.empty:
-        return
-    mejor = df_sim.loc[df_sim["P&L (USD)"].idxmax()]
-    peor = df_sim.loc[df_sim["P&L (USD)"].idxmin()]
+def _kpi_card(titulo, valor, detalle="", color="#e6edf3", destacado=False):
+    borde = f"2px solid {color}" if destacado else "1px solid #21262d"
+    tam = "28px" if destacado else "19px"
+    return (f'<div style="background:#0d1117;border:{borde};border-radius:10px;padding:12px 14px;'
+            f'min-height:98px;margin-bottom:10px">'
+            f'<div style="font-size:11px;color:#6b7d9a;margin-bottom:4px">{_h(titulo)}</div>'
+            f'<div style="font-size:{tam};font-weight:700;color:{color};line-height:1.2">{_h(valor)}</div>'
+            f'<div style="font-size:11px;color:#8b949e;margin-top:4px">{_h(detalle)}</div></div>')
 
-    def _tarjeta_html(row, titulo, emoji):
-        val = float(row["P&L (USD)"])
-        positivo = val >= 0
-        color = "#3fb950" if positivo else "#f85149"
-        signo = "+" if positivo else ""
-        cierre = row.get("Cierre")
-        if cierre and cierre not in ("Sigue abierta", "—"):
-            sub_cierre = f" · cierre {cierre}"
-        elif cierre == "Sigue abierta":
-            sub_cierre = " · sigue abierta"
+
+def _floor_dec(x, decimales):
+    """Redondea hacia ABAJO (la cantidad nunca pasa tu límite de riesgo)."""
+    f = 10 ** decimales
+    return math.floor(x * f + 1e-9) / f
+
+
+def _config_activo_sim(categoria, ticker, usa_lotes):
+    """Decimales de cantidad y tamaño de lote según la categoría del activo y la plataforma."""
+    t = (ticker or "").upper().strip()
+    if categoria == "💱 Forex":
+        dec_unid, contrato, conocido = 0, CONTRATO_FOREX, True
+    elif categoria == "🛢️ Commodity":
+        c = CONTRATOS_COMMODITY.get(t)
+        dec_unid, contrato, conocido = 2, (c or 100.0), c is not None
+    elif categoria == "₿ Cripto":
+        dec_unid, contrato, conocido = 6, 1.0, False
+    else:
+        dec_unid, contrato, conocido = 0, 1.0, False
+    if usa_lotes:
+        return dict(dec_cant=2, es_lotes=True, contrato=contrato, contrato_conocido=conocido)
+    return dict(dec_cant=dec_unid, es_lotes=False, contrato=1.0, contrato_conocido=True)
+
+
+def _cantidad_automatica(capital_op, apal, entrada, cfg):
+    """Devuelve (cantidad en su unidad [lotes o unidades], cantidad en unidades)."""
+    if entrada <= 0 or capital_op <= 0:
+        return 0.0, 0.0
+    exposicion = capital_op * apal
+    if cfg["es_lotes"]:
+        lotes = _floor_dec(exposicion / (entrada * cfg["contrato"]), cfg["dec_cant"])
+        return lotes, lotes * cfg["contrato"]
+    unidades = _floor_dec(exposicion / entrada, cfg["dec_cant"])
+    return unidades, unidades
+
+
+def _calcular_stop_loss(entrada, stop, cantidad, apal, es_largo, capital_cuenta,
+                        take_profit=None, atr=None):
+    """Pérdida al stop, precio de liquidación aproximado y ganancia/ratio al TP."""
+    distancia_stop_pct = abs(stop - entrada) / entrada * 100
+    exposicion = entrada * cantidad
+    capital_propio = exposicion / apal
+    perdida = abs(entrada - stop) * cantidad
+    perdida_pct_cuenta = perdida / capital_cuenta * 100 if capital_cuenta > 0 else None
+
+    liq = entrada * (1 - 1 / apal) if es_largo else entrada * (1 + 1 / apal)
+    dist_liq_pct = abs(liq - entrada) / entrada * 100
+    stop_antes_de_liquidar = (stop > liq) if es_largo else (stop < liq)
+
+    ganancia = rr = None
+    if take_profit and take_profit > 0:
+        ganancia = (take_profit - entrada) * cantidad if es_largo else (entrada - take_profit) * cantidad
+        if perdida > 0:
+            rr = ganancia / perdida
+
+    return dict(
+        distancia_stop_pct=distancia_stop_pct, exposicion=exposicion, capital_propio=capital_propio,
+        perdida=perdida, perdida_pct_cuenta=perdida_pct_cuenta, precio_liquidacion=liq,
+        dist_liq_pct=dist_liq_pct, stop_antes_de_liquidar=stop_antes_de_liquidar,
+        ganancia=ganancia, rr=rr,
+        dist_stop_en_atr=(abs(entrada - stop) / atr) if atr and atr > 0 else None,
+    )
+
+
+def _avisos_riesgo(info, horizonte, pct_riesgo):
+    """Avisos en criollo sobre el riesgo de la operación simulada."""
+    avisos = []
+    p = info["perdida_pct_cuenta"]
+    if p is not None:
+        if p > PERDIDA_PCT_CUENTA_ALTO_ABSOLUTO:
+            avisos.append(f"🚨 Si te toca el stop, perdés {p:.1f}% de TODA tu cuenta. Es una pérdida "
+                          "enorme para una sola operación.")
+        elif p > pct_riesgo * 2:
+            avisos.append(f"Si te toca el stop, perdés {p:.1f}% de tu cuenta, muy por encima del "
+                          f"{pct_riesgo:g}% que definiste. La posición es demasiado grande.")
+        elif p > pct_riesgo * 1.0001:
+            avisos.append(f"Si te toca el stop, perdés {p:.1f}% de tu cuenta, un poco por encima del "
+                          f"{pct_riesgo:g}% que te propusiste.")
         else:
-            sub_cierre = ""
-        return f"""
-        <div style="background:#0d1117;border:1px solid #21262d;border-left:3px solid {color};
-             border-radius:8px;padding:12px 16px">
-          <div style="font-size:11px;color:{color};font-weight:700">{emoji} {titulo}</div>
-          <div style="font-size:13px;color:#e6edf3;margin-top:4px">{row['Ticker']} · {row['Fecha']}{sub_cierre}</div>
-          <div style="font-size:16px;font-weight:800;color:{color}">{signo}${val:,.2f}</div>
-        </div>
-        """
+            avisos.append(f"Si te toca el stop, perdés {p:.1f}% de tu cuenta, dentro de lo que "
+                          "dijiste que estabas dispuesto a arriesgar. ✅")
 
-    cM, cP = st.columns(2)
-    with cM:
-        st.markdown(_tarjeta_html(mejor, "MEJOR OPERACIÓN", "🏆"), unsafe_allow_html=True)
-    with cP:
-        st.markdown(_tarjeta_html(peor, "PEOR OPERACIÓN", "📉"), unsafe_allow_html=True)
+    if not info["stop_antes_de_liquidar"]:
+        avisos.append("⚠️ Con este apalancamiento, el precio de liquidación llega ANTES que el stop: "
+                      "te cerrarían la posición por la fuerza antes de que el stop actúe.")
+    elif (info["dist_liq_pct"] - info["distancia_stop_pct"]) < 2:
+        avisos.append("El stop está muy cerca del precio de liquidación: casi no hay margen para un "
+                      "movimiento brusco.")
+
+    if info["dist_stop_en_atr"] is not None:
+        minimo = 1.0 if horizonte == "corto" else 1.5
+        if info["dist_stop_en_atr"] < minimo:
+            avisos.append(f"El stop está muy pegado al precio (a solo {info['dist_stop_en_atr']:.2f} "
+                          "veces la volatilidad normal del activo): puede saltar por un vaivén normal.")
+
+    rr = info["rr"]
+    if rr is not None:
+        if rr < 1:
+            avisos.append(f"Por cada $1 que arriesgás, buscás ganar ${rr:.2f}: arriesgás más de lo "
+                          "que buscás ganar.")
+        elif rr < 1.5:
+            avisos.append(f"Por cada $1 que arriesgás, buscás ganar ${rr:.2f}. Aceptable, aunque lo "
+                          "ideal es apuntar a $2 o más.")
+        else:
+            avisos.append(f"Por cada $1 que arriesgás, buscás ganar ${rr:.2f}. Relación favorable. ✅")
+    return avisos
 
 
-# ==============================================================
-#  RENDER — TAB SIMULADOR (todos, con límite por plan)
-# ==============================================================
+def _panel_resultados_sim(capital, pct_max, horizonte, es_largo, apal, entrada, cant_u,
+                          cant_mostrar, cfg, stop, tp, atr_val):
+    if cant_u <= 0:
+        st.markdown(_banner_calc("info", "Cargá el capital para la operación para ver los resultados "
+                                         "(tiene que alcanzar para la cantidad mínima operable)."),
+                    unsafe_allow_html=True)
+        return
+
+    info = _calcular_stop_loss(entrada, stop, cant_u, apal, es_largo, capital, tp, atr_val)
+    perdida, perdida_pct = info["perdida"], info["perdida_pct_cuenta"]
+    dinero_max = capital * pct_max / 100
+    sobre = perdida > dinero_max * 1.0001
+
+    # ── Banner ──
+    if not info["stop_antes_de_liquidar"]:
+        lado = "por debajo" if es_largo else "por encima"
+        st.markdown(_banner_calc("danger", f"Peligro: el Stop Loss está {lado} del precio de liquidación"),
+                    unsafe_allow_html=True)
+    elif perdida_pct > PERDIDA_PCT_CUENTA_ALTO_ABSOLUTO:
+        st.markdown(_banner_calc("danger", f"Peligro: si salta el stop perdés {perdida_pct:.1f}% de TODA "
+                                           "tu cuenta — demasiado para una sola operación"),
+                    unsafe_allow_html=True)
+    elif perdida > dinero_max * 2:
+        st.markdown(_banner_calc("danger", f"Sobre-riesgo fuerte: perdés ${perdida:,.2f} ({perdida_pct:.1f}%) "
+                                           f"y tu límite es ${dinero_max:,.2f} ({pct_max:g}%). Reducí el capital."),
+                    unsafe_allow_html=True)
+    elif sobre:
+        st.markdown(_banner_calc("warn", f"Sobre-riesgo: perdés ${perdida:,.2f} ({perdida_pct:.1f}%) y tu "
+                                         f"límite es ${dinero_max:,.2f} ({pct_max:g}%). Reducí el capital."),
+                    unsafe_allow_html=True)
+    else:
+        st.markdown(_banner_calc("ok", f"Riesgo dentro del límite: arriesgás ${perdida:,.2f} "
+                                       f"({perdida_pct:.1f}% de tu cuenta) de un máximo de ${dinero_max:,.2f}"),
+                    unsafe_allow_html=True)
+
+    # ── KPIs ──
+    gan, rr = info["ganancia"], info["rr"]
+
+    if gan is None:
+        card_gan = _kpi_card("Ganancia estimada (Take Profit)", "—",
+                             "La señal no tiene Take Profit", "#6b7d9a", True)
+    elif gan <= 0:
+        card_gan = _kpi_card("Ganancia estimada (Take Profit)", "—",
+                             "⚠️ El Take Profit de la señal está del lado equivocado de la entrada",
+                             "#f0883e", True)
+    else:
+        dist_tp = abs(tp - entrada) / entrada * 100
+        card_gan = _kpi_card("Ganancia estimada (Take Profit)", f"+${gan:,.2f}",
+                             f"+{gan / capital * 100:.1f}% de tu cuenta · TP a {dist_tp:.2f}% de la entrada · "
+                             f"neto vs. pérdida del stop: +${gan - perdida:,.2f}", "#3fb950", True)
+
+    card_perd = _kpi_card("Pérdida máxima (si salta el Stop)", f"-${perdida:,.2f}",
+                          f"{perdida_pct:.1f}% de tu cuenta · límite ${dinero_max:,.2f} · "
+                          f"stop a {info['distancia_stop_pct']:.2f}%",
+                          "#f85149" if sobre else "#e6edf3")
+
+    if rr is None or (gan is not None and gan <= 0):
+        card_rr = _kpi_card("Ratio Riesgo / Beneficio", "—", "Sin Take Profit válido para calcularlo", "#6b7d9a")
+    else:
+        col_rr = "#3fb950" if rr >= 2 else ("#e3b341" if rr >= 1 else "#f85149")
+        txt_rr = ("Relación favorable" if rr >= 2 else
+                  ("Aceptable, ideal ≥ 1:2" if rr >= 1 else "Arriesgás más de lo que buscás ganar"))
+        card_rr = _kpi_card("Ratio Riesgo / Beneficio", f"1:{rr:.1f}", txt_rr, col_rr)
+
+    margen = info["capital_propio"]
+    card_marg = _kpi_card("Margen requerido", f"${margen:,.2f}",
+                          f"{margen / capital * 100:.1f}% de tu cuenta · exposición ${info['exposicion']:,.2f}"
+                          + (" · ⚠️ supera tu capital" if margen > capital else ""),
+                          "#f85149" if margen > capital else "#e6edf3")
+
+    if apal > 1:
+        card_liq = _kpi_card("Precio de liquidación aprox.", fmt_precio_exacto(info["precio_liquidacion"]),
+                             f"a {info['dist_liq_pct']:.2f}% de la entrada",
+                             "#e6edf3" if info["stop_antes_de_liquidar"] else "#f85149")
+    else:
+        card_liq = _kpi_card("Precio de liquidación aprox.", "No aplica",
+                             "Sin apalancamiento (1x) nadie te puede liquidar", "#6b7d9a")
+
+    unidad = "lotes" if cfg["es_lotes"] else "unidades"
+    detalle_pos = f"{fmt_unidades(cant_u)} unidades" if cfg["es_lotes"] else f"a {fmt_precio_exacto(entrada)}"
+    card_pos = _kpi_card("Posición simulada", f"{cant_mostrar:,.{cfg['dec_cant']}f} {unidad}", detalle_pos)
+
+    fila1, fila2, fila3 = st.columns(2), st.columns(2), st.columns(2)
+    for col, card in zip(fila1 + fila2 + fila3,
+                         [card_gan, card_perd, card_rr, card_marg, card_liq, card_pos]):
+        with col:
+            st.markdown(card, unsafe_allow_html=True)
+
+    with st.expander("Ver detalle de los avisos de riesgo"):
+        for aviso in _avisos_riesgo(info, horizonte, pct_max):
+            st.markdown(f"- {_md_dolar(aviso)}")
+
 
 def _tab_simulador(supabase, es_pro=True, es_admin=False):
     st.caption(
-        "Simulá cuánto hubieras ganado o perdido con las señales que elijas, asignándole a cada "
-        "una el monto que quieras."
-    )
-    st.caption(
-        "🧩 Para señales con varias entradas, acá se usa el precio promedio de la posición. "
-        "Las órdenes pendientes (todavía no activadas) no se incluyen acá."
+        "Elegí una señal y simulá la operación con tu cuenta: la entrada, el Stop Loss y el Take "
+        "Profit son los de la señal; vos solo cargás tu plataforma, tu capital y tu riesgo."
     )
 
     senales, ocultas = _filtrar_senales_por_plan(_obtener_senales(supabase, 200), es_pro)
@@ -1468,104 +1606,160 @@ def _tab_simulador(supabase, es_pro=True, es_admin=False):
         st.info("Todavía no hay señales para simular en tu plan.")
         return
 
-    with st.spinner("Evaluando señales..."):
-        if es_admin:                       # solo el admin puede escribir (RLS)
-            _sincronizar_estados(supabase, senales)
-        senales, _ = _filtrar_senales_por_plan(_obtener_senales(supabase, 200), es_pro)
+    # ── Elegir la señal ──
+    por_id, labels = {}, {}
+    for s in senales:
+        sid = s["id"]
+        por_id[sid] = s
+        emoji = ESTADO_COLOR.get(s.get("estado"), ("", "", "⚪"))[2]
+        labels[sid] = (f"{emoji} {s.get('fecha','')} · {s.get('ticker','')} · "
+                       f"{s.get('tipo','')} · {s.get('estado','')}")
+    sid_sel = st.selectbox("🗂️ Señal a simular", list(por_id.keys()),
+                           format_func=lambda i: labels[i], key="sim_senal_sel")
+    senal = por_id[sid_sel]
 
-    df_base = pd.DataFrame(senales)
-    if "categoria" not in df_base.columns:
-        df_base["categoria"] = "🔹 Otro"
-    df_base["categoria"] = df_base["categoria"].fillna("🔹 Otro")
-    df_base = df_base[df_base["estado"] != "PENDIENTE"]
+    ticker = str(senal.get("ticker") or "")
+    categoria = senal.get("categoria") or "🔹 Otro"
+    es_largo = "LARGO" in str(senal.get("tipo", "")).upper()
+    entradas_senal = _entradas_de_senal(senal)
+    entrada = _precio_promedio_ponderado(senal)
+    sl = float(senal.get("stop_loss") or 0)
+    tp = float(senal.get("take_profit") or 0)
 
-    incluir_abiertas = st.checkbox("Incluir señales abiertas (P&L flotante)", value=True,
-                                    key="sim_incluir_abiertas")
-    if not incluir_abiertas:
-        df_base = df_base[df_base["estado"] != "ABIERTA"]
-
-    if df_base.empty:
-        st.info("No hay señales para incluir en la simulación con estos filtros.")
+    if entrada <= 0 or sl <= 0:
+        st.error("Esta señal no tiene entrada o Stop Loss válidos, no se puede simular.")
+        return
+    if (es_largo and sl >= entrada) or ((not es_largo) and sl <= entrada):
+        st.error("El Stop Loss de esta señal está del lado equivocado de la entrada, no se puede simular.")
         return
 
-    st.markdown("#### 🗂️ Elegí las señales a simular")
-    opciones_label = {}
-    for _, row in df_base.iterrows():
-        estado_lbl = row.get("estado", "ABIERTA")
-        _col, _bg, _emoji = ESTADO_COLOR.get(estado_lbl, ("#8b949e", "", "⚪"))
-        label = (f"{_emoji} {row.get('fecha','')} · {row.get('ticker','')} · "
-                 f"{row.get('tipo','')} · {estado_lbl}")
-        opciones_label[label] = row["id"]
+    if senal.get("estado") == "PENDIENTE":
+        st.caption("🕓 Esta señal es una orden pendiente: la simulación asume que se activa en el "
+                   "precio de entrada.")
 
-    labels_todas = list(opciones_label.keys())
-    seleccionadas = st.multiselect(
-        "Señales a incluir (por defecto, todas)", labels_todas, default=labels_todas,
-        key="sim_senales_sel")
+    atr_val, _px = _atr_y_precio_actual(ticker.upper()) if ticker else (None, None)
 
-    if not seleccionadas:
-        st.info("Seleccioná al menos una señal para simular.")
-        return
+    col_in, col_out = st.columns([1, 1.25], gap="large")
 
-    ids_sel = [opciones_label[l] for l in seleccionadas]
-    df_base = df_base[df_base["id"].isin(ids_sel)]
+    # ══════════════════ IZQUIERDA: INPUTS ══════════════════
+    with col_in:
+        st.markdown("#### 📥 Parámetros de tu operación")
 
-    st.divider()
-    modo_monto = st.radio(
-        "💵 Monto a simular",
-        ["Mismo monto para todas las señales elegidas", "Elegir un monto distinto por señal"],
-        horizontal=True, key="sim_modo_monto")
+        # ── ① Activo y cuenta ──
+        with st.container(border=True):
+            st.markdown("**① Activo y cuenta**")
+            st.caption(f"🎯 **{ticker}** · {categoria} · {'🟢 LARGO' if es_largo else '🔴 CORTO'}")
+            usa_lotes = st.radio(
+                "Plataforma donde operás", PLATAFORMAS, horizontal=True, key="sim_plataforma",
+                help="Exchange: operás en unidades/tokens. Broker CFD (MT4/MT5, cTrader, etc.): operás "
+                     "en lotes. Las dos permiten apalancamiento.") == "Broker · lotes"
+            tipo_op = st.radio(
+                "Tipo de operación", TIPOS_OPERACION, horizontal=True, key="sim_tipo_op",
+                help="Inversión: comprar y conservar meses/años (normalmente sin apalancar). "
+                     "Trade: operación acotada de días o semanas. Ajusta los avisos de riesgo.")
+            horizonte = "largo" if tipo_op == "Inversión" else "corto"
 
-    montos = {}
-    if modo_monto == "Mismo monto para todas las señales elegidas":
-        monto_fijo = st.number_input("Monto por señal (USD)", min_value=1.0, value=100.0,
-                                      step=10.0, key="sim_monto_fijo",
-                                      help="Se aplica el mismo monto a todas las señales "
-                                           "seleccionadas arriba.")
-        for sid in df_base["id"]:
-            montos[sid] = monto_fijo
-    else:
-        st.caption("Cargá el monto que le vas a asignar a cada señal seleccionada:")
-        for _, row in df_base.iterrows():
-            estado_lbl = row.get("estado", "ABIERTA")
-            _col, _bg, _emoji = ESTADO_COLOR.get(estado_lbl, ("#8b949e", "", "⚪"))
-            label = f"{_emoji} {row.get('fecha','')} · {row.get('ticker','')} · {row.get('tipo','')}"
-            montos[row["id"]] = st.number_input(
-                f"Monto (USD) — {label}", min_value=1.0, value=100.0, step=10.0,
-                key=f"sim_monto_ind_{row['id']}")
+            b1, b2 = st.columns(2)
+            with b1:
+                capital_cuenta = st.number_input(
+                    "💰 Capital total (USD)", min_value=1.0, value=1000.0, step=100.0,
+                    key="sim_capital_cuenta",
+                    help="NO es lo que ponés en esta operación: es TODO tu dinero operable. Sirve solo "
+                         "de base para calcular qué porción de tu cuenta arriesgás.")
+            with b2:
+                pct_riesgo = st.number_input(
+                    "% de riesgo deseado", min_value=0.1, max_value=25.0, value=2.0, step=0.5,
+                    key="sim_pct_riesgo",
+                    help="% de tu capital TOTAL que aceptás perder si salta el stop. Regla clásica: 1-2%.")
+            dinero_max = capital_cuenta * pct_riesgo / 100
+            st.caption(_md_dolar(f"Máximo a perder: **${dinero_max:,.2f}**")
+                       + (" · ⚠️ por encima del 5% que suele recomendarse" if pct_riesgo > 5 else ""))
 
-    filas = []
-    for _, row in df_base.iterrows():
-        s = row.to_dict()
-        s = _senal_con_precio_entrada(s, _precio_promedio_ponderado(s))
-        precio_ref = s.get("precio_cierre")
-        if precio_ref is None:
-            ev = _evaluar_senal(s)
-            precio_ref = ev["precio_ref"]
-        if precio_ref is None:
-            continue
-        monto_signal = montos.get(row["id"]) or 0.0
-        if monto_signal <= 0:
-            continue
+        cfg = _config_activo_sim(categoria, ticker, usa_lotes)
 
-        fila = _calcular_fila_simulacion(s, precio_ref, monto_signal,
-                                          fecha_cierre=s.get("fecha_cierre"),
-                                          hora_cierre=s.get("hora_cierre"))
-        if fila:
-            filas.append(fila)
+        # ── ② Parámetros de entrada ──
+        with st.container(border=True):
+            st.markdown("**② Parámetros de entrada**")
+            capital_op = st.number_input(
+                "💵 Capital para la operación (USD)", min_value=0.0, value=0.0, step=10.0,
+                format="%.2f", key="sim_capital_op",
+                help="Cuánta plata tuya (margen) ponés en ESTA operación. Con el apalancamiento se "
+                     "calcula la cantidad. Es distinto del capital total de tu cuenta.")
+            apal = st.number_input(
+                "Apalancamiento (x)", min_value=1.0, max_value=1000.0, value=1.0, step=1.0,
+                key="sim_apal",
+                help="1x = con tu propia plata, sin margen."
+                     + (" Para inversión de largo plazo lo normal es 1x." if horizonte == "largo" else ""))
 
-    if not filas:
-        st.info("No se pudo simular ninguna señal (faltan datos de entrada).")
-        return
+            cant_mostrar, cant_u = _cantidad_automatica(capital_op, apal, entrada, cfg)
+            etiqueta_entrada = (f"promedio de {len(entradas_senal)} entradas"
+                                if len(entradas_senal) > 1 else "entrada de la señal")
+            st.caption(f"📍 Precio de entrada: **{fmt_precio_exacto(entrada)}** ({etiqueta_entrada})")
+            if cfg["es_lotes"]:
+                st.caption(f"📦 Cantidad automática: **{cant_mostrar:,.{cfg['dec_cant']}f} lotes** "
+                           f"(1 lote = {cfg['contrato']:,.8g} unidades → {fmt_unidades(cant_u)} unidades)")
+                if not cfg["contrato_conocido"]:
+                    st.caption("⚠️ El tamaño de lote es un valor típico, no un dato seguro: verificalo "
+                               "en la especificación del contrato de tu bróker.")
+            else:
+                st.caption(f"📦 Cantidad automática: **{fmt_unidades(cant_u)} unidades**")
 
-    df_sim = pd.DataFrame(filas)
-    st.divider()
-    _mostrar_metricas_sim(df_sim, "Capital total usado")
-    _mostrar_tabla_estilizada(df_sim)
-    _mostrar_mejor_peor(df_sim)
+            if horizonte == "largo" and apal > 1:
+                st.info('Marcaste "Inversión" pero usás apalancamiento: existe precio de liquidación '
+                        "aunque tu plan sea conservar.")
 
-    st.caption("⚠️ Simulación educativa. No contempla comisiones, spread, financiamiento, "
-               "swap ni slippage. Cuando TP y SL se tocan en la misma vela se "
-               "asume el peor caso (SL). No constituye asesoramiento financiero.")
+            # Capital máximo (margen) que respeta tu riesgo con el stop de la señal
+            rec_u = dinero_max / abs(entrada - sl)
+            cap_rec = math.floor(rec_u * entrada / apal * 100) / 100
+
+            if capital_op > capital_cuenta:
+                st.warning(_md_dolar(f"⚠️ El capital de la operación (${capital_op:,.2f}) supera el "
+                                     f"capital total de tu cuenta (${capital_cuenta:,.2f})."))
+            if cant_u > 0:
+                perd = abs(entrada - sl) * cant_u
+                if perd > dinero_max * 1.0001:
+                    msg = _md_dolar(
+                        f"🚨 Con **${capital_op:,.2f}** de capital ({apal:g}x) te pasás de tu riesgo "
+                        f"deseado: si salta el stop perdés **${perd:,.2f}** "
+                        f"({perd / capital_cuenta * 100:.1f}% de tu cuenta) y tu límite es "
+                        f"**${dinero_max:,.2f}** ({pct_riesgo:g}%). "
+                        f"Capital máximo para respetarlo: **${cap_rec:,.2f}**.")
+                    (st.error if perd > dinero_max * 2 else st.warning)(msg)
+            elif capital_op > 0:
+                st.warning("Con este capital y apalancamiento no alcanza ni para la mínima cantidad "
+                           "operable. Subí el capital o el apalancamiento.")
+
+            if cap_rec > 0:
+                st.button(_md_dolar(f"⚡ Usar capital recomendado (${cap_rec:,.2f})"),
+                          key="sim_usar_recomendado", on_click=_set_state,
+                          args=("sim_capital_op", cap_rec))
+            else:
+                st.caption("Con el stop de esta señal y tu % de riesgo no alcanza ni para la mínima "
+                           "cantidad operable. Subí el % de riesgo.")
+
+        # ── ③ Gestión de salida (de la señal) ──
+        with st.container(border=True):
+            st.markdown("**③ Gestión de salida**")
+            g1, g2 = st.columns(2)
+            g1.metric("🛑 Stop Loss", fmt_precio_exacto(sl),
+                      delta=f"{abs(entrada - sl) / entrada * 100:.2f}% de la entrada", delta_color="off")
+            if tp > 0:
+                g2.metric("🎯 Take Profit", fmt_precio_exacto(tp),
+                          delta=f"{abs(tp - entrada) / entrada * 100:.2f}% de la entrada", delta_color="off")
+            else:
+                g2.metric("🎯 Take Profit", "—")
+            st.caption("El Stop Loss y el Take Profit son los que publicó el administrador en la señal.")
+
+    # ══════════════════ DERECHA: RESULTADOS ══════════════════
+    with col_out:
+        st.markdown("#### 📊 Resultados posibles")
+        _panel_resultados_sim(capital_cuenta, pct_riesgo, horizonte, es_largo, apal, entrada,
+                              cant_u, cant_mostrar, cfg, sl, tp, atr_val)
+
+    st.caption("⚠️ Simulación educativa, no asesoramiento financiero. El precio de liquidación es "
+               "aproximado (no incluye fees ni margen de mantenimiento del bróker/exchange). No "
+               "contempla comisiones, spread, financiamiento, swap ni slippage. En Forex y "
+               "Commodities la pérdida se expresa en USD asumiendo que la moneda de cotización es el dólar.")
 
 
 # ==============================================================
@@ -1595,14 +1789,14 @@ def render_senales_trading(supabase, user_id, user_email, tiene_acceso_pro=False
         Señales publicadas con fecha, hora, una o varias entradas, stop loss y take profit
         — o cargadas como órdenes pendientes (🕓) que se activan solas cuando el precio toca
         la entrada. Evaluación automática de aciertos/desaciertos, P&L en vivo para las
-        abiertas y simulador de capital.
+        abiertas y simulador de operación.
         Plan Pro: señales ilimitadas · Plan Básico/Prueba: 1 señal destacada.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
     tab_pub, tab_hist, tab_sim = st.tabs([
-        "📢 Publicar Señal", "📋 Señales y Resultados", "🧮 Simulador de Capital",
+        "📢 Publicar Señal", "📋 Señales y Resultados", "🧮 Simulador de Operación",
     ])
     with tab_pub:
         _tab_publicar(supabase, user_id, user_email, es_admin)
