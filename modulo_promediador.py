@@ -12,6 +12,9 @@
 #  - El tamaño de lote (unidades por lote) es editable cuando operás en
 #    lotes, porque cada bróker define el suyo.
 #  - Nueva tarjeta "Ganancia estimada (Take Profit)" en los resultados.
+#  - Modo Exchange: se carga "Capital para la operación" y el apalancamiento,
+#    y la cantidad se calcula sola. Avisa si ese capital te hace pasar del
+#    % de riesgo deseado y sugiere el capital máximo para respetarlo.
 #
 #  v3 (se mantiene):
 #  - Decimales automáticos según el mercado y el ticker.
@@ -621,6 +624,9 @@ GLOSARIO_PROM = [
     ('% de riesgo deseado', 'Cuánto de tu cuenta TOTAL estás dispuesto a perder si esta operación puntual '
      'sale mal (no el % de esta operación en sí). La regla clásica de trading dice no arriesgar más del 1-2% '
      'de tu cuenta en una sola operación, aunque uses todo tu apalancamiento o toda tu convicción en ella.'),
+    ('Capital para la operación', 'Solo en modo Exchange. Es la plata tuya (margen) que ponés en ESTA operación. '
+     'La cantidad se calcula sola: capital × apalancamiento ÷ precio de entrada. El módulo te avisa si, con ese '
+     'capital, la pérdida en el stop supera el % de riesgo que definiste sobre tu cuenta total.'),
     ('Plataforma', 'Dónde ejecutás la operación. Exchange: comprás en unidades o tokens (por ejemplo 0,05 BTC) '
      'y, si querés, con apalancamiento. Broker CFD (MT4/MT5, cTrader, etc.): operás en lotes, también con '
      'apalancamiento. Un mismo activo se puede operar de las dos formas; elegí la que usás vos.'),
@@ -986,25 +992,58 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
         # ── Bloque 2: Parámetros de entrada ────────────────────────
         with st.container(border=True):
             st.markdown('**② Parámetros de entrada**')
-            e1, e2 = st.columns([1, 1])
-            with e1:
+            help_apal = ('1x = con tu propia plata, sin margen ni futuros.'
+                         + (' Para inversión de largo plazo lo normal es 1x.' if es_inversion else ''))
+            capital_op = 0.0
+
+            if cfg['es_lotes']:
+                # ── Broker · lotes: la cantidad se carga a mano, en lotes ──
+                e1, e2 = st.columns([1, 1])
+                with e1:
+                    direccion_label = st.radio('Dirección', ['Long', 'Short'], horizontal=True, key='prom_direccion')
+                    direccion = 'long' if direccion_label == 'Long' else 'short'
+                with e2:
+                    apalancamiento = st.number_input(
+                        'Apalancamiento (x)', min_value=1.0, max_value=1000.0, value=1.0, step=1.0,
+                        key='prom_apalancamiento', help=help_apal)
+
+                e3, e4 = st.columns([1, 1])
+                with e3:
+                    precio_nuevo = st.number_input('Precio de entrada (USD)', min_value=0.0, value=0.0,
+                                                    step=paso_precio, format=fmt_precio, key='prom_precio_nuevo')
+                with e4:
+                    cant_op = st.number_input(etiqueta_cant, min_value=0.0, value=0.0,
+                                               step=paso_cant, format=fmt_cant, key='prom_cant_op_lotes')
+            else:
+                # ── Exchange · unidades: capital → apalancamiento → cantidad automática ──
                 direccion_label = st.radio('Dirección', ['Long', 'Short'], horizontal=True, key='prom_direccion')
                 direccion = 'long' if direccion_label == 'Long' else 'short'
-            with e2:
+
+                capital_op = st.number_input(
+                    '💵 Capital para la operación (USD)', min_value=0.0, value=0.0, step=10.0,
+                    format='%.2f', key='prom_capital_op',
+                    help='Cuánta plata tuya (margen) ponés en ESTA operación. Con el apalancamiento de abajo '
+                         'se calcula la cantidad. Es distinto del capital total de tu cuenta.')
                 apalancamiento = st.number_input(
                     'Apalancamiento (x)', min_value=1.0, max_value=1000.0, value=1.0, step=1.0,
-                    key='prom_apalancamiento',
-                    help='1x = con tu propia plata, sin margen ni futuros.'
-                         + (' Para inversión de largo plazo lo normal es 1x.' if es_inversion else ''))
+                    key='prom_apalancamiento', help=help_apal)
 
-            e3, e4 = st.columns([1, 1])
-            with e3:
-                precio_nuevo = st.number_input('Precio de entrada (USD)', min_value=0.0, value=0.0,
-                                                step=paso_precio, format=fmt_precio, key='prom_precio_nuevo')
-            with e4:
-                cant_op = st.number_input(etiqueta_cant, min_value=0.0, value=0.0,
-                                           step=paso_cant, format=fmt_cant,
-                                           key=f'prom_cant_op_{"lotes" if cfg["es_lotes"] else "unid"}')
+                e3, e4 = st.columns([1, 1])
+                with e3:
+                    precio_nuevo = st.number_input('Precio de entrada (USD)', min_value=0.0, value=0.0,
+                                                    step=paso_precio, format=fmt_precio, key='prom_precio_nuevo')
+                cant_calc = (_floor_dec(capital_op * apalancamiento / precio_nuevo, dec_c)
+                             if precio_nuevo > 0 and capital_op > 0 else 0.0)
+                with e4:
+                    cant_op = st.number_input(
+                        'Cantidad a operar (automática)', min_value=0.0, value=float(cant_calc),
+                        step=paso_cant, format=fmt_cant, disabled=True,
+                        help='Se calcula sola: capital para la operación × apalancamiento ÷ precio de entrada '
+                             '(redondeada hacia abajo).')
+                if capital_op > 0 and precio_nuevo > 0:
+                    st.caption(f'🧮 ${capital_op:,.2f} × {apalancamiento:g}x = exposición de '
+                               f'**${capital_op * apalancamiento:,.2f}** → **{cant_calc:,.{dec_c}f}** '
+                               f'{"unidades/tokens" if dec_c else "unidades"}')
 
             if info_tend:
                 px = info_tend['precio_actual']
@@ -1027,6 +1066,7 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                                 f'unidades de exposición' if cant_op > 0 else '')
                 st.caption(f'📦 1 lote = {cfg["contrato"]:,.8g} unidades' + contrato_txt)
 
+            slot_riesgo = st.container()  # aviso de riesgo del capital cargado (solo modo exchange)
             slot_rec = st.container()  # acá va "⚡ Usar recomendado" (se completa cuando ya hay stop)
 
             tiene_posicion = st.checkbox('Ya tengo posición en este activo (promediar)', key='prom_tiene_posicion')
@@ -1106,22 +1146,78 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
         rec_u = cantidad_recomendada_unidades(
             capital_cuenta, pct_riesgo_max, direccion, precio_nuevo, precio_stop,
             cant_actual_u, precio_prom_actual)
+        dinero_max_op = capital_cuenta * pct_riesgo_max / 100
+
+        # Capital máximo (margen) que respeta tu riesgo con este stop — solo modo exchange
+        cap_rec = None
+        if not cfg['es_lotes'] and rec_u is not None and precio_nuevo > 0:
+            cap_rec = math.floor(rec_u * precio_nuevo / apalancamiento * 100) / 100
+
+        # ── Aviso de riesgo según el capital cargado (solo modo exchange) ──
+        with slot_riesgo:
+            if not cfg['es_lotes'] and capital_op > 0 and precio_nuevo > 0:
+                if cant_op <= 0:
+                    st.warning('Con este capital y apalancamiento no alcanza ni para la mínima cantidad '
+                               'operable. Subí el capital o el apalancamiento.')
+                else:
+                    if capital_op > capital_cuenta:
+                        st.warning(f'⚠️ El capital de la operación (${capital_op:,.2f}) supera el capital '
+                                   f'total de tu cuenta (${capital_cuenta:,.2f}).')
+                    if precio_stop > 0 and not (cant_actual_u > 0 and precio_prom_actual <= 0):
+                        try:
+                            prom_l = calcular_promedio(cant_actual_u, precio_prom_actual, cant_op, precio_nuevo)
+                            p_avg = prom_l['precio_promedio_final']
+                            lado_ok = precio_stop < p_avg if direccion == 'long' else precio_stop > p_avg
+                            if lado_ok:
+                                perd = abs(p_avg - precio_stop) * prom_l['cantidad_final']
+                                perd_pct = perd / capital_cuenta * 100
+                                tope = (f' Capital máximo para respetarlo: **${cap_rec:,.2f}**.'
+                                        if cap_rec else '')
+                                if perd > dinero_max_op * 1.0001:
+                                    msg = (f'🚨 Con **${capital_op:,.2f}** de capital ({apalancamiento:g}x) '
+                                           f'te pasás de tu riesgo deseado: si salta el stop perdés '
+                                           f'**${perd:,.2f}** ({perd_pct:.1f}% de tu cuenta) y tu límite es '
+                                           f'**${dinero_max_op:,.2f}** ({pct_riesgo_max:g}%).' + tope)
+                                    (st.error if perd > dinero_max_op * 2 else st.warning)(msg)
+                                else:
+                                    st.success(f'✅ Con **${capital_op:,.2f}** de capital estás dentro de tu '
+                                               f'riesgo deseado: si salta el stop perdés ${perd:,.2f} '
+                                               f'({perd_pct:.1f}% de tu cuenta) de un máximo de '
+                                               f'${dinero_max_op:,.2f} ({pct_riesgo_max:g}%).')
+                        except ValueError:
+                            pass
+
+        # ── Botón recomendado ──
         with slot_rec:
             if rec_u is None:
-                st.caption('⚡ Cargá entrada y Stop para ver la cantidad recomendada.')
+                st.caption('⚡ Cargá entrada y Stop para ver la recomendación.')
+            elif not cfg['es_lotes']:
+                # Exchange: se recomienda el CAPITAL; la cantidad sale sola
+                if cap_rec and cap_rec > 0:
+                    cant_rec = _floor_dec(cap_rec * apalancamiento / precio_nuevo, dec_c)
+                    r1, r2 = st.columns([1, 1.6])
+                    with r1:
+                        st.button('⚡ Usar capital recomendado', key='prom_usar_sugerida',
+                                  on_click=_set_state, args=('prom_capital_op', cap_rec),
+                                  use_container_width=True)
+                    with r2:
+                        st.caption(f'Recomendado: **${cap_rec:,.2f}** de capital ({apalancamiento:g}x) → '
+                                   f'**{cant_rec:,.{dec_c}f}** unidades, para arriesgar como máximo '
+                                   f'${dinero_max_op:,.2f}')
+                else:
+                    st.caption('Con este stop y tu % de riesgo no alcanza ni para la mínima '
+                               'cantidad operable. Acercá el stop o subí el % de riesgo.')
             else:
                 rec_op = _floor_dec(rec_u / contrato, dec_c)
                 r1, r2 = st.columns([1, 1.6])
                 with r1:
                     st.button('⚡ Usar recomendado', key='prom_usar_sugerida',
-                              on_click=_set_state,
-                              args=(f'prom_cant_op_{"lotes" if cfg["es_lotes"] else "unid"}', rec_op),
+                              on_click=_set_state, args=('prom_cant_op_lotes', rec_op),
                               disabled=rec_op <= 0, use_container_width=True)
                 with r2:
                     if rec_op > 0:
-                        unidad = 'lotes' if cfg['es_lotes'] else ''
-                        st.caption(f'Recomendado: **{rec_op:,.{dec_c}f}** {unidad} para arriesgar '
-                                   f'como máximo ${capital_cuenta * pct_riesgo_max / 100:,.2f}'.replace('  ', ' '))
+                        st.caption(f'Recomendado: **{rec_op:,.{dec_c}f}** lotes para arriesgar '
+                                   f'como máximo ${dinero_max_op:,.2f}')
                     else:
                         st.caption('Con este stop y tu % de riesgo no alcanza ni para la mínima '
                                    'cantidad operable. Acercá el stop o subí el % de riesgo.')
