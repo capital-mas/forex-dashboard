@@ -39,8 +39,17 @@ import pandas as pd
 import numpy as np
 from datetime import date, datetime, time as dt_time, timedelta
 from streamlit_autorefresh import st_autorefresh
+from zoneinfo import ZoneInfo          # en Windows: pip install tzdata
 
 from scanner_gex import render_scanner_gex
+
+# Todas las fechas y horas de las señales se guardan en hora de Argentina,
+# sin importar en qué zona horaria esté el servidor.
+TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
+
+
+def _ahora_ar():
+    return datetime.now(TZ_AR)
 
 ADMIN_EMAIL = "brainferreyra@gmail.com"
 TABLA_SENALES = "senales_trading"
@@ -613,8 +622,8 @@ def _cerrar_senal_manual(supabase, senal_id, precio_cierre):
     supabase.table(TABLA_SENALES).update({
         "estado": "CERRADA MANUAL",
         "precio_cierre": precio_cierre,
-        "fecha_cierre": str(date.today()),
-        "hora_cierre": datetime.now().strftime("%H:%M:%S"),
+        "fecha_cierre": str(_ahora_ar().date()),
+        "hora_cierre": _ahora_ar().strftime("%H:%M:%S"),
     }).eq("id", senal_id).execute()
 
 
@@ -663,7 +672,7 @@ def _historial_desde_fecha(ticker, fecha_inicio_str):
 @st.cache_data(ttl=900, show_spinner=False)
 def _historial_intradia_desde(ticker, fecha_str, hora_str):
     """Velas horarias de los últimos 7 días, desde fecha_str + hora_str.
-    Se comparan sin ajustar zona horaria (aproximación)."""
+    Las velas se convierten a hora de Argentina antes de comparar."""
     try:
         import yfinance as yf
         df = yf.download(ticker, period="7d", interval="1h",
@@ -676,8 +685,11 @@ def _historial_intradia_desde(ticker, fecha_str, hora_str):
         if df.empty:
             return None
         df = df.copy()
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
+        # El índice se pasa a hora de Argentina (si viene sin zona, se asume UTC),
+        # para compararlo con la fecha/hora de la señal, que también está en hora AR.
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        df.index = df.index.tz_convert(TZ_AR).tz_localize(None)
         try:
             corte = pd.Timestamp(f"{fecha_str} {hora_str or '00:00:00'}")
         except Exception:
@@ -904,7 +916,7 @@ def _sincronizar_estados(supabase, senales):
         if ev["es_final"] and ev["estado_calc"] != "ABIERTA":
             _actualizar_estado_senal(supabase, s["id"], ev["estado_calc"],
                                       ev["precio_ref"], ev["fecha_ref"],
-                                      hora_cierre=ev.get("hora_ref") or datetime.now().strftime("%H:%M:%S"))
+                                      hora_cierre=ev.get("hora_ref") or _ahora_ar().strftime("%H:%M:%S"))
             actualizadas = True
     if actualizadas:
         _obtener_senales.clear()
@@ -1004,9 +1016,9 @@ def _form_publicar_manual(supabase, user_id, user_email):
 
     f1, f2 = st.columns(2)
     with f1:
-        fecha = st.date_input("📅 Fecha", value=date.today(), key="sen_fecha")
+        fecha = st.date_input("📅 Fecha", value=_ahora_ar().date(), key="sen_fecha")
     with f2:
-        hora = st.time_input("🕐 Hora", value=datetime.now().time().replace(microsecond=0), key="sen_hora")
+        hora = st.time_input("🕐 Hora", value=_ahora_ar().time().replace(microsecond=0), key="sen_hora")
 
     es_pendiente_pub = st.checkbox(
         "🕓 Dejar como orden pendiente (se activa sola cuando el precio toque la entrada)",
