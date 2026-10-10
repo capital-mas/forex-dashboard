@@ -15,6 +15,7 @@
 import re
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -22,6 +23,8 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
 import modulo_gex as gx
+
+TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
 
 CLAVE_RES = "sen_scan_res"          # resultados del último escaneo (en session_state)
 MAX_TICKERS = 60
@@ -151,7 +154,7 @@ def _escanear(lista, n_vtos, rango_pct, r, q):
         except Exception as e:
             errores[t] = f"{type(e).__name__}: {e}"
     barra.empty()
-    return {"filas": filas, "errores": errores, "hora": datetime.now().strftime("%H:%M:%S"),
+    return {"filas": filas, "errores": errores, "hora": datetime.now(TZ_AR).strftime("%H:%M:%S"),
             "ts": time.time(), "n_vtos": n_vtos, "rango": rango_pct, "cambios": []}
 
 
