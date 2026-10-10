@@ -12,18 +12,13 @@
 #   - app.py decide qué plan es "pro para señales" y lo pasa en
 #     render_senales_trading(..., tiene_acceso_pro=...).
 #
-#  MIGRACIÓN DE SUPABASE (si todavía no la hiciste):
-#     ALTER TABLE senales_trading
-#       ADD COLUMN IF NOT EXISTS categoria text DEFAULT '🔹 Otro',
-#       ADD COLUMN IF NOT EXISTS riesgo_conservador float DEFAULT 1.0,
-#       ADD COLUMN IF NOT EXISTS riesgo_moderado    float DEFAULT 2.0,
-#       ADD COLUMN IF NOT EXISTS riesgo_agresivo    float DEFAULT 3.0,
-#       ADD COLUMN IF NOT EXISTS entradas jsonb DEFAULT '[]'::jsonb,
-#       ADD COLUMN IF NOT EXISTS hora_cierre text,
-#       ADD COLUMN IF NOT EXISTS fecha_activacion date,
-#       ADD COLUMN IF NOT EXISTS hora_activacion text,
-#       ADD COLUMN IF NOT EXISTS visible_basico boolean DEFAULT false;
-#   Si la columna "estado" tiene un CHECK constraint, agregale 'PENDIENTE'.
+#  PUBLICAR (solo admin), dos modos:
+#   - Manual: formulario con una o varias entradas.
+#   - Scanner GEX: cargás una lista de tickers (~40), el módulo scanner_gex.py
+#     los escanea (CBOE / Deribit) y te muestra un panel con filtros para ver
+#     cuáles están en gamma negativa y sus niveles. Desde ahí cargás el activo
+#     en el formulario manual (ticker, entrada, SL, TP y notas precargados).
+#   Requiere scanner_gex.py y modulo_gex.py en la misma carpeta.
 #
 #  FUNCIONALIDADES:
 #   - Varias entradas por señal (precio, costo apertura, apalancamiento,
@@ -32,6 +27,9 @@
 #   - Órdenes pendientes (entrada límite) que se activan solas cuando el
 #     precio toca la entrada; TP/SL se evalúa desde la activación.
 #   - Evaluación automática de TP/SL con velas horarias + diarias.
+#     OJO: como solo el admin puede escribir en la tabla (RLS), la evaluación
+#     se GUARDA cuando el admin abre la app. Los demás usuarios la ven
+#     calculada en pantalla pero no pueden persistirla.
 #   - P&L en vivo (cada 5 min) para señales abiertas.
 #   - Réplica de la posición a tu margen, y Simulador de Capital.
 # ==============================================================
@@ -42,8 +40,13 @@ import numpy as np
 from datetime import date, datetime, time as dt_time, timedelta
 from streamlit_autorefresh import st_autorefresh
 
+from scanner_gex import render_scanner_gex
+
 ADMIN_EMAIL = "brainferreyra@gmail.com"
 TABLA_SENALES = "senales_trading"
+
+MODO_MANUAL = "✍️ Cargar señal manual"
+MODO_SCANNER = "🧲 Scanner GEX (lista de activos)"
 
 # ── Límites por plan ──────────────────────────────────────────
 # Plan Pro / Admin: ven TODAS las señales.
@@ -865,7 +868,9 @@ def _evaluar_senal(senal):
 
 
 def _sincronizar_estados(supabase, senales):
-    """Activa órdenes pendientes y cierra señales abiertas que tocaron TP/SL."""
+    """Activa órdenes pendientes y cierra señales abiertas que tocaron TP/SL.
+    Solo debe llamarse como admin: el resto de los usuarios no tiene permiso de
+    escritura (RLS), así que sus updates no se guardarían."""
     actualizadas = False
     for s in senales:
         estado_s = s.get("estado")
@@ -955,12 +960,38 @@ def _tamano_posicion_por_riesgo(senal, capital, pct_riesgo):
 #  RENDER — TAB PUBLICAR (solo admin)
 # ==============================================================
 
-def _tab_publicar(supabase, user_id, user_email, es_admin):
-    if not es_admin:
-        st.info("🔒 Solo el administrador puede publicar señales de trading. "
-                "Podés ver las señales y simular resultados en las otras pestañas.")
-        return
+def _cargar_desde_scanner(fila, lado):
+    """on_click del scanner: pasa el activo elegido al formulario manual."""
+    es_largo = (lado == "LARGO")
+    st.session_state["sen_modo_pub"] = MODO_MANUAL
+    st.session_state["sen_ticker"] = fila["ticker_yahoo"]
+    if fila.get("categoria") in CATEGORIAS:
+        st.session_state["sen_categoria"] = fila["categoria"]
+    st.session_state["sen_tipo"] = "🟢 LARGO (Compra)" if es_largo else "🔴 CORTO (Venta)"
 
+    sup, inf = fila.get("nivel_sup"), fila.get("nivel_inf")
+    sup = float(sup) if sup is not None and not pd.isna(sup) else 0.0
+    inf = float(inf) if inf is not None and not pd.isna(inf) else 0.0
+    st.session_state["sen_sl"] = inf if es_largo else sup
+    st.session_state["sen_tp"] = sup if es_largo else inf
+
+    # Precio de la 1ª entrada = precio actual (margen y apalancamiento los cargás vos)
+    _init_entradas_state()
+    ent0 = st.session_state["sen_entradas"][0]
+    ent0["precio"] = float(fila["precio"])
+    st.session_state[f"sen_entrada_precio_{ent0['id']}"] = float(fila["precio"])
+
+    flip = fila.get("flip")
+    st.session_state["sen_notas"] = (
+        f"Gamma {fila['regimen']}"
+        + (f" · punto de cambio {flip:,.2f}" if flip is not None and not pd.isna(flip) else "")
+        + (f" · resistencia {sup:,.2f}" if sup else "")
+        + (f" · soporte {inf:,.2f}" if inf else "")
+        + f" · Squeeze Score {fila['squeeze']:.0f} ({fila['sq_nivel']})."
+    )
+
+
+def _form_publicar_manual(supabase, user_id, user_email):
     c1, c2, c3 = st.columns(3)
     with c1:
         ticker = st.text_input("🎯 Ticker", key="sen_ticker", placeholder="Ej: NVDA, BTC-USD, EURUSD=X")
@@ -1051,6 +1082,20 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error al publicar: {e}")
+
+
+def _tab_publicar(supabase, user_id, user_email, es_admin):
+    if not es_admin:
+        st.info("🔒 Solo el administrador puede publicar señales de trading. "
+                "Podés ver las señales y simular resultados en las otras pestañas.")
+        return
+
+    modo = st.radio("Cómo querés armar la señal", [MODO_MANUAL, MODO_SCANNER],
+                    horizontal=True, key="sen_modo_pub")
+    if modo == MODO_SCANNER:
+        render_scanner_gex(on_cargar=_cargar_desde_scanner)
+    else:
+        _form_publicar_manual(supabase, user_id, user_email)
 
     # ----------------------------------------------------------
     #  Gestionar señales publicadas (el admin ve TODAS, sin límite)
@@ -1287,7 +1332,8 @@ def _tab_senales(supabase, es_admin, es_pro=True):
         return
 
     with st.spinner("Evaluando señales pendientes y abiertas contra el precio de mercado..."):
-        _sincronizar_estados(supabase, senales)
+        if es_admin:                       # solo el admin puede escribir (RLS)
+            _sincronizar_estados(supabase, senales)
         senales, _ = _filtrar_senales_por_plan(_obtener_senales(supabase, 200), es_pro)
 
     df = pd.DataFrame(senales)
@@ -1694,7 +1740,7 @@ def _mostrar_mejor_peor(df_sim):
 #  RENDER — TAB SIMULADOR (todos, con límite por plan)
 # ==============================================================
 
-def _tab_simulador(supabase, es_pro=True):
+def _tab_simulador(supabase, es_pro=True, es_admin=False):
     st.caption(
         "Simulá cuánto hubieras ganado o perdido con las señales que elijas, asignándole a cada "
         "una el monto que quieras — siempre con el apalancamiento real con el que se publicó."
@@ -1713,7 +1759,8 @@ def _tab_simulador(supabase, es_pro=True):
         return
 
     with st.spinner("Evaluando señales..."):
-        _sincronizar_estados(supabase, senales)
+        if es_admin:                       # solo el admin puede escribir (RLS)
+            _sincronizar_estados(supabase, senales)
         senales, _ = _filtrar_senales_por_plan(_obtener_senales(supabase, 200), es_pro)
 
     df_base = pd.DataFrame(senales)
@@ -1869,4 +1916,4 @@ def render_senales_trading(supabase, user_id, user_email, tiene_acceso_pro=False
     with tab_hist:
         _tab_senales(supabase, es_admin, es_pro)
     with tab_sim:
-        _tab_simulador(supabase, es_pro)
+        _tab_simulador(supabase, es_pro, es_admin)
