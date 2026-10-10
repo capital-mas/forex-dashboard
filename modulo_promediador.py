@@ -1,21 +1,31 @@
 # ==============================================================
-#  MÓDULO PROMEDIADOR — v3 (multi-mercado, decimales automáticos)
+#  MÓDULO PROMEDIADOR — v3.1 (multi-mercado + multi-plataforma)
 #  Calcula precio promedio, tamaño de posición según tu riesgo,
 #  tendencia y stop loss/apalancamiento — todo explicado en criollo.
 #
-#  NOVEDADES v3:
-#  - Se eliminó el panel "Precisión numérica": los decimales se
-#    deciden solos según el mercado y el ticker.
+#  NOVEDADES v3.1:
+#  - Selector de PLATAFORMA: "Exchange · unidades" o "Broker · lotes".
+#    Cualquier activo (cripto, acciones, forex, commodities) se puede
+#    operar de las dos formas:
+#        Exchange · unidades : cantidad en unidades/tokens + apalancamiento
+#        Broker · lotes      : cantidad en lotes + apalancamiento
+#  - El tamaño de lote (unidades por lote) es editable cuando operás en
+#    lotes, porque cada bróker define el suyo.
+#  - Nueva tarjeta "Ganancia estimada (Take Profit)" en los resultados.
+#
+#  v3 (se mantiene):
+#  - Decimales automáticos según el mercado y el ticker.
 #        Acciones / CEDEARs : cantidad 0 dec · precio 2 dec
 #        Cripto (BTC, ETH…) : cantidad 6 dec · precio 2 dec
 #                             (si el precio es < 1 sube solo a 4/6/10 dec
 #                              para no truncar altcoins baratas)
-#        Forex              : cantidad 2 dec (lotes) · precio 5 dec (3 en JPY)
-#        Commodities        : cantidad 2 dec (lotes) · precio 2 dec
-#  - Selector de mercado al inicio: Cripto / Acciones · Forex · Commodities.
-#  - Forex y Commodities se operan en LOTES. Internamente se convierte a
-#    unidades (1 lote Forex = 100.000 · 1 lote Oro = 100 oz · etc.) para
-#    que margen, exposición, pérdida y liquidación salgan bien.
+#        Forex              : precio 5 dec (3 en JPY)
+#        Commodities        : precio 2 dec
+#        En lotes           : cantidad 2 dec
+#  - Selector de mercado: Cripto / Acciones · Forex · Commodities.
+#  - Internamente todo se convierte a unidades (1 lote Forex = 100.000 ·
+#    1 lote Oro = 100 oz · etc.) para que margen, exposición, pérdida y
+#    liquidación salgan bien.
 #  - Stop Loss con 3 modos: Manual · Por ATR · % Fijo (-2% / -3% / -5%).
 #  - Botón "⚡ Usar recomendado" pegado al campo de cantidad (un clic).
 #  - Semáforo coherente: sobre-riesgo = naranja/rojo; verde solo si la
@@ -293,11 +303,15 @@ def _sesgo_a_tendencia(sesgo):
 
 
 # ==============================================================
-#  1-bis) CONFIGURACIÓN AUTOMÁTICA POR MERCADO / ACTIVO
+#  1-bis) CONFIGURACIÓN AUTOMÁTICA POR MERCADO / ACTIVO / PLATAFORMA
 #         (decimales, lotes, tamaño de contrato)
 # ==============================================================
 
 MERCADOS = ['Cripto / Acciones', 'Forex', 'Commodities']
+
+# Dónde operás: en un exchange (unidades) o en un bróker CFD (lotes).
+# Los dos permiten apalancamiento.
+PLATAFORMAS = ['Exchange · unidades', 'Broker · lotes']
 
 CONTRATO_FOREX = 100_000.0  # 1 lote estándar = 100.000 unidades de la divisa base
 
@@ -330,24 +344,28 @@ def _es_cripto(t):
     )
 
 
-def config_activo(mercado, ticker, precio_ref=None):
+def config_activo(mercado, ticker, precio_ref=None, usa_lotes=None):
     """
-    Decide sola la precisión y la unidad de operación. No hay nada que configurar a mano.
-    Devuelve: clase, dec_cant, dec_precio, es_lotes, contrato (unidades por lote o 1),
-    contrato_conocido (False si es un commodity que no tenemos en la tabla).
+    Decide sola la precisión y la unidad de operación según el activo Y la plataforma.
+      - Exchange (usa_lotes=False): cantidad en unidades/tokens, solo apalancamiento.
+      - Broker CFD (usa_lotes=True): cantidad en lotes (+ apalancamiento).
+    Si usa_lotes es None se usa el comportamiento clásico (Forex/Commodities = lotes).
+    Devuelve: clase, dec_cant, dec_precio, es_lotes, contrato (unidades por lote, o 1 si son
+    unidades), contrato_conocido (False si el tamaño de lote depende del bróker).
     """
     t = (ticker or '').upper().strip()
+    if usa_lotes is None:
+        usa_lotes = mercado in ('Forex', 'Commodities')
 
+    # 1) Clase de activo → decimales de precio, decimales de cantidad en unidades y tamaño de lote
     if mercado == 'Forex':
-        return dict(clase='forex', dec_cant=2, dec_precio=3 if 'JPY' in t else 5,
-                    es_lotes=True, contrato=CONTRATO_FOREX, contrato_conocido=True)
-
-    if mercado == 'Commodities':
-        contrato = CONTRATOS_COMMODITY.get(t)
-        return dict(clase='commodity', dec_cant=2, dec_precio=2, es_lotes=True,
-                    contrato=contrato or 100.0, contrato_conocido=contrato is not None)
-
-    if _es_cripto(t):
+        clase, dec_p = 'forex', (3 if 'JPY' in t else 5)
+        dec_unid, contrato_lote, conocido = 0, CONTRATO_FOREX, True
+    elif mercado == 'Commodities':
+        c = CONTRATOS_COMMODITY.get(t)
+        clase, dec_p = 'commodity', 2
+        dec_unid, contrato_lote, conocido = 2, (c or 100.0), c is not None
+    elif _es_cripto(t):
         # 2 decimales de precio para las grandes; sube solo si el precio es chico
         # para no truncar altcoins tipo 0.00000012.
         if not precio_ref or precio_ref >= 1:
@@ -358,11 +376,18 @@ def config_activo(mercado, ticker, precio_ref=None):
             dec_p = 6
         else:
             dec_p = 10
-        return dict(clase='cripto', dec_cant=6, dec_precio=dec_p,
-                    es_lotes=False, contrato=1.0, contrato_conocido=True)
+        clase = 'cripto'
+        dec_unid, contrato_lote, conocido = 6, 1.0, False   # en MT5 suele ser 1 lote = 1 moneda
+    else:
+        clase, dec_p = 'accion', 2
+        dec_unid, contrato_lote, conocido = 0, 1.0, False   # CFD de acciones: suele ser 1 lote = 1 acción
 
-    return dict(clase='accion', dec_cant=0, dec_precio=2,
-                es_lotes=False, contrato=1.0, contrato_conocido=True)
+    # 2) Plataforma → unidades o lotes
+    if usa_lotes:
+        return dict(clase=clase, dec_cant=2, dec_precio=dec_p, es_lotes=True,
+                    contrato=contrato_lote, contrato_conocido=conocido)
+    return dict(clase=clase, dec_cant=dec_unid, dec_precio=dec_p, es_lotes=False,
+                contrato=1.0, contrato_conocido=True)
 
 
 def _paso(decimales):
@@ -596,9 +621,13 @@ GLOSARIO_PROM = [
     ('% de riesgo deseado', 'Cuánto de tu cuenta TOTAL estás dispuesto a perder si esta operación puntual '
      'sale mal (no el % de esta operación en sí). La regla clásica de trading dice no arriesgar más del 1-2% '
      'de tu cuenta en una sola operación, aunque uses todo tu apalancamiento o toda tu convicción en ella.'),
-    ('Lote', 'Unidad de contrato que usan Forex y Commodities. 1 lote estándar de Forex = 100.000 unidades de la '
-     'divisa; 1 lote de oro = 100 onzas; 1 lote de petróleo = 1.000 barriles. El módulo convierte los lotes a '
-     'unidades por vos para calcular margen, exposición y pérdida.'),
+    ('Plataforma', 'Dónde ejecutás la operación. Exchange: comprás en unidades o tokens (por ejemplo 0,05 BTC) '
+     'y, si querés, con apalancamiento. Broker CFD (MT4/MT5, cTrader, etc.): operás en lotes, también con '
+     'apalancamiento. Un mismo activo se puede operar de las dos formas; elegí la que usás vos.'),
+    ('Lote', 'Unidad de contrato que usan los brókers CFD (MT4/MT5, cTrader, etc.). 1 lote estándar de Forex = '
+     '100.000 unidades de la divisa; 1 lote de oro = 100 onzas; 1 lote de petróleo = 1.000 barriles. En los '
+     'exchanges no hay lotes: se opera en unidades o tokens. El módulo convierte los lotes a unidades por vos '
+     'para calcular margen, exposición y pérdida.'),
     ('Stop Loss', 'El precio al que vas a vender (o cerrar la posición) automáticamente si el precio va en tu contra, '
      'para cortar la pérdida antes de que sea mayor. En una inversión de largo plazo suele pensarse más '
      'como "el precio al que la razón por la que compré dejó de ser válida", no como un stop ajustado día a día.'),
@@ -616,6 +645,8 @@ GLOSARIO_PROM = [
     ('Cantidad recomendada', 'Cuánto podés comprar/vender sin superar el % de tu cuenta que dijiste que ibas '
      'a arriesgar, dado dónde pusiste el stop. Es el "tamaño correcto" de la operación. Si ya tenés posición, '
      'se descuenta el riesgo que esa posición ya tiene.'),
+    ('Ganancia estimada', 'Cuánto ganarías en dólares si el precio llega a tu Take Profit. Se calcula sobre '
+     'toda tu posición (lo que ya tenías más lo nuevo) contra el precio promedio resultante.'),
     ('Ratio Riesgo/Beneficio', 'Compara cuánto podés perder contra cuánto podés ganar. Un ratio de 2:1 significa '
      'que por cada $1 que arriesgás, tu objetivo es ganar $2.'),
 ]
@@ -787,7 +818,7 @@ def _panel_resultados(capital, pct_max, horizonte, direccion, apal, precio, cant
     rr = stop_info['rr_ratio']
     gan = stop_info['ganancia_potencial']
 
-    # 1) Ganancia estimada al Take Profit (nueva)
+    # 1) Ganancia estimada al Take Profit
     if gan is None:
         card_gan = _kpi_card('Ganancia estimada (Take Profit)', '—',
                              'Poné un precio en Take Profit para calcularla', '#6b7d9a', True)
@@ -857,7 +888,7 @@ def _panel_resultados(capital, pct_max, horizonte, direccion, apal, precio, cant
     if cant_actual_u > 0 and gan is not None and gan > 0:
         st.caption('💡 La ganancia estimada es la de toda tu posición (lo que ya tenías + lo nuevo) '
                    'si el precio llega al Take Profit.')
-        
+
     with st.expander('Ver detalle de los avisos de riesgo'):
         for aviso in riesgo_stop['avisos']:
             st.markdown(f'- {aviso}')
@@ -896,6 +927,14 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
         with st.container(border=True):
             st.markdown('**① Activo y cuenta**')
             mercado = st.selectbox('Mercado / tipo de activo', MERCADOS, key='prom_mercado')
+            usa_lotes = st.radio(
+                'Plataforma donde operás', PLATAFORMAS,
+                index=1 if mercado in ('Forex', 'Commodities') else 0,
+                horizontal=True, key=f'prom_plataforma_{mercado}',
+                help='Exchange (o bróker de acciones): comprás en unidades/tokens y, si querés, con '
+                     'apalancamiento. Broker CFD (MT4/MT5, cTrader, etc.): operás en lotes, también '
+                     'con apalancamiento. Podés operar el mismo activo de las dos formas.',
+            ) == 'Broker · lotes'
             b1, b2 = st.columns([1, 1])
             with b1:
                 ticker = st.text_input('Ticker', value='', placeholder=_PLACEHOLDER_TICKER[mercado],
@@ -936,8 +975,8 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
         atr_val = info_tend.get('atr') if info_tend else None
         precio_ref = info_tend['precio_actual'] if info_tend else None
 
-        # Precisión y unidad de operación: 100% automáticas
-        cfg = config_activo(mercado, ticker, precio_ref)
+        # Precisión y unidad de operación: 100% automáticas (según activo + plataforma)
+        cfg = config_activo(mercado, ticker, precio_ref, usa_lotes)
         dec_c, dec_p = cfg['dec_cant'], cfg['dec_precio']
         paso_cant, paso_precio = _paso(dec_c), _paso(dec_p)
         fmt_cant, fmt_precio = f'%.{dec_c}f', f'%.{dec_p}f'
@@ -964,24 +1003,29 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                                                 step=paso_precio, format=fmt_precio, key='prom_precio_nuevo')
             with e4:
                 cant_op = st.number_input(etiqueta_cant, min_value=0.0, value=0.0,
-                                           step=paso_cant, format=fmt_cant, key='prom_cant_op')
+                                           step=paso_cant, format=fmt_cant,
+                                           key=f'prom_cant_op_{"lotes" if cfg["es_lotes"] else "unid"}')
 
             if info_tend:
                 px = info_tend['precio_actual']
                 st.button(f'📍 Usar precio actual (${px:,.{dec_p}f})', key='prom_btn_px',
                           on_click=_set_state, args=('prom_precio_nuevo', round(float(px), dec_p)))
 
-            # Tamaño de contrato (solo Commodities no reconocidos piden dato manual)
+            # Tamaño de contrato: editable siempre que operes en lotes (cada bróker define el suyo)
             if cfg['es_lotes']:
-                if cfg['clase'] == 'commodity' and not cfg['contrato_conocido']:
-                    cfg['contrato'] = st.number_input(
-                        'Unidades por lote (tamaño de contrato)', min_value=0.0001, value=100.0,
-                        step=1.0, key='prom_contrato_custom',
-                        help='No reconocimos este commodity: indicá cuántas unidades tiene 1 lote '
-                             'en tu bróker (ej. oro = 100 oz, petróleo = 1000 barriles).')
-                st.caption(f'📦 1 lote = {cfg["contrato"]:,.0f} unidades'
-                           + (f' → {cant_op:,.{dec_c}f} lotes = {cant_op * cfg["contrato"]:,.0f} unidades '
-                              f'de exposición' if cant_op > 0 else ''))
+                cfg['contrato'] = st.number_input(
+                    'Unidades por lote (tamaño de contrato)', min_value=0.0001,
+                    value=float(cfg['contrato']), step=1.0, format='%.4f',
+                    key=f'prom_contrato_{cfg["clase"]}_{ticker}',
+                    help='Cuántas unidades tiene 1 lote en tu bróker. Forex estándar = 100.000, '
+                         'oro = 100 oz, petróleo = 1.000 barriles. En CFD de cripto y acciones '
+                         'suele ser 1 lote = 1 unidad, pero varía: confirmalo en tu plataforma.')
+                if not cfg['contrato_conocido']:
+                    st.caption('⚠️ Este tamaño de lote es un valor típico, no un dato seguro: '
+                               'verificalo en la especificación del contrato de tu bróker.')
+                contrato_txt = (f' → {cant_op:,.{dec_c}f} lotes = {cant_op * cfg["contrato"]:,.8g} '
+                                f'unidades de exposición' if cant_op > 0 else '')
+                st.caption(f'📦 1 lote = {cfg["contrato"]:,.8g} unidades' + contrato_txt)
 
             slot_rec = st.container()  # acá va "⚡ Usar recomendado" (se completa cuando ya hay stop)
 
@@ -992,7 +1036,8 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                 with p1:
                     cant_actual = st.number_input(
                         'Cantidad que ya tengo' + (' (lotes)' if cfg['es_lotes'] else ''),
-                        min_value=0.0, value=0.0, step=paso_cant, format=fmt_cant, key='prom_cant_actual')
+                        min_value=0.0, value=0.0, step=paso_cant, format=fmt_cant,
+                        key=f'prom_cant_actual_{"lotes" if cfg["es_lotes"] else "unid"}')
                 with p2:
                     precio_prom_actual = st.number_input('Precio promedio actual', min_value=0.0, value=0.0,
                                                           step=paso_precio, format=fmt_precio,
@@ -1053,7 +1098,7 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
             precio_tp = st.number_input(
                 '🎯 Take Profit (USD)', min_value=0.0, value=0.0, step=paso_precio,
                 format=fmt_precio, key='prom_tp',
-                help='Opcional (0 = sin objetivo). Es lo que habilita el ratio Riesgo/Beneficio.')
+                help='Opcional (0 = sin objetivo). Habilita la ganancia estimada y el ratio Riesgo/Beneficio.')
 
         # ── Botón "⚡ Usar recomendado" (junto al campo de cantidad) ──
         contrato = cfg['contrato']
@@ -1069,7 +1114,8 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
                 r1, r2 = st.columns([1, 1.6])
                 with r1:
                     st.button('⚡ Usar recomendado', key='prom_usar_sugerida',
-                              on_click=_set_state, args=('prom_cant_op', rec_op),
+                              on_click=_set_state,
+                              args=(f'prom_cant_op_{"lotes" if cfg["es_lotes"] else "unid"}', rec_op),
                               disabled=rec_op <= 0, use_container_width=True)
                 with r2:
                     if rec_op > 0:
@@ -1145,4 +1191,5 @@ def modulo_promediador(analizar_largo=None, descargar_datos=None, get_close_seri
 
     st.caption('⚠️ Herramienta de apoyo cuantitativo, no asesoramiento financiero. El precio de liquidación '
                'es aproximado (no incluye fees ni margen de mantenimiento del bróker/exchange). En Forex y '
-               'Commodities la pérdida se expresa en USD asumiendo que la moneda de cotización es el dólar.')
+               'Commodities la pérdida se expresa en USD asumiendo que la moneda de cotización es el dólar. '
+               'El tamaño de lote en cripto y acciones depende de tu bróker: verificalo antes de operar.')
