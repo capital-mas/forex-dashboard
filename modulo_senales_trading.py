@@ -241,10 +241,28 @@ def _cierre_manual_fue_ganador(senal):
     return ret_apalancado > 0
 
 
+def _ratio_rb_de_senal(senal):
+    """Riesgo/Beneficio = distancia al TP / distancia al SL, medidas desde el precio promedio.
+    Devuelve None si los niveles no permiten calcularlo."""
+    try:
+        prom = _precio_promedio_ponderado(senal)
+        sl = float(senal.get("stop_loss") or 0)
+        tp = float(senal.get("take_profit") or 0)
+    except (TypeError, ValueError):
+        return None
+    if prom <= 0 or sl <= 0 or tp <= 0:
+        return None
+    riesgo = abs(prom - sl)
+    beneficio = abs(tp - prom)
+    if riesgo <= 0 or beneficio <= 0:
+        return None
+    return beneficio / riesgo
+
+
 def _render_niveles(senal, entradas_lista):
-    """Entrada, Stop Loss, Take Profit y (si hay más de una entrada) Precio promedio."""
+    """Entrada, Stop Loss, Take Profit, Riesgo/Beneficio y (si hay más de una entrada) Precio promedio."""
     multiples = len(entradas_lista) > 1
-    cols = st.columns(4 if multiples else 3)
+    cols = st.columns(5 if multiples else 4)
     if entradas_lista:
         precio_primera = entradas_lista[0]["precio"]
     else:
@@ -252,8 +270,11 @@ def _render_niveles(senal, entradas_lista):
     cols[0].metric("Primera entrada" if multiples else "Entrada", fmt_precio_exacto(precio_primera))
     cols[1].metric("Stop Loss", fmt_precio_exacto(senal.get("stop_loss")))
     cols[2].metric("Take Profit", fmt_precio_exacto(senal.get("take_profit")))
+    rr = _ratio_rb_de_senal(senal)
+    cols[3].metric("Riesgo / Beneficio", f"1:{rr:.1f}" if rr is not None else "—",
+                   help="Cuánto buscás ganar por cada $1 que arriesgás (medido desde el precio promedio).")
     if multiples:
-        cols[3].metric("Precio promedio", fmt_precio_exacto(_precio_promedio_ponderado(senal)))
+        cols[4].metric("Precio promedio", fmt_precio_exacto(_precio_promedio_ponderado(senal)))
         st.caption(_md_dolar(f"🧩 {len(entradas_lista)} entradas → {_texto_entradas(entradas_lista)}"))
 
 
