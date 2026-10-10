@@ -7697,7 +7697,13 @@ def _pares_fig_ratio(nombre, df, z_entry):
     fig.add_hline(y=0, line_color=C_MUTED, opacity=0.4, row=2, col=1)
     fig.update_yaxes(gridcolor=C_GRID, row=1, col=1)
     fig.update_yaxes(gridcolor=C_GRID, row=2, col=1)
-    fig.update_xaxes(gridcolor=C_GRID)
+    fig.update_xaxes(
+        gridcolor=C_GRID,
+        tickformat='%d/%m/%Y',            # eje X: día/mes/año
+        hoverformat='%d/%m/%Y',           # tooltip: día/mes/año
+        tickangle=-30,
+        nticks=10,                        # evita que se amontonen las etiquetas
+    )
     fig.update_layout(**PLOTLY_LAYOUT_BASE, height=560, hovermode='x unified',
                        legend=dict(orientation='h', y=1.08, font=dict(size=9)),
                        margin=dict(l=10, r=10, t=50, b=10))
