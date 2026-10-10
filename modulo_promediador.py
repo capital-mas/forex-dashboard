@@ -854,6 +854,10 @@ def _panel_resultados(capital, pct_max, horizonte, direccion, apal, precio, cant
                    f'({prom["variacion_precio_prom_pct"]:+.2f}%) · cantidad total: '
                    f'**{prom["cantidad_final"] / contrato:,.{dec_c}f} {unidad}**')
 
+    if cant_actual_u > 0 and gan is not None and gan > 0:
+        st.caption('💡 La ganancia estimada es la de toda tu posición (lo que ya tenías + lo nuevo) '
+                   'si el precio llega al Take Profit.')
+        
     with st.expander('Ver detalle de los avisos de riesgo'):
         for aviso in riesgo_stop['avisos']:
             st.markdown(f'- {aviso}')
