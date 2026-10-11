@@ -21,7 +21,7 @@ import streamlit as st
 
 # ⚠️ OBLIGATORIO: la SEC bloquea pedidos sin identificación real.
 # Poné tu nombre/empresa y un mail tuyo.
-SEC_USER_AGENT = "Capitalmas Braian Ferreyra Brainferreyra@gmail.com"
+SEC_USER_AGENT = "Capital+ TuNombre tuemail@dominio.com"
 _HEADERS = {"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 
 # ── Límite de la SEC: 10 pedidos/seg. Acá ~8/seg compartido entre hilos ──
@@ -87,6 +87,7 @@ _TAGS = {
                        'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations']),
     'capex':  ('USD', ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets',
                        'PaymentsForCapitalImprovements']),
+    'dps':    ('USD/shares', ['CommonStockDividendsPerShareDeclared', 'CommonStockDividendsPerShareCashPaid']),
     'div':    ('USD', ['PaymentsOfDividendsCommonStock', 'PaymentsOfDividends', 'PaymentsOfOrdinaryDividends']),
     # Instantes (balance)
     'assets': ('USD', ['Assets']),
@@ -240,16 +241,45 @@ def _ult_dur(ents):
 
 
 def _beta(c, spy):
+    """Beta con retornos SEMANALES (más estable que diarios, evita desfasajes)."""
     try:
         if c is None or spy is None:
             return None
-        j = pd.concat([c.pct_change(), spy.pct_change()], axis=1, join='inner').dropna()
-        if len(j) < 120:
+        j = pd.concat([c, spy], axis=1, join='inner').dropna()
+        j = j.resample('W-FRI').last().pct_change().dropna()
+        if len(j) < 50:
             return None
         cov = np.cov(j.iloc[:, 0], j.iloc[:, 1])
         return float(cov[0, 1] / cov[1, 1])
     except Exception:
         return None
+
+
+# ── Datos que la SEC no tiene: se piden a Yahoo (1 sola llamada por ticker, cacheada) ──
+_ylock = threading.Lock()
+_yultimo = [0.0]
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False, max_entries=600)
+def _yahoo_extra(ticker):
+    with _ylock:                                   # separa los pedidos para no saturar a Yahoo
+        espera = 0.4 - (time.time() - _yultimo[0])
+        if espera > 0:
+            time.sleep(espera)
+        _yultimo[0] = time.time()
+    import yfinance as yf
+    info = yf.Ticker(ticker).info or {}
+    out = {
+        'pegRatio': info.get('pegRatio') if info.get('pegRatio') is not None else info.get('trailingPegRatio'),
+        'beta': info.get('beta'),
+        'trailingEps': info.get('trailingEps'),
+        'earningsQuarterlyGrowth': info.get('earningsQuarterlyGrowth'),
+        'recommendationKey': info.get('recommendationKey'),
+        'targetMeanPrice': info.get('targetMeanPrice'),
+    }
+    if all(v is None for v in out.values()):
+        raise RuntimeError("Yahoo vacío")           # no se cachea el fallo
+    return out
 
 
 # ==============================================================
@@ -259,8 +289,9 @@ class SecTicker:
     es_sec = True
 
     def __init__(self, ticker, d, close=None, close_spy=None, precio=None,
-                 ttm_first=True, max_cols=6):
+                 ttm_first=True, max_cols=6, usar_yahoo=True):
         self.ticker = ticker
+        self._usar_yahoo = usar_yahoo
         self._d = d
         self._close = close.dropna() if close is not None else None
         if precio is None and self._close is not None and len(self._close):
@@ -449,13 +480,33 @@ class SecTicker:
         divp = cf['Cash Dividends Paid']
         g = lambda n: (self._R(n) or {}).get('crec')
         g_eps = g('eps')
+        dps = F('dps')
+        if dps is not None and px:
+            dy = dps / px
+        elif divp is not None and mcap:
+            dy = abs(divp) / mcap
+        else:
+            dy = None
+
+        y = {}
+        if self._usar_yahoo:
+            try:
+                y = _yahoo_extra(self.ticker) or {}
+            except Exception:
+                y = {}                                # si Yahoo falla, se usa lo calculado con SEC
+        if y.get('earningsQuarterlyGrowth') is not None:
+            g_eps = y['earningsQuarterlyGrowth']      # crecimiento de EPS: Yahoo
+        eps_y = y.get('trailingEps')
 
         per = None
-        if px and eps and eps > 0:
+        if px and eps_y and eps_y > 0:
+            per = px / eps_y                          # EPS: Yahoo
+        elif px and eps and eps > 0:
             per = px / eps
         elif mcap and ni and ni > 0:
             per = mcap / ni
-        peg = per / (g_eps * 100) if (per and g_eps and g_eps > 0.01) else None
+        peg_sec = per / (g_eps * 100) if (per and g_eps and 0.01 < g_eps <= 0.35) else None
+        peg = y.get('pegRatio') if y.get('pegRatio') is not None else peg_sec   # PEG: Yahoo
         pre, tax = F('pretax'), F('tax')
         tasa = tax / pre if (pre and pre > 0 and tax is not None) else None
 
@@ -470,24 +521,25 @@ class SecTicker:
             'returnOnEquity': _div(ni, eq_pos), 'returnOnAssets': _div(ni, assets),
             'currentRatio': _div(bal['Current Assets'], bal['Current Liabilities']),
             'debtToEquity': (deuda / eq_pos * 100) if (eq_pos and deuda is not None) else None,
-            'beta': self._beta,
+            'beta': y.get('beta') if y.get('beta') is not None else self._beta,   # Beta: Yahoo
             'grossMargins': _div(inc['Gross Profit'], rev), 'operatingMargins': _div(inc['Operating Income'], rev),
             'profitMargins': _div(ni, rev),
-            'dividendYield': (abs(divp) / mcap) if (divp is not None and mcap) else None,
+            'dividendYield': dy,
             'payoutRatio': (abs(divp) / ni) if (divp is not None and ni and ni > 0) else None,
             'earningsQuarterlyGrowth': g_eps, 'revenueGrowth': g('rev'), 'earningsGrowth': g('ni'),
             'freeCashflow': cf['Free Cash Flow'], 'operatingCashflow': cf['Operating Cash Flow'],
             'enterpriseToRevenue': _div(ev, rev if (rev and rev > 0) else None),
             'totalRevenue': rev, 'ebitda': inc['EBITDA'],
             'effectiveTaxRate': tasa,
-            # La SEC no publica estimaciones de analistas:
-            'recommendationKey': None, 'targetMeanPrice': None,
+            # Analistas: solo Yahoo (la SEC no los publica)
+            'recommendationKey': y.get('recommendationKey'), 'targetMeanPrice': y.get('targetMeanPrice'),
         }
         self._cache['__info'] = info
         return info
 
 
-def crear_ticker_sec(ticker, close=None, close_spy=None, precio=None, ttm_first=True, anios=4):
+def crear_ticker_sec(ticker, close=None, close_spy=None, precio=None, ttm_first=True, anios=4,
+                     usar_yahoo=True):
     """Devuelve un SecTicker (parecido a yf.Ticker) o None si la empresa no es
     10-K/USD o la SEC no responde. Usar None como señal para caer a Yahoo.
 
@@ -504,7 +556,7 @@ def crear_ticker_sec(ticker, close=None, close_spy=None, precio=None, ttm_first=
         return None
     try:
         t = SecTicker(str(ticker).upper(), d, close, close_spy, precio, ttm_first,
-                      max_cols=anios + 5 if anios > 4 else 6)
+                      max_cols=anios + 5 if anios > 4 else 6, usar_yahoo=usar_yahoo)
         return t if t.valido() else None
     except Exception:
         return None
