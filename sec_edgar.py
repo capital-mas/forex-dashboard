@@ -21,7 +21,7 @@ import streamlit as st
 
 # ⚠️ OBLIGATORIO: la SEC bloquea pedidos sin identificación real.
 # Poné tu nombre/empresa y un mail tuyo.
-SEC_USER_AGENT = "Capital+ TuNombre tuemail@dominio.com"
+SEC_USER_AGENT = "Capitalmas Braian Ferreyra braianferr86@gmail.com"
 _HEADERS = {"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 
 # ── Límite de la SEC: 10 pedidos/seg. Acá ~8/seg compartido entre hilos ──
