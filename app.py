@@ -34,6 +34,7 @@ from modulo_fscore import modulo_fscore
 from modulo_market_breadth import render_market_breadth, crear_breadth_ia
 from modulo_velas import modulo_velas
 from modulo_valuacion import modulo_valuacion
+from sec_edgar import crear_ticker_sec
 from modulo_renta_fija_macro import modulo_renta_fija_macro
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
@@ -3183,7 +3184,17 @@ def _analizar_fundamental_cached(ticker, industria):
         import yfinance as yf
         sector = SECTOR_MAP_FUND.get(industria, 'Sin Clasificar')
         bench  = INDUSTRY_BENCHMARKS_FUND.get(sector, DEFAULT_BENCHMARK_FUND)
-        stock  = yf.Ticker(ticker)
+        stock = None
+        try:
+            cl_2y  = get_close_series(descargar_datos(ticker, '2y'))
+            cl_spy = get_close_series(descargar_datos('SPY', '2y'))
+            cl_5d  = get_close_series(descargar_datos(ticker, '5d'))
+            px = float(cl_5d.iloc[-1]) if cl_5d is not None and len(cl_5d) else None
+            stock = crear_ticker_sec(ticker, cl_2y, cl_spy, precio=px, ttm_first=True)
+        except Exception:
+            stock = None
+        if stock is None:
+            stock = yf.Ticker(ticker)   # respaldo: ADRs / empresas extranjeras (20-F)
         info   = stock.info or {}
 
         precio_actual    = info.get('currentPrice') or info.get('regularMarketPrice')
@@ -3710,7 +3721,10 @@ def _fund_historico_anual(ticker):
         return None
     try:
         import yfinance as yf
-        stock = yf.Ticker(ticker)
+        close_tk = get_close_series(descargar_datos(ticker, '10y'))
+        stock = crear_ticker_sec(ticker, close_tk, None, ttm_first=False, anios=10)
+        if stock is None:
+            stock = yf.Ticker(ticker)
         income = stock.financials
         balance = stock.balance_sheet
         cashflow = stock.cashflow
@@ -3721,11 +3735,7 @@ def _fund_historico_anual(ticker):
         if len(fechas) < 2:
             return None
 
-        try:
-            inicio = (min(fechas) - pd.Timedelta(days=10)).strftime('%Y-%m-%d')
-            precio_hist = yf.download(ticker, start=inicio, progress=False, auto_adjust=True)['Close']
-        except Exception:
-            precio_hist = None
+        precio_hist = close_tk
 
         def _precio_en(fecha):
             if precio_hist is None or precio_hist.empty:
