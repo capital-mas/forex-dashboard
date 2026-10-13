@@ -8860,8 +8860,8 @@ _OPCIONES_SUB_CORTO = {
     '🛢️ Mercados': 'mercados', '📈 Acciones': 'acciones',
 }
 _OPCIONES_SUB_LARGO = {
-    '📋 Ranking': 'ranking', '🔄 Reversión': 'reversion', '🏭 Industria': 'industria',
-    '🔍 Ticker': 'ticker', '📊 Fundamental': 'fundamental',
+    '📋 Ranking': 'ranking', '🔄 Reversión': 'reversion',
+    '📊 Fundamental': 'fundamental',
     '📐 Top-Down Cuantitativo': 'tdc',
     ('📑 Análisis COT' if TIENE_ACCESO_PRO else '🔒 Análisis COT (Pro)'): 'cot',
     ('📑 Análisis TFF' if TIENE_ACCESO_PRO else '🔒 Análisis TFF (Pro)'): 'tff',
