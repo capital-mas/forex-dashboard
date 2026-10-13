@@ -3063,14 +3063,19 @@ EXTRAS_LARGO_COLS = [
     ('mejor_mes', 'Mejor Mes', 'pct'), ('peor_mes', 'Peor Mes', 'pct'),
     ('recup', 'Recup. (días)', 'int'),
     ('corr_bench', 'Corr. SPY', 'num'), ('prob_sup', 'Prob > SPY', 'pct'),
+    ('omega', 'Omega', 'num'), ('gain_pain', 'Gain/Pain', 'num'),
+    ('up_capture', 'Up Capture', 'pct'), ('down_capture', 'Down Capture', 'pct'),
+    ('capture_ratio', 'Capture Ratio', 'num'),
+    ('sobre_sma20', '> SMA20', 'bool'), ('sobre_sma50', '> SMA50', 'bool'),
+    ('sobre_sma200', '> SMA200', 'bool'),
 ]
 
 def _fmt_extra(v, tipo):
     if v is None or pd.isna(v): return 'N/A'
     if tipo == 'pct': return f'{v*100:.2f}%'
     if tipo == 'int': return f'{int(v)}'
+    if tipo == 'bool': return '✅' if v >= 0.5 else '❌'
     return f'{v:.2f}'
-
 
 def tabla_largo(df_res, key_suffix=''):
     if df_res.empty: return
