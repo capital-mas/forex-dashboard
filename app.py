@@ -10054,9 +10054,51 @@ elif HORIZONTE == 'largo':
                 ('🔴 Bajistas', str(n_baj), 'Bajista + Muy Bajista', '#f85149'),
                 ('⚡ Candidatos Reversión', str(n_rev), 'Z<-1 | BajoBB | RSI<35', '#f0e68c'),
             ])
-            tab1, tab2, tab3 = st.tabs(['📋 Tabla completa','📊 Distribución','🗺️ Cuadrante largo plazo'])
+            tab1, tab_ind, tab2, tab3 = st.tabs([
+                '📋 Tabla completa', '🏭 Resumen por industria',
+                '📊 Distribución', '🗺️ Cuadrante largo plazo',
+            ])
             with tab1:
                 tabla_largo(df_res_l, key_suffix='ranking')
+
+            with tab_ind:
+                # Una fila por industria: de un vistazo cuál está mejor y quién la lidera
+                filas_ind = []
+                for industria, grupo in df_res_l.groupby('industria'):
+                    mejor = grupo.sort_values('global_score', ascending=False).iloc[0]
+                    filas_ind.append({
+                        'Industria': industria,
+                        'Activos': len(grupo),
+                        'Score prom.': round(float(grupo['global_score'].mean()), 1),
+                        'Alcistas': int(grupo['sesgo'].isin(['ALCISTA', 'MUY ALCISTA']).sum()),
+                        'Bajistas': int(grupo['sesgo'].isin(['BAJISTA', 'MUY BAJISTA']).sum()),
+                        'Ret % prom.': round(float(grupo['ret_anual'].mean()), 1),
+                        'Sharpe prom.': round(float(grupo['sharpe'].mean()), 2),
+                        'Líder': mejor['ticker'],
+                        'Score líder': int(mejor['global_score']),
+                    })
+                df_ind_res = pd.DataFrame(filas_ind).sort_values('Score prom.', ascending=False)
+                styled_ind_res = _apply_score_style(df_ind_res, ['Score prom.', 'Score líder'], ['Ret % prom.'])
+                st.dataframe(styled_ind_res, use_container_width=True, hide_index=True,
+                             height=min(600, len(df_ind_res) * 36 + 45))
+                st.caption('Ordenado por score promedio. Para ver todos los activos de una industria, '
+                           'filtrala en "Tabla completa".')
+                chips_navegacion(df_ind_res['Líder'].tolist(), 'ranking_lideres')
+
+                st.markdown('### 📝 Lectura por activo')
+                ind_lectura = st.selectbox('Industria', df_ind_res['Industria'].tolist(), key='ranking_ind_lectura')
+                grupo_l = df_res_l[df_res_l['industria'] == ind_lectura].sort_values('global_score', ascending=False)
+                for _, row in grupo_l.iterrows():
+                    r_dict = row.to_dict()
+                    sesgo_class = {'MUY ALCISTA':'sesgo-muy-alc','ALCISTA':'sesgo-alc','NEUTRAL':'sesgo-neu',
+                                   'BAJISTA':'sesgo-baj','MUY BAJISTA':'sesgo-muy-baj'}.get(r_dict['sesgo'], '')
+                    st.markdown(f"""
+                    <div class="interp-card">
+                      <div class="interp-header">{r_dict['ticker']} · Score: {int(r_dict['global_score'])}/100 · <span class="{sesgo_class}">{r_dict['sesgo']}</span> · {fmt_precio(r_dict['precio'])}</div>
+                      {interpretar_largo(r_dict)}
+                    </div>
+                    """, unsafe_allow_html=True)
+
             with tab2:
                 st.plotly_chart(fig_distribuciones(df_res_l), use_container_width=True, config=PLOTLY_CONFIG, key='ranking_dist')
             with tab3:
@@ -10065,7 +10107,6 @@ elif HORIZONTE == 'largo':
                 with c_m:
                     fig_c = fig_cuadrante(datos_cuad, None, 'Trend Score vs MR Score')
                     st.plotly_chart(fig_c, use_container_width=True, config=PLOTLY_CONFIG, key='ranking_cuadrante')
-
 
         elif MODULO == 'reversion':
             with st.spinner('Calculando señales de reversión...'):
