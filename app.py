@@ -783,6 +783,12 @@ GLOSARIO = {
     'Operating Cash Flow': 'Efectivo generado por las operaciones del negocio, antes de inversiones de capital (CAPEX).',
     'YTD': 'Year to Date: variación del precio desde el 1° de enero del año en curso hasta hoy.',
     'Precio Objetivo': 'Precio promedio que estiman los analistas que cubren la acción, a 12 meses.',
+        'Omega': 'Suma de las ganancias diarias dividida por la suma de las pérdidas diarias (umbral 0%). Mayor a 1 = las ganancias pesan más que las pérdidas; captura toda la distribución de retornos, no solo media y desvío.',
+    'Gain/Pain': 'Suma de retornos mensuales dividida por el valor absoluto de la suma de los meses negativos. Mide cuánta ganancia obtenés por cada unidad de "dolor" sufrido.',
+    'Up Capture': 'Qué porcentaje de la suba mensual de SPY captura el activo en los meses alcistas del mercado. Más de 100% = sube más que el mercado.',
+    'Down Capture': 'Qué porcentaje de la caída mensual de SPY sufre el activo en los meses bajistas del mercado. Menos de 100% = cae menos que el mercado.',
+    'Capture Ratio': 'Up Capture / Down Capture. Mayor a 1 = el activo captura más suba que caída respecto al mercado.',
+    'Amplitud Sectorial': 'Porcentaje de activos de una industria que cotizan por encima de su media móvil (SMA 20, 50 o 200). Alto = tendencia compartida y sana; bajo = debilidad generalizada.',
 }
 GLOSARIO_EXTRA = {
     'P/FCF': 'Precio / Flujo de Caja Libre por acción. Como el PER pero con caja '
@@ -1043,6 +1049,28 @@ GLOSARIO_NIVELES = {
     'Precio Objetivo': [
         ('Objetivo > Precio actual', 'Upside potencial',   'Los analistas ven recorrido alcista.'),
         ('Objetivo < Precio actual', 'Downside potencial',  'Los analistas ven recorrido bajista.'),
+    ],
+    'Omega': [
+        ('< 1',     'Negativo',  'Las pérdidas pesan más que las ganancias.'),
+        ('1 – 1.3', 'Moderado',  'Ganancias levemente superiores a las pérdidas.'),
+        ('1.3 – 1.7','Bueno',    'Buen balance entre ganancias y pérdidas.'),
+        ('> 1.7',   'Excelente', 'Las ganancias dominan claramente.'),
+    ],
+    'Gain/Pain': [
+        ('< 0',    'Negativo',  'La suma de retornos es negativa.'),
+        ('0 – 1',  'Moderado',  'Ganancia menor al dolor sufrido.'),
+        ('1 – 2',  'Bueno',     'Ganancia superior al dolor sufrido.'),
+        ('> 2',    'Excelente', 'Muy buena relación ganancia/dolor.'),
+    ],
+    'Up Capture': [
+        ('< 80%',     'Débil',     'Captura poca de la suba del mercado.'),
+        ('80% – 100%','Moderado',  'Acompaña parcialmente la suba.'),
+        ('> 100%',    'Fuerte',    'Sube más que el mercado en meses alcistas.'),
+    ],
+    'Down Capture': [
+        ('< 80%',     'Excelente', 'Cae bastante menos que el mercado.'),
+        ('80% – 100%','Bueno',     'Cae algo menos que el mercado.'),
+        ('> 100%',    'Débil',     'Cae más que el mercado en meses bajistas.'),
     ],
 }
 
