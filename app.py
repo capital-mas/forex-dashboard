@@ -9368,6 +9368,9 @@ if HORIZONTE not in ('pyme', 'agro'):
 
 
 HORIZONTE = st.session_state['nav_horizonte']
+if HORIZONTE == 'largo' and MODULO in ('industria', 'ticker'):
+    st.session_state['nav_modulo'] = 'ranking'
+    MODULO = 'ranking'
 MODULO    = st.session_state['nav_modulo']
 
 
