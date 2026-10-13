@@ -2106,23 +2106,79 @@ def cargar_acciones_corto(industrias_sel):
         industria, tk = key.split('::', 1)
         res[industria][tk] = data
     return res
+# ==============================================================
+#  MÉTRICAS EXTRA DE RANKING — Omega, Gain-to-Pain, Capture, Breadth
+# ==============================================================
 
+def _omega_ratio(ret, umbral=0.0):
+    """Σ ganancias por encima del umbral / Σ pérdidas por debajo (retornos diarios)."""
+    r = pd.Series(ret).dropna()
+    if len(r) < 30:
+        return np.nan
+    ganancias = (r[r > umbral] - umbral).sum()
+    perdidas = (umbral - r[r < umbral]).sum()
+    return float(ganancias / perdidas) if perdidas > 0 else np.nan
+
+
+def _gain_to_pain(ret):
+    """Σ retornos mensuales / |Σ retornos mensuales negativos| (Schwager)."""
+    r = pd.Series(ret).dropna()
+    if len(r) < 60:
+        return np.nan
+    mensual = (1 + r).resample('ME').prod() - 1
+    dolor = abs(mensual[mensual < 0].sum())
+    return float(mensual.sum() / dolor) if dolor > 0 else np.nan
+
+
+def _capture_ratios(ret, rb):
+    """Up/Down capture vs benchmark, sobre retornos mensuales.
+    Devuelve (up, down, ratio) como fracciones: 1.05 = 105%."""
+    nan3 = (np.nan, np.nan, np.nan)
+    if rb is None:
+        return nan3
+    m = pd.concat([ret, rb], axis=1, keys=['s', 'b']).dropna()
+    if len(m) < 60:
+        return nan3
+    m = (1 + m).resample('ME').prod() - 1
+    up, down = m[m['b'] > 0], m[m['b'] < 0]
+    if len(up) < 3 or len(down) < 3:
+        return nan3
+    up_cap = up['s'].mean() / up['b'].mean()
+    down_cap = down['s'].mean() / down['b'].mean()
+    # si el activo sube cuando el benchmark cae, down_cap < 0 y el cociente no tiene sentido
+    ratio = up_cap / down_cap if down_cap > 0 else np.nan
+    return float(up_cap), float(down_cap), float(ratio)
+
+
+def _flags_sma(precio):
+    """1.0 si el último precio está sobre la SMA, 0.0 si está debajo, NaN si no hay historia."""
+    out = {}
+    ultimo = float(precio.iloc[-1])
+    for n in (20, 50, 200):
+        sma = precio.rolling(n).mean().iloc[-1]
+        out[f'sobre_sma{n}'] = float(ultimo > sma) if pd.notna(sma) else np.nan
+    return out
+    
 def _extras_largo(precio, bench_precio):
     """Métricas extra (las mismas del Optimizador) para cada ticker del ranking de largo plazo.
     Benchmark: SPY. Si no hay benchmark válido, las métricas relativas quedan en NaN."""
+    extras = {}
+    ret = precio.pct_change().dropna()
+    rb = None
+    if bench_precio is not None and len(bench_precio) > 60:
+        rb_full = bench_precio.pct_change().dropna()
+        idx = ret.index.intersection(rb_full.index)
+        if len(idx) >= 60:
+            ret_al, rb = ret.loc[idx], rb_full.loc[idx]
+        else:
+            ret_al = ret
+    else:
+        ret_al = ret
+
     try:
-        ret = precio.pct_change().dropna()
-        rb = None
-        if bench_precio is not None and len(bench_precio) > 60:
-            rb = bench_precio.pct_change().dropna()
-            idx = ret.index.intersection(rb.index)
-            if len(idx) >= 60:
-                ret, rb = ret.loc[idx], rb.loc[idx]
-            else:
-                rb = None
-        m = _opt_metricas_completas(ret, rb)
+        m = _opt_metricas_completas(ret_al, rb)
         rel = (lambda k: m[k]) if rb is not None else (lambda k: np.nan)
-        return dict(
+        extras.update(dict(
             cagr=m['CAGR'], rent_acum=m['Rentabilidad Acumulada'],
             sortino_c=m['Sortino'], calmar=m['Calmar'], ulcer=m['Ulcer Index'],
             beta=rel('Beta'), alpha=rel('Alpha'), track_err=rel('Tracking Error'),
@@ -2132,9 +2188,20 @@ def _extras_largo(precio, bench_precio):
             mejor_mes=m['Mejor Mes'], peor_mes=m['Peor Mes'],
             recup=m['Tiempo Recuperacion'],
             corr_bench=rel('Correlacion Benchmark'), prob_sup=rel('Prob Superar Benchmark'),
-        )
+        ))
     except Exception:
-        return {}
+        pass
+
+    try:
+        up_c, down_c, cap_ratio = _capture_ratios(ret_al, rb)
+        extras.update(dict(
+            omega=_omega_ratio(ret_al), gain_pain=_gain_to_pain(ret_al),
+            up_capture=up_c, down_capture=down_c, capture_ratio=cap_ratio,
+            **_flags_sma(precio),
+        ))
+    except Exception:
+        pass
+    return extras
         
 @st.cache_data(ttl=3600, show_spinner=False)
 def cargar_resultados_largo(industrias_sel):
@@ -2629,6 +2696,36 @@ def fig_distribuciones(df_res_l):
     fig.update_annotations(font=dict(color=C_TEXT, size=12))
     return fig
 
+def fig_breadth_sectorial(df_ind):
+    fig = go.Figure()
+    for col, color in [('% > SMA20', C_ACENT), ('% > SMA50', C_YELL), ('% > SMA200', C_MONSTER)]:
+        fig.add_trace(go.Bar(x=df_ind['Industria'], y=df_ind[col], name=col, marker_color=color,
+                              hovertemplate='%{x}<br>' + col + ': %{y:.0f}%<extra></extra>'))
+    fig.add_hline(y=50, line_dash='dot', line_color=C_MUTED, opacity=0.5)
+    fig.update_layout(
+        **PLOTLY_LAYOUT_BASE, barmode='group',
+        title=dict(text='Amplitud sectorial — % de activos sobre su media móvil', font=dict(color=C_TEXT, size=13),
+                   y=0.97, yanchor='top', x=0.01, xanchor='left'),
+        yaxis=dict(range=[0, 100], gridcolor=C_GRID, title='% de activos'),
+        xaxis=dict(gridcolor=C_GRID, tickangle=-35),
+        height=460, legend=dict(orientation='h', yanchor='bottom', y=1.1, xanchor='left', x=0, font=dict(size=10)),
+        margin=dict(l=10, r=10, t=90, b=100),
+    )
+    return fig
+
+
+def _breadth_lectura(p20, p50, p200):
+    if pd.isna(p200):
+        return 'Sin historia suficiente para la SMA200.'
+    if p200 >= 70 and p50 >= 60:
+        return 'Tendencia amplia y sana: la mayoría de los activos está por encima de sus medias.'
+    if p200 >= 60 and p20 < 40:
+        return 'Tendencia de fondo sana, pero con corrección de corto plazo en curso.'
+    if p200 < 40 and p20 >= 60:
+        return 'Rebote de corto plazo dentro de una tendencia de fondo débil.'
+    if p200 < 30:
+        return 'Debilidad generalizada: pocos activos sostienen su tendencia de largo plazo.'
+    return 'Amplitud mixta: sin consenso claro entre los activos.'
 
 def fig_topdown(fuentes):
     fig = make_subplots(rows=1, cols=len(fuentes), subplot_titles=[f[0] for f in fuentes])
@@ -10062,11 +10159,19 @@ elif HORIZONTE == 'largo':
                 tabla_largo(df_res_l, key_suffix='ranking')
 
             with tab_ind:
-                # Una fila por industria: de un vistazo cuál está mejor y quién la lidera
+                tiene_breadth = 'sobre_sma20' in df_res_l.columns
+                tiene_extras = 'omega' in df_res_l.columns
+
+                def _prom(grupo, col, mult=1.0, dec=2):
+                    if col not in grupo.columns:
+                        return np.nan
+                    v = grupo[col].mean(skipna=True)
+                    return round(float(v) * mult, dec) if pd.notna(v) else np.nan
+
                 filas_ind = []
                 for industria, grupo in df_res_l.groupby('industria'):
                     mejor = grupo.sort_values('global_score', ascending=False).iloc[0]
-                    filas_ind.append({
+                    fila = {
                         'Industria': industria,
                         'Activos': len(grupo),
                         'Score prom.': round(float(grupo['global_score'].mean()), 1),
@@ -10074,15 +10179,44 @@ elif HORIZONTE == 'largo':
                         'Bajistas': int(grupo['sesgo'].isin(['BAJISTA', 'MUY BAJISTA']).sum()),
                         'Ret % prom.': round(float(grupo['ret_anual'].mean()), 1),
                         'Sharpe prom.': round(float(grupo['sharpe'].mean()), 2),
-                        'Líder': mejor['ticker'],
-                        'Score líder': int(mejor['global_score']),
-                    })
+                    }
+                    if tiene_breadth:
+                        fila['% > SMA20'] = _prom(grupo, 'sobre_sma20', 100, 1)
+                        fila['% > SMA50'] = _prom(grupo, 'sobre_sma50', 100, 1)
+                        fila['% > SMA200'] = _prom(grupo, 'sobre_sma200', 100, 1)
+                    if tiene_extras:
+                        fila['Omega prom.'] = _prom(grupo, 'omega')
+                        fila['Gain/Pain prom.'] = _prom(grupo, 'gain_pain')
+                        fila['Up Capt. %'] = _prom(grupo, 'up_capture', 100, 1)
+                        fila['Down Capt. %'] = _prom(grupo, 'down_capture', 100, 1)
+                    fila['Líder'] = mejor['ticker']
+                    fila['Score líder'] = int(mejor['global_score'])
+                    filas_ind.append(fila)
+
                 df_ind_res = pd.DataFrame(filas_ind).sort_values('Score prom.', ascending=False)
-                styled_ind_res = _apply_score_style(df_ind_res, ['Score prom.', 'Score líder'], ['Ret % prom.'])
+                cols_color = ['Score prom.', 'Score líder'] + [c for c in ('% > SMA20', '% > SMA50', '% > SMA200') if c in df_ind_res.columns]
+                styled_ind_res = _apply_score_style(df_ind_res, cols_color, ['Ret % prom.'])
+                st.caption('↔️ Desliza horizontalmente para ver todas las columnas.')
                 st.dataframe(styled_ind_res, use_container_width=True, hide_index=True,
                              height=min(600, len(df_ind_res) * 36 + 45))
-                st.caption('Ordenado por score promedio. Para ver todos los activos de una industria, '
-                           'filtrala en "Tabla completa".')
+                st.caption('Ordenado por score promedio. Amplitud = % de activos de la industria (entre los analizados) '
+                           'cuyo precio está sobre su SMA. Capture contra SPY.')
+
+                if tiene_breadth:
+                    p20 = df_res_l['sobre_sma20'].mean(skipna=True) * 100
+                    p50 = df_res_l['sobre_sma50'].mean(skipna=True) * 100
+                    p200 = df_res_l['sobre_sma200'].mean(skipna=True) * 100
+                    kpi_cards_4([
+                        ('% sobre SMA20', f'{p20:.0f}%', 'Corto plazo', score_color_hex(p20)),
+                        ('% sobre SMA50', f'{p50:.0f}%', 'Mediano plazo', score_color_hex(p50)),
+                        ('% sobre SMA200', f'{p200:.0f}%', 'Largo plazo', score_color_hex(p200)),
+                        ('Lectura global', 'Amplitud', _breadth_lectura(p20, p50, p200), C_ACENT),
+                    ])
+                    st.plotly_chart(fig_breadth_sectorial(df_ind_res), use_container_width=True,
+                                    config=PLOTLY_CONFIG, key='ranking_breadth_fig')
+                else:
+                    st.info('Tocá "↺ Actualizar" para recalcular el ranking con las métricas nuevas.')
+
                 chips_navegacion(df_ind_res['Líder'].tolist(), 'ranking_lideres')
 
                 st.markdown('### 📝 Lectura por activo')
