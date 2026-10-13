@@ -2975,6 +2975,24 @@ def tabla_corto(filas_dict, key_suffix=''):
     pares = [(n, filas_dict[n].get('tk', n)) for n in df_f['Nombre'].tolist()]
     chips_navegacion(pares, f'tc_{key_suffix}')
 
+EXTRAS_LARGO_COLS = [
+    ('cagr', 'CAGR', 'pct'), ('rent_acum', 'Rent. Acum.', 'pct'),
+    ('sortino_c', 'Sortino', 'num'), ('calmar', 'Calmar', 'num'), ('ulcer', 'Ulcer Idx', 'num'),
+    ('beta', 'Beta', 'num'), ('alpha', 'Alpha', 'pct'), ('track_err', 'Tracking Err.', 'pct'),
+    ('info_ratio', 'Info Ratio', 'num'),
+    ('var95', 'VaR 95%', 'pct'), ('cvar95', 'CVaR 95%', 'pct'),
+    ('meses_pos', 'Meses +', 'int'), ('meses_neg', 'Meses −', 'int'),
+    ('mejor_mes', 'Mejor Mes', 'pct'), ('peor_mes', 'Peor Mes', 'pct'),
+    ('recup', 'Recup. (días)', 'int'),
+    ('corr_bench', 'Corr. SPY', 'num'), ('prob_sup', 'Prob > SPY', 'pct'),
+]
+
+def _fmt_extra(v, tipo):
+    if v is None or pd.isna(v): return 'N/A'
+    if tipo == 'pct': return f'{v*100:.2f}%'
+    if tipo == 'int': return f'{int(v)}'
+    return f'{v:.2f}'
+
 
 def tabla_largo(df_res, key_suffix=''):
     if df_res.empty: return
@@ -2990,6 +3008,10 @@ def tabla_largo(df_res, key_suffix=''):
     df_show['Sharpe'] = df_show['Sharpe'].apply(lambda x: f'{x:.2f}')
     df_show['DD%']    = df_show['DD%'].apply(lambda x: f'{x:.1f}')
 
+    # Columnas extra (crudas por ahora; se formatean después de filtrar)
+    extras_disp = [(k, n, t) for k, n, t in EXTRAS_LARGO_COLS if k in df_res.columns]
+    for k, n, _t in extras_disp:
+        df_show[n] = df_res[k]
 
     fc1, fc2 = st.columns([2,2])
     with fc1:
@@ -2998,7 +3020,6 @@ def tabla_largo(df_res, key_suffix=''):
     with fc2:
         inds_u = ['Todas'] + sorted(df_show['Industria'].unique().tolist())
         f_ind = st.selectbox('Industria', inds_u, key=f'tl_ind_{key_suffix}')
-
 
     fr1, fr2, fr3, fr4 = st.columns(4)
     with fr1:
@@ -3010,7 +3031,6 @@ def tabla_largo(df_res, key_suffix=''):
     with fr4:
         f_risk = st.slider('Rango Risk', 0, 100, (0,100), 1, key=f'tl_risk_{key_suffix}')
 
-
     fr5, fr6, fr7, fr8 = st.columns(4)
     with fr5:
         f_mr = st.slider('Rango MR', 0, 100, (0,100), 1, key=f'tl_mr_{key_suffix}')
@@ -3020,7 +3040,6 @@ def tabla_largo(df_res, key_suffix=''):
         f_vol = st.slider('Rango Vol %', 0, 150, (0,150), 5, key=f'tl_vol_{key_suffix}')
     with fr8:
         f_dd = st.slider('Rango DD %', -100, 0, (-100,0), 5, key=f'tl_dd_{key_suffix}')
-
 
     df_f = df_show.copy()
     if f_sesgo != 'Todos': df_f = df_f[df_f['Sesgo']==f_sesgo]
@@ -3036,6 +3055,9 @@ def tabla_largo(df_res, key_suffix=''):
         df_f = df_f[df_f['DD%'].astype(float).between(*f_dd)]
     except: pass
 
+    # Formateo de las columnas extra (después de filtrar)
+    for _k, n, t in extras_disp:
+        df_f[n] = df_f[n].apply(lambda v, t=t: _fmt_extra(v, t))
 
     def sesgo_style(val):
         return {'MUY ALCISTA':'color:#3fb950;font-weight:700','ALCISTA':'color:#7ee787;font-weight:700',
@@ -3044,6 +3066,7 @@ def tabla_largo(df_res, key_suffix=''):
     _map = 'map' if hasattr(df_f.style,'map') else 'applymap'
     styled = (_apply_score_style(df_f, ['Trend','MR','Risk','Global'])
               .pipe(lambda s: getattr(s,_map)(sesgo_style, subset=['Sesgo'])))
+    st.caption('↔️ Desliza horizontalmente para ver todas las métricas. Benchmark de Beta/Alpha/Tracking/Info Ratio/Correlación: SPY.')
     st.dataframe(styled, use_container_width=True, height=min(700, max(200, len(df_f)*30+45)))
     st.caption(f'{len(df_f)} activos mostrados de {len(df_show)} totales')
 
