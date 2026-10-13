@@ -2107,18 +2107,51 @@ def cargar_acciones_corto(industrias_sel):
         res[industria][tk] = data
     return res
 
-
+def _extras_largo(precio, bench_precio):
+    """Métricas extra (las mismas del Optimizador) para cada ticker del ranking de largo plazo.
+    Benchmark: SPY. Si no hay benchmark válido, las métricas relativas quedan en NaN."""
+    try:
+        ret = precio.pct_change().dropna()
+        rb = None
+        if bench_precio is not None and len(bench_precio) > 60:
+            rb = bench_precio.pct_change().dropna()
+            idx = ret.index.intersection(rb.index)
+            if len(idx) >= 60:
+                ret, rb = ret.loc[idx], rb.loc[idx]
+            else:
+                rb = None
+        m = _opt_metricas_completas(ret, rb)
+        rel = (lambda k: m[k]) if rb is not None else (lambda k: np.nan)
+        return dict(
+            cagr=m['CAGR'], rent_acum=m['Rentabilidad Acumulada'],
+            sortino_c=m['Sortino'], calmar=m['Calmar'], ulcer=m['Ulcer Index'],
+            beta=rel('Beta'), alpha=rel('Alpha'), track_err=rel('Tracking Error'),
+            info_ratio=rel('Information Ratio'),
+            var95=m['VaR 95%'], cvar95=m['CVaR 95%'],
+            meses_pos=m['Meses Positivos'], meses_neg=m['Meses Negativos'],
+            mejor_mes=m['Mejor Mes'], peor_mes=m['Peor Mes'],
+            recup=m['Tiempo Recuperacion'],
+            corr_bench=rel('Correlacion Benchmark'), prob_sup=rel('Prob Superar Benchmark'),
+        )
+    except Exception:
+        return {}
+        
 @st.cache_data(ttl=3600, show_spinner=False)
 def cargar_resultados_largo(industrias_sel):
     tickers = list(set(t for ind in industrias_sel for t in UNIVERSO_LARGO.get(ind, [])))
     if not tickers: return pd.DataFrame()
-    df_all = descargar_bulk(tickers, period='2y')
+    df_all = descargar_bulk(list(set(tickers) | {'SPY'}), period='2y')   # SPY = benchmark
     if df_all is None: return pd.DataFrame()
+
+    bench_precio = get_close_from_bulk(df_all, 'SPY')
 
     def _proc(tk):
         precio = get_close_from_bulk(df_all, tk)
         if len(precio) < 150: return None
-        return analizar_largo(tk, precio)
+        r = analizar_largo(tk, precio)
+        if r is not None:
+            r.update(_extras_largo(precio, bench_precio))
+        return r
 
     resultados = []
     fallidos_largo = []
