@@ -2968,35 +2968,11 @@ def _render_extras_largo(r):
         ])
     st.caption('Beta, Alpha, Tracking Error, Info Ratio, correlación y capture se calculan contra SPY.')
 
-def render_largo_completo(ticker, cl, r, key_suffix='', df_ohlc=None):
-    accent = score_color_hex(r['global_score'])
-    kpi_cards_4([
-        ('Global Score',  f"{int(r['global_score'])}/100",  r['sesgo'], accent),
-        ('Trend Score',   f"{int(r['trend_score'])}/100",
-         f"GC: {'Sí' if r['golden_cross'] else 'No'} · MACD: {'Alc' if r['macd_bull'] else 'Baj'}",
-         score_color_hex(r['trend_score'])),
-        ('MR Score',      f"{int(r['mr_score'])}/100",
-         f"Z: {r['zscore']:+.2f} · RSI: {r['rsi']:.1f}", score_color_hex(r['mr_score'])),
-        ('Risk Score',    f"{int(r['risk_score'])}/100",
-         f"Sharpe: {r['sharpe']:.2f} · DD: {r['max_dd']:.1f}%", score_color_hex(r['risk_score'])),
-    ])
-
-    c1,c2,c3,c4 = st.columns(4)
-    with c1: st.metric('Ret. Anual', f"{r['ret_anual']:+.1f}%")
-    with c2: st.metric('Volatilidad', f"{r['vol_anual']:.1f}%")
-    with c3: st.metric('Max DrawDown', f"{r['max_dd']:.1f}%", help=G('Max Drawdown'))
-    with c4: st.metric('Hurst', f"{r['hurst']:.3f}", help=G('Hurst'))
-
-    _render_extras_largo(r)
-    with st.expander('📏 Tabla de rangos de las métricas avanzadas', expanded=True):
-        render_tabla_rangos_metricas({ticker: r}, key=f'{key_suffix}_{ticker}')
-
-    # ==============================================================
+# ==============================================================
 #  RANGOS DE LAS MÉTRICAS AVANZADAS — tabla interactiva
 #  Cada nivel: (límite_superior, texto_rango, nivel, lectura). Se evalúa de menor a mayor.
 #  Los valores porcentuales están en fracción (0.15 = 15%), igual que en _extras_largo.
 # ==============================================================
-
 _INF = float('inf')
 
 RANGOS_METRICAS = [
@@ -3128,6 +3104,30 @@ RANGOS_METRICAS = [
         (_INF,  '> 1.3',      'Excelente', 'Asimetría muy favorable: mucha suba, poca caída.'),
     ]),
 ]
+
+def render_largo_completo(ticker, cl, r, key_suffix='', df_ohlc=None):
+    accent = score_color_hex(r['global_score'])
+    kpi_cards_4([
+        ('Global Score',  f"{int(r['global_score'])}/100",  r['sesgo'], accent),
+        ('Trend Score',   f"{int(r['trend_score'])}/100",
+         f"GC: {'Sí' if r['golden_cross'] else 'No'} · MACD: {'Alc' if r['macd_bull'] else 'Baj'}",
+         score_color_hex(r['trend_score'])),
+        ('MR Score',      f"{int(r['mr_score'])}/100",
+         f"Z: {r['zscore']:+.2f} · RSI: {r['rsi']:.1f}", score_color_hex(r['mr_score'])),
+        ('Risk Score',    f"{int(r['risk_score'])}/100",
+         f"Sharpe: {r['sharpe']:.2f} · DD: {r['max_dd']:.1f}%", score_color_hex(r['risk_score'])),
+    ])
+
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: st.metric('Ret. Anual', f"{r['ret_anual']:+.1f}%")
+    with c2: st.metric('Volatilidad', f"{r['vol_anual']:.1f}%")
+    with c3: st.metric('Max DrawDown', f"{r['max_dd']:.1f}%", help=G('Max Drawdown'))
+    with c4: st.metric('Hurst', f"{r['hurst']:.3f}", help=G('Hurst'))
+
+    _render_extras_largo(r)
+    with st.expander('📏 Tabla de rangos de las métricas avanzadas', expanded=True):
+        render_tabla_rangos_metricas({ticker: r}, key=f'{key_suffix}_{ticker}')
+
 
 GLOSARIO.update({
     'CAGR': 'Retorno anual compuesto: la tasa anual constante que llevaría el precio inicial al final del período analizado.',
@@ -3261,27 +3261,6 @@ def render_tabla_rangos_metricas(resultados, key):
                     {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11.5px')]}]))
     st.dataframe(styled_e, use_container_width=True, hide_index=True,
                  height=min(320, len(df_e) * 40 + 45))
-
-    interp = interpretar_largo(r)
-    sesgo_class = {'MUY ALCISTA':'sesgo-muy-alc','ALCISTA':'sesgo-alc','NEUTRAL':'sesgo-neu',
-                   'BAJISTA':'sesgo-baj','MUY BAJISTA':'sesgo-muy-baj'}.get(r['sesgo'],'')
-    st.markdown(f"""
-    <div class="interp-card">
-      <div class="interp-header">{ticker} · {r['industria']} · <span class="{sesgo_class}">{r['sesgo']}</span></div>
-      {interp}
-    </div>
-    """, unsafe_allow_html=True)
-
-    tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger', '📊 RSI & MACD', '📉 Drawdown'])
-    with tab_g1:
-        tipo_graf = st.radio('Tipo de gráfico', ['Línea', 'Velas'],
-                              horizontal=True, key=f'tipo_graf_{key_suffix}_{ticker}')
-        st.plotly_chart(fig_precio_bollinger(ticker, cl, df_ohlc=df_ohlc, tipo=tipo_graf),
-                         use_container_width=True, config=PLOTLY_CONFIG, key=f'fpb_{key_suffix}_{ticker}')
-    with tab_g2:
-        st.plotly_chart(fig_rsi_macd(cl), use_container_width=True, config=PLOTLY_CONFIG, key=f'frm_{key_suffix}_{ticker}')
-    with tab_g3:
-        st.plotly_chart(fig_drawdown(ticker, cl), use_container_width=True, config=PLOTLY_CONFIG, key=f'fdd_{key_suffix}_{ticker}')
 
 
 def _tabla_fundamental_completa(df, columnas, fmt_overrides=None):
