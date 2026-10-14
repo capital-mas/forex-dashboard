@@ -4978,7 +4978,6 @@ def _renderizar_buscador(ticker):
 
         with st.spinner('Descargando ratios fundamentales...'):
             res_fund = analizar_fundamental(ticker, industria_fund)
-        st.caption(f"Fuente fundamental: {res_fund.get('fuente', 'caché viejo')}")
 
         if res_fund is None:
             st.info('No se encontraron datos fundamentales para este activo (puede ser cripto, forex o commodity sin estados financieros).')
@@ -4987,6 +4986,7 @@ def _renderizar_buscador(ticker):
             with mc1: st.metric('Sector', sector_fund[:20])
             with mc2: st.metric('Industria', industria_fund[:20])
             with mc3: st.metric('Rec. Analistas', res_fund.get('recommendation') or 'N/D')
+        st.caption(f"Fuente fundamental: {res_fund.get('fuente', 'caché viejo')}")
 
             render_resumen_visual_fundamental(res_fund)
 
