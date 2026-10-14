@@ -2923,7 +2923,50 @@ def fig_categoria_fundamental(datos_fund, metricas, titulo):
 # ==============================================================
 #  RENDER ÚNICO — ANÁLISIS DE LARGO PLAZO (evita duplicación)
 # ==============================================================
+def _render_extras_largo(r):
+    """Muestra las métricas extra (las mismas del Ranking) agrupadas en cards."""
+    if 'cagr' not in r and 'omega' not in r:
+        return  # no hay extras calculados
 
+    def f(k, tipo):
+        return _fmt_extra(r.get(k), tipo)
+
+    st.markdown('<div class="sec-title">📐 Métricas avanzadas</div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        kpi_card_fundamental('Retorno', '#3fb950', [
+            ('CAGR', f('cagr', 'pct')), ('Rent. Acum.', f('rent_acum', 'pct')),
+            ('Mejor Mes', f('mejor_mes', 'pct')), ('Peor Mes', f('peor_mes', 'pct')),
+        ])
+    with c2:
+        kpi_card_fundamental('Ajustado por riesgo', '#3a7bd5', [
+            ('Sortino', f('sortino_c', 'num')), ('Calmar', f('calmar', 'num')),
+            ('Omega', f('omega', 'num')), ('Gain/Pain', f('gain_pain', 'num')),
+        ], tooltip=f"{G('Omega')} | {G('Gain/Pain')}")
+    with c3:
+        kpi_card_fundamental('Riesgo de cola', '#f85149', [
+            ('VaR 95%', f('var95', 'pct')), ('CVaR 95%', f('cvar95', 'pct')),
+            ('Ulcer Index', f('ulcer', 'num')), ('Recup. (días)', f('recup', 'int')),
+        ])
+
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+    c4, c5, c6 = st.columns(3)
+    with c4:
+        kpi_card_fundamental('Vs. SPY', '#bc8cff', [
+            ('Beta', f('beta', 'num')), ('Alpha', f('alpha', 'pct')),
+            ('Corr. SPY', f('corr_bench', 'num')), ('Prob > SPY', f('prob_sup', 'pct')),
+        ])
+    with c5:
+        kpi_card_fundamental('Capture / Tracking', '#e3b341', [
+            ('Up Capture', f('up_capture', 'pct')), ('Down Capture', f('down_capture', 'pct')),
+            ('Capture Ratio', f('capture_ratio', 'num')), ('Info Ratio', f('info_ratio', 'num')),
+        ], tooltip=f"{G('Up Capture')} | {G('Down Capture')}")
+    with c6:
+        kpi_card_fundamental('Consistencia / Tendencia', '#6CC24A', [
+            ('Meses +', f('meses_pos', 'int')), ('Meses −', f('meses_neg', 'int')),
+            ('> SMA50', f('sobre_sma50', 'bool')), ('> SMA200', f('sobre_sma200', 'bool')),
+        ])
+    st.caption('Beta, Alpha, Tracking Error, Info Ratio, correlación y capture se calculan contra SPY.')
 
 def render_largo_completo(ticker, cl, r, key_suffix='', df_ohlc=None):
     accent = score_color_hex(r['global_score'])
@@ -2943,6 +2986,8 @@ def render_largo_completo(ticker, cl, r, key_suffix='', df_ohlc=None):
     with c2: st.metric('Volatilidad', f"{r['vol_anual']:.1f}%")
     with c3: st.metric('Max DrawDown', f"{r['max_dd']:.1f}%", help=G('Max Drawdown'))
     with c4: st.metric('Hurst', f"{r['hurst']:.3f}", help=G('Hurst'))
+
+    _render_extras_largo(r)   # ← NUEVO
 
     interp = interpretar_largo(r)
     sesgo_class = {'MUY ALCISTA':'sesgo-muy-alc','ALCISTA':'sesgo-alc','NEUTRAL':'sesgo-neu',
@@ -4639,6 +4684,15 @@ def _renderizar_buscador(ticker):
                 if r is None:
                     st.warning('No se pudo calcular el análisis cuantitativo.')
                 else:
+                    # Mismas métricas extra que el Ranking (benchmark: SPY)
+                    try:
+                        bench_cl = get_close_series(descargar_datos('SPY', '2y'))
+                    except Exception:
+                        bench_cl = None
+                    try:
+                        r.update(_extras_largo(cl, bench_cl))
+                    except Exception:
+                        pass
                     render_largo_completo(ticker, cl, r, key_suffix='buscador', df_ohlc=df_tk)
 
     # ── ANÁLISIS FUNDAMENTAL — resumen visual ───────────────────────
