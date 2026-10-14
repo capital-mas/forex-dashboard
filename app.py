@@ -2987,7 +2987,280 @@ def render_largo_completo(ticker, cl, r, key_suffix='', df_ohlc=None):
     with c3: st.metric('Max DrawDown', f"{r['max_dd']:.1f}%", help=G('Max Drawdown'))
     with c4: st.metric('Hurst', f"{r['hurst']:.3f}", help=G('Hurst'))
 
-    _render_extras_largo(r)   # ← NUEVO
+    _render_extras_largo(r)
+    with st.expander('📏 Tabla de rangos de las métricas avanzadas', expanded=True):
+        render_tabla_rangos_metricas({ticker: r}, key=f'{key_suffix}_{ticker}')
+
+    # ==============================================================
+#  RANGOS DE LAS MÉTRICAS AVANZADAS — tabla interactiva
+#  Cada nivel: (límite_superior, texto_rango, nivel, lectura). Se evalúa de menor a mayor.
+#  Los valores porcentuales están en fracción (0.15 = 15%), igual que en _extras_largo.
+# ==============================================================
+
+_INF = float('inf')
+
+RANGOS_METRICAS = [
+    # ── Retorno ──
+    dict(k='cagr', grupo='Retorno', nombre='CAGR', tipo='pct', glos='CAGR', niveles=[
+        (0,     '< 0%',       'Negativo',  'Perdió valor de forma anualizada en el período.'),
+        (0.08,  '0% – 8%',    'Débil',     'Retorno anual modesto.'),
+        (0.15,  '8% – 15%',   'Moderado',  'Retorno anual en línea con el mercado general.'),
+        (0.25,  '15% – 25%',  'Bueno',     'Retorno anual claramente superior al promedio.'),
+        (_INF,  '> 25%',      'Excelente', 'Retorno anual sobresaliente (verificar sostenibilidad).'),
+    ]),
+    dict(k='pct_meses_pos', grupo='Retorno', nombre='% Meses positivos', tipo='pct',
+         glos='Meses Positivos %',
+         get=lambda r: (r['meses_pos'] / (r['meses_pos'] + r['meses_neg']))
+                       if r.get('meses_pos') is not None and r.get('meses_neg') is not None
+                       and (r['meses_pos'] + r['meses_neg']) > 0 else None,
+         niveles=[
+        (0.50,  '< 50%',      'Débil',     'Pierde más meses de los que gana.'),
+        (0.60,  '50% – 60%',  'Moderado',  'Leve ventaja de meses positivos.'),
+        (0.70,  '60% – 70%',  'Bueno',     'Consistencia mensual sólida.'),
+        (_INF,  '> 70%',      'Excelente', 'Muy consistente mes a mes.'),
+    ]),
+
+    # ── Ajustado por riesgo ──
+    dict(k='sortino_c', grupo='Ajustado por riesgo', nombre='Sortino', tipo='num', glos='Sortino', niveles=[
+        (0,     '< 0',        'Negativo',  'El retorno no compensa la volatilidad negativa.'),
+        (1,     '0 – 1',      'Moderado',  'Retorno aceptable ajustado por caídas.'),
+        (2,     '1 – 2',      'Bueno',     'Buena relación retorno/volatilidad negativa.'),
+        (_INF,  '> 2',        'Excelente', 'Relación sobresaliente frente a las caídas.'),
+    ]),
+    dict(k='calmar', grupo='Ajustado por riesgo', nombre='Calmar', tipo='num', glos='Calmar', niveles=[
+        (0,     '< 0',        'Negativo',  'Retorno anual negativo: no compensa el drawdown.'),
+        (0.5,   '0 – 0.5',    'Débil',     'Mucha caída para el retorno que entrega.'),
+        (1,     '0.5 – 1',    'Moderado',  'El retorno anual apenas iguala la peor caída.'),
+        (3,     '1 – 3',      'Bueno',     'El retorno compensa bien la peor caída.'),
+        (_INF,  '> 3',        'Excelente', 'Retorno muy alto respecto a su peor caída.'),
+    ]),
+    dict(k='omega', grupo='Ajustado por riesgo', nombre='Omega', tipo='num', glos='Omega', niveles=[
+        (1,     '< 1',        'Negativo',  'Las pérdidas pesan más que las ganancias.'),
+        (1.3,   '1 – 1.3',    'Moderado',  'Ganancias levemente superiores a las pérdidas.'),
+        (1.7,   '1.3 – 1.7',  'Bueno',     'Buen balance entre ganancias y pérdidas.'),
+        (_INF,  '> 1.7',      'Excelente', 'Las ganancias dominan claramente.'),
+    ]),
+    dict(k='gain_pain', grupo='Ajustado por riesgo', nombre='Gain/Pain', tipo='num', glos='Gain/Pain', niveles=[
+        (0,     '< 0',        'Negativo',  'La suma de retornos mensuales es negativa.'),
+        (1,     '0 – 1',      'Moderado',  'Ganancia menor al dolor sufrido.'),
+        (2,     '1 – 2',      'Bueno',     'Ganancia superior al dolor sufrido.'),
+        (_INF,  '> 2',        'Excelente', 'Muy buena relación ganancia/dolor.'),
+    ]),
+
+    # ── Riesgo de cola ──
+    dict(k='var95', grupo='Riesgo de cola', nombre='VaR 95% (diario)', tipo='pct', glos='VaR 95%', niveles=[
+        (-0.05,  '< -5%',        'Severo',        'En el peor 5% de los días pierde más de 5%.'),
+        (-0.03,  '-5% a -3%',    'Significativo', 'Días malos con caídas fuertes.'),
+        (-0.015, '-3% a -1.5%',  'Aceptable',     'Pérdida diaria en un día malo dentro de lo normal.'),
+        (_INF,   '> -1.5%',      'Contenido',     'Días malos relativamente suaves.'),
+    ]),
+    dict(k='cvar95', grupo='Riesgo de cola', nombre='CVaR 95% (diario)', tipo='pct', glos='CVaR 95%', niveles=[
+        (-0.07,  '< -7%',        'Severo',        'Cuando el día es malo, la pérdida promedio es muy profunda.'),
+        (-0.04,  '-7% a -4%',    'Significativo', 'Pérdida promedio relevante en los peores días.'),
+        (-0.02,  '-4% a -2%',    'Aceptable',     'Pérdida promedio en los peores días dentro de lo normal.'),
+        (_INF,   '> -2%',        'Contenido',     'Peores días con pérdidas acotadas.'),
+    ]),
+    dict(k='ulcer', grupo='Riesgo de cola', nombre='Ulcer Index', tipo='num', glos='Ulcer Index', niveles=[
+        (5,     '< 5',        'Contenido',     'Caídas poco profundas y cortas.'),
+        (10,    '5 – 10',     'Aceptable',     'Estrés de drawdown moderado.'),
+        (20,    '10 – 20',    'Significativo', 'Caídas profundas o prolongadas.'),
+        (_INF,  '> 20',       'Severo',        'Mucho estrés acumulado por drawdowns.'),
+    ]),
+    dict(k='recup', grupo='Riesgo de cola', nombre='Recuperación (días)', tipo='int', glos='Tiempo de Recuperación', niveles=[
+        (60,    '< 60 días',      'Contenido',     'Se recupera rápido de sus máximos.'),
+        (180,   '60 – 180 días',  'Aceptable',     'Recuperación de hasta ~6 meses.'),
+        (365,   '180 – 365 días', 'Significativo', 'Pasa buena parte del año bajo su máximo.'),
+        (_INF,  '> 365 días',     'Severo',        'Períodos de más de un año sin recuperar máximos.'),
+    ]),
+
+    # ── Vs. mercado (SPY) ──
+    dict(k='beta', grupo='Vs. SPY', nombre='Beta', tipo='num', glos='Beta', niveles=[
+        (0.8,   '< 0.8',      'Defensivo',            'Menos volátil que el mercado.'),
+        (1.2,   '0.8 – 1.2',  'En línea con mercado', 'Se mueve parecido al mercado.'),
+        (1.5,   '1.2 – 1.5',  'Más volátil',          'Amplifica los movimientos del mercado.'),
+        (_INF,  '> 1.5',      'Muy volátil',          'Sensibilidad muy alta al mercado.'),
+    ]),
+    dict(k='alpha', grupo='Vs. SPY', nombre='Alpha (anual)', tipo='pct', glos='Alpha', niveles=[
+        (0,     '< 0%',       'Negativo',  'No compensa el riesgo de mercado asumido.'),
+        (0.03,  '0% – 3%',    'Moderado',  'Retorno propio leve por encima del mercado.'),
+        (0.08,  '3% – 8%',    'Bueno',     'Genera retorno propio relevante.'),
+        (_INF,  '> 8%',       'Excelente', 'Retorno propio muy alto (verificar que no sea suerte de un período).'),
+    ]),
+    dict(k='info_ratio', grupo='Vs. SPY', nombre='Information Ratio', tipo='num', glos='Information Ratio', niveles=[
+        (0,     '< 0',        'Negativo',  'Rinde menos que SPY por el riesgo activo que toma.'),
+        (0.5,   '0 – 0.5',    'Moderado',  'Ventaja leve sobre SPY.'),
+        (1,     '0.5 – 1',    'Bueno',     'Supera a SPY de forma eficiente.'),
+        (_INF,  '> 1',        'Excelente', 'Supera a SPY con mucha eficiencia.'),
+    ]),
+    dict(k='track_err', grupo='Vs. SPY', nombre='Tracking Error', tipo='pct', glos='Tracking Error', niveles=[
+        (0.05,  '< 5%',       'Cercano al índice', 'Se comporta casi igual que SPY.'),
+        (0.10,  '5% – 10%',   'Moderado',          'Se aparta algo de SPY.'),
+        (0.20,  '10% – 20%',  'Activo',            'Se comporta bastante distinto de SPY.'),
+        (_INF,  '> 20%',      'Muy activo',        'Trayectoria muy distinta de SPY.'),
+    ]),
+    dict(k='corr_bench', grupo='Vs. SPY', nombre='Correlación con SPY', tipo='num', glos='Correlación SPY', niveles=[
+        (0.3,   '< 0.3',      'Independiente', 'Se mueve casi sin relación con SPY (diversifica).'),
+        (0.7,   '0.3 – 0.7',  'Moderada',      'Relación parcial con el mercado.'),
+        (_INF,  '> 0.7',      'Alta',          'Se mueve muy ligado al mercado (diversifica poco).'),
+    ]),
+    dict(k='prob_sup', grupo='Vs. SPY', nombre='Prob. de superar a SPY', tipo='pct', glos='Prob > SPY', niveles=[
+        (0.45,  '< 45%',      'Débil',     'Supera a SPY en pocos días.'),
+        (0.50,  '45% – 50%',  'Moderado',  'Casi parejo con SPY.'),
+        (0.55,  '50% – 55%',  'Bueno',     'Gana a SPY en más días de los que pierde.'),
+        (_INF,  '> 55%',      'Excelente', 'Gana a SPY en la mayoría de los días.'),
+    ]),
+
+    # ── Capture ──
+    dict(k='up_capture', grupo='Capture', nombre='Up Capture', tipo='pct', glos='Up Capture', niveles=[
+        (0.80,  '< 80%',      'Débil',     'Captura poca de la suba del mercado.'),
+        (1.00,  '80% – 100%', 'Moderado',  'Acompaña parcialmente la suba.'),
+        (_INF,  '> 100%',     'Fuerte',    'Sube más que el mercado en meses alcistas.'),
+    ]),
+    dict(k='down_capture', grupo='Capture', nombre='Down Capture', tipo='pct', glos='Down Capture', niveles=[
+        (0.80,  '< 80%',      'Excelente', 'Cae bastante menos que el mercado.'),
+        (1.00,  '80% – 100%', 'Bueno',     'Cae algo menos que el mercado.'),
+        (_INF,  '> 100%',     'Débil',     'Cae más que el mercado en meses bajistas.'),
+    ]),
+    dict(k='capture_ratio', grupo='Capture', nombre='Capture Ratio', tipo='num', glos='Capture Ratio', niveles=[
+        (0.8,   '< 0.8',      'Débil',     'Captura más caída que suba.'),
+        (1.0,   '0.8 – 1',    'Moderado',  'Captura algo menos suba que caída.'),
+        (1.3,   '1 – 1.3',    'Bueno',     'Captura más suba que caída.'),
+        (_INF,  '> 1.3',      'Excelente', 'Asimetría muy favorable: mucha suba, poca caída.'),
+    ]),
+]
+
+GLOSARIO.update({
+    'CAGR': 'Retorno anual compuesto: la tasa anual constante que llevaría el precio inicial al final del período analizado.',
+    'Meses Positivos %': 'Porcentaje de meses calendario con retorno positivo sobre el total de meses analizados.',
+    'Calmar': 'CAGR dividido por el valor absoluto del Max Drawdown. Cuánto retorno anual obtenés por cada punto de peor caída.',
+    'Ulcer Index': 'Raíz cuadrática media de los drawdowns (en %). Mide la profundidad y duración de las caídas: más alto = más "estrés" acumulado.',
+    'Alpha': 'Retorno anual del activo por encima del que explicaría su Beta frente a SPY. Positivo = genera retorno propio más allá del mercado.',
+    'Tracking Error': 'Desvío estándar anualizado de la diferencia de retornos contra SPY. Cuánto se aparta el activo del comportamiento del índice.',
+    'Information Ratio': 'Retorno extra sobre SPY dividido por el Tracking Error. Eficiencia con la que el riesgo activo se convierte en retorno extra.',
+    'VaR 95%': 'Pérdida diaria que se superó solo en el 5% de los peores días del historial (percentil 5 de los retornos diarios).',
+    'CVaR 95%': 'Pérdida diaria promedio en ese 5% de peores días (Expected Shortfall). Más informativo que el VaR porque mide la profundidad de la cola.',
+    'Correlación SPY': 'Correlación de los retornos diarios del activo con SPY (-1 a 1). Alta = se mueve junto al mercado; baja = diversifica.',
+    'Prob > SPY': 'Porcentaje de ruedas en las que el activo rindió más que SPY.',
+    'Tiempo de Recuperación': 'Máxima cantidad de ruedas consecutivas que el activo estuvo por debajo de un máximo previo.',
+})
+for _c in RANGOS_METRICAS:
+    GLOSARIO_NIVELES.setdefault(_c['glos'], [(rt, nv, lec) for _l, rt, nv, lec in _c['niveles']])
+_COLOR_NIVEL_MAP.update({
+    'Cercano al índice': '#8b949e', 'Activo': '#e3b341', 'Muy activo': '#f0883e',
+    'Independiente': '#79c0ff', 'Moderada': '#e3b341', 'Alta': '#8b949e',
+})
+
+_EMOJI_COLOR = {'#3fb950': '🟢', '#7ee787': '🟢', '#e3b341': '🟡', '#f0883e': '🟠',
+                '#f85149': '🔴', '#79c0ff': '🔵'}
+
+
+def _valor_metrica(cfg, r):
+    g = cfg.get('get')
+    v = g(r) if g else r.get(cfg['k'])
+    return None if (v is None or pd.isna(v)) else v
+
+
+def _clasificar_metrica(cfg, v):
+    """Devuelve (rango_texto, nivel, lectura) o None si no hay dato."""
+    if v is None:
+        return None
+    for lim, rango, nivel, lectura in cfg['niveles']:
+        if v < lim:
+            return rango, nivel, lectura
+    return cfg['niveles'][-1][1:]
+
+
+def _etiqueta_nivel(nivel):
+    return f"{_EMOJI_COLOR.get(_COLOR_NIVEL_MAP.get(nivel, ''), '⚪')} {nivel}"
+
+
+def render_tabla_rangos_metricas(resultados, key):
+    """Tabla interactiva de niveles para las métricas avanzadas.
+    resultados: {ticker: dict r (con extras de _extras_largo)}.
+    Con 1 ticker muestra Valor/Nivel/Lectura; con varios, una columna por ticker."""
+    tickers = list(resultados.keys())
+    if not tickers:
+        return
+    grupos = ['Todos'] + list(dict.fromkeys(c['grupo'] for c in RANGOS_METRICAS))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        grupo_sel = st.selectbox('Grupo de métricas', grupos, key=f'rng_grp_{key}')
+    cfgs = [c for c in RANGOS_METRICAS if grupo_sel in ('Todos', c['grupo'])]
+    with c2:
+        met_sel = st.selectbox('Ver escala completa de', [c['nombre'] for c in cfgs], key=f'rng_met_{key}')
+
+    _map = 'map' if hasattr(pd.DataFrame().style, 'map') else 'applymap'
+
+    # ── Tabla principal ──
+    filas = []
+    for c in cfgs:
+        if len(tickers) == 1:
+            r = resultados[tickers[0]]
+            v = _valor_metrica(c, r)
+            cl = _clasificar_metrica(c, v)
+            filas.append({
+                'Grupo': c['grupo'], 'Métrica': c['nombre'],
+                'Valor': _fmt_extra(v, c['tipo']),
+                'Nivel': _etiqueta_nivel(cl[1]) if cl else '—',
+                'Rango': cl[0] if cl else '—',
+                'Lectura': cl[2] if cl else 'Sin datos suficientes.',
+            })
+        else:
+            fila = {'Grupo': c['grupo'], 'Métrica': c['nombre']}
+            for tk in tickers:
+                v = _valor_metrica(c, resultados[tk])
+                cl = _clasificar_metrica(c, v)
+                fila[tk] = f"{_fmt_extra(v, c['tipo'])} · {_etiqueta_nivel(cl[1])}" if cl else 'N/A'
+            filas.append(fila)
+
+    df_t = pd.DataFrame(filas)
+    if len(tickers) == 1:
+        def _col_niv(val):
+            nombre = str(val).split(' ', 1)[-1]
+            return f"color:{_COLOR_NIVEL_MAP.get(nombre, '#e6edf3')};font-weight:700"
+        styled = (df_t.style.pipe(lambda s: getattr(s, _map)(_col_niv, subset=['Nivel']))
+                  .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+                  .set_table_styles([
+                      {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                          ('font-weight', '700'), ('text-align', 'center'),
+                          ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                      {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]}]))
+        st.dataframe(styled, use_container_width=True, hide_index=True,
+                     height=min(700, len(df_t) * 36 + 45))
+    else:
+        st.dataframe(df_t, use_container_width=True, hide_index=True,
+                     height=min(700, len(df_t) * 36 + 45))
+    st.caption('Rangos orientativos de uso general — varían según el tipo de activo y el período. No es asesoramiento financiero.')
+
+    # ── Escala completa de la métrica elegida ──
+    cfg = next(c for c in cfgs if c['nombre'] == met_sel)
+    st.markdown(f"<b style='color:#6CC24A'>{cfg['nombre']}</b> — "
+                f"<span style='color:#f5f7fa;font-size:13px'>{GLOSARIO.get(cfg['glos'], '')}</span>",
+                unsafe_allow_html=True)
+    niveles_tk = {}
+    for tk in tickers:
+        cl = _clasificar_metrica(cfg, _valor_metrica(cfg, resultados[tk]))
+        if cl:
+            niveles_tk.setdefault(cl[1], []).append(tk)
+    filas_e = [{
+        'Rango': rt, 'Nivel': _etiqueta_nivel(nv), 'Lectura': lec,
+        'Dónde está': ('📍 ' + ', '.join(niveles_tk[nv])) if nv in niveles_tk else '',
+    } for _l, rt, nv, lec in cfg['niveles']]
+    df_e = pd.DataFrame(filas_e)
+
+    def _col_niv_e(val):
+        nombre = str(val).split(' ', 1)[-1]
+        return f"color:{_COLOR_NIVEL_MAP.get(nombre, '#e6edf3')};font-weight:700"
+    styled_e = (df_e.style.pipe(lambda s: getattr(s, _map)(_col_niv_e, subset=['Nivel']))
+                .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+                .set_table_styles([
+                    {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                        ('font-weight', '700'), ('text-align', 'center'),
+                        ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                    {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11.5px')]}]))
+    st.dataframe(styled_e, use_container_width=True, hide_index=True,
+                 height=min(320, len(df_e) * 40 + 45))
 
     interp = interpretar_largo(r)
     sesgo_class = {'MUY ALCISTA':'sesgo-muy-alc','ALCISTA':'sesgo-alc','NEUTRAL':'sesgo-neu',
@@ -4875,11 +5148,17 @@ def modulo_comparador():
     if not st.session_state.get('comp_run_flag'):
         return
 
+    bench_cmp = get_close_series(descargar_datos('SPY', '2y'))
+
     def _proc_cmp(tk):
         df_tk = descargar_datos(tk, '2y')
         cl = get_close_series(df_tk) if df_tk is not None else None
         r_l = analizar_largo(tk, cl) if cl is not None and len(cl) >= 150 else None
-        df_m = descargar_datos(tk, '1mo'); df_v = descargar_datos(tk, '3mo')
+        if r_l is not None:
+            try:
+                r_l.update(_extras_largo(cl, bench_cmp))
+            except Exception:
+                pass
         r_c = None
         if df_m is not None and df_v is not None:
             cl_m = get_close_series(df_m); cl_v = get_close_series(df_v)
@@ -4942,6 +5221,8 @@ def modulo_comparador():
             st.plotly_chart(fig_radar_comparador(resultados_l), use_container_width=True, config=PLOTLY_CONFIG, key='comp_radar_fig')
 
         ganador = max(resultados_l.items(), key=lambda x: x[1]['global_score'])
+        st.markdown('### 📐 Métricas avanzadas — comparación')
+        render_tabla_rangos_metricas(resultados_l, key='comparador')
         st.markdown(f"""
         <div class="interp-card">
           <div class="interp-header">🏆 Mejor Global Score del grupo</div>
@@ -10831,6 +11112,24 @@ def modulo_fundamental():
                 with c3f: st.metric('Net Debt/EBITDA', fn_f(res_f.get('net_debt_ebitda')))
                 with c4f: st.metric('Interest Coverage', fn_f(res_f.get('interest_coverage')))
                 with c5f: st.metric('YTD', f"{res_f['alza_ytd']:.1f}%" if res_f.get('alza_ytd') is not None else 'N/D')
+
+                st.markdown('---')
+                st.markdown('### 📐 Métricas cuantitativas de largo plazo')
+                with st.spinner('Calculando métricas avanzadas...'):
+                    df_lp = descargar_datos(tk_fund, '2y')
+                    cl_lp = get_close_series(df_lp) if df_lp is not None else None
+                    r_lp = analizar_largo(tk_fund, cl_lp) if cl_lp is not None and len(cl_lp) >= 150 else None
+                    if r_lp is not None:
+                        try:
+                            r_lp.update(_extras_largo(cl_lp, get_close_series(descargar_datos('SPY', '2y'))))
+                        except Exception:
+                            pass
+                if r_lp is None:
+                    st.info('No hay suficiente historial (150+ ruedas) para las métricas cuantitativas.')
+                else:
+                    _render_extras_largo(r_lp)
+                    with st.expander('📏 Tabla de rangos de las métricas avanzadas', expanded=True):
+                        render_tabla_rangos_metricas({tk_fund: r_lp}, key=f'fund_{tk_fund}')
 
                 col_ok_f, col_alt_f = st.columns(2)
                 with col_ok_f:
