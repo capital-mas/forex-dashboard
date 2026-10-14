@@ -8802,6 +8802,18 @@ def modulo_inicio():
                 # Chips para ir al buscador
                 chips_navegacion(df_acc_f['Ticker'].tolist(), 'inicio_acc')
 
+    # ── Calendario económico (debajo de las cotizaciones) ────────────────
+    st.markdown('---')
+    st.markdown('<div class="sec-title">📆 Calendario Económico</div>', unsafe_allow_html=True)
+    render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
+
+    # ── Noticias (debajo del calendario) ─────────────────────────────────
+    st.markdown('---')
+    st.markdown('<div class="sec-title">📰 Noticias</div>', unsafe_allow_html=True)
+    render_noticias_mercado(supabase, USER_ID, st.session_state["usuario"].email)
+
+                
+
 # ==============================================================
 #  MÓDULO NUEVO — SCORE AAS (Acumulación / Anticipación / Sentimiento)
 #  Portado del script Top-Down MP/LP (Colab).
@@ -9410,14 +9422,6 @@ def _render_mi_cuenta(col):
                     st.session_state['nav_horizonte'] = 'finanzas'
                     st.session_state['nav_modulo'] = 'finanzas'
                     st.rerun()
-                if st.button('📊 Calendario Económico', use_container_width=True, key='menu_calendario'):
-                    st.session_state['nav_horizonte'] = 'calendario'
-                    st.session_state['nav_modulo'] = 'calendario'
-                    st.rerun()
-                if st.button('📰 Noticias', use_container_width=True, key='menu_noticias'):
-                    st.session_state['nav_horizonte'] = 'noticias'
-                    st.session_state['nav_modulo'] = 'noticias'
-                    st.rerun()
                 if st.button('🤖 Asistente IA' if TIENE_ACCESO_PRO else '🔒 Asistente IA (Pro)',
                              use_container_width=True, key='menu_ia_chat'):
                     st.session_state['ia_chat_abierto'] = not st.session_state.get('ia_chat_abierto', False)
@@ -9728,7 +9732,7 @@ with st.container(key='nav_mobile_wrap'):
         ('📡 Salud Mercado' if TIENE_ACCESO_PRO else '🔒 Salud Mercado (Pro)'): 'breadth',
         ('📉 Renta Fija/Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija/Macro (Pro)'): 'renta_fija_macro',
         ('🕯️ Velas' if TIENE_ACCESO_PRO else '🔒 Velas (Pro)'): 'velas',
-        '👤 Mi Cuenta': 'finanzas', '📊 Calendario': 'calendario', '📰 Noticias': 'noticias',
+        '👤 Mi Cuenta': 'finanzas',
     }
     if ES_ADMIN:
         _label_admin_mobile = f'🛠️ Panel de Pagos 🔴{n_pagos_pend}' if n_pagos_pend > 0 else '🛠️ Panel de Pagos'
