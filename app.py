@@ -3128,6 +3128,27 @@ def render_largo_completo(ticker, cl, r, key_suffix='', df_ohlc=None):
     with st.expander('📏 Tabla de rangos de las métricas avanzadas', expanded=True):
         render_tabla_rangos_metricas({ticker: r}, key=f'{key_suffix}_{ticker}')
 
+    interp = interpretar_largo(r)
+    sesgo_class = {'MUY ALCISTA':'sesgo-muy-alc','ALCISTA':'sesgo-alc','NEUTRAL':'sesgo-neu',
+                   'BAJISTA':'sesgo-baj','MUY BAJISTA':'sesgo-muy-baj'}.get(r['sesgo'],'')
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">{ticker} · {r['industria']} · <span class="{sesgo_class}">{r['sesgo']}</span></div>
+      {interp}
+    </div>
+    """, unsafe_allow_html=True)
+
+    tab_g1, tab_g2, tab_g3 = st.tabs(['📈 Precio + Bollinger', '📊 RSI & MACD', '📉 Drawdown'])
+    with tab_g1:
+        tipo_graf = st.radio('Tipo de gráfico', ['Línea', 'Velas'],
+                              horizontal=True, key=f'tipo_graf_{key_suffix}_{ticker}')
+        st.plotly_chart(fig_precio_bollinger(ticker, cl, df_ohlc=df_ohlc, tipo=tipo_graf),
+                         use_container_width=True, config=PLOTLY_CONFIG, key=f'fpb_{key_suffix}_{ticker}')
+    with tab_g2:
+        st.plotly_chart(fig_rsi_macd(cl), use_container_width=True, config=PLOTLY_CONFIG, key=f'frm_{key_suffix}_{ticker}')
+    with tab_g3:
+        st.plotly_chart(fig_drawdown(ticker, cl), use_container_width=True, config=PLOTLY_CONFIG, key=f'fdd_{key_suffix}_{ticker}')
+
 
 GLOSARIO.update({
     'CAGR': 'Retorno anual compuesto: la tasa anual constante que llevaría el precio inicial al final del período analizado.',
