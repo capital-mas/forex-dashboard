@@ -5159,6 +5159,7 @@ def modulo_comparador():
                 r_l.update(_extras_largo(cl, bench_cmp))
             except Exception:
                 pass
+        df_m = descargar_datos(tk, '1mo'); df_v = descargar_datos(tk, '3mo')   # ← volver a poner
         r_c = None
         if df_m is not None and df_v is not None:
             cl_m = get_close_series(df_m); cl_v = get_close_series(df_v)
