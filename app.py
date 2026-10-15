@@ -4160,38 +4160,6 @@ def _es_dato_fresco(ts_iso, ttl_segundos):
         return edad < ttl_segundos
     except Exception:
         return False
-# ============== FIN DEL BLOQUE NUEVO ==============
-
-
-def analizar_fundamental(ticker, industria):
-    """Envoltorio con caché compartido primero:
-    1) Supabase, si está fresco (< FUND_TTL_SEGUNDOS) — NO toca Yahoo, lo comparten todos los usuarios.
-    2) Yahoo en vivo, si Supabase está vencido o no existe — y actualiza Supabase.
-    3) Supabase vencido, como último respaldo si Yahoo falla.
-    4) Última copia buena de esta sesión, si ni Supabase tiene nada."""
-    if '_fund_cache_ok' not in st.session_state:
-        st.session_state['_fund_cache_ok'] = {}
-
-    datos_db, ts_db = _fund_supabase_leer(ticker)
-    if datos_db is not None and _es_dato_fresco(ts_db, FUND_TTL_SEGUNDOS):
-        datos_db = dict(datos_db)
-        st.session_state['_fund_cache_ok'][ticker] = datos_db
-        return datos_db
-
-    resultado = _analizar_fundamental_cached(ticker, industria)
-    if resultado is not None:
-        st.session_state['_fund_cache_ok'][ticker] = resultado
-        _fund_supabase_guardar(ticker, industria, resultado)
-        return resultado
-
-    if datos_db is not None:
-        datos_db = dict(datos_db)
-        datos_db['_desde_respaldo'] = True
-        datos_db['_respaldo_fecha'] = ts_db
-        st.session_state['_fund_cache_ok'][ticker] = datos_db
-        return datos_db
-
-    return st.session_state['_fund_cache_ok'].get(ticker)
 
 # ==============================================================
 # 4) EVOLUCIÓN HISTÓRICA — agregar estas dos funciones nuevas
