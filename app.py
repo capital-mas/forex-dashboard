@@ -36,6 +36,7 @@ from modulo_velas import modulo_velas
 from modulo_valuacion import modulo_valuacion
 from sec_edgar import crear_ticker_sec
 from modulo_renta_fija_macro import modulo_renta_fija_macro
+from modulo_grafico_live import modulo_grafico_live
 from finanzas_ui import render_finanzas_personales
 import finanzas_data as fd
 from modulo_ia_asistente import modulo_ia_asistente
@@ -9595,11 +9596,12 @@ with st.container(key='nav_pills_wrap'):
                          ('senales', 'senales'),
             '🎲 Valuación de Opciones': ('opciones', 'opciones'),
             '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),
+            '📺 Gráfico en vivo': ('grafico_live', 'grafico_live'),
             ('🕯️ Lectura de Velas' if TIENE_ACCESO_PRO else '🔒 Lectura de Velas (Pro)'):
                                      ('velas', 'velas'),
         }
         
-        _trading_horizontes = {'pares', 'senales', 'opciones', 'gex', 'velas'}
+        _trading_horizontes = {'pares', 'senales', 'opciones', 'grafico_live', 'gex', 'velas'}
         _trading_activo = HORIZONTE in _trading_horizontes
         _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
         _label_trading = f'📈 {_trading_label_actual.split(" ",1)[1]}' if _trading_label_actual else '📈 Trading'
@@ -9872,6 +9874,7 @@ titulos = {
     'tff': ('Análisis TFF — Traders in Financial Futures', '📑', 'Posicionamiento Asset Manager vs. Leveraged Funds — índices, forex y cripto'),
     'opciones': ('Valuación de Opciones', '🎲', 'Black-Scholes / Binomial · Catálogo de estrategias · Griegas · Payoff'),
     'gex': ('GEX — Gamma Exposure', '🧲', 'Exposición gamma, punto de cambio de gamma y paredes de Calls/Puts · datos CBOE'),
+    'grafico_live': ('Gráfico en vivo', '📺', 'Velas en vivo · niveles GEX · lectura de velas'),
     'velas': ('Lectura de Velas Diarias', '🕯️', 'Patrones de velas japonesas · freno de caída / freno de suba'),
     'valuacion': ('Simulador de Valuación', '🏦', 'DCF · Múltiplos · Sensibilidad WACC × g · Ingeniería inversa'),
     'renta_fija_macro': ('Renta Fija, Salud del Mercado y Macro', '📉','Bonos, tasas del Tesoro, crédito corporativo y 12 ratios macro estratégicos'),
@@ -10067,6 +10070,13 @@ elif MODULO == 'pares':
 
 elif MODULO == 'opciones':
     modulo_opciones()
+
+elif MODULO == 'grafico_live':
+    modulo_grafico_live(
+        selector_ticker_autocomplete=selector_ticker_autocomplete,
+        kpi_cards_4=kpi_cards_4,
+        fmt_precio=fmt_precio,
+    )
 
 elif MODULO == 'gex':
     if TIENE_ACCESO_PRO:
