@@ -3593,8 +3593,8 @@ def tabla_corto(filas_dict, key_suffix=''):
                 & df_f['Sent'].between(*f_sent) & df_f['RSI'].between(*f_rsi)
                 & df_f['Ret 5d %'].between(*f_ret5) & df_f['Ret 10d %'].between(*f_ret10)]
 
-    styled = (_apply_score_style(df_f, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %','MACD Hist %','CMF'])
-              .format({'MACD Hist %': '{:+.3f}', 'ADX': '{:.0f}', 'CMF': '{:+.2f}', 'RVOL': '{:.1f}x'}, na_rep='—'))
+    styled = (_apply_score_style(df_show_a, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %','MACD Hist %','CMF'])
+              .format({'MACD Hist %': '{:+.3f}', 'ADX': '{:.0f}', 'CMF': '{:+.2f}'}, na_rep='—'))
     st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
     st.caption(f'{len(df_f)} activos mostrados de {len(df)} totales · ADX > 25 = tendencia fuerte · '
                'CMF > 0 = entra dinero · RVOL del día es parcial mientras el mercado está abierto · '
@@ -10651,12 +10651,12 @@ elif HORIZONTE == 'corto':
                     filas.append({'Industria': industria, 'Ticker': tk,
                         'Acum': round(d['sa'],1), 'Antic': round(d['sn'],1), 'Sent': round(d['ss'],1),
                         'RSI': round(d.get('rsi',0),1),
-                        'MACD Hist %': round(d['macd_hist_pct'],3) if d.get('macd_hist_pct') is not None else np.nan,  # ← NUEVA
-                        'ADX': round(d['adx'],0) if d.get('adx') is not None else np.nan,                              # ← NUEVA
-                        'CMF': round(d['cmf'],2) if d.get('cmf') is not None else np.nan,                              # ← NUEVA
-                        'Ret 10d %': round(d.get('ret_10d',0),2),
+                        'MACD Hist %': round(d['macd_hist_pct'],3) if d.get('macd_hist_pct') is not None else np.nan,
+                        'ADX': round(d['adx'],0) if d.get('adx') is not None else np.nan,
+                        'CMF': round(d['cmf'],2) if d.get('cmf') is not None else np.nan,
+                        'Ret 5d %': round(d.get('ret_5d',0),2), 'Ret 10d %': round(d.get('ret_10d',0),2),
                         'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion'],
-                        'Confirma': d.get('confirma', '—')})                                                            # ← NUEVA
+                        'Confirma': d.get('confirma', '—')})
             df_acc = pd.DataFrame(filas).sort_values('Acum', ascending=False)
 
 
