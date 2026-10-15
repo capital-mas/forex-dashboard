@@ -823,6 +823,34 @@ GLOSARIO_EXTRA = {
 def G(term):
     return GLOSARIO.get(term)
 
+GLOSARIO.update({
+    'Histograma MACD': 'Diferencia entre la línea MACD y su señal. Es la "aceleración" del momentum: si las barras crecen el movimiento gana fuerza, si se achican la pierde. Suele girar antes que el cruce del MACD.',
+    'ADX': 'Average Directional Index (14): mide la FUERZA de la tendencia, no su dirección. < 20 = mercado lateral; > 25 = tendencia fuerte. +DI vs −DI indica el lado. En tendencia fuerte, las señales de rebote/reversión fallan más.',
+    'CMF': 'Chaikin Money Flow (20): combina dónde cierra el precio dentro del rango del día con el volumen. > 0 = entra dinero (acumulación); < 0 = sale dinero (distribución).',
+    'RVOL': 'Volumen relativo: volumen de hoy ÷ promedio de las últimas 20 ruedas. > 1.3x = movimiento con convicción; < 0.7x = poco interés. El dato de hoy es parcial si el mercado está abierto.',
+})
+GLOSARIO_NIVELES['Histograma MACD'] = [
+    ('> 0 y creciendo',   'Alcista', 'Momentum alcista acelerando.'),
+    ('> 0 y decreciendo', 'Neutral', 'Suba que pierde fuerza.'),
+    ('< 0 y creciendo',   'Neutral', 'Caída que pierde fuerza (posible giro).'),
+    ('< 0 y decreciendo', 'Bajista', 'Momentum bajista acelerando.'),
+]
+GLOSARIO_NIVELES['ADX'] = [
+    ('< 20',    'Débil',    'Mercado lateral, sin tendencia clara.'),
+    ('20 – 25', 'Moderado', 'Tendencia en formación.'),
+    ('25 – 40', 'Fuerte',   'Tendencia definida: ojo con operar en contra.'),
+    ('> 40',    'Muy alto', 'Tendencia muy extendida, puede estar cerca de agotarse.'),
+]
+GLOSARIO_NIVELES['CMF'] = [
+    ('> 0.1',        'Alcista', 'Entra dinero: acumulación.'),
+    ('-0.1 a 0.1',   'Neutral', 'Sin presión clara.'),
+    ('< -0.1',       'Bajista', 'Sale dinero: distribución.'),
+]
+GLOSARIO_NIVELES['RVOL'] = [
+    ('< 0.7x',      'Débil',  'Poco interés en el movimiento.'),
+    ('0.7x – 1.3x', 'Normal', 'Volumen habitual.'),
+    ('> 1.3x',      'Fuerte', 'Movimiento con convicción.'),
+]
 # ==============================================================
 #  NIVELES POR TÉRMINO — tabla de rangos/interpretación para el glosario
 # ==============================================================
@@ -2158,6 +2186,7 @@ def _fetch_corto_ticker(tk, extra=None):
         out = dict(sa=sa, sn=sn, ss=ss, sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi,
                    ret_5d=ret_5d, ret_10d=ret_10d, precio=precio,
                    accion=señal_accion_corto(sa, sn, ss), hmm=hmm_r)
+        out.update(calcular_confirmacion_corto(df_v, cl_v, out['accion']))   # ← NUEVA
         if extra:
             out.update(extra)
         return out
@@ -3523,18 +3552,27 @@ def _color_regimen_hmm(val):
             'BAJISTA':'color:#f85149;font-weight:700'}.get(val, 'color:#6b7d9a')
 
 def tabla_corto(filas_dict, key_suffix=''):
+    def _n(d, k, dec):
+        return round(d[k], dec) if d.get(k) is not None else np.nan
+
     filas = []
     for nombre, d in sorted(filas_dict.items(), key=lambda x: x[1]['sa'], reverse=True):
         filas.append({'Nombre': nombre, 'Acum': round(d['sa'],1), 'Antic': round(d['sn'],1),
             'Sent': round(d['ss'],1), 'RSI': round(d.get('rsi',0),1),
+            'MACD Hist %': _n(d, 'macd_hist_pct', 3), 'ADX': _n(d, 'adx', 0),
+            'CMF': _n(d, 'cmf', 2), 'RVOL': _n(d, 'rvol', 1),
             'Ret 5d %': round(d.get('ret_5d',0),2), 'Ret 10d %': round(d.get('ret_10d',0),2),
-            'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion']})
+            'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion'],
+            'Confirma': d.get('confirma', '—'), 'Detalle': d.get('confirma_motivo', '')})
     df = pd.DataFrame(filas)
 
-    fc1, _ = st.columns([2,4])
+    fc1, fc2, _ = st.columns([2,2,2])
     with fc1:
         señales_u = ['Todas'] + sorted(df['Señal'].unique().tolist())
         f_señal = st.selectbox('Señal', señales_u, key=f'tc_señal_{key_suffix}')
+    with fc2:
+        f_conf = st.selectbox('Confirmación', ['Todas', '✅ Confirma', '🟡 Parcial', '⚠️ No confirma'],
+                              key=f'tc_conf_{key_suffix}')
 
     fr1, fr2, fr3 = st.columns(3)
     with fr1:
@@ -3554,13 +3592,17 @@ def tabla_corto(filas_dict, key_suffix=''):
 
     df_f = df.copy()
     if f_señal != 'Todas': df_f = df_f[df_f['Señal']==f_señal]
+    if f_conf  != 'Todas': df_f = df_f[df_f['Confirma']==f_conf]
     df_f = df_f[df_f['Acum'].between(*f_acum) & df_f['Antic'].between(*f_antic)
                 & df_f['Sent'].between(*f_sent) & df_f['RSI'].between(*f_rsi)
                 & df_f['Ret 5d %'].between(*f_ret5) & df_f['Ret 10d %'].between(*f_ret10)]
 
-    styled = _apply_score_style(df_f, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %'])
+    styled = (_apply_score_style(df_f, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %','MACD Hist %','CMF'])
+              .format({'MACD Hist %': '{:+.3f}', 'ADX': '{:.0f}', 'CMF': '{:+.2f}', 'RVOL': '{:.1f}x'}, na_rep='—'))
     st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
-    st.caption(f'{len(df_f)} activos mostrados de {len(df)} totales')
+    st.caption(f'{len(df_f)} activos mostrados de {len(df)} totales · ADX > 25 = tendencia fuerte · '
+               'CMF > 0 = entra dinero · RVOL del día es parcial mientras el mercado está abierto · '
+               'Forex e índices no traen volumen (CMF/RVOL "—")')
 
     pares = [(n, filas_dict[n].get('tk', n)) for n in df_f['Nombre'].tolist()]
     chips_navegacion(pares, f'tc_{key_suffix}')
@@ -10592,9 +10634,13 @@ elif HORIZONTE == 'corto':
                 for tk, d in sorted(tickers.items(), key=lambda x: x[1]['sa'], reverse=True):
                     filas.append({'Industria': industria, 'Ticker': tk,
                         'Acum': round(d['sa'],1), 'Antic': round(d['sn'],1), 'Sent': round(d['ss'],1),
-                        'RSI': round(d.get('rsi',0),1), 'Ret 5d %': round(d.get('ret_5d',0),2),
+                        'RSI': round(d.get('rsi',0),1),
+                        'MACD Hist %': round(d['macd_hist_pct'],3) if d.get('macd_hist_pct') is not None else np.nan,  # ← NUEVA
+                        'ADX': round(d['adx'],0) if d.get('adx') is not None else np.nan,                              # ← NUEVA
+                        'CMF': round(d['cmf'],2) if d.get('cmf') is not None else np.nan,                              # ← NUEVA
                         'Ret 10d %': round(d.get('ret_10d',0),2),
-                        'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion']})
+                        'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion'],
+                        'Confirma': d.get('confirma', '—')})                                                            # ← NUEVA
             df_acc = pd.DataFrame(filas).sort_values('Acum', ascending=False)
 
 
