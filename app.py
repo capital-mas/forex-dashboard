@@ -5141,9 +5141,7 @@ def modulo_comparador():
                 atr = calcular_atr(df_m)
                 sa, sn, ss = scores_corto(cl_v, cl_m, atr)
                 r_c = dict(sa=sa, sn=sn, ss=ss, sf=sa*0.45+sn*0.35+ss*0.20)
-        industria_tk = TICKER_INDUSTRY.get(tk, 'Sin Clasificar')
-        r_f = analizar_fundamental(tk, industria_tk)
-        return tk, cl, r_l, r_c, r_f
+        return tk, cl, r_l, r_c
 
     with st.spinner('Descargando y calculando comparación...'):
         series, resultados_l, resultados_c, resultados_f = {}, {}, {}, {}
