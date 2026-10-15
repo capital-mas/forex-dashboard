@@ -5143,7 +5143,7 @@ def modulo_comparador():
                 r_c = dict(sa=sa, sn=sn, ss=ss, sf=sa*0.45+sn*0.35+ss*0.20)
         return tk, cl, r_l, r_c
 
-    with st.spinner('Descargando y calculando comparación...'):
+with st.spinner('Descargando y calculando comparación...'):
     series, resultados_l, resultados_c, resultados_f = {}, {}, {}, {}
     sin_precio = []
     with ThreadPoolExecutor(max_workers=5) as ex:
