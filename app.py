@@ -11192,9 +11192,10 @@ def modulo_fundamental():
 # ==============================================================
 
 if HORIZONTE == 'largo' and MODULO == 'fundamental':
-    if 'fund_ind_sel' not in st.session_state:
-        st.session_state['fund_ind_sel'] = list(ACCIONES_POR_INDUSTRIA.keys())[:1]
-    modulo_fundamental()
+    if TIENE_ACCESO_PRO:
+        modulo_fundamental_fscore(supabase, puede_cargar=ES_ADMIN, PLOTLY_CONFIG=PLOTLY_CONFIG)
+    else:
+        _mostrar_bloqueo_pro('Análisis Fundamental')
 
 if HORIZONTE == 'largo' and MODULO == 'tdc':
     modulo_topdown_cuantitativo()
