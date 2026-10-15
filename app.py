@@ -5144,17 +5144,22 @@ def modulo_comparador():
         return tk, cl, r_l, r_c
 
     with st.spinner('Descargando y calculando comparación...'):
-        series, resultados_l, resultados_c, resultados_f = {}, {}, {}, {}
-        sin_precio = []
-        with ThreadPoolExecutor(max_workers=5) as ex:
-            for tk, cl, r_l, r_c, r_f in ex.map(_proc_cmp, tickers_cmp):
-                if cl is not None:
-                    series[tk] = cl
-                else:
-                    sin_precio.append(tk)
-                if r_l: resultados_l[tk] = r_l
-                if r_c: resultados_c[tk] = r_c
-                if r_f: resultados_f[tk] = r_f
+    series, resultados_l, resultados_c, resultados_f = {}, {}, {}, {}
+    sin_precio = []
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        for tk, cl, r_l, r_c in ex.map(_proc_cmp, tickers_cmp):
+            if cl is not None:
+                series[tk] = cl
+            else:
+                sin_precio.append(tk)
+            if r_l: resultados_l[tk] = r_l
+            if r_c: resultados_c[tk] = r_c
+
+    # Fundamental: en el hilo principal (necesita session_state)
+    for tk in tickers_cmp:
+        r_f = analizar_fundamental(tk, TICKER_INDUSTRY.get(tk, 'Sin Clasificar'))
+        if r_f:
+            resultados_f[tk] = r_f
 
     if not series:
         st.error('No se pudieron descargar datos para los activos seleccionados.')
