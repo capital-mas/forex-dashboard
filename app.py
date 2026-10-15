@@ -30,7 +30,7 @@ from modulo_estados_financieros import render_analisis_profundo, render_comparat
 from modulo_calendario import render_calendario_economico, render_noticias
 from modulo_noticias_mercado import render_noticias_mercado
 from modulo_senales_trading import render_senales_trading
-from modulo_fscore import modulo_fscore
+from modulo_fundamental_fscore import modulo_fundamental_fscore, fundamental_desde_csv
 from modulo_market_breadth import render_market_breadth, crear_breadth_ia
 from modulo_velas import modulo_velas
 from modulo_valuacion import modulo_valuacion
@@ -10108,9 +10108,7 @@ elif MODULO == 'promediador':                 # ← agregar
         señal_accion_corto=señal_accion_corto,
     )
 
-elif MODULO == 'fscore':
-    if TIENE_ACCESO_PRO:
-        modulo_fscore(supabase)
+modulo_fundamental_fscore(supabase, puede_cargar=ES_ADMIN, PLOTLY_CONFIG=PLOTLY_CONFIG)
     else:
         _mostrar_bloqueo_pro('F-Score (Piotroski)')
 
