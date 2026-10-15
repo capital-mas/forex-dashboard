@@ -77,6 +77,47 @@ def _klines_binance(par, intervalo, limite=500):
 
 
 # ==============================================================
+#  DETECCIÓN DE CRIPTO + FUENTE POR DEFECTO PARA EL RESTO
+# ==============================================================
+
+_SUFIJOS_CRIPTO = ('-USDT', '/USDT', 'USDT', '-USD')
+_ALIAS_BINANCE = {'MATIC': 'POL'}
+_INDICE_YF = {'SPX': '^GSPC', 'NDX': '^NDX', 'RUT': '^RUT', 'VIX': '^VIX'}
+_PERIODO_YF = {'1m': '5d', '5m': '1mo', '15m': '1mo', '30m': '1mo', '1h': '6mo', '1d': '2y'}
+
+
+def _cripto_base(entrada):
+    """'BNB-USD', 'SOLUSDT', 'BTC' -> 'BNB', 'SOL', 'BTC'. None si no es una cripto."""
+    e = (entrada or '').strip().upper().lstrip('^')
+    if e in ('BTC', 'ETH'):
+        return e
+    for suf in _SUFIJOS_CRIPTO:
+        if e.endswith(suf) and len(e) > len(suf):
+            base = e[:-len(suf)]
+            if base.isalnum():
+                return _ALIAS_BINANCE.get(base, base)
+    return None
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _velas_yahoo(simbolo, intervalo):
+    """Fuente por defecto para acciones, ETFs, forex e índices (única opción sin clave del lado servidor).
+    Se cachea 30 s y se comparte entre todos los usuarios. Podés reemplazarla con fuente_velas=..."""
+    import yfinance as yf
+    sym = _INDICE_YF.get(simbolo, simbolo)
+    d = yf.download(sym, period=_PERIODO_YF[intervalo], interval=intervalo, progress=False, auto_adjust=True)
+    if d is None or d.empty:
+        return None
+    if isinstance(d.columns, pd.MultiIndex):
+        d.columns = d.columns.get_level_values(0)
+    if not {'Open', 'High', 'Low', 'Close'}.issubset(d.columns):
+        return None
+    if 'Volume' not in d.columns:
+        d['Volume'] = 0
+    return d[['Open', 'High', 'Low', 'Close', 'Volume']].dropna(subset=['Open', 'High', 'Low', 'Close'])
+
+
+# ==============================================================
 #  NIVELES GEX (reutiliza modulo_gex)
 # ==============================================================
 
@@ -222,6 +263,7 @@ window.addEventListener('resize', () => chart.applyOptions({width: el.clientWidt
 """
 
 _HTML_TV = """
+<style>html,body{height:100%;margin:0;background:#0d1117}</style>
 <div class="tradingview-widget-container" style="height:__H__px;width:100%">
   <div class="tradingview-widget-container__widget" style="height:calc(100% - 22px);width:100%"></div>
   <div class="tradingview-widget-copyright" style="font:11px Inter,sans-serif">
@@ -248,9 +290,9 @@ def _render_tv(simbolo_tv, intervalo, altura):
     components.html(html, height=altura + 8)
 
 
-def _simbolo_tv(entrada, simbolo_cboe, simbolo):
-    if simbolo_cboe.startswith('DERIBIT:'):
-        return f'BINANCE:{simbolo}USDT'
+def _simbolo_tv(entrada, simbolo_cboe, simbolo, base_cripto=None):
+    if base_cripto:
+        return f'BINANCE:{base_cripto}USDT'
     e = (entrada or '').strip().upper().lstrip('^').replace('=X', '').replace('/', '')
     if e in _FOREX_TV:
         return f'FX:{e}'
@@ -263,31 +305,36 @@ def _simbolo_tv(entrada, simbolo_cboe, simbolo):
 #  PANELES
 # ==============================================================
 
-def _panel_lw(simbolo_cboe, simbolo, tf_label, n_vtos, ver_niveles, ver_patrones, altura,
+def _panel_lw(base_cripto, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, ver_patrones, altura,
               kpi_cards_4, fmt_precio, fuente_velas):
     iv = TIMEFRAMES[tf_label]
     diario = iv == '1d'
-    es_cripto = simbolo_cboe.startswith('DERIBIT:')
-    if simbolo_cboe.startswith('_'):
-        st.warning('Los índices no tienen velas en este modo. Usá su ETF (SPY, QQQ, IWM) o el modo TradingView.')
-        return
+    cripto = base_cripto is not None
+    nombre = base_cripto or simbolo
 
     try:
-        df = _klines_binance(f'{simbolo}USDT', iv) if es_cripto else fuente_velas(simbolo, iv)
+        if cripto:
+            df = _klines_binance(f'{base_cripto}USDT', iv)
+        else:
+            df = (fuente_velas or _velas_yahoo)(simbolo, iv)
     except Exception as e:
-        st.error(f'No se pudieron obtener velas de {simbolo}: {type(e).__name__}: {e}')
+        if cripto:
+            st.error(f'{base_cripto}USDT no está disponible en Binance ({type(e).__name__}).')
+        else:
+            st.error(f'No se pudieron obtener velas de {simbolo}: {type(e).__name__}: {e}')
         return
     if df is None or df.empty:
-        st.error(f'No hay velas disponibles para {simbolo}.')
+        st.error(f'No hay velas disponibles para {simbolo} en esta temporalidad. Probá con otra.')
         return
 
     df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy().tail(500)
-    if df.index.tz is None and not diario:
-        df.index = df.index.tz_localize('UTC')
     if diario:
-        df.index = df.index.tz_localize(None) if df.index.tz is not None else df.index
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
         df.index = df.index.normalize()
     else:
+        if df.index.tz is None:
+            df.index = df.index.tz_localize('UTC')
         df.index = df.index.tz_convert(TZ_AR).tz_localize(None)
     df = df[~df.index.duplicated()].sort_index()
 
@@ -301,17 +348,20 @@ def _panel_lw(simbolo_cboe, simbolo, tf_label, n_vtos, ver_niveles, ver_patrones
 
     niveles, aviso, g = [], None, None
     if ver_niveles:
-        g, aviso = _niveles_gex(simbolo_cboe, n_vtos)
-        if g:
-            niveles = _armar_niveles(g)
+        if cboe_gex is None:
+            aviso = 'Este activo no tiene opciones listadas (en cripto solo BTC y ETH): se muestran velas y señales, sin niveles GEX.'
+        else:
+            g, aviso = _niveles_gex(cboe_gex, n_vtos)
+            if g:
+                niveles = _armar_niveles(g)
 
     candles = [dict(time=t, open=float(o), high=float(h), low=float(l), close=float(c))
                for t, o, h, l, c in zip(_tiempo(df.index, diario), df['Open'], df['High'], df['Low'], df['Close'])]
-    ws = f'wss://data-stream.binance.vision/ws/{simbolo.lower()}usdt@kline_{iv}' if es_cripto else None
-    estado = 'conectando…' if es_cripto else 'datos según la fuente configurada'
-    _render_lw(candles, niveles, marcadores, f'{simbolo} · {tf_label}', diario, ws, estado, altura)
+    ws = f'wss://data-stream.binance.vision/ws/{base_cripto.lower()}usdt@kline_{iv}' if cripto else None
+    estado = 'conectando…' if cripto else 'actualiza cada 60 s'
+    _render_lw(candles, niveles, marcadores, f'{nombre} · {tf_label}', diario, ws, estado, altura)
 
-    st.caption(f"🕐 Hora Argentina · {'Binance, en vivo desde tu navegador' if es_cripto else 'fuente de velas configurada'} · "
+    st.caption(f"🕐 Hora Argentina · {'Binance, en vivo desde tu navegador' if cripto else 'velas con el retraso de la fuente, recarga cada 60 s'} · "
                f"panel actualizado {datetime.now().strftime('%H:%M:%S')} · señales sobre velas cerradas")
     if aviso:
         st.info(f'ℹ️ {aviso}')
@@ -324,15 +374,18 @@ def _panel_lw(simbolo_cboe, simbolo, tf_label, n_vtos, ver_niveles, ver_patrones
         with c4: st.metric('Put Wall', fmt_precio(z['put_wall']) if z['put_wall'] else 'N/D')
         st.caption('Violeta = flip · verde = resistencias (R★ principal) · rojo = soportes (S★) · amarillo = pivote. '
                    'Los niveles fuera del rango visible no se dibujan: alejá el zoom.')
-    _render_conclusion(d, simbolo, fmt_precio, kpi_cards_4, not diario)
+    _render_conclusion(d, nombre, fmt_precio, kpi_cards_4, not diario)
 
 
-def _panel_tv(entrada, simbolo_cboe, simbolo, tf_label, n_vtos, ver_niveles, altura, fmt_precio):
-    _render_tv(_simbolo_tv(entrada, simbolo_cboe, simbolo), TIMEFRAMES[tf_label], altura)
+def _panel_tv(entrada, base_cripto, simbolo_cboe, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, altura, fmt_precio):
+    _render_tv(_simbolo_tv(entrada, simbolo_cboe, simbolo, base_cripto), TIMEFRAMES[tf_label], altura)
     if not ver_niveles:
         return
     st.markdown('#### 🧲 Escalera de niveles GEX')
-    g, aviso = _niveles_gex(simbolo_cboe, n_vtos)
+    if cboe_gex is None:
+        st.info('Este activo no tiene opciones listadas (en cripto solo BTC y ETH).')
+        return
+    g, aviso = _niveles_gex(cboe_gex, n_vtos)
     if aviso:
         st.info(f'ℹ️ {aviso}')
         return
@@ -343,8 +396,7 @@ def _panel_tv(entrada, simbolo_cboe, simbolo, tf_label, n_vtos, ver_niveles, alt
     with c3: st.metric('Call Wall', fmt_precio(z['call_wall']) if z['call_wall'] else 'N/D')
     with c4: st.metric('Put Wall', fmt_precio(z['put_wall']) if z['put_wall'] else 'N/D')
     _render_escalera(g, fmt_precio)
-    st.caption('El widget de TradingView no permite dibujar líneas externas, por eso los niveles van en esta escalera. '
-               'Para verlos sobre el gráfico usá el modo "Gráfico con GEX y velas".')
+    st.caption('El widget de TradingView no permite dibujar líneas externas: por eso los niveles van en esta escalera.')
 
 
 # ==============================================================
@@ -358,9 +410,9 @@ def modulo_grafico_live(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, f
          border-radius:14px; padding:24px 30px; margin-bottom:20px;">
       <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📺 Gráfico en vivo + GEX + Velas</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Gráficos en vivo gratuitos y sin claves, para todos los usuarios. <b>Cripto</b>: velas en vivo de Binance con
-        niveles <b style="color:#bc8cff">GEX</b> y <b style="color:#3fb950">lectura de velas</b> dibujados.
-        <b>Acciones, ETFs, forex e índices</b>: widget de TradingView en vivo con escalera de niveles GEX.
+        El mismo gráfico para todos los activos, con los niveles <b style="color:#bc8cff">GEX</b> dibujados y la
+        <b style="color:#3fb950">lectura de velas</b> marcada. Cripto: velas en vivo de Binance (cualquier par).
+        Acciones, ETFs, forex e índices: velas con el retraso de la fuente, recargadas cada 60 s.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -380,36 +432,35 @@ def modulo_grafico_live(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, f
     simbolo_cboe, simbolo, aviso = resolver_simbolo(entrada)
     if aviso:
         st.info(aviso)
-    es_cripto = simbolo_cboe.startswith('DERIBIT:')
+    base_cripto = _cripto_base(entrada)
+    # GEX solo si hay opciones: cualquier no-cripto (CBOE) o BTC/ETH (Deribit)
+    cboe_gex = None if (base_cripto and not simbolo_cboe.startswith('DERIBIT:')) else simbolo_cboe
 
-    if es_cripto:
-        modo = MODO_LW
-    else:
-        opciones = [MODO_TV] + ([MODO_LW] if fuente_velas else [])
-        modo = st.radio('Modo', opciones, horizontal=True, key='live_modo') if len(opciones) > 1 else MODO_TV
+    modo = st.radio('Modo', [MODO_LW, MODO_TV], horizontal=True, key='live_modo',
+                    help='El modo TradingView es el widget oficial: no admite líneas GEX ni marcadores de velas.')
 
     o1, o2, o3, o4 = st.columns(4)
     with o1:
         ver_niveles = st.checkbox('Niveles GEX', value=True, key='live_gex')
     with o2:
         ver_patrones = st.checkbox('Patrones sueltos', value=False, key='live_pat', disabled=(modo == MODO_TV),
-                                   help='Martillo, envolventes y estrella fugaz (solo modo gráfico con velas).')
+                                   help='Martillo, envolventes y estrella fugaz.')
     with o3:
         n_vtos = st.slider('Vencimientos GEX', 1, 12, 6, key='live_nvtos', disabled=not ver_niveles)
     with o4:
         auto = st.checkbox('Auto-actualizar señales', value=True, key='live_auto', disabled=(modo == MODO_TV))
 
     if modo == MODO_TV:
-        _panel_tv(entrada, simbolo_cboe, simbolo, tf_label, n_vtos, ver_niveles, altura, fmt_precio)
+        _panel_tv(entrada, base_cripto, simbolo_cboe, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, altura, fmt_precio)
     else:
-        # cripto: el WebSocket ya mueve la vela; el panel solo recalcula señales y GEX cada 5 min
-        run_every = (300 if es_cripto else 60) if auto else None
+        # cripto: el WebSocket mueve la vela; el panel solo recalcula señales y GEX cada 5 min
+        run_every = (300 if base_cripto else 60) if auto else None
         st.fragment(run_every=run_every)(_panel_lw)(
-            simbolo_cboe, simbolo, tf_label, n_vtos, ver_niveles, ver_patrones, altura,
+            base_cripto, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, ver_patrones, altura,
             kpi_cards_4, fmt_precio, fuente_velas)
 
     st.markdown(
         '<div style="font-size:11px;color:#6b7d9a;margin-top:12px">GEX: opciones de CBOE/Deribit con ~15 min de '
-        'retraso e interés abierto del día anterior. TradingView indica en el propio gráfico si un mercado tiene retraso. '
-        'Las señales y niveles son herramientas de lectura, no asesoramiento financiero.</div>',
+        'retraso e interés abierto del día anterior. Las señales y niveles son herramientas de lectura, '
+        'no asesoramiento financiero.</div>',
         unsafe_allow_html=True)
