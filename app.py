@@ -823,34 +823,7 @@ GLOSARIO_EXTRA = {
 def G(term):
     return GLOSARIO.get(term)
 
-GLOSARIO.update({
-    'Histograma MACD': 'Diferencia entre la línea MACD y su señal. Es la "aceleración" del momentum: si las barras crecen el movimiento gana fuerza, si se achican la pierde. Suele girar antes que el cruce del MACD.',
-    'ADX': 'Average Directional Index (14): mide la FUERZA de la tendencia, no su dirección. < 20 = mercado lateral; > 25 = tendencia fuerte. +DI vs −DI indica el lado. En tendencia fuerte, las señales de rebote/reversión fallan más.',
-    'CMF': 'Chaikin Money Flow (20): combina dónde cierra el precio dentro del rango del día con el volumen. > 0 = entra dinero (acumulación); < 0 = sale dinero (distribución).',
-    'RVOL': 'Volumen relativo: volumen de hoy ÷ promedio de las últimas 20 ruedas. > 1.3x = movimiento con convicción; < 0.7x = poco interés. El dato de hoy es parcial si el mercado está abierto.',
-})
-GLOSARIO_NIVELES['Histograma MACD'] = [
-    ('> 0 y creciendo',   'Alcista', 'Momentum alcista acelerando.'),
-    ('> 0 y decreciendo', 'Neutral', 'Suba que pierde fuerza.'),
-    ('< 0 y creciendo',   'Neutral', 'Caída que pierde fuerza (posible giro).'),
-    ('< 0 y decreciendo', 'Bajista', 'Momentum bajista acelerando.'),
-]
-GLOSARIO_NIVELES['ADX'] = [
-    ('< 20',    'Débil',    'Mercado lateral, sin tendencia clara.'),
-    ('20 – 25', 'Moderado', 'Tendencia en formación.'),
-    ('25 – 40', 'Fuerte',   'Tendencia definida: ojo con operar en contra.'),
-    ('> 40',    'Muy alto', 'Tendencia muy extendida, puede estar cerca de agotarse.'),
-]
-GLOSARIO_NIVELES['CMF'] = [
-    ('> 0.1',        'Alcista', 'Entra dinero: acumulación.'),
-    ('-0.1 a 0.1',   'Neutral', 'Sin presión clara.'),
-    ('< -0.1',       'Bajista', 'Sale dinero: distribución.'),
-]
-GLOSARIO_NIVELES['RVOL'] = [
-    ('< 0.7x',      'Débil',  'Poco interés en el movimiento.'),
-    ('0.7x – 1.3x', 'Normal', 'Volumen habitual.'),
-    ('> 1.3x',      'Fuerte', 'Movimiento con convicción.'),
-]
+
 # ==============================================================
 #  NIVELES POR TÉRMINO — tabla de rangos/interpretación para el glosario
 # ==============================================================
@@ -1107,6 +1080,29 @@ GLOSARIO_NIVELES = {
         ('> 100%',    'Débil',     'Cae más que el mercado en meses bajistas.'),
     ],
 }
+
+GLOSARIO_NIVELES['Histograma MACD'] = [
+    ('> 0 y creciendo',   'Alcista', 'Momentum alcista acelerando.'),
+    ('> 0 y decreciendo', 'Neutral', 'Suba que pierde fuerza.'),
+    ('< 0 y creciendo',   'Neutral', 'Caída que pierde fuerza (posible giro).'),
+    ('< 0 y decreciendo', 'Bajista', 'Momentum bajista acelerando.'),
+]
+GLOSARIO_NIVELES['ADX'] = [
+    ('< 20',    'Débil',    'Mercado lateral, sin tendencia clara.'),
+    ('20 – 25', 'Moderado', 'Tendencia en formación.'),
+    ('25 – 40', 'Fuerte',   'Tendencia definida: ojo con operar en contra.'),
+    ('> 40',    'Muy alto', 'Tendencia muy extendida, puede estar cerca de agotarse.'),
+]
+GLOSARIO_NIVELES['CMF'] = [
+    ('> 0.1',        'Alcista', 'Entra dinero: acumulación.'),
+    ('-0.1 a 0.1',   'Neutral', 'Sin presión clara.'),
+    ('< -0.1',       'Bajista', 'Sale dinero: distribución.'),
+]
+GLOSARIO_NIVELES['RVOL'] = [
+    ('< 0.7x',      'Débil',  'Poco interés en el movimiento.'),
+    ('0.7x – 1.3x', 'Normal', 'Volumen habitual.'),
+    ('> 1.3x',      'Fuerte', 'Movimiento con convicción.'),
+]
 
 _COLOR_NIVEL_MAP = {
     'Muy bajo': '#f85149', 'Bajo': '#f0883e', 'Neutral': '#e3b341', 'Alto': '#7ee787', 'Muy alto': '#3fb950',
