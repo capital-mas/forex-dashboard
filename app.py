@@ -1801,7 +1801,139 @@ def señal_accion_corto(sa, sn, ss):
     elif sa<38  and sn>=55 and ss<40:  return '🟠 POSIBLE REBOTE'
     else:                              return '⏸️ ESPERAR'
 
+def calcular_macd_hist(close, rapida=12, lenta=26, senal=9):
+    s = pd.Series(close).dropna().astype(float)
+    if len(s) < lenta + senal: return None
+    macd = s.ewm(span=rapida, adjust=False).mean() - s.ewm(span=lenta, adjust=False).mean()
+    sig = macd.ewm(span=senal, adjust=False).mean()
+    return macd - sig
 
+
+def calcular_adx(df, p=14):
+    """ADX de Wilder + DI. Devuelve DataFrame (adx, pdi, mdi) o None."""
+    try:
+        h = df.get('High'); l = df.get('Low'); c = get_close_series(df)
+        if h is None or l is None or c is None: return None
+        up = h.diff(); dn = -l.diff()
+        plus_dm = pd.Series(np.where((up > dn) & (up > 0), up, 0.0), index=h.index)
+        minus_dm = pd.Series(np.where((dn > up) & (dn > 0), dn, 0.0), index=h.index)
+        tr = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
+        a = 1 / p
+        atr = tr.ewm(alpha=a, adjust=False).mean()
+        pdi = 100 * plus_dm.ewm(alpha=a, adjust=False).mean() / atr
+        mdi = 100 * minus_dm.ewm(alpha=a, adjust=False).mean() / atr
+        dx = 100 * (pdi - mdi).abs() / (pdi + mdi).replace(0, np.nan)
+        return pd.DataFrame({'adx': dx.ewm(alpha=a, adjust=False).mean(), 'pdi': pdi, 'mdi': mdi})
+    except Exception:
+        return None
+
+
+def calcular_cmf(df, p=20):
+    """Chaikin Money Flow: >0 entra dinero (acumulación), <0 sale (distribución). None si no hay volumen."""
+    try:
+        h = df.get('High'); l = df.get('Low'); c = get_close_series(df); v = df.get('Volume')
+        if h is None or l is None or c is None or v is None: return None
+        rango = (h - l).replace(0, np.nan)
+        mfv = ((c - l) - (h - c)) / rango * v
+        den = v.rolling(p).sum().replace(0, np.nan)
+        return mfv.rolling(p).sum() / den
+    except Exception:
+        return None
+
+
+def calcular_rvol(df, p=20):
+    """Volumen de hoy / promedio de las p ruedas previas. Ojo: durante la rueda el volumen de hoy es parcial."""
+    try:
+        v = df.get('Volume')
+        if v is None: return None
+        v = v.dropna()
+        if len(v) < p + 1: return None
+        prom = float(v.iloc[-p-1:-1].mean())
+        return float(v.iloc[-1] / prom) if prom > 0 else None
+    except Exception:
+        return None
+
+
+def estado_macd_hist(h, h_prev):
+    if h is None or h_prev is None: return 'N/D'
+    if h >= 0: return 'Alcista ↑ acelera' if h >= h_prev else 'Alcista ↓ pierde fuerza'
+    return 'Bajista ↑ pierde fuerza' if h > h_prev else 'Bajista ↓ acelera'
+
+
+def estado_adx(ind):
+    adx, pdi, mdi = ind.get('adx'), ind.get('pdi'), ind.get('mdi')
+    if adx is None: return 'N/D'
+    if adx < 20: return 'Lateral'
+    return ('Alcista' if pdi > mdi else 'Bajista') + (' fuerte' if adx >= 25 else ' débil')
+
+
+def estado_cmf(v):
+    if v is None: return 'N/D'
+    if v > 0.1:  return 'Entra dinero'
+    if v < -0.1: return 'Sale dinero'
+    return 'Neutral'
+
+
+def confirmacion_corto(accion, ind):
+    """Chequea la señal de los scores contra 3 cosas independientes del precio-percentil:
+    1) momentum (histograma MACD), 2) volumen (CMF), 3) que no haya tendencia fuerte EN CONTRA (ADX/DI).
+    Devuelve (etiqueta, detalle)."""
+    a = str(accion).upper()
+    if any(k in a for k in ('ACUMULAR', 'VIGILAR', 'TENDENCIA ALCISTA', 'REBOTE')): compra = True
+    elif any(k in a for k in ('EVITAR', 'MÁXIMOS')): compra = False
+    else: return '—', ''
+
+    ok, total, falla = 0, 0, []
+    h, hp = ind.get('macd_hist'), ind.get('macd_hist_prev')
+    if h is not None and hp is not None:
+        total += 1
+        if (h > hp) == compra: ok += 1
+        else: falla.append('momentum no acompaña')
+    cmf = ind.get('cmf')
+    if cmf is not None:
+        total += 1
+        if (cmf > 0) == compra: ok += 1
+        else: falla.append('el volumen no acompaña (CMF)')
+    adx, pdi, mdi = ind.get('adx'), ind.get('pdi'), ind.get('mdi')
+    if None not in (adx, pdi, mdi):
+        total += 1
+        en_contra = adx >= 25 and ((mdi > pdi) if compra else (pdi > mdi))
+        if not en_contra: ok += 1
+        else: falla.append('tendencia fuerte en contra (ADX)')
+
+    if total < 2: return '—', 'datos insuficientes'
+    faltan = total - ok
+    etiqueta = '✅ Confirma' if faltan == 0 else ('🟡 Parcial' if faltan == 1 else '⚠️ No confirma')
+    return etiqueta, ('Falla: ' + ', '.join(falla)) if falla else 'Momentum, volumen y tendencia acompañan'
+
+
+def calcular_confirmacion_corto(df_v, cl_v, accion):
+    out = dict(macd_hist=None, macd_hist_prev=None, macd_hist_pct=None,
+               adx=None, pdi=None, mdi=None, cmf=None, rvol=None)
+    try:
+        hist_s = calcular_macd_hist(cl_v)
+        if hist_s is not None:
+            h = hist_s.dropna()
+            if len(h) >= 2:
+                out['macd_hist'], out['macd_hist_prev'] = float(h.iloc[-1]), float(h.iloc[-2])
+                px = float(pd.Series(cl_v).dropna().iloc[-1])
+                out['macd_hist_pct'] = out['macd_hist'] / px * 100 if px else None  # comparable entre activos
+        adx_df = calcular_adx(df_v)
+        if adx_df is not None:
+            a = adx_df.dropna()
+            if len(a):
+                r = a.iloc[-1]
+                out.update(adx=float(r['adx']), pdi=float(r['pdi']), mdi=float(r['mdi']))
+        cmf_s = calcular_cmf(df_v)
+        if cmf_s is not None:
+            c = cmf_s.dropna()
+            if len(c): out['cmf'] = float(c.iloc[-1])
+        out['rvol'] = calcular_rvol(df_v)
+    except Exception:
+        pass
+    out['confirma'], out['confirma_motivo'] = confirmacion_corto(accion, out)
+    return out
+    
 def calcular_regimen_hmm(cl, n_states=3, min_obs=120):
     """Ajusta un Hidden Markov Model Gaussiano sobre los retornos logarítmicos
     y determina el régimen actual (bajista/neutral/alcista) del activo, junto
@@ -2683,6 +2815,34 @@ def fig_rsi_macd(cl):
     fig.update_annotations(font=dict(color=C_TEXT, size=12))
     return fig
 
+def fig_confirmacion_corto(ticker, df_ohlc):
+    cl = get_close_series(df_ohlc)
+    hist = calcular_macd_hist(cl)
+    adx_df = calcular_adx(df_ohlc)
+    cmf = calcular_cmf(df_ohlc)
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+                         subplot_titles=('Histograma MACD (12,26,9)', 'ADX (14) · +DI / −DI', 'CMF (20) — flujo de dinero'))
+    if hist is not None:
+        h = hist.dropna(); prev = h.shift(1); colores = []
+        for v, p in zip(h.values, prev.values):
+            if v >= 0: colores.append(C_GREEN if (np.isnan(p) or v >= p) else C_LGRE)   # verde fuerte = acelera
+            else:      colores.append(C_LRED if (not np.isnan(p) and v > p) else C_RED)  # rojo fuerte = acelera
+        fig.add_trace(go.Bar(x=h.index, y=h, marker_color=colores, name='Hist'), row=1, col=1)
+        fig.add_hline(y=0, line_color=C_MUTED, opacity=0.4, row=1, col=1)
+    if adx_df is not None:
+        fig.add_trace(go.Scatter(x=adx_df.index, y=adx_df['adx'], line=dict(color=C_TEXT, width=2), name='ADX'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=adx_df.index, y=adx_df['pdi'], line=dict(color=C_GREEN, width=1.2), name='+DI'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=adx_df.index, y=adx_df['mdi'], line=dict(color=C_RED, width=1.2), name='−DI'), row=2, col=1)
+        fig.add_hline(y=25, line_dash='dash', line_color=C_YELL, opacity=0.5, row=2, col=1)
+    if cmf is not None and cmf.dropna().size:
+        c = cmf.dropna()
+        fig.add_trace(go.Bar(x=c.index, y=c, marker_color=[C_GREEN if v >= 0 else C_RED for v in c], name='CMF'), row=3, col=1)
+        fig.add_hline(y=0, line_color=C_MUTED, opacity=0.4, row=3, col=1)
+    fig.update_yaxes(gridcolor=C_GRID); fig.update_xaxes(gridcolor=C_GRID)
+    fig.update_layout(**PLOTLY_LAYOUT_BASE, height=660, hovermode='x unified', showlegend=False,
+                       margin=dict(l=10, r=10, t=45, b=10))
+    fig.update_annotations(font=dict(color=C_TEXT, size=12))
+    return fig
 
 def fig_drawdown(ticker, cl):
     ret = cl.pct_change().dropna()
