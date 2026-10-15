@@ -3598,9 +3598,13 @@ def tabla_corto(filas_dict, key_suffix=''):
                     .format({'MACD Hist %': '{:+.3f}', 'ADX': '{:.0f}', 'CMF': '{:+.2f}'}, na_rep='—'))
     
     st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
-    st.caption(f'{len(df_f)} activos mostrados de {len(df)} totales · ADX > 25 = tendencia fuerte · ')
-               'CMF > 0 = entra dinero · RVOL del día es parcial mientras el mercado está abierto · '
-               'Forex e índices no traen volumen (CMF/RVOL "—")')
+    
+    # Texto unificado correctamente para evitar el error de indentación
+    st.caption(
+        f"{len(df_f)} activos mostrados de {len(df)} totales · ADX > 25 = tendencia fuerte · "
+        "CMF > 0 = entra dinero · RVOL del día es parcial mientras el mercado está abierto · "
+        "Forex e índices no traen volumen (CMF/RVOL '—')"
+    )
 
     pares = [(n, filas_dict[n].get('tk', n)) for n in df_f['Nombre'].tolist()]
     chips_navegacion(pares, f'tc_{key_suffix}')
