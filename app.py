@@ -5083,6 +5083,7 @@ def _renderizar_buscador(ticker):
                 ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
                 precio  = float(cl_m.iloc[-1])
                 señal   = señal_accion_corto(sa, sn, ss)
+                conf = calcular_confirmacion_corto(df_v, cl_v, señal)
                 lbl_sa, col_sa, _ = clasificar_score(sa)
 
                 kpi_cards_4([
@@ -5098,10 +5099,29 @@ def _renderizar_buscador(ticker):
                 with c3: st.metric('Ret 10d', f'{ret_10d:+.2f}%')
                 with c4: st.metric('Precio', fmt_precio(precio))
                 with c5: st.metric('Industria', industria[:15])
+                c6, c7, c8, c9 = st.columns(4)
+                hp = conf.get('macd_hist_pct')
+                with c6: st.metric('Hist. MACD', f'{hp:+.3f}%' if hp is not None else 'N/D',
+                                   estado_macd_hist(conf.get('macd_hist'), conf.get('macd_hist_prev')),
+                                   delta_color='off', help=G('Histograma MACD'))
+                with c7: st.metric('ADX (14)', f"{conf['adx']:.0f}" if conf.get('adx') is not None else 'N/D',
+                                   estado_adx(conf), delta_color='off', help=G('ADX'))
+                with c8: st.metric('CMF (20)', f"{conf['cmf']:+.2f}" if conf.get('cmf') is not None else 'N/D',
+                                   estado_cmf(conf.get('cmf')), delta_color='off', help=G('CMF'))
+                with c9: st.metric('Vol. relativo', f"{conf['rvol']:.1f}x" if conf.get('rvol') is not None else 'N/D',
+                                   help=G('RVOL'))
+                st.markdown(f"""
+                <div class="interp-card">
+                  <div class="interp-header">🧭 Confirmación de la señal: {conf['confirma']}</div>
+                  {señal} → {conf['confirma_motivo']}.
+                </div>
+                """, unsafe_allow_html=True)
 
                 st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{señal}</span></div>', unsafe_allow_html=True)
 
                 precios = cl_m.values
+                st.plotly_chart(fig_confirmacion_corto(ticker, df_v), use_container_width=True,
+                                config=PLOTLY_CONFIG, key=f'conf_corto_{ticker}')
                 if len(precios) > 2:
                     st.plotly_chart(fig_mini_precio(ticker, precios), use_container_width=True, config=PLOTLY_CONFIG, key=f'mini_{ticker}')
             else:
