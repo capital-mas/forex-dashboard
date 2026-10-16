@@ -9502,6 +9502,14 @@ def _render_mi_cuenta(col):
 
                 if ES_ADMIN:
                     st.markdown('<hr style="margin:6px 0;border-color:#21262d">', unsafe_allow_html=True)
+                    if st.button('📆 Calendario Económico', use_container_width=True, key='menu_admin_calendario'):
+                        st.session_state['nav_horizonte'] = 'calendario'
+                        st.session_state['nav_modulo'] = 'calendario'
+                        st.rerun()
+                    if st.button('📰 Noticias de Mercado', use_container_width=True, key='menu_admin_noticias'):
+                        st.session_state['nav_horizonte'] = 'noticias'
+                        st.session_state['nav_modulo'] = 'noticias'
+                        st.rerun()
                     label_panel_pagos = (
                         f'🛠️ Panel de Pagos 🔴{n_pagos_pend}' if n_pagos_pend > 0 else '🛠️ Panel de Pagos'
                     )
@@ -9811,6 +9819,8 @@ with st.container(key='nav_mobile_wrap'):
     if ES_ADMIN:
         _label_admin_mobile = f'🛠️ Panel de Pagos 🔴{n_pagos_pend}' if n_pagos_pend > 0 else '🛠️ Panel de Pagos'
         _OPCIONES_HORIZONTE_MOBILE[_label_admin_mobile] = 'admin_pagos'
+        _OPCIONES_HORIZONTE_MOBILE['📆 Calendario'] = 'calendario'
+        _OPCIONES_HORIZONTE_MOBILE['📰 Noticias'] = 'noticias'
     _OPCIONES_MODULO_MOBILE = {
         'corto': {'🎯 Resumen Top-Down': 'resumen', '💱 Forex': 'forex', '📦 ETFs y Bonos': 'etfs', '🌍 Países': 'paises',
                   '📊 Sectores': 'sectores', '🧩 Sub-sectores': 'subsectores',
@@ -10161,10 +10171,16 @@ elif MODULO == 'senales':
                            tiene_acceso_pro=TIENE_SENALES_PRO)
 
 elif MODULO == 'calendario':
-       render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
+    if ES_ADMIN:
+        render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
+    else:
+        st.warning('No tenés permisos de administrador.')
 
 elif MODULO == 'noticias':
-    render_noticias_mercado(supabase, USER_ID, st.session_state["usuario"].email)
+    if ES_ADMIN:
+        render_noticias_mercado(supabase, USER_ID, st.session_state["usuario"].email)
+    else:
+        st.warning('No tenés permisos de administrador.')
 
 elif MODULO == 'finanzas':
     render_finanzas_personales(supabase, USER_ID)
