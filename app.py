@@ -8871,6 +8871,13 @@ def modulo_inicio():
       </div>
     </div>
     """, unsafe_allow_html=True)
+    render_inicio_dashboard(
+        descargar_bulk=descargar_bulk,
+        get_close_from_bulk=get_close_from_bulk,
+        # eventos=...,   # lo conectamos abajo
+        # noticias=...,
+    )
+    st.markdown('---')
 
     # ── Tabs principales ─────────────────────────────────────────────────
     tab_indices, tab_etfs, tab_sectores, tab_mercados, tab_forex, tab_acciones = st.tabs([
@@ -9062,17 +9069,6 @@ def modulo_inicio():
 
                 # Chips para ir al buscador
                 chips_navegacion(df_acc_f['Ticker'].tolist(), 'inicio_acc')
-
-    # ── Calendario económico (debajo de las cotizaciones) ────────────────
-    st.markdown('---')
-    st.markdown('<div class="sec-title">📆 Calendario Económico</div>', unsafe_allow_html=True)
-    render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
-
-    # ── Noticias (debajo del calendario) ─────────────────────────────────
-    st.markdown('---')
-    st.markdown('<div class="sec-title">📰 Noticias</div>', unsafe_allow_html=True)
-    render_noticias_mercado(supabase, USER_ID, st.session_state["usuario"].email)
-
                 
 
 # ==============================================================
