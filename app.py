@@ -1897,41 +1897,91 @@ def estado_cmf(v):
     if v < -0.1: return 'Sale dinero'
     return 'Neutral'
 
+_AJUSTE_SENAL = {
+    'ACUMULAR GRADUAL': 8, 'ACUMULAR': 12, 'VIGILAR': 4, 'TENDENCIA ALCISTA': 10,
+    'MOVIMIENTO INMINENTE': 0, 'REBOTE': 4, 'MÁXIMOS': -12, 'EVITAR': -12,
+}
 
-def confirmacion_corto(accion, ind):
-    """Chequea la señal de los scores contra 3 cosas independientes del precio-percentil:
-    1) momentum (histograma MACD), 2) volumen (CMF), 3) que no haya tendencia fuerte EN CONTRA (ADX/DI).
-    Devuelve (etiqueta, detalle)."""
+
+def decision_corto(accion, sa, sn, ss, rsi, ind):
+    """Decisión final COMPRAR / MANTENER / VENDER combinando scores + técnico.
+    Devuelve (decision, detalle, puntos_totales)."""
     a = str(accion).upper()
-    if any(k in a for k in ('ACUMULAR', 'VIGILAR', 'TENDENCIA ALCISTA', 'REBOTE')): compra = True
-    elif any(k in a for k in ('EVITAR', 'MÁXIMOS')): compra = False
-    else: return '—', ''
+    ajuste = 0
+    for k in sorted(_AJUSTE_SENAL, key=len, reverse=True):   # 'ACUMULAR GRADUAL' antes que 'ACUMULAR'
+        if k in a:
+            ajuste = _AJUSTE_SENAL[k]
+            break
 
-    ok, total, falla = 0, 0, []
+    sa = 50 if sa is None else sa
+    sn = 50 if sn is None else sn
+    ss = 50 if ss is None else ss
+
+    # ── 1) Parte SCORES ──
+    pts_sc = (sa - 50) * 0.40 + (sn - 50) * 0.15 + ajuste
+    if ss > 85:
+        pts_sc -= 4          # euforia
+    pts_sc = max(-40, min(40, pts_sc))
+
+    # ── 2) Parte TÉCNICA ──
+    pts_t = 0.0
+    pos, neg = [], []
+
     h, hp = ind.get('macd_hist'), ind.get('macd_hist_prev')
     if h is not None and hp is not None:
-        total += 1
-        if (h > hp) == compra: ok += 1
-        else: falla.append('momentum no acompaña')
-    cmf = ind.get('cmf')
-    if cmf is not None:
-        total += 1
-        if (cmf > 0) == compra: ok += 1
-        else: falla.append('el volumen no acompaña (CMF)')
+        if h >= 0 and h >= hp:   pts_t += 10; pos.append('MACD alcista acelerando')
+        elif h >= 0:             pts_t += 4;  pos.append('MACD alcista pero pierde fuerza')
+        elif h > hp:             pts_t -= 2;  neg.append('MACD bajista aunque mejorando')
+        else:                    pts_t -= 10; neg.append('MACD bajista acelerando')
+
     adx, pdi, mdi = ind.get('adx'), ind.get('pdi'), ind.get('mdi')
     if None not in (adx, pdi, mdi):
-        total += 1
-        en_contra = adx >= 25 and ((mdi > pdi) if compra else (pdi > mdi))
-        if not en_contra: ok += 1
-        else: falla.append('tendencia fuerte en contra (ADX)')
+        if adx >= 25:
+            if pdi > mdi: pts_t += 10; pos.append('tendencia alcista fuerte (ADX)')
+            else:         pts_t -= 10; neg.append('tendencia bajista fuerte (ADX)')
+        elif adx >= 20:
+            if pdi > mdi: pts_t += 4;  pos.append('tendencia alcista en formación')
+            else:         pts_t -= 4;  neg.append('tendencia bajista en formación')
 
-    if total < 2: return '—', 'datos insuficientes'
-    faltan = total - ok
-    etiqueta = '✅ Confirma' if faltan == 0 else ('🟡 Parcial' if faltan == 1 else '⚠️ No confirma')
-    return etiqueta, ('Falla: ' + ', '.join(falla)) if falla else 'Momentum, volumen y tendencia acompañan'
+    cmf = ind.get('cmf')
+    if cmf is not None:
+        if   cmf > 0.1:  pts_t += 10; pos.append('entra dinero (CMF)')
+        elif cmf > 0:    pts_t += 4;  pos.append('CMF levemente positivo')
+        elif cmf < -0.1: pts_t -= 10; neg.append('sale dinero (CMF)')
+        else:            pts_t -= 4;  neg.append('CMF levemente negativo')
+
+    if rsi is not None:
+        if rsi < 30:   pts_t += 6; pos.append(f'RSI {rsi:.0f} sobreventa')
+        elif rsi > 70: pts_t -= 6; neg.append(f'RSI {rsi:.0f} sobrecompra')
+
+    rvol = ind.get('rvol')
+    if rvol is not None and rvol > 1.3 and h is not None:
+        if h > 0: pts_t += 3; pos.append('volumen fuerte acompaña')
+        else:     pts_t -= 3; neg.append('volumen fuerte acompaña la caída')
+
+    pts_t = max(-40, min(40, pts_t))
+    total = pts_sc + pts_t
+
+    # ── 3) Decisión ──
+    conflicto = (pts_sc * pts_t < 0) and abs(pts_sc) >= 12 and abs(pts_t) >= 12
+    if conflicto:
+        decision = '🟡 MANTENER'
+        lado_sc = 'compra' if pts_sc > 0 else 'venta'
+        lado_t = 'compra' if pts_t > 0 else 'venta'
+        extra = ', '.join((neg if pts_sc > 0 else pos)[:2])
+        detalle = (f'Scores sesgo {lado_sc} ({pts_sc:+.0f}) pero técnico sesgo {lado_t} ({pts_t:+.0f})'
+                   + (f': {extra}' if extra else '') + ' → esperar confirmación')
+    else:
+        if   total >= 18:  decision = '🟢 COMPRAR'
+        elif total <= -18: decision = '🔴 VENDER'
+        else:              decision = '🟡 MANTENER'
+        razones = (pos if total >= 0 else neg)[:3]
+        detalle = (f'Scores {pts_sc:+.0f} · Técnico {pts_t:+.0f} = {total:+.0f}'
+                   + (f' · ' + ', '.join(razones) if razones else ''))
+    return decision, detalle, round(total, 1)
 
 
-def calcular_confirmacion_corto(df_v, cl_v, accion):
+def calcular_confirmacion_corto(df_v, cl_v, accion, sa=None, sn=None, ss=None, rsi=None):
     out = dict(macd_hist=None, macd_hist_prev=None, macd_hist_pct=None,
                adx=None, pdi=None, mdi=None, cmf=None, rvol=None)
     try:
@@ -1941,7 +1991,7 @@ def calcular_confirmacion_corto(df_v, cl_v, accion):
             if len(h) >= 2:
                 out['macd_hist'], out['macd_hist_prev'] = float(h.iloc[-1]), float(h.iloc[-2])
                 px = float(pd.Series(cl_v).dropna().iloc[-1])
-                out['macd_hist_pct'] = out['macd_hist'] / px * 100 if px else None  # comparable entre activos
+                out['macd_hist_pct'] = out['macd_hist'] / px * 100 if px else None
         adx_df = calcular_adx(df_v)
         if adx_df is not None:
             a = adx_df.dropna()
@@ -1955,7 +2005,8 @@ def calcular_confirmacion_corto(df_v, cl_v, accion):
         out['rvol'] = calcular_rvol(df_v)
     except Exception:
         pass
-    out['confirma'], out['confirma_motivo'] = confirmacion_corto(accion, out)
+    # Mantengo las claves 'confirma' / 'confirma_motivo' para no romper nada que ya las lea
+    out['confirma'], out['confirma_motivo'], out['decision_puntos'] = decision_corto(accion, sa, sn, ss, rsi, out)
     return out
     
 def calcular_regimen_hmm(cl, n_states=3, min_obs=120):
@@ -2182,7 +2233,7 @@ def _fetch_corto_ticker(tk, extra=None):
         out = dict(sa=sa, sn=sn, ss=ss, sf=sa*0.45+sn*0.35+ss*0.20, rsi=rsi,
                    ret_5d=ret_5d, ret_10d=ret_10d, precio=precio,
                    accion=señal_accion_corto(sa, sn, ss), hmm=hmm_r)
-        out.update(calcular_confirmacion_corto(df_v, cl_v, out['accion']))   # ← NUEVA
+        out.update(calcular_confirmacion_corto(df_v, cl_v, out['accion'], sa, sn, ss, rsi))
         if extra:
             out.update(extra)
         return out
@@ -5085,7 +5136,7 @@ def _renderizar_buscador(ticker):
                 ret_10d = float(cl_m.pct_change(10).iloc[-1]*100) if len(cl_m)>=11 else 0
                 precio  = float(cl_m.iloc[-1])
                 señal   = señal_accion_corto(sa, sn, ss)
-                conf = calcular_confirmacion_corto(df_v, cl_v, señal)
+                conf = calcular_confirmacion_corto(df_v, cl_v, señal, sa, sn, ss, rsi)
                 lbl_sa, col_sa, _ = clasificar_score(sa)
 
                 kpi_cards_4([
@@ -5114,7 +5165,7 @@ def _renderizar_buscador(ticker):
                                    help=G('RVOL'))
                 st.markdown(f"""
                 <div class="interp-card">
-                  <div class="interp-header">🧭 Confirmación de la señal: {conf['confirma']}</div>
+                  <div class="interp-header">🧭 Decisión: {conf['confirma']}</div>
                   {señal} → {conf['confirma_motivo']}.
                 </div>
                 """, unsafe_allow_html=True)
@@ -10662,7 +10713,7 @@ elif HORIZONTE == 'corto':
                         'CMF': round(d['cmf'],2) if d.get('cmf') is not None else np.nan,
                         'Ret 5d %': round(d.get('ret_5d',0),2), 'Ret 10d %': round(d.get('ret_10d',0),2),
                         'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion'],
-                        'Confirma': d.get('confirma', '—')})
+                        'Decisión': d.get('confirma', '—'), 'Detalle': d.get('confirma_motivo', '')})
             df_acc = pd.DataFrame(filas).sort_values('Acum', ascending=False)
 
 
