@@ -3598,6 +3598,14 @@ def _color_regimen_hmm(val):
             'NEUTRAL':'color:#e3b341;font-weight:700',
             'BAJISTA':'color:#f85149;font-weight:700'}.get(val, 'color:#6b7d9a')
 
+def _color_decision(val):
+    v = str(val)
+    if 'COMPRAR' in v: return 'color:#3fb950;font-weight:700'
+    if 'VENDER' in v:  return 'color:#f85149;font-weight:700'
+    if 'MANTENER' in v: return 'color:#e3b341;font-weight:700'
+    return ''
+
+
 def tabla_corto(filas_dict, key_suffix=''):
     def _n(d, k, dec):
         return round(d[k], dec) if d.get(k) is not None else np.nan
@@ -3610,7 +3618,7 @@ def tabla_corto(filas_dict, key_suffix=''):
             'CMF': _n(d, 'cmf', 2), 'RVOL': _n(d, 'rvol', 1),
             'Ret 5d %': round(d.get('ret_5d',0),2), 'Ret 10d %': round(d.get('ret_10d',0),2),
             'Precio': fmt_precio(d.get('precio',0)), 'Señal': d['accion'],
-            'Confirma': d.get('confirma', '—'), 'Detalle': d.get('confirma_motivo', '')})
+            'Decisión': d.get('confirma', '—'), 'Detalle': d.get('confirma_motivo', '')})
     df = pd.DataFrame(filas)
 
     fc1, fc2, _ = st.columns([2,2,2])
@@ -3618,8 +3626,8 @@ def tabla_corto(filas_dict, key_suffix=''):
         señales_u = ['Todas'] + sorted(df['Señal'].unique().tolist())
         f_señal = st.selectbox('Señal', señales_u, key=f'tc_señal_{key_suffix}')
     with fc2:
-        f_conf = st.selectbox('Confirmación', ['Todas', '✅ Confirma', '🟡 Parcial', '⚠️ No confirma'],
-                              key=f'tc_conf_{key_suffix}')
+        f_dec = st.selectbox('Decisión', ['Todas', '🟢 COMPRAR', '🟡 MANTENER', '🔴 VENDER'],
+                             key=f'tc_dec_{key_suffix}')
 
     fr1, fr2, fr3 = st.columns(3)
     with fr1:
@@ -3639,22 +3647,22 @@ def tabla_corto(filas_dict, key_suffix=''):
 
     df_f = df.copy()
     if f_señal != 'Todas': df_f = df_f[df_f['Señal']==f_señal]
-    if f_conf  != 'Todas': df_f = df_f[df_f['Confirma']==f_conf]
+    if f_dec   != 'Todas': df_f = df_f[df_f['Decisión']==f_dec]
     df_f = df_f[df_f['Acum'].between(*f_acum) & df_f['Antic'].between(*f_antic)
                 & df_f['Sent'].between(*f_sent) & df_f['RSI'].between(*f_rsi)
                 & df_f['Ret 5d %'].between(*f_ret5) & df_f['Ret 10d %'].between(*f_ret10)]
 
-    # Usamos df_f en lugar de df_show_a
+    _map = 'map' if hasattr(df_f.style, 'map') else 'applymap'
     styled = (_apply_score_style(df_f, ['Acum','Antic','Sent'], ['Ret 5d %','Ret 10d %','MACD Hist %','CMF'])
-                    .format({'MACD Hist %': '{:+.3f}', 'ADX': '{:.0f}', 'CMF': '{:+.2f}'}, na_rep='—'))
-    
+                    .format({'MACD Hist %': '{:+.3f}', 'ADX': '{:.0f}', 'CMF': '{:+.2f}'}, na_rep='—')
+                    .pipe(lambda s: getattr(s, _map)(_color_decision, subset=['Decisión'])))
+
     st.dataframe(styled, use_container_width=True, height=min(600, max(150, len(df_f)*35+45)))
-    
-    # Texto unificado correctamente para evitar el error de indentación
+
     st.caption(
-        f"{len(df_f)} activos mostrados de {len(df)} totales · ADX > 25 = tendencia fuerte · "
-        "CMF > 0 = entra dinero · RVOL del día es parcial mientras el mercado está abierto · "
-        "Forex e índices no traen volumen (CMF/RVOL '—')"
+        f"{len(df_f)} activos mostrados de {len(df)} totales · Decisión = scores (Acum/Antic/Sent/señal) + "
+        "técnico (MACD, ADX, CMF, RSI, RVOL) · Si scores y técnico se contradicen → MANTENER · "
+        "Forex e índices no traen volumen (CMF/RVOL '—'), la decisión se calcula con lo que haya"
     )
 
     pares = [(n, filas_dict[n].get('tk', n)) for n in df_f['Nombre'].tolist()]
