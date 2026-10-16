@@ -1,26 +1,17 @@
 # ==============================================================
 #  MICRO APP — INICIO DASHBOARD
-#  Franja de cotizaciones + Calendario Económico + Noticias
-#  + Cotizaciones por sección (Índices, ETFs, Sectores, Mercados,
-#    Forex, Acciones) con TODO el universo de app.py.
+#  Cotizaciones destacadas (agrupadas, con resumen) + Calendario
+#  Económico + Noticias + Cotizaciones por categoría (desplegable).
 #
-#  Contrato:
+#  Contrato (sin cambios):
 #      render_inicio_dashboard(descargar_bulk, get_close_from_bulk,
 #                              eventos=None, noticias=None, watchlist=None,
 #                              eventos_tag="Hoy", universo=None)
 #      limpiar_cache_inicio()
 #
-#  - No importa nada de app.py: todo entra por parámetro.
-#  - eventos : [{pais|hora, evento, prev, consenso}]
-#  - noticias: [{ticker, titular, sentimiento}]  (Alcista|Bajista|Neutro)
-#  - watchlist: [{label, ticker}]
-#  - universo : dict con las claves (todas opcionales):
-#        'paises'   -> PAISES               {nombre: (tk, region)}
-#        'etfs'     -> ETFS                 {nombre: (tk, cat, color)}
-#        'sectores' -> SECTORES_TOTAL       {nombre: (tk, cat, color)}
-#        'mercados' -> MERCADOS_REALES      {nombre: (tk, cat, color)}
-#        'forex'    -> FOREX                {nombre: (tk, grupo)}
-#        'acciones' -> ACCIONES_POR_INDUSTRIA {industria: [tickers]}
+#  - watchlist: [{label, ticker, grupo(opcional)}]
+#  - universo : dict con claves opcionales:
+#        'paises','etfs','sectores','mercados','forex','acciones'
 # ==============================================================
 
 import html
@@ -28,22 +19,27 @@ import streamlit as st
 
 # ── Watchlist de la franja superior (editable) ──
 WATCHLIST_DEFAULT = [
-    {"label": "S&P 500 (SPY)",  "ticker": "SPY"},
-    {"label": "Nasdaq (QQQ)",   "ticker": "QQQ"},
-    {"label": "Dow (DIA)",      "ticker": "DIA"},
-    {"label": "Russell (IWM)",  "ticker": "IWM"},
-    {"label": "NVIDIA",         "ticker": "NVDA"},
-    {"label": "Apple",          "ticker": "AAPL"},
-    {"label": "Microsoft",      "ticker": "MSFT"},
-    {"label": "Tesla",          "ticker": "TSLA"},
-    {"label": "Bitcoin",        "ticker": "BTC-USD"},
-    {"label": "Ethereum",       "ticker": "ETH-USD"},
-    {"label": "Oro",            "ticker": "GC=F"},
-    {"label": "Petróleo WTI",   "ticker": "CL=F"},
-    {"label": "Dólar (DXY)",    "ticker": "DX-Y.NYB"},
-    {"label": "EUR/USD",        "ticker": "EURUSD=X"},
-    {"label": "Tasa 10 años",   "ticker": "^TNX"},
+    {"label": "S&P 500 (SPY)",  "ticker": "SPY",      "grupo": "Índices"},
+    {"label": "Nasdaq (QQQ)",   "ticker": "QQQ",      "grupo": "Índices"},
+    {"label": "Dow (DIA)",      "ticker": "DIA",      "grupo": "Índices"},
+    {"label": "Russell (IWM)",  "ticker": "IWM",      "grupo": "Índices"},
+    {"label": "NVIDIA",         "ticker": "NVDA",     "grupo": "Acciones"},
+    {"label": "Apple",          "ticker": "AAPL",     "grupo": "Acciones"},
+    {"label": "Microsoft",      "ticker": "MSFT",     "grupo": "Acciones"},
+    {"label": "Tesla",          "ticker": "TSLA",     "grupo": "Acciones"},
+    {"label": "Bitcoin",        "ticker": "BTC-USD",  "grupo": "Cripto"},
+    {"label": "Ethereum",       "ticker": "ETH-USD",  "grupo": "Cripto"},
+    {"label": "Oro",            "ticker": "GC=F",     "grupo": "Commodities"},
+    {"label": "Petróleo WTI",   "ticker": "CL=F",     "grupo": "Commodities"},
+    {"label": "Dólar (DXY)",    "ticker": "DX-Y.NYB", "grupo": "Divisas y Tasas"},
+    {"label": "EUR/USD",        "ticker": "EURUSD=X", "grupo": "Divisas y Tasas"},
+    {"label": "Tasa 10 años",   "ticker": "^TNX",     "grupo": "Divisas y Tasas"},
 ]
+
+COLORES_GRUPO_WL = {
+    "Índices": "#3a7bd5", "Acciones": "#6CC24A", "Cripto": "#f0883e",
+    "Commodities": "#e3b341", "Divisas y Tasas": "#bc8cff", "Destacados": "#6CC24A",
+}
 
 EVENTOS_DEMO = [
     {"hora": "14:30", "evento": "IPC EE.UU. (MoM)", "prev": "0.3%",  "consenso": "0.2%"},
@@ -193,7 +189,7 @@ def _fmt_delta(d):
 
 
 # ==============================================================
-#  RENDER — cards de cotización (mismo formato que la pestaña Índices)
+#  RENDER — cards de cotización
 # ==============================================================
 def _card(nombre, tk, d):
     tk_h, nom_h = html.escape(tk), html.escape(str(nombre))
@@ -331,7 +327,7 @@ def _html_noticias(noticias):
 
 
 # ==============================================================
-#  RENDER — sección de cotizaciones por pestañas (todo el universo)
+#  AGRUPADORES por categoría
 # ==============================================================
 def _grupos_paises(paises):
     reg = {}
@@ -363,74 +359,93 @@ def _grupos_forex(forex):
     return [(g, COLORES_GRUPO_FX.get(g, "#6CC24A"), its) for g, its in gr.items()]
 
 
+def _grupos_watchlist(wl):
+    """Agrupa la watchlist por su campo 'grupo' (conserva el orden)."""
+    gr = {}
+    for w in wl:
+        gr.setdefault(w.get("grupo") or "Destacados", []).append((w["label"], w["ticker"]))
+    return [(g, COLORES_GRUPO_WL.get(g, "#6CC24A"), its) for g, its in gr.items()]
+
+
 def _tickers_de(grupos):
     return sorted({tk for _t, _c, items in grupos for _n, tk in items})
 
 
+# ==============================================================
+#  RENDER — cotizaciones por categoría (DESPLEGABLE)
+# ==============================================================
 def _render_cotizaciones(universo, descargar_bulk, get_close):
     st.markdown('<div class="sec-title">📊 Cotizaciones del día</div>', unsafe_allow_html=True)
 
-    secciones = []   # (label_tab, grupos, sufijo)
+    secciones = {}   # label -> (grupos, sufijo)
     if universo.get("paises"):
-        secciones.append(("🌍 Índices", _grupos_paises(universo["paises"]), "índices"))
+        secciones["🌍 Índices"] = (_grupos_paises(universo["paises"]), "índices")
     if universo.get("etfs"):
-        secciones.append(("📦 ETFs y Bonos", _grupos_con_categoria(universo["etfs"]), "ETFs"))
+        secciones["📦 ETFs y Bonos"] = (_grupos_con_categoria(universo["etfs"]), "ETFs")
     if universo.get("sectores"):
-        secciones.append(("📊 Sectores", _grupos_sectores(universo["sectores"]), "sectores"))
+        secciones["📊 Sectores"] = (_grupos_sectores(universo["sectores"]), "sectores")
     if universo.get("mercados"):
-        secciones.append(("🛢️ Mercados", _grupos_con_categoria(universo["mercados"], "#f0883e"), "mercados"))
+        secciones["🛢️ Mercados"] = (_grupos_con_categoria(universo["mercados"], "#f0883e"), "mercados")
     if universo.get("forex"):
-        secciones.append(("💱 Forex", _grupos_forex(universo["forex"]), "pares"))
+        secciones["💱 Forex"] = (_grupos_forex(universo["forex"]), "pares")
 
-    tiene_acc = bool(universo.get("acciones"))
-    labels = [s[0] for s in secciones] + (["📈 Acciones"] if tiene_acc else [])
-    if not labels:
+    acciones = universo.get("acciones") or {}
+    LABEL_ACC = "📈 Acciones"
+    opciones = list(secciones.keys()) + ([LABEL_ACC] if acciones else [])
+    if not opciones:
         return
-    tabs = st.tabs(labels)
 
-    # Un solo bulk para todo lo que NO es acciones (se cachea 5 min)
-    todos = sorted({tk for _l, grupos, _s in secciones for tk in _tickers_de(grupos)})
-    with st.spinner("Cargando cotizaciones..."):
-        datos = _precios(tuple(todos), descargar_bulk, get_close) if todos else {}
+    # ── Desplegables: categoría (+ industria al lado si es Acciones) ──
+    es_acc_sel = st.session_state.get("ci_cat_sel") == LABEL_ACC
+    if es_acc_sel:
+        c1, c2, _ = st.columns([1.3, 1.6, 2.1])
+    else:
+        c1, _ = st.columns([1.3, 3.7])
+        c2 = None
 
-    for tab, (label, grupos, sufijo) in zip(tabs, secciones):
-        with tab:
-            tks = set(_tickers_de(grupos))
-            _kpi_resumen({tk: d for tk, d in datos.items() if tk in tks}, sufijo)
-            _render_grupos(grupos, datos)
+    with c1:
+        categoria = st.selectbox("Categoría", opciones, key="ci_cat_sel")
 
-    if tiene_acc:
-        with tabs[-1]:
-            acciones = universo["acciones"]
-            industrias = list(acciones.keys())
-            sel = st.multiselect("Industrias", industrias, default=industrias[:3], key="ci_ind_sel",
-                                 help="Elegí una o más industrias para ver sus cotizaciones del día.")
-            if not sel:
-                st.info("Seleccioná al menos una industria para ver cotizaciones.")
-                return
-            tks_acc = sorted({tk for ind in sel for tk in acciones.get(ind, [])})
-            with st.spinner("Cargando precios de acciones..."):
-                datos_acc = _precios(tuple(tks_acc), descargar_bulk, get_close)
-            _kpi_resumen(datos_acc, "acciones seleccionadas")
+    # ── Categorías normales ──
+    if categoria != LABEL_ACC:
+        grupos, sufijo = secciones[categoria]
+        with st.spinner("Cargando cotizaciones..."):
+            datos = _precios(tuple(_tickers_de(grupos)), descargar_bulk, get_close)
+        tks = set(_tickers_de(grupos))
+        _kpi_resumen({tk: d for tk, d in datos.items() if tk in tks}, sufijo)
+        _render_grupos(grupos, datos)
+        return
 
-            direccion = st.radio("Dirección", ["Todas", "▲ Subiendo", "▼ Bajando"],
-                                 horizontal=True, key="ci_acc_dir")
-            for ind in sel:
-                items = []
-                for tk in acciones.get(ind, []):
-                    d = datos_acc.get(tk)
-                    if not d:
-                        continue
-                    if direccion == "▲ Subiendo" and d["pct"] <= 0:
-                        continue
-                    if direccion == "▼ Bajando" and d["pct"] >= 0:
-                        continue
-                    items.append((tk, tk, d["pct"]))
-                items.sort(key=lambda x: x[2], reverse=True)
-                if not items:
-                    continue
-                st.markdown(_titulo_grupo(f"{ind} ({len(items)})", "#6CC24A"), unsafe_allow_html=True)
-                st.markdown(_grid([(n, tk) for n, tk, _p in items], datos_acc), unsafe_allow_html=True)
+    # ── Acciones: segundo desplegable con cada industria ──
+    industrias = list(acciones.keys())
+    if c2 is None:   # primer render justo después de elegir Acciones
+        st.rerun()
+    with c2:
+        industria = st.selectbox("Industria", industrias, key="ci_ind_one")
+
+    tks_acc = sorted(set(acciones.get(industria, [])))
+    with st.spinner("Cargando precios de acciones..."):
+        datos_acc = _precios(tuple(tks_acc), descargar_bulk, get_close)
+    _kpi_resumen(datos_acc, f"acciones de {industria}")
+
+    direccion = st.radio("Dirección", ["Todas", "▲ Subiendo", "▼ Bajando"],
+                         horizontal=True, key="ci_acc_dir")
+    items = []
+    for tk in tks_acc:
+        d = datos_acc.get(tk)
+        if not d:
+            continue
+        if direccion == "▲ Subiendo" and d["pct"] <= 0:
+            continue
+        if direccion == "▼ Bajando" and d["pct"] >= 0:
+            continue
+        items.append((tk, tk, d["pct"]))
+    items.sort(key=lambda x: x[2], reverse=True)
+    if not items:
+        st.info("No hay acciones que cumplan ese filtro.")
+        return
+    st.markdown(_titulo_grupo(f"{industria} ({len(items)})", "#6CC24A"), unsafe_allow_html=True)
+    st.markdown(_grid([(n, tk) for n, tk, _p in items], datos_acc), unsafe_allow_html=True)
 
 
 # ==============================================================
@@ -443,14 +458,15 @@ def render_inicio_dashboard(descargar_bulk, get_close_from_bulk,
 
     st.markdown(_CSS, unsafe_allow_html=True)
 
-    # ── 1) Franja de cotizaciones destacadas (formato cards) ──
-    items_wl = [(w["label"], w["ticker"]) for w in wl]
+    # ── 1) Cotizaciones destacadas: mismo formato que la sección de Índices ──
+    grupos_wl = _grupos_watchlist(wl)
     try:
-        datos_wl = _precios(tuple(sorted({tk for _n, tk in items_wl})),
-                            descargar_bulk, get_close_from_bulk)
+        datos_wl = _precios(tuple(_tickers_de(grupos_wl)), descargar_bulk, get_close_from_bulk)
     except Exception:
         datos_wl = {}
-    st.markdown(_grid(items_wl, datos_wl), unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">⭐ Cotizaciones destacadas</div>', unsafe_allow_html=True)
+    _kpi_resumen(datos_wl, "destacados")
+    _render_grupos(grupos_wl, datos_wl)
     st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
 
     # ── 2) Calendario + Noticias ──
@@ -464,7 +480,7 @@ def render_inicio_dashboard(descargar_bulk, get_close_from_bulk,
             f'<div class="ci-root">{_html_noticias(NOTICIAS_DEMO if noticias is None else noticias)}</div>',
             unsafe_allow_html=True)
 
-    # ── 3) Todo el universo de app.py, por pestañas ──
+    # ── 3) Todo el universo de app.py, con desplegable ──
     if universo:
         st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
         _render_cotizaciones(universo, descargar_bulk, get_close_from_bulk)
