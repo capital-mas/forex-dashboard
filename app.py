@@ -9238,6 +9238,504 @@ def modulo_topdown_cuantitativo():
         if len(items_ord) > 15:
             st.caption(f'Mostrando lectura de los primeros 15 de {len(items_ord)} activos (ordenados por Score Acumulación).')
 
+# ==============================================================
+#  MÓDULO ANÁLISIS — micro app unificada (Corto + Mediano + Largo)
+# ==============================================================
+
+UNIVERSOS_ANALISIS = {
+    '📈 Acciones': 'acciones',
+    '💱 Forex': 'forex',
+    '🌍 Países / Índices': 'paises',
+    '📦 ETFs y Bonos': 'etfs',
+    '📊 Sectores': 'sectores',
+    '🧩 Sub-sectores': 'subsectores',
+    '🛢️ Mercados (commodities / cripto)': 'mercados',
+}
+
+VISTAS_LEGACY = {
+    '🎯 Resumen Top-Down': ('corto', 'resumen'),
+    '💱 Forex — gráficos y ranking': ('corto', 'forex'),
+    '🌍 Países — gráficos y ranking': ('corto', 'paises'),
+    '📦 ETFs y Bonos — gráficos y ranking': ('corto', 'etfs'),
+    '📊 Sectores — gráficos y ranking': ('corto', 'sectores'),
+    '🧩 Sub-sectores — gráficos y ranking': ('corto', 'subsectores'),
+    '🛢️ Mercados — gráficos y ranking': ('corto', 'mercados'),
+    '📈 Acciones — gráficos y ranking (corto)': ('corto', 'acciones'),
+    '📋 Ranking cuantitativo (largo)': ('largo', 'ranking'),
+    '🔄 Candidatos a reversión': ('largo', 'reversion'),
+    '📊 Fundamental por industria': ('largo', 'fundamental'),
+    '📐 Top-Down Cuantitativo (universo completo)': ('largo', 'tdc'),
+    '📑 Análisis COT': ('largo', 'cot'),
+    '📑 Análisis TFF': ('largo', 'tff'),
+}
+
+
+def _ana_grupos(universo):
+    """{nombre_grupo: {ticker: nombre_legible}} para el universo elegido."""
+    g = {}
+    if universo == 'acciones':
+        for ind, tks in ACCIONES_POR_INDUSTRIA.items():
+            g[ind] = {tk: tk for tk in tks}
+    elif universo == 'forex':
+        for n, (tk, grupo) in FOREX.items():
+            g.setdefault(grupo, {})[tk] = n
+    elif universo == 'paises':
+        for n, (tk, reg) in PAISES.items():
+            g.setdefault(reg, {})[tk] = n
+    elif universo == 'etfs':
+        for n, (tk, cat, _c) in ETFS.items():
+            g.setdefault(cat, {})[tk] = n
+    elif universo == 'sectores':
+        g['Sectores GICS'] = {tk: n for n, (tk, _c) in SECTORES_GICS.items()}
+    elif universo == 'subsectores':
+        for n, (tk, _c) in SUBSECTORES.items():
+            g.setdefault(SUBSECTOR_A_SECTOR.get(n, 'Otros'), {})[tk] = n
+    elif universo == 'mercados':
+        for n, (tk, cat, _c) in MERCADOS_REALES.items():
+            g.setdefault(cat, {})[tk] = n
+    return g
+
+
+def _ana_un_ticker(tk):
+    """Corto + Mediano + Largo (percentiles) + cuantitativo 2 años, de un ticker."""
+    out = {
+        'corto': _fetch_corto_ticker(tk),
+        'mp': _tdc_analizar_ticker(tk, HORIZONTES_TDC['MP']),
+        'lp': _tdc_analizar_ticker(tk, HORIZONTES_TDC['LP']),
+        'quant': None,
+    }
+    try:
+        cl = get_close_series(descargar_datos(tk, '2y'))
+        if cl is not None and len(cl) >= 150:
+            out['quant'] = analizar_largo(tk, cl)
+    except Exception:
+        pass
+    return out
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def cargar_analisis_grupo(tickers_tuple):
+    """Devuelve ({ticker: {...}}, [fallidos]). En paralelo, caché 30 min."""
+    res, fallidos = {}, []
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futuros = {ex.submit(_ana_un_ticker, tk): tk for tk in tickers_tuple}
+        for fut in as_completed(futuros):
+            tk = futuros[fut]
+            try:
+                r = fut.result()
+            except Exception:
+                r = None
+            if r and any(r.get(k) for k in ('corto', 'mp', 'lp', 'quant')):
+                res[tk] = r
+            else:
+                fallidos.append(tk)
+    return res, fallidos
+
+
+def _ana_abrir_activo(tk):
+    """Callback de los chips: salta a la vista Activo con ese ticker."""
+    st.session_state['ana_vista'] = 'Activo'
+    st.session_state['ana_activo_sel'] = tk
+
+
+def _ana_color_score(v):
+    try:
+        v = float(v)
+        if np.isnan(v):
+            return ''
+        return f'color:{score_color_hex(v)};font-weight:700'
+    except Exception:
+        return ''
+
+
+def _ana_filas(res, nombres):
+    filas = []
+    for tk, r in res.items():
+        c, m, l, q = r.get('corto'), r.get('mp'), r.get('lp'), r.get('quant')
+        base = c or m or l or {}
+        filas.append({
+            'Ticker': tk,
+            'Nombre': nombres.get(tk, tk),
+            'Precio': fmt_precio(base.get('precio', 0)),
+            'Corto Acum': c['sa'] if c else np.nan,
+            'Corto Antic': c['sn'] if c else np.nan,
+            'Corto Señal': c['accion'] if c else '—',
+            'Decisión': c.get('confirma', '—') if c else '—',
+            'Med. Acum': m['sa'] if m else np.nan,
+            'Med. Antic': m['sn'] if m else np.nan,
+            'Med. Señal': m['accion'] if m else '—',
+            'Largo Acum': l['sa'] if l else np.nan,
+            'Largo Antic': l['sn'] if l else np.nan,
+            'Largo Señal': l['accion'] if l else '—',
+            'Global (cuant.)': q['global_score'] if q else np.nan,
+            'Sesgo': q['sesgo'] if q else '—',
+        })
+    df = pd.DataFrame(filas)
+    if not df.empty and (df['Nombre'] == df['Ticker']).all():
+        df = df.drop(columns='Nombre')
+    return df
+
+
+# ── Vista INDUSTRIA / GRUPO ─────────────────────────────────────
+
+def _ana_render_grupo(items, universo, grupo):
+    firma = (universo, grupo)
+    st.caption(f'{len(items)} activos en este grupo · calcula corto, mediano y largo plazo de todos a la vez.')
+    if st.button('▶ Analizar todo el grupo', key='ana_run_grupo'):
+        st.session_state['ana_grupo_run'] = firma
+    if st.session_state.get('ana_grupo_run') != firma:
+        st.markdown("""
+        <div style='background:#0d1117;border:1px dashed #21262d;border-radius:10px;padding:36px;text-align:center'>
+          <div style='font-size:36px;margin-bottom:10px'>📊</div>
+          <div style='color:#6b7d9a;font-size:12px'>Presioná "Analizar todo el grupo" para ver corto, mediano y largo plazo.</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    with st.spinner(f'Analizando {len(items)} activos en paralelo...'):
+        res, fallidos = cargar_analisis_grupo(tuple(sorted(items.keys())))
+    if not res:
+        st.error('Sin datos.')
+        return
+    if fallidos:
+        st.warning(f"⚠️ {len(fallidos)} no pudieron cargarse: {', '.join(fallidos[:10])}"
+                   f"{' …' if len(fallidos) > 10 else ''}. Probá '↺ Actualizar' en unos minutos.")
+
+    df = _ana_filas(res, items)
+    dfg = df.dropna(subset=['Global (cuant.)'])
+    mejor = dfg.sort_values('Global (cuant.)', ascending=False).iloc[0] if not dfg.empty else None
+    kpi_cards_4([
+        ('Analizados', str(len(df)), grupo, '#3a7bd5'),
+        ('🟢 Comprar (corto)', str(int((df['Decisión'] == '🟢 COMPRAR').sum())), 'Decisión de corto plazo', '#3fb950'),
+        ('📈 Alcistas (largo)', str(int(df['Sesgo'].isin(['ALCISTA', 'MUY ALCISTA']).sum())), 'Sesgo cuantitativo 2 años', '#7ee787'),
+        ('🏆 Mejor Global', mejor['Ticker'] if mejor is not None else '—',
+         f"{int(mejor['Global (cuant.)'])}/100" if mejor is not None else '', '#e3b341', ''),
+    ])
+
+    t_tabla, t_c, t_m, t_l = st.tabs(['📋 Tabla', '⚡ Corto', '📆 Mediano', '📈 Largo'])
+
+    with t_tabla:
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            f_dec = st.selectbox('Decisión (corto)', ['Todas', '🟢 COMPRAR', '🟡 MANTENER', '🔴 VENDER'], key='ana_f_dec')
+        with f2:
+            f_ses = st.selectbox('Sesgo (largo)', ['Todos', 'MUY ALCISTA', 'ALCISTA', 'NEUTRAL', 'BAJISTA', 'MUY BAJISTA'], key='ana_f_ses')
+        with f3:
+            orden = st.selectbox('Ordenar por', ['Corto Acum', 'Med. Acum', 'Largo Acum', 'Global (cuant.)'], key='ana_f_ord')
+
+        df_f = df.copy()
+        if f_dec != 'Todas':
+            df_f = df_f[df_f['Decisión'] == f_dec]
+        if f_ses != 'Todos':
+            df_f = df_f[df_f['Sesgo'] == f_ses]
+        df_f = df_f.sort_values(orden, ascending=False, na_position='last')
+
+        cols_sc = ['Corto Acum', 'Corto Antic', 'Med. Acum', 'Med. Antic',
+                   'Largo Acum', 'Largo Antic', 'Global (cuant.)']
+        _map = 'map' if hasattr(df_f.style, 'map') else 'applymap'
+        styled = (df_f.style
+                  .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3', 'border': '1px solid #21262d'})
+                  .pipe(lambda s: getattr(s, _map)(_ana_color_score, subset=cols_sc))
+                  .pipe(lambda s: getattr(s, _map)(_color_decision, subset=['Decisión']))
+                  .format({c: '{:.0f}' for c in cols_sc}, na_rep='—')
+                  .set_table_styles([
+                      {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                          ('font-weight', '700'), ('text-align', 'center'),
+                          ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                      {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+                  ]))
+        st.caption('↔️ Desliza horizontalmente para ver todas las columnas.')
+        st.dataframe(styled, use_container_width=True, hide_index=True,
+                     height=min(650, max(200, len(df_f) * 35 + 45)))
+        st.caption(f'{len(df_f)} activos mostrados de {len(df)} · Corto = 1–30 días · Mediano = 3–6 meses · '
+                   'Largo = 1–2 años · Global = score cuantitativo 2 años.')
+
+        top = df_f['Ticker'].tolist()[:24]
+        if top:
+            st.markdown('<div style="font-size:11px;color:#6b7d9a;margin:10px 0 4px 0">'
+                        '🔍 Tocá un activo para ver su análisis completo:</div>', unsafe_allow_html=True)
+            n_cols = 6
+            for i in range(0, len(top), n_cols):
+                cols = st.columns(n_cols)
+                for j, (col, tk) in enumerate(zip(cols, top[i:i + n_cols])):
+                    with col:
+                        st.button(tk, key=f'ana_chip_{i + j}_{tk}', use_container_width=True,
+                                  on_click=_ana_abrir_activo, args=(tk,))
+
+    for tab_obj, clave, titulo in [(t_c, 'corto', 'Corto plazo'), (t_m, 'mp', 'Mediano plazo'), (t_l, 'lp', 'Largo plazo')]:
+        with tab_obj:
+            pares = [(items.get(tk, tk), r[clave]) for tk, r in res.items() if r.get(clave)]
+            if not pares:
+                st.info('Sin datos suficientes para este horizonte.')
+                continue
+            pares.sort(key=lambda x: x[1]['sa'], reverse=True)
+            st.plotly_chart(fig_barras_h(pares, f'{grupo} — {titulo}'), use_container_width=True,
+                            config=PLOTLY_CONFIG, key=f'ana_barras_{clave}_{universo}_{grupo}')
+
+
+# ── Vista ACTIVO ────────────────────────────────────────────────
+
+def _ana_resumen_activo(ticker):
+    res, _ = cargar_analisis_grupo((ticker,))
+    r = res.get(ticker)
+    if not r:
+        return
+    c, m, l, q = r.get('corto'), r.get('mp'), r.get('lp'), r.get('quant')
+    kpi_cards_4([
+        ('⚡ Corto plazo', c['accion'] if c else 'S/D', c.get('confirma', '') if c else '',
+         score_color_hex(c['sa']) if c else C_MUTED, ''),
+        ('📆 Mediano plazo', m['accion'] if m else 'S/D', f"Acum {m['sa']:.0f} · Antic {m['sn']:.0f}" if m else '',
+         score_color_hex(m['sa']) if m else C_MUTED, ''),
+        ('📈 Largo plazo', l['accion'] if l else 'S/D', f"Acum {l['sa']:.0f} · Antic {l['sn']:.0f}" if l else '',
+         score_color_hex(l['sa']) if l else C_MUTED, ''),
+        ('🧮 Cuantitativo', q['sesgo'] if q else 'S/D', f"Global {int(q['global_score'])}/100" if q else '',
+         sesgo_color_hex(q['sesgo']) if q else C_MUTED, ''),
+    ])
+
+
+def _ana_render_corto(ticker):
+    with st.spinner('Cargando datos de corto plazo...'):
+        df_v = descargar_datos(ticker, '3mo')
+        df_m = descargar_datos(ticker, '1mo')
+    if df_v is None or df_m is None:
+        st.warning(f'No se encontraron datos para {ticker}.')
+        return
+    cl_v = get_close_series(df_v)
+    cl_m = get_close_series(df_m)
+    if cl_v is None or cl_m is None or len(cl_v.dropna()) < 15:
+        st.info('Datos insuficientes para el análisis de corto plazo.')
+        return
+
+    atr = calcular_atr(df_m)
+    sa, sn, ss = scores_corto(cl_v, cl_m, atr)
+    sf = sa * 0.45 + sn * 0.35 + ss * 0.20
+    rsi = float(calcular_rsi(cl_m, p=7).iloc[-1])
+    ret_5d = float(cl_m.pct_change(5).iloc[-1] * 100) if len(cl_m) >= 6 else 0
+    ret_10d = float(cl_m.pct_change(10).iloc[-1] * 100) if len(cl_m) >= 11 else 0
+    precio = float(cl_m.iloc[-1])
+    señal = señal_accion_corto(sa, sn, ss)
+    conf = calcular_confirmacion_corto(df_v, cl_v, señal, sa, sn, ss, rsi)
+    lbl_sa, col_sa, _ = clasificar_score(sa)
+
+    kpi_cards_4([
+        ('Score Acumulación', f'{sa:.0f}/100', lbl_sa, col_sa),
+        ('Score Anticipación', f'{sn:.0f}/100', 'Momentum futuro', score_color_hex(sn)),
+        ('Score Sentimiento', f'{ss:.0f}/100', 'Percentil precio', score_color_hex(ss)),
+        ('Score Final', f'{sf:.0f}/100', 'Compuesto 45/35/20', score_color_hex(sf)),
+    ])
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric('RSI (7)', f'{rsi:.1f}', help=G('RSI'))
+    with c2: st.metric('Ret 5d', f'{ret_5d:+.2f}%')
+    with c3: st.metric('Ret 10d', f'{ret_10d:+.2f}%')
+    with c4: st.metric('Precio', fmt_precio(precio))
+    c6, c7, c8, c9 = st.columns(4)
+    hp = conf.get('macd_hist_pct')
+    with c6: st.metric('Hist. MACD', f'{hp:+.3f}%' if hp is not None else 'N/D',
+                       estado_macd_hist(conf.get('macd_hist'), conf.get('macd_hist_prev')),
+                       delta_color='off', help=G('Histograma MACD'))
+    with c7: st.metric('ADX (14)', f"{conf['adx']:.0f}" if conf.get('adx') is not None else 'N/D',
+                       estado_adx(conf), delta_color='off', help=G('ADX'))
+    with c8: st.metric('CMF (20)', f"{conf['cmf']:+.2f}" if conf.get('cmf') is not None else 'N/D',
+                       estado_cmf(conf.get('cmf')), delta_color='off', help=G('CMF'))
+    with c9: st.metric('Vol. relativo', f"{conf['rvol']:.1f}x" if conf.get('rvol') is not None else 'N/D',
+                       help=G('RVOL'))
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">🧭 Decisión: {conf['confirma']}</div>
+      {señal} → {conf['confirma_motivo']}.
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.plotly_chart(fig_confirmacion_corto(ticker, df_v), use_container_width=True,
+                    config=PLOTLY_CONFIG, key=f'ana_conf_{ticker}')
+    if len(cl_m.values) > 2:
+        st.plotly_chart(fig_mini_precio(ticker, cl_m.values), use_container_width=True,
+                        config=PLOTLY_CONFIG, key=f'ana_mini_{ticker}')
+
+
+def _ana_render_tdc(ticker, hz):
+    cfg = HORIZONTES_TDC[hz]
+    d = _tdc_analizar_ticker(ticker, cfg)
+    if d is None:
+        st.info(f"Historial insuficiente para {cfg['nombre'].lower()} (mínimo {cfg['min_dias_valor']} sesiones).")
+        return
+    lbl_sa, col_sa, _ = clasificar_score(d['sa'])
+    kpi_cards_4([
+        ('Score Acumulación', f"{d['sa']:.0f}/100", lbl_sa, col_sa),
+        ('Score Anticipación', f"{d['sn']:.0f}/100", 'Momentum', score_color_hex(d['sn'])),
+        ('Score Sentimiento', f"{d['ss']:.0f}/100", 'Percentil precio', score_color_hex(d['ss'])),
+        ('Score Final', f"{d['sf']:.0f}/100", 'Compuesto 45/35/20', score_color_hex(d['sf'])),
+    ])
+    c1, c2, c3 = st.columns(3)
+    with c1: st.metric(f"Ret {cfg['ret_label_1']}", f"{d['ret_1']:+.2f}%")
+    with c2: st.metric(f"Ret {cfg['ret_label_2']}", f"{d['ret_2']:+.2f}%")
+    with c3: st.metric('RSI', f"{d['rsi']:.1f}")
+    st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{d["accion"]}</span></div>',
+                unsafe_allow_html=True)
+    nombre_lbl, _col, emo = _tdc_clasificar(d['sa'])
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">{emo} {escape_html(ticker)} · {cfg['nombre']} · {nombre_lbl}</div>
+      {_tdc_texto_interpretacion(d['sa'], d['sn'], d['ss'])}
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def _ana_render_largo_cuant(ticker):
+    with st.spinner('Cargando 2 años de datos...'):
+        df_tk = descargar_datos(ticker, '2y')
+    if df_tk is None or df_tk.empty:
+        st.warning('No hay datos suficientes para el análisis cuantitativo.')
+        return
+    cl = get_close_series(df_tk)
+    if cl is None or len(cl) < 150:
+        st.info('Se necesitan al menos 150 sesiones para el análisis cuantitativo.')
+        return
+    r = analizar_largo(ticker, cl)
+    if r is None:
+        st.warning('No se pudo calcular el análisis cuantitativo.')
+        return
+    try:
+        r.update(_extras_largo(cl, get_close_series(descargar_datos('SPY', '2y'))))
+    except Exception:
+        pass
+    render_largo_completo(ticker, cl, r, key_suffix='ana', df_ohlc=df_tk)
+
+
+def _ana_render_fundamental(ticker):
+    render_perfil_empresa(ticker, key_suffix='ana')
+    with st.spinner('Descargando ratios fundamentales...'):
+        res_fund = analizar_fundamental(ticker, TICKER_INDUSTRY.get(ticker, 'Sin Clasificar'))
+    if res_fund is None:
+        st.info('No se encontraron datos fundamentales para este activo.')
+        return
+    render_resumen_visual_fundamental(res_fund)
+
+
+def _ana_render_activo(ticker):
+    ticker = validar_ticker(ticker)
+    if ticker is None:
+        st.error('Símbolo inválido.')
+        return
+    industria = TICKER_INDUSTRY.get(ticker)
+    st.markdown(
+        f'<div class="sec-title">{escape_html(ticker)}'
+        + (f' · {escape_html(industria)}' if industria else '') + '</div>',
+        unsafe_allow_html=True,
+    )
+    with st.spinner('Calculando los tres horizontes...'):
+        _ana_resumen_activo(ticker)
+
+    nombres_tabs = ['⚡ Corto plazo', '📆 Mediano plazo', '📈 Largo plazo']
+    con_fund = not _es_activo_sin_fundamentals(ticker)
+    if con_fund:
+        nombres_tabs.append('📊 Fundamental')
+    tabs = st.tabs(nombres_tabs)
+
+    with tabs[0]:
+        st.caption('Horizonte: 1–30 días')
+        _ana_render_corto(ticker)
+    with tabs[1]:
+        st.caption('Horizonte: 3–6 meses')
+        _ana_render_tdc(ticker, 'MP')
+    with tabs[2]:
+        st.caption('Horizonte: 1–2 años')
+        _ana_render_tdc(ticker, 'LP')
+        st.markdown('---')
+        st.markdown('#### 🧮 Análisis cuantitativo (2 años)')
+        _ana_render_largo_cuant(ticker)
+    if con_fund:
+        with tabs[3]:
+            _ana_render_fundamental(ticker)
+
+
+def _ana_vista_activo(items):
+    tickers = list(items.keys())
+    if st.session_state.get('ana_activo_sel') not in tickers:
+        st.session_state['ana_activo_sel'] = tickers[0]
+    tk_sel = st.selectbox(
+        'Activo', tickers, key='ana_activo_sel',
+        format_func=lambda t: t if items.get(t, t) == t else f'{t} · {items[t]}',
+        help='Escribí para filtrar dentro del grupo elegido.',
+    )
+    with st.expander('🔎 ¿Otro símbolo que no está en la lista?'):
+        otro = selector_ticker_autocomplete('ana_otro', label='Buscar activo')
+        usar_otro = st.checkbox('Analizar este símbolo en vez del de arriba', key='ana_usar_otro')
+    ticker = otro if (usar_otro and otro) else tk_sel
+    _ana_render_activo(ticker)
+
+
+def _ana_vistas_avanzadas():
+    with st.expander('🧭 Vistas avanzadas (gráficos por universo, ranking, reversión, COT, TFF…)'):
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            sel = st.selectbox('Vista', list(VISTAS_LEGACY.keys()), key='ana_legacy_sel',
+                               label_visibility='collapsed')
+        with c2:
+            if st.button('Ir →', key='ana_legacy_go', use_container_width=True):
+                h, m = VISTAS_LEGACY[sel]
+                st.session_state['nav_horizonte'] = h
+                st.session_state['nav_modulo'] = m
+                st.rerun()
+
+
+def modulo_analisis():
+    st.markdown("""
+    <style>
+    .st-key-ana_vista_cont [role="radiogroup"] { gap: 8px; }
+    .st-key-ana_vista_cont [data-baseweb="radio"] {
+        background:#0d1117; border:1px solid #21262d; border-radius:999px;
+        padding:6px 18px; margin:0;
+    }
+    .st-key-ana_vista_cont [data-baseweb="radio"] > div:first-child { display:none; }
+    .st-key-ana_vista_cont [data-baseweb="radio"]:has(input:checked) { border-color: var(--verde-monster); }
+    .st-key-ana_vista_cont [data-baseweb="radio"]:has(input:checked) p {
+        color: var(--verde-monster) !important; font-weight:700;
+    }
+    </style>
+    <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #6CC24A;
+         border-radius:14px; padding:22px 28px; margin-bottom:18px;">
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:4px">📊 Análisis</div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+        Elegí qué querés analizar y mirá <b style="color:#f0883e">corto</b>,
+        <b style="color:#e3b341">mediano</b> y <b style="color:#3fb950">largo plazo</b> en un solo lugar.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        uni_label = st.selectbox('¿Qué querés analizar?', list(UNIVERSOS_ANALISIS.keys()), key='ana_universo')
+    universo = UNIVERSOS_ANALISIS[uni_label]
+    grupos = _ana_grupos(universo)
+    with c2:
+        if len(grupos) > 1:
+            etiqueta = 'Industria' if universo == 'acciones' else 'Categoría'
+            grupo = st.selectbox(etiqueta, list(grupos.keys()), key=f'ana_grupo_{universo}')
+        else:
+            grupo = next(iter(grupos))
+    items = grupos[grupo]
+    if not items:
+        st.info('No hay activos en este grupo.')
+        return
+
+    etiqueta_grupo = 'Industria' if universo == 'acciones' else 'Grupo'
+    opciones_vista = ['Activo', etiqueta_grupo]
+    if st.session_state.get('ana_vista') not in opciones_vista:
+        st.session_state['ana_vista'] = 'Activo'
+    with st.container(key='ana_vista_cont'):
+        vista = st.radio('Vista', opciones_vista, horizontal=True, key='ana_vista',
+                         label_visibility='collapsed')
+
+    if vista == 'Activo':
+        _ana_vista_activo(items)
+    else:
+        _ana_render_grupo(items, universo, grupo)
+
+    st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
+    _ana_vistas_avanzadas()
+    
 def _refrescar_cotizaciones():
     """Fuerza nueva descarga de precios y scores (corto/largo plazo, forex, países,
     sectores, mercados, acciones, ticker tape, Top-Down Cuantitativo). A propósito
@@ -9548,7 +10046,7 @@ with st.container(key='nav_pills_wrap'):
     #  LAYOUT COMPLETO — Mercados & Inversiones
     # ══════════════════════════════════════════════════════════════
     else:
-        _c = st.columns([1.0, 1.15, 1.15, 1.05, 1.2, 1.15, 1.1, 0.25, 1.1, 0.15, 1.3])
+        _c = st.columns([1.0, 1.3, 1.05, 1.2, 1.15, 0.6, 1.1, 0.15, 1.3])
 
         _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
                  HORIZONTE=='inicio', None, 'inicio', 'inicio')
@@ -9618,8 +10116,8 @@ with st.container(key='nav_pills_wrap'):
                 </style>
                 """, unsafe_allow_html=True)
 
-        _nav_btn(_c[3], '🔍 Buscador', 'nav_buscador',
-                 HORIZONTE=='buscador', None, 'buscador', 'buscador')
+        _nav_btn(_c[1], '📊 Análisis', 'nav_analisis',
+                 HORIZONTE=='analisis', None, 'analisis', 'analisis')
 
         # ── Menú desplegable "Herramientas": Comparar, Optimizar, Promediador ──
         _HERRAMIENTAS_MAP = {
@@ -9716,7 +10214,7 @@ with st.container(key='nav_pills_wrap'):
         _render_app_switcher(_c[8])
         _render_mi_cuenta(_c[10])
 
-        _c2 = st.columns([1.0, 1.15, 1.15, 1.05, 1.2, 1.15, 1.1, 0.25, 1.1, 0.15, 1.3])
+        _c2 = st.columns([1.0, 1.3, 1.05, 1.2, 1.15, 0.6, 1.1, 0.15, 1.3])
         _render_actualizar(_c2[10])
 
 st.markdown("""
@@ -9964,6 +10462,7 @@ titulos = {
     'finanzas': ('Finanzas Personales', '💰', 'Ingresos, gastos, deudas, inversiones y objetivos de ahorro'),
     'promediador': ('Promediador + Stop Loss', '📐', 'Precio promedio, tendencia y gestión de riesgo con apalancamiento'),
     'fscore': ('F-Score (Piotroski)', '🧮', 'Calidad financiera 0-9 por sector — Piotroski Score'),
+    'analisis': ('Análisis', '📊', 'Corto, mediano y largo plazo en un solo lugar'),
     'breadth': ('Salud del Mercado', '📡', 'Amplitud, avance/declive, máximos/mínimos y concentración'),
     'ia_asistente': ('Asistente IA', '🤖', 'Preguntá por activos, comparaciones, finanzas personales y más'),
     'calendario': ('Calendario Económico', '📆', 'Eventos económicos relevantes y su impacto en mercados'),
@@ -9997,6 +10496,7 @@ badge_map = {
     'breadth': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'BREADTH'),
     'renta_fija_macro': ('#00838f', 'rgba(0,131,143,0.12)', 'RENTA FIJA'),   # ← coma agregada acá
     'ia_asistente': ('#bc8cff', 'rgba(188,140,255,0.12)', 'ASISTENTE IA'),
+    'analisis': ('#6CC24A', 'rgba(108,194,74,0.12)', 'ANÁLISIS'),
     'calendario': ('#79c0ff', 'rgba(121,192,255,0.12)', 'CALENDARIO'),
     'noticias': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'NOTICIAS'),
     'pyme': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'PYMES'),
@@ -10118,6 +10618,8 @@ elif MODULO == 'buscador':
 elif MODULO == 'comparador':
     modulo_comparador()
 
+elif MODULO == 'analisis':
+    modulo_analisis()
 
 elif MODULO == 'optimizador':
     if TIENE_ACCESO_PRO:
