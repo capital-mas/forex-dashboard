@@ -29,6 +29,7 @@ from modulo_gex import modulo_gex
 from modulo_estados_financieros import render_analisis_profundo, render_comparativo_estados
 from modulo_calendario import render_calendario_economico, render_noticias
 from modulo_noticias_mercado import render_noticias_mercado
+from modulo_inicio_dashboard import render_inicio_dashboard
 from modulo_senales_trading import render_senales_trading
 from modulo_fundamental_fscore import modulo_fundamental_fscore, fundamental_desde_csv, obtener_base
 
