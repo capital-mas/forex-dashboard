@@ -9839,8 +9839,8 @@ for key, default in [
 
 
 _now_str = ahora_ar().strftime('%H:%M')
-_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'gex': '#bc8cff', 'renta_fija_macro': '#00838f', 'ia_asistente': '#bc8cff', 'senales': '#ff6ec7', 'finanzas': '#6CC24A', 'velas': '#e3b341', 'pyme': '#3a7bd5', 'valuacion': '#6CC24A'}
-_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'gex': 'GEX', 'renta_fija_macro': 'Renta Fija', 'ia_asistente': 'Asistente IA', 'senales': 'Señales', 'finanzas': 'Finanzas', 'velas': 'Velas', 'pyme': 'PyMEs', 'valuacion': 'Valuación'}
+_h_color = {'inicio': '#e3b341', 'corto': '#f0883e', 'largo': '#3fb950', 'buscador': '#3a7bd5', 'comparador': '#6CC24A', 'optimizador': '#bc8cff', 'pares': '#79c0ff', 'opciones': '#bc5cff', 'gex': '#bc8cff', 'renta_fija_macro': '#00838f', 'ia_asistente': '#bc8cff', 'senales': '#ff6ec7', 'finanzas': '#6CC24A', 'velas': '#e3b341', 'pyme': '#3a7bd5', 'valuacion': '#6CC24A', 'analisis': '#6CC24A'}
+_h_label = {'inicio': 'Inicio', 'corto': 'Corto Plazo', 'largo': 'Largo Plazo', 'buscador': 'Búsqueda', 'comparador': 'Comparador', 'optimizador': 'Optimizador', 'pares': 'Rotación', 'opciones': 'Opciones', 'gex': 'GEX', 'renta_fija_macro': 'Renta Fija', 'ia_asistente': 'Asistente IA', 'senales': 'Señales', 'finanzas': 'Finanzas', 'velas': 'Velas', 'pyme': 'PyMEs', 'valuacion': 'Valuación', 'analisis': 'Análisis'}
 
 HORIZONTE = st.session_state['nav_horizonte']
 MODULO    = st.session_state['nav_modulo']
@@ -10237,6 +10237,7 @@ def _mobile_cambiar_modulo():
 with st.container(key='nav_mobile_wrap'):
     _OPCIONES_HORIZONTE_MOBILE = {
         '🏠 Inicio': 'inicio', '⚡ Corto Plazo': 'corto', '📈 Largo Plazo': 'largo',
+        '📊 Análisis': 'analisis',
         '🔍 Buscador': 'buscador', '⚖️ Comparar': 'comparador',
         ('🧮 Optimizar' if TIENE_ACCESO_PRO else '🔒 Optimizar (Pro)'): 'optimizador',
         ('🔗 Pares' if TIENE_ACCESO_PRO else '🔒 Pares (Pro)'): 'pares',
