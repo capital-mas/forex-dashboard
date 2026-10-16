@@ -454,20 +454,12 @@ def _render_cotizaciones(universo, descargar_bulk, get_close):
 def render_inicio_dashboard(descargar_bulk, get_close_from_bulk,
                             eventos=None, noticias=None, watchlist=None,
                             eventos_tag="Hoy", universo=None):
-    wl = watchlist or WATCHLIST_DEFAULT
-
     st.markdown(_CSS, unsafe_allow_html=True)
 
-    # ── 1) Cotizaciones destacadas: mismo formato que la sección de Índices ──
-    grupos_wl = _grupos_watchlist(wl)
-    try:
-        datos_wl = _precios(tuple(_tickers_de(grupos_wl)), descargar_bulk, get_close_from_bulk)
-    except Exception:
-        datos_wl = {}
-    st.markdown('<div class="sec-title">⭐ Cotizaciones destacadas</div>', unsafe_allow_html=True)
-    _kpi_resumen(datos_wl, "destacados")
-    _render_grupos(grupos_wl, datos_wl)
-    st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
+    # ── 1) Cotizaciones del día (desplegables) ──
+    if universo:
+        _render_cotizaciones(universo, descargar_bulk, get_close_from_bulk)
+        st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
 
     # ── 2) Calendario + Noticias ──
     col_cal, col_news = st.columns(2, gap="medium")
@@ -479,8 +471,3 @@ def render_inicio_dashboard(descargar_bulk, get_close_from_bulk,
         st.markdown(
             f'<div class="ci-root">{_html_noticias(NOTICIAS_DEMO if noticias is None else noticias)}</div>',
             unsafe_allow_html=True)
-
-    # ── 3) Todo el universo de app.py, con desplegable ──
-    if universo:
-        st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
-        _render_cotizaciones(universo, descargar_bulk, get_close_from_bulk)
