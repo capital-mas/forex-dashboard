@@ -9748,6 +9748,7 @@ def _refrescar_cotizaciones():
         cargar_mercados_corto, cargar_acciones_corto, cargar_resultados_largo,
         cargar_precios_inicio_base, cargar_precios_acciones_inicio,
         cargar_ticker_tape, cargar_topdown_cuantitativo,
+        cargar_analisis_grupo,
     ]
     for fn in funciones_a_limpiar:
         try:
