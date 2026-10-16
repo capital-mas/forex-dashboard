@@ -3,12 +3,11 @@
 #
 #  Leen DIRECTO de las tablas de Supabase (no importan nada de
 #  modulo_calendario.py ni modulo_noticias_mercado.py), así el
-#  Inicio queda desacoplado: si rediseñás esos módulos, esto
-#  sigue funcionando mientras las tablas mantengan sus columnas.
+#  Inicio queda desacoplado.
 #
 #  Salida (formato que espera render_inicio_dashboard):
 #     eventos  -> [{pais, evento, prev, consenso}]   (+ etiqueta)
-#     noticias -> [{ticker, titulo -> titular, sentimiento}]
+#     noticias -> [{ticker, titular, sentimiento}]
 # ==============================================================
 
 from datetime import date, datetime
@@ -18,8 +17,7 @@ import streamlit as st
 TABLA_CALENDARIO = "calendario_registro"
 TABLA_NOTICIAS = "mercado_eventos"
 
-# "Clase A" = eventos de impacto Muy Alto y Alto (campo `relevancia`
-# que ya guarda el Calendario al registrar cada evento).
+# "Clase A" = eventos de impacto Muy Alto y Alto (campo `relevancia`).
 IMPACTOS_CLASE_A = ["Muy Alto", "Alto"]
 _ORDEN_IMPACTO = {"Muy Alto": 0, "Alto": 1}
 
@@ -27,15 +25,15 @@ _SENTIMIENTO = {"Positivo": "Alcista", "Negativo": "Bajista"}  # el resto -> Neu
 
 
 def _fmt_valor(v, unidad):
-    """4.0 + 'M' -> '4M' · 0.3 + '%' -> '0.3%' · None -> '--'."""
-    if v is None:
+    """4.0 + 'M' -> '4M' · 0.3 + '%' -> '0.3%' · None/NaN -> '--'."""
+    if v is None or v != v:          # None o NaN
         return "--"
     try:
         num = f"{float(v):g}"
     except (TypeError, ValueError):
         return str(v)
-    unidad = (unidad or "").strip()
-    if not unidad:
+    unidad = "" if unidad is None else str(unidad).strip()
+    if unidad.lower() in ("", "nan", "none"):
         return num
     return f"{num}{unidad}" if unidad == "%" else f"{num} {unidad}"
 
@@ -54,9 +52,9 @@ def _fecha_corta(iso):
 def obtener_eventos_clase_a(_supabase, limite=6):
     """Devuelve (lista_de_eventos, etiqueta).
 
-    - Si hay eventos Clase A cargados con fecha de HOY -> los muestra, etiqueta 'Hoy'.
-    - Si hoy no hay ninguno (el calendario se carga a mano), cae al último
-      día que sí tenga datos y lo avisa en la etiqueta ('Último: 14/10').
+    - Si hay eventos Clase A con fecha de HOY -> los muestra, etiqueta 'Hoy'.
+    - Si hoy no hay ninguno, cae al último día que sí tenga datos
+      y lo avisa en la etiqueta ('Último: 14/10').
     """
     cols = "fecha,pais,evento,relevancia,previsto,anterior,real,unidad"
     try:
