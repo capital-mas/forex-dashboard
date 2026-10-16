@@ -30,6 +30,7 @@ from modulo_estados_financieros import render_analisis_profundo, render_comparat
 from modulo_calendario import render_calendario_economico, render_noticias
 from modulo_noticias_mercado import render_noticias_mercado
 from modulo_inicio_dashboard import render_inicio_dashboard
+from adaptadores_inicio import obtener_eventos_clase_a, obtener_noticias_inicio
 from modulo_senales_trading import render_senales_trading
 from modulo_fundamental_fscore import modulo_fundamental_fscore, fundamental_desde_csv, obtener_base
 
@@ -8871,11 +8872,12 @@ def modulo_inicio():
       </div>
     </div>
     """, unsafe_allow_html=True)
+    eventos, tag = obtener_eventos_clase_a(supabase)
     render_inicio_dashboard(
         descargar_bulk=descargar_bulk,
         get_close_from_bulk=get_close_from_bulk,
-        # eventos=...,   # lo conectamos abajo
-        # noticias=...,
+        eventos=eventos, eventos_tag=tag,
+        noticias=obtener_noticias_inicio(supabase),
     )
     st.markdown('---')
 
