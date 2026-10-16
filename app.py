@@ -10054,7 +10054,8 @@ with st.container(key='nav_pills_wrap'):
         _nav_btn(_c[1], '📊 Análisis', 'nav_analisis',
                  HORIZONTE=='analisis', None, 'analisis', 'analisis')
 
-        _nav_btn(_c[2], '🔍 Buscador'
+        _nav_btn(_c[2], '🔍 Buscador', 'nav_buscador',
+                 HORIZONTE=='buscador', None, 'buscador', 'buscador')
 
         # ── Menú desplegable "Herramientas": Comparar, Optimizar, Promediador ──
         _HERRAMIENTAS_MAP = {
