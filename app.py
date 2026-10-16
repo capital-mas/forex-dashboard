@@ -9256,6 +9256,7 @@ def _refrescar_cotizaciones():
             fn.clear()
         except Exception:
             pass
+    limpiar_cache_inicio()   # ← NUEVO: limpia el caché del dashboard de Inicio
     st.rerun()
 
 UNIVERSO_TICKERS_VALIDOS = (
