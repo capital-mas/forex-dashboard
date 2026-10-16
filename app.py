@@ -29,7 +29,7 @@ from modulo_gex import modulo_gex
 from modulo_estados_financieros import render_analisis_profundo, render_comparativo_estados
 from modulo_calendario import render_calendario_economico, render_noticias
 from modulo_noticias_mercado import render_noticias_mercado
-from modulo_inicio_dashboard import render_inicio_dashboard
+from modulo_inicio_dashboard import render_inicio_dashboard, limpiar_cache_inicio
 from adaptadores_inicio import obtener_eventos_clase_a, obtener_noticias_inicio
 from modulo_senales_trading import render_senales_trading
 from modulo_fundamental_fscore import modulo_fundamental_fscore, fundamental_desde_csv, obtener_base
@@ -8872,206 +8872,19 @@ def modulo_inicio():
       </div>
     </div>
     """, unsafe_allow_html=True)
+
     eventos, tag = obtener_eventos_clase_a(supabase)
     render_inicio_dashboard(
         descargar_bulk=descargar_bulk,
         get_close_from_bulk=get_close_from_bulk,
         eventos=eventos, eventos_tag=tag,
         noticias=obtener_noticias_inicio(supabase),
+        universo=dict(
+            paises=PAISES, etfs=ETFS, sectores=SECTORES_TOTAL,
+            mercados=MERCADOS_REALES, forex=FOREX,
+            acciones=ACCIONES_POR_INDUSTRIA,
+        ),
     )
-    st.markdown('---')
-
-    # ── Tabs principales ─────────────────────────────────────────────────
-    tab_indices, tab_etfs, tab_sectores, tab_mercados, tab_forex, tab_acciones = st.tabs([
-        '🌍 Índices', '📦 ETFs y Bonos', '📊 Sectores', '🛢️ Mercados', '💱 Forex', '📈 Acciones',
-    ])
-
-    with st.spinner('Cargando cotizaciones...'):
-        datos_base = cargar_precios_inicio_base()
-
-    # ── Subconjuntos de datos_base por sección (para los KPI por tab) ─────
-    tks_paises_all   = [tk for tk, _ in PAISES.values()]
-    tks_etfs_all = [tk for tk, _cat, _c in ETFS.values()]
-    tks_sectores_all = [tk for tk, _ in SECTORES.values()]
-    tks_mercados_all = [tk for tk, _, _ in MERCADOS_REALES.values()]
-    tks_forex_all    = [tk for tk, _ in FOREX.values()]
-
-    datos_indices_kpi  = {tk: d for tk, d in datos_base.items() if tk in tks_paises_all}
-    datos_etfs_kpi = {tk: d for tk, d in datos_base.items() if tk in tks_etfs_all}
-    datos_sectores_kpi = {tk: d for tk, d in datos_base.items() if tk in tks_sectores_all}
-    datos_mercados_kpi = {tk: d for tk, d in datos_base.items() if tk in tks_mercados_all}
-    datos_forex_kpi    = {tk: d for tk, d in datos_base.items() if tk in tks_forex_all}
-
-    # ── TAB: Índices ──────────────────────────────────────────────────────
-    with tab_indices:
-        _kpi_resumen_seccion(datos_indices_kpi, 'índices')
-
-        regiones = {}
-        for nombre, (tk, region) in PAISES.items():
-            regiones.setdefault(region, []).append((nombre, tk))
-
-        for region, items in regiones.items():
-            color_r = COLORES_REGION.get(region, C_MONSTER)
-            st.markdown(
-                f'<div style="font-size:11px;font-weight:700;color:{color_r};'
-                f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
-                f'◆ {region}</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(_cards_html(items, datos_base), unsafe_allow_html=True)
-
-# ── TAB: ETFs ───────────────────────────────────────────────────────────────
-    with tab_etfs:
-        _kpi_resumen_seccion(datos_etfs_kpi, 'ETFs')
-    
-        categorias = {}
-        colores_etf_cat = {}
-        for nombre, (tk, categoria, color) in ETFS.items():
-            categorias.setdefault(categoria, []).append((nombre, tk))
-            colores_etf_cat.setdefault(categoria, color)
-    
-        for categoria, items in categorias.items():
-            color_c = colores_etf_cat.get(categoria, C_MONSTER)
-            st.markdown(
-                f'<div style="font-size:11px;font-weight:700;color:{color_c};'
-                f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
-                f'◆ {categoria}</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(_cards_html(items, datos_base), unsafe_allow_html=True)
-
-# ── TAB: Sectores ─────────────────────────────────────────────────────
-    with tab_sectores:
-        _kpi_resumen_seccion(datos_sectores_kpi, 'sectores')
-
-        items_gics = [(nombre, tk) for nombre, (tk, cat, _c) in SECTORES_TOTAL.items() if cat == 'Sectores']
-        items_sub  = [(nombre, tk) for nombre, (tk, cat, _c) in SECTORES_TOTAL.items() if cat == 'Sub-sectores']
-
-        _sec_inicio('Sectores GICS (11 sectores)', '📊', items_gics, datos_base)
-        st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
-        _sec_inicio('Sub-sectores / Temáticos', '🧩', items_sub, datos_base)
-
-    # ── TAB: Mercados ─────────────────────────────────────────────────────
-    with tab_mercados:
-        _kpi_resumen_seccion(datos_mercados_kpi, 'mercados')
-
-        cats_merc = {}
-        for nombre, (tk, cat, _) in MERCADOS_REALES.items():
-            cats_merc.setdefault(cat, []).append((nombre, tk))
-
-        for cat, items in cats_merc.items():
-            st.markdown(
-                f'<div style="font-size:11px;font-weight:700;color:#f0883e;'
-                f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
-                f'◆ {cat}</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(_cards_html(items, datos_base), unsafe_allow_html=True)
-
-    # ── TAB: Forex ────────────────────────────────────────────────────────
-    with tab_forex:
-        _kpi_resumen_seccion(datos_forex_kpi, 'pares')
-
-        grupos_fx = {}
-        for nombre, (tk, grupo) in FOREX.items():
-            grupos_fx.setdefault(grupo, []).append((nombre, tk))
-
-        for grupo, items in grupos_fx.items():
-            color_fx = COLORES_GRUPO_FX.get(grupo, C_MONSTER)
-            st.markdown(
-                f'<div style="font-size:11px;font-weight:700;color:{color_fx};'
-                f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
-                f'◆ {grupo}</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(_cards_html(items, datos_base), unsafe_allow_html=True)
-
-    # ── TAB: Acciones ─────────────────────────────────────────────────────
-    with tab_acciones:
-        ind_disp_ini = list(ACCIONES_POR_INDUSTRIA.keys())
-        ind_sel_ini  = st.multiselect(
-            'Industrias', ind_disp_ini,
-            default=ind_disp_ini[:3],
-            key='inicio_ind_sel',
-            help='Elegí una o más industrias para ver sus cotizaciones del día.',
-        )
-
-        if not ind_sel_ini:
-            st.info('Seleccioná al menos una industria para ver cotizaciones.')
-        else:
-            with st.spinner('Cargando precios de acciones...'):
-                datos_acc_ini = cargar_precios_acciones_inicio(tuple(ind_sel_ini))
-
-            # KPIs propios de Acciones, en base a las industrias seleccionadas
-            _kpi_resumen_seccion(datos_acc_ini, 'acciones seleccionadas')
-
-            filas_acc = []
-            for ind in ind_sel_ini:
-                for tk in ACCIONES_POR_INDUSTRIA.get(ind, []):
-                    d = datos_acc_ini.get(tk)
-                    if d:
-                        filas_acc.append({
-                            'Ticker': tk,
-                            'Industria': ind,
-                            'Precio': d['precio'],
-                            'Cambio %': round(d['cambio_pct'], 2),
-                            'Cambio $': round(d['cambio_abs'], 4),
-                        })
-
-            if not filas_acc:
-                st.warning('No se pudieron cargar datos. Intentá ↺ Actualizar.')
-            else:
-                df_acc_ini = pd.DataFrame(filas_acc).sort_values('Cambio %', ascending=False)
-
-                # Filtros rápidos
-                fc1, fc2, fc3 = st.columns(3)
-                with fc1:
-                    inds_u_ini = ['Todas'] + sorted(df_acc_ini['Industria'].unique().tolist())
-                    f_ind_ini  = st.selectbox('Industria', inds_u_ini, key='ini_f_ind')
-                with fc2:
-                    f_dir = st.selectbox('Dirección', ['Todas', '▲ Subiendo', '▼ Bajando'], key='ini_f_dir')
-                with fc3:
-                    f_pct_ini = st.slider('Cambio % mín/máx', -30.0, 30.0, (-30.0, 30.0), 0.5, key='ini_f_pct')
-
-                df_acc_f = df_acc_ini.copy()
-                if f_ind_ini != 'Todas':
-                    df_acc_f = df_acc_f[df_acc_f['Industria'] == f_ind_ini]
-                if f_dir == '▲ Subiendo':
-                    df_acc_f = df_acc_f[df_acc_f['Cambio %'] > 0]
-                elif f_dir == '▼ Bajando':
-                    df_acc_f = df_acc_f[df_acc_f['Cambio %'] < 0]
-                df_acc_f = df_acc_f[df_acc_f['Cambio %'].between(*f_pct_ini)]
-
-                st.caption(f'{len(df_acc_f)} acciones mostradas de {len(df_acc_ini)} totales')
-
-                # ── Cards agrupadas por industria ────────────────────────
-                industrias_con_datos = [
-                    ind for ind in ind_sel_ini
-                    if (f_ind_ini == 'Todas' or f_ind_ini == ind)
-                    and not df_acc_f[df_acc_f['Industria'] == ind].empty
-                ]
-
-                if not industrias_con_datos:
-                    st.info('Ningún activo cumple los filtros seleccionados.')
-                else:
-                    for ind in industrias_con_datos:
-                        tks_ind = df_acc_f[df_acc_f['Industria'] == ind].sort_values(
-                            'Cambio %', ascending=False
-                        )['Ticker'].tolist()
-                        if not tks_ind:
-                            continue
-                        st.markdown(
-                            f'<div style="font-size:11px;font-weight:700;color:{C_MONSTER};'
-                            f'text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px 0">'
-                            f'◆ {ind} ({len(tks_ind)})</div>',
-                            unsafe_allow_html=True,
-                        )
-                        items_ind = [(tk, tk) for tk in tks_ind]
-                        st.markdown(_cards_html(items_ind, datos_acc_ini), unsafe_allow_html=True)
-
-                # Chips para ir al buscador
-                chips_navegacion(df_acc_f['Ticker'].tolist(), 'inicio_acc')
-                
 
 # ==============================================================
 #  MÓDULO NUEVO — SCORE AAS (Acumulación / Anticipación / Sentimiento)
