@@ -10051,71 +10051,6 @@ with st.container(key='nav_pills_wrap'):
         _nav_btn(_c[0], '🏠 Inicio', 'nav_h_inicio',
                  HORIZONTE=='inicio', None, 'inicio', 'inicio')
 
-        # ── Corto Plazo: desplegable con sus módulos ──
-        _corto_label_actual = next(
-            (k for k, v in _OPCIONES_SUB_CORTO.items()
-             if v == MODULO or (MODULO == 'topdown' and v == 'resumen')), None
-        )
-        _label_corto = (f'⚡ {_corto_label_actual.split(" ",1)[1]}'
-                         if (HORIZONTE == 'corto' and _corto_label_actual) else '⚡ Corto Plazo')
-        with _c[1]:
-            _cont_key_cp = 'navcont_nav_corto'
-            with st.container(key=_cont_key_cp):
-                with st.popover(_label_corto, use_container_width=True):
-                    st.markdown(
-                        '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
-                        'Corto Plazo</div>',
-                        unsafe_allow_html=True
-                    )
-                    for label, m_val in _OPCIONES_SUB_CORTO.items():
-                        if st.button(label, use_container_width=True, key=f'subcp_{m_val}'):
-                            st.session_state['nav_horizonte'] = 'corto'
-                            st.session_state['nav_modulo'] = m_val
-                            st.rerun()
-            if HORIZONTE == 'corto':
-                st.markdown(f"""
-                <style>
-                .st-key-{_cont_key_cp} button {{
-                    background: #0d1117 !important;
-                    color: var(--verde-monster) !important;
-                    border: 1.5px solid var(--verde-monster) !important;
-                    font-weight: 700 !important;
-                    box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
-                }}
-                </style>
-                """, unsafe_allow_html=True)
-
-        # ── Largo Plazo: desplegable con sus módulos ──
-        _largo_label_actual = next((k for k, v in _OPCIONES_SUB_LARGO.items() if v == MODULO), None)
-        _label_largo = (f'📈 {_largo_label_actual.split(" ",1)[1]}'
-                         if (HORIZONTE == 'largo' and _largo_label_actual) else '📈 Largo Plazo')
-        with _c[2]:
-            _cont_key_lp = 'navcont_nav_largo'
-            with st.container(key=_cont_key_lp):
-                with st.popover(_label_largo, use_container_width=True):
-                    st.markdown(
-                        '<div style="font-size:11px;color:#6b7d9a;padding:2px 4px 8px 4px">'
-                        'Largo Plazo</div>',
-                        unsafe_allow_html=True
-                    )
-                    for label, m_val in _OPCIONES_SUB_LARGO.items():
-                        if st.button(label, use_container_width=True, key=f'sublp_{m_val}'):
-                            st.session_state['nav_horizonte'] = 'largo'
-                            st.session_state['nav_modulo'] = m_val
-                            st.rerun()
-            if HORIZONTE == 'largo':
-                st.markdown(f"""
-                <style>
-                .st-key-{_cont_key_lp} button {{
-                    background: #0d1117 !important;
-                    color: var(--verde-monster) !important;
-                    border: 1.5px solid var(--verde-monster) !important;
-                    font-weight: 700 !important;
-                    box-shadow: 0 0 0 2px rgba(108,194,74,0.15) !important;
-                }}
-                </style>
-                """, unsafe_allow_html=True)
-
         _nav_btn(_c[1], '📊 Análisis', 'nav_analisis',
                  HORIZONTE=='analisis', None, 'analisis', 'analisis')
 
@@ -10139,7 +10074,7 @@ with st.container(key='nav_pills_wrap'):
         _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
         _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
 
-        with _c[4]:
+        with _c[3]:
             _cont_key_h = 'navcont_nav_herramientas'
             with st.container(key=_cont_key_h):
                 with st.popover(_label_herramientas, use_container_width=True):
@@ -10184,7 +10119,7 @@ with st.container(key='nav_pills_wrap'):
         _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
         _label_trading = f'📈 {_trading_label_actual.split(" ",1)[1]}' if _trading_label_actual else '📈 Trading'
 
-        with _c[5]:
+        with _c[4]:
             _cont_key_t = 'navcont_nav_trading'
             with st.container(key=_cont_key_t):
                 with st.popover(_label_trading, use_container_width=True):
@@ -10211,11 +10146,11 @@ with st.container(key='nav_pills_wrap'):
                 </style>
                 """, unsafe_allow_html=True)
 
-        _render_app_switcher(_c[8])
-        _render_mi_cuenta(_c[10])
+        _render_app_switcher(_c[6])
+        _render_mi_cuenta(_c[8])
 
         _c2 = st.columns([1.0, 1.3, 1.05, 1.2, 1.15, 0.6, 1.1, 0.15, 1.3])
-        _render_actualizar(_c2[10])
+        _render_actualizar(_c2[8])
 
 st.markdown("""
 <style>
