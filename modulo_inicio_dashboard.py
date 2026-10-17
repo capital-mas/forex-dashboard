@@ -216,7 +216,8 @@ def _html_noticias(noticias):
 #  ENTRADA PÚBLICA
 # ==============================================================
 def render_inicio_dashboard(descargar_bulk, get_close_from_bulk,
-                            eventos=None, noticias=None, watchlist=None, eventos_tag="Hoy"):
+                            eventos=None, noticias=None, watchlist=None,
+                            eventos_tag="Hoy", universo=None):
     wl = watchlist or WATCHLIST_DEFAULT
     items = tuple((w.get("nombre") or w.get("label"), w["ticker"], w.get("tipo", "precio")) for w in wl)
 
