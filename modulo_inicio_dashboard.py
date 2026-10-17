@@ -10,7 +10,7 @@
 #  - No importa nada de app.py: todo entra por parámetro.
 #  - watchlist: [{nombre, ticker, tipo}]  tipo: precio | indice | fx | yield
 #  - eventos  : [{pais|hora, evento, prev, consenso}]
-#  - noticias : [{ticker, titular, sentimiento}]  (Alcista|Bajista|Neutro)
+#  - noticias : [{fecha, titular, url}]
 #  Si eventos/noticias son None se muestran datos de ejemplo.
 # ==============================================================
 
@@ -39,9 +39,9 @@ EVENTOS_DEMO = [
 ]
 
 NOTICIAS_DEMO = [
-    {"ticker": "NVDA",  "titular": "Aumento de demanda en chips H100/H200 en Data Centers.", "sentimiento": "Alcista"},
-    {"ticker": "AAPL",  "titular": "Lanzamiento de nuevas integraciones IA en WWDC.",        "sentimiento": "Alcista"},
-    {"ticker": "US10Y", "titular": "Subasta de bonos a 10 años muestra demanda moderada.",   "sentimiento": "Neutro"},
+    {"fecha": "16/10", "titular": "Aumento de demanda en chips H100/H200 en Data Centers.", "url": ""},
+    {"fecha": "16/10", "titular": "Lanzamiento de nuevas integraciones IA en WWDC.",        "url": ""},
+    {"fecha": "15/10", "titular": "Subasta de bonos a 10 años muestra demanda moderada.",   "url": ""},
 ]
 
 _COLOR_SENT = {"alcista": "var(--ci-up)", "bajista": "var(--ci-down)", "neutro": "var(--ci-warn)"}
@@ -82,6 +82,9 @@ _CSS = """
 .ci-mono { font-family:'JetBrains Mono',monospace; color:var(--ci-muted); }
 .ci-tk   { font-family:'JetBrains Mono',monospace; font-weight:700; }
 .ci-sent { font-family:'JetBrains Mono',monospace; font-weight:600; font-size:12px; }
+.ci-link { color:#3a7bd5; text-decoration:none; font-family:'JetBrains Mono',monospace;
+           font-size:12px; font-weight:600; white-space:nowrap; }
+.ci-link:hover { text-decoration:underline; color:#79c0ff; }
 .ci-empty { color:var(--ci-muted); font-size:12px; padding:18px 0; text-align:center; }
 </style>
 """
@@ -173,22 +176,32 @@ def _html_calendario(eventos, tag="Hoy"):
     )
 
 
+def _url_segura(u):
+    """Solo http/https: evita enlaces tipo javascript: que vengan de una fuente externa."""
+    u = (u or "").strip()
+    return u if u.lower().startswith(("http://", "https://")) else ""
+
+
 def _html_noticias(noticias):
     if not noticias:
         cuerpo = '<div class="ci-empty">Sin noticias por ahora.</div>'
     else:
         filas = []
         for n in noticias:
-            sent = str(n.get("sentimiento", "Neutro"))
-            color = _COLOR_SENT.get(sent.lower(), "var(--ci-muted)")
+            url = _url_segura(n.get("url"))
+            if url:
+                enlace = (f'<a class="ci-link" href="{html.escape(url, quote=True)}" '
+                          f'target="_blank" rel="noopener noreferrer">Ver noticia ↗</a>')
+            else:
+                enlace = '<span class="ci-mono">—</span>'
             filas.append(
-                f'<tr><td class="ci-tk">{html.escape(str(n.get("ticker", "")))}</td>'
+                f'<tr><td class="ci-mono">{html.escape(str(n.get("fecha", "")))}</td>'
                 f'<td>{html.escape(str(n.get("titular", "")))}</td>'
-                f'<td class="ci-sent" style="color:{color}">{html.escape(sent)}</td></tr>'
+                f'<td>{enlace}</td></tr>'
             )
         cuerpo = (
             '<table class="ci-table"><thead><tr>'
-            '<th>Ticker</th><th>Titular</th><th>Sentimiento</th>'
+            '<th>Fecha</th><th>Titular</th><th>Enlace</th>'
             f'</tr></thead><tbody>{"".join(filas)}</tbody></table>'
         )
     return (
