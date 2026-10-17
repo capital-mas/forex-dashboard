@@ -238,3 +238,21 @@ def render_inicio_dashboard(descargar_bulk, get_close_from_bulk,
         st.markdown(
             f'<div class="ci-root">{_html_noticias(NOTICIAS_DEMO if noticias is None else noticias)}</div>',
             unsafe_allow_html=True)
+
+
+# ==============================================================
+#  CACHÉ — para el botón "↺ Actualizar" de la app
+# ==============================================================
+def limpiar_cache_inicio():
+    """Fuerza la recarga de cotizaciones, calendario y noticias del Inicio.
+    Llamala desde _refrescar_cotizaciones() en app.py."""
+    try:
+        _calcular_kpis.clear()
+    except Exception:
+        pass
+    try:  # los adaptadores son opcionales: si no están, no pasa nada
+        from adaptadores_inicio import obtener_eventos_clase_a, obtener_noticias_inicio
+        obtener_eventos_clase_a.clear()
+        obtener_noticias_inicio.clear()
+    except Exception:
+        pass
