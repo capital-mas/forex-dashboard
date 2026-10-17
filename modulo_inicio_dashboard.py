@@ -211,6 +211,91 @@ def _html_noticias(noticias):
         f'{cuerpo}</div>'
     )
 
+# ==============================================================
+#  SECCIONES DESDE EL UNIVERSO DE LA APP
+# ==============================================================
+_YIELDS = {"^IRX", "^FVX", "^TNX", "^TYX"}
+
+SECCIONES_INICIO = [
+    ("paises",    "🌍 Índices"),
+    ("etfs",      "📦 ETFs y Bonos"),
+    ("sectores",  "📊 Sectores"),
+    ("mercados",  "🛢️ Mercados"),
+    ("forex",     "💱 Forex"),
+    ("acciones",  "📈 Acciones"),
+]
+
+
+def _tipo_ticker(tk):
+    if tk in _YIELDS:
+        return "yield"
+    if tk.endswith("=X"):
+        return "fx"
+    if tk.startswith("^"):
+        return "indice"
+    return "precio"
+
+
+def _grupos_seccion(clave, datos):
+    """Normaliza cada sección a {grupo: [(nombre, ticker, tipo), ...]}.
+    - acciones: {industria: [tickers]}
+    - resto:    {nombre: (ticker, grupo, ...)}  -> agrupa por el 2º elemento
+    """
+    grupos = {}
+    if clave == "acciones":
+        for ind, tks in datos.items():
+            grupos[ind] = [(tk, tk, _tipo_ticker(tk)) for tk in tks]
+    else:
+        for nombre, v in datos.items():
+            tk, grupo = v[0], v[1]
+            grupos.setdefault(grupo, []).append((nombre, tk, _tipo_ticker(tk)))
+    return grupos
+
+
+def _render_secciones(universo, descargar_bulk, get_close_from_bulk):
+    disponibles = [(k, l) for k, l in SECCIONES_INICIO if universo.get(k)]
+    if not disponibles:
+        return
+    etiquetas = {k: l for k, l in disponibles}
+
+    st.markdown('<div class="ci-root"><div class="ci-panel-title" style="margin:6px 0 8px 0">'
+                'Mercados del día</div></div>', unsafe_allow_html=True)
+
+    clave = st.radio("Sección", [k for k, _ in disponibles], horizontal=True,
+                     format_func=lambda k: etiquetas[k], key="ini_seccion",
+                     label_visibility="collapsed")
+
+    grupos = _grupos_seccion(clave, universo[clave])
+    nombres_grupo = list(grupos.keys())
+
+    # Acciones: una industria a la vez (son cientos de tickers). El resto permite "Todos".
+    if clave == "acciones":
+        opciones = nombres_grupo
+        etiqueta = "Industria"
+    else:
+        opciones = ["Todos"] + nombres_grupo
+        etiqueta = "Categoría"
+    grupo_sel = st.selectbox(etiqueta, opciones, key=f"ini_grupo_{clave}")
+
+    if grupo_sel == "Todos":
+        items = [it for g in nombres_grupo for it in grupos[g]]
+    else:
+        items = grupos[grupo_sel]
+
+    # sin duplicados, manteniendo orden
+    vistos, items_unicos = set(), []
+    for it in items:
+        if it[1] not in vistos:
+            vistos.add(it[1])
+            items_unicos.append(it)
+
+    try:
+        kpis = _calcular_kpis(tuple(items_unicos), descargar_bulk, get_close_from_bulk)
+    except Exception:
+        kpis = [{"nombre": n, "ticker": t, "valor": "S/D", "delta": "", "abs": "", "up": None}
+                for n, t, _ in items_unicos]
+
+    st.markdown(f'<div class="ci-root">{_html_kpis(kpis)}</div>', unsafe_allow_html=True)
 
 # ==============================================================
 #  ENTRADA PÚBLICA
