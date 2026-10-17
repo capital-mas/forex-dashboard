@@ -8898,6 +8898,7 @@ HORIZONTES_TDC = {
         'ret_dias_1': 20, 'ret_label_1': '1m', 'ret_dias_2': 60, 'ret_label_2': '3m',
         'rsi_periodo': 14, 'vol_corta': 20, 'bb_ventana': 20, 'atr_periodo': 14,
         'mom_escala': 0.60,
+        'macd': (12, 26, 9), 'adx_p': 14, 'cmf_p': 20, 'rvol_p': 20,
     },
     'LP': {
         'nombre': 'LARGO PLAZO', 'subtitulo': 'Posiciones estimadas de 1 a 2 años',
@@ -8905,6 +8906,7 @@ HORIZONTES_TDC = {
         'ret_dias_1': 60, 'ret_label_1': '3m', 'ret_dias_2': 252, 'ret_label_2': '12m',
         'rsi_periodo': 21, 'vol_corta': 60, 'bb_ventana': 50, 'atr_periodo': 21,
         'mom_escala': 0.35,
+        'macd': (24, 52, 18), 'adx_p': 28, 'cmf_p': 50, 'rvol_p': 50,
     },
 }
 
@@ -9013,7 +9015,36 @@ def _tdc_texto_interpretacion(sa, sn, ss):
             f"Sent ({ss:.0f}) {_tdc_fase(ss)} — {_tdc_interp_sent(ss)}. "
             f"» {_tdc_interp_conjunto(sa, sn, ss)}")
 
-
+def _tdc_confirmacion(df_v, cl_v, accion, sa, sn, ss, rsi, cfg):
+    out = dict(macd_hist=None, macd_hist_prev=None, macd_hist_pct=None,
+               adx=None, pdi=None, mdi=None, cmf=None, rvol=None)
+    try:
+        r, l, s = cfg['macd']
+        hist_s = calcular_macd_hist(cl_v, rapida=r, lenta=l, senal=s)
+        if hist_s is not None:
+            h = hist_s.dropna()
+            if len(h) >= 2:
+                out['macd_hist'], out['macd_hist_prev'] = float(h.iloc[-1]), float(h.iloc[-2])
+                px = float(pd.Series(cl_v).dropna().iloc[-1])
+                out['macd_hist_pct'] = out['macd_hist'] / px * 100 if px else None
+        adx_df = calcular_adx(df_v, p=cfg['adx_p'])
+        if adx_df is not None:
+            a = adx_df.dropna()
+            if len(a):
+                row = a.iloc[-1]
+                out.update(adx=float(row['adx']), pdi=float(row['pdi']), mdi=float(row['mdi']))
+        cmf_s = calcular_cmf(df_v, p=cfg['cmf_p'])
+        if cmf_s is not None:
+            c = cmf_s.dropna()
+            if len(c):
+                out['cmf'] = float(c.iloc[-1])
+        out['rvol'] = calcular_rvol(df_v, p=cfg['rvol_p'])
+    except Exception:
+        pass
+    out['confirma'], out['confirma_motivo'], out['decision_puntos'] = decision_corto(
+        accion, sa, sn, ss, rsi, out)
+    return out
+    
 def _tdc_analizar_ticker(tk, cfg):
     try:
         df_v = descargar_datos(tk, cfg['periodo_valor'])
@@ -9033,11 +9064,12 @@ def _tdc_analizar_ticker(tk, cfg):
         rsi = float(calcular_rsi(cl_m, p=cfg['rsi_periodo']).iloc[-1])
         if np.isnan(rsi): rsi = 50
         precio = float(cl_m.iloc[-1])
-        return dict(tk=tk, sa=sa, sn=sn, ss=ss, sf=round(sf, 1),
-                    ret_1=ret_1, ret_2=ret_2, rsi=rsi, precio=precio,
-                    accion=_tdc_señal(sa, sn, ss))
-    except Exception:
-        return None
+        accion = _tdc_señal(sa, sn, ss)
+        out = dict(tk=tk, sa=sa, sn=sn, ss=ss, sf=round(sf, 1),
+                   ret_1=ret_1, ret_2=ret_2, rsi=rsi, precio=precio,
+                   accion=accion)
+        out.update(_tdc_confirmacion(df_m, cl_m, accion, sa, sn, ss, rsi, cfg))
+        return out
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
