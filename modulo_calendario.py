@@ -2479,8 +2479,8 @@ def _validar_fila_masiva(row):
         if val == "ERROR":
             errores.append(f"Valor numérico inválido en '{nombre}'")
 
-    unidad = str(row.get("unidad") or "").strip()
-    notas = str(row.get("notas") or "").strip()
+    unidad = "" if pd.isna(row.get("unidad")) else str(row.get("unidad")).strip()
+    notas  = "" if pd.isna(row.get("notas"))  else str(row.get("notas")).strip()
 
     if errores:
         return errores, None
