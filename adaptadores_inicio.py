@@ -96,22 +96,17 @@ def obtener_eventos_clase_a(_supabase, limite=6):
 # ==============================================================
 @st.cache_data(ttl=120, show_spinner=False)
 def obtener_noticias_inicio(_supabase, limite=5):
+    """Últimas noticias: fecha + titular + enlace a la fuente (fuente_url)."""
     try:
         res = (_supabase.table(TABLA_NOTICIAS)
-               .select("ticker,empresa,pais,titulo,impacto,fecha_evento,created_at")
+               .select("fecha_evento,titulo,fuente_url,created_at")
                .order("fecha_evento", desc=True).order("created_at", desc=True)
                .limit(limite).execute())
     except Exception:
         return []
 
-    noticias = []
-    for r in (res.data or []):
-        etiqueta = (r.get("ticker") or "").strip() \
-            or (r.get("empresa") or "").strip()[:12] \
-            or (r.get("pais") or "").strip() or "—"
-        noticias.append({
-            "ticker": etiqueta,
-            "titular": r.get("titulo") or "",
-            "sentimiento": _SENTIMIENTO.get(r.get("impacto"), "Neutro"),
-        })
-    return noticias
+    return [{
+        "fecha": _fecha_corta(r.get("fecha_evento")),
+        "titular": r.get("titulo") or "",
+        "url": (r.get("fuente_url") or "").strip(),
+    } for r in (res.data or [])]
