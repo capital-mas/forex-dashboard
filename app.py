@@ -9090,6 +9090,8 @@ def _tdc_analizar_ticker(tk, cfg):
                    accion=accion)
         out.update(_tdc_confirmacion(df_m, cl_m, accion, sa, sn, ss, rsi, cfg))
         return out
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
