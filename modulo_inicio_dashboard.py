@@ -308,6 +308,7 @@ def render_inicio_dashboard(descargar_bulk, get_close_from_bulk,
 
     st.markdown(_CSS, unsafe_allow_html=True)
 
+    # 1) Franja fija de resumen
     try:
         kpis = _calcular_kpis(items, descargar_bulk, get_close_from_bulk)
     except Exception:
@@ -315,6 +316,11 @@ def render_inicio_dashboard(descargar_bulk, get_close_from_bulk,
                 for n, t, _ in items]
     st.markdown(f'<div class="ci-root">{_html_kpis(kpis)}</div>', unsafe_allow_html=True)
 
+    # 2) Secciones del universo (si app.py lo pasa)
+    if universo:
+        _render_secciones(universo, descargar_bulk, get_close_from_bulk)
+
+    # 3) Calendario + noticias
     col_cal, col_news = st.columns(2, gap="medium")
     with col_cal:
         st.markdown(
