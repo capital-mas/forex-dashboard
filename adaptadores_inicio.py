@@ -101,12 +101,20 @@ def obtener_noticias_inicio(_supabase, limite=5):
         res = (_supabase.table(TABLA_NOTICIAS)
                .select("fecha_evento,titulo,fuente_url,created_at")
                .order("fecha_evento", desc=True).order("created_at", desc=True)
-               .limit(limite).execute())
+               .limit(limite * 4).execute())
     except Exception:
         return []
+
+    vistas, salida = set(), []
+    for r in (res.data or []):
+        clave = (r.get("fuente_url") or r.get("titulo") or "").strip()
+        if clave in vistas:
+            continue
+        vistas.add(clave)
+        salida.append(r)
 
     return [{
         "fecha": _fecha_corta(r.get("fecha_evento")),
         "titular": r.get("titulo") or "",
         "url": (r.get("fuente_url") or "").strip(),
-    } for r in (res.data or [])]
+    } for r in salida[:limite]]
