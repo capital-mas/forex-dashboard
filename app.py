@@ -5334,6 +5334,7 @@ def _renderizar_buscador(ticker):
                     with c1t: st.metric(f"Ret {cfg_hz['ret_label_1']}", f"{d_tdc['ret_1']:+.2f}%")
                     with c2t: st.metric(f"Ret {cfg_hz['ret_label_2']}", f"{d_tdc['ret_2']:+.2f}%")
                     with c3t: st.metric('RSI', f"{d_tdc['rsi']:.1f}")
+                    _render_confirmacion_tdc(d_tdc)
                     st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{d_tdc["accion"]}</span></div>',
                                 unsafe_allow_html=True)
                     _, col_lbl_tdc, emo_lbl_tdc = _tdc_clasificar(d_tdc['sa'])
@@ -9044,7 +9045,26 @@ def _tdc_confirmacion(df_v, cl_v, accion, sa, sn, ss, rsi, cfg):
     out['confirma'], out['confirma_motivo'], out['decision_puntos'] = decision_corto(
         accion, sa, sn, ss, rsi, out)
     return out
-    
+
+def _render_confirmacion_tdc(d):
+    c6, c7, c8, c9 = st.columns(4)
+    hp = d.get('macd_hist_pct')
+    with c6: st.metric('Hist. MACD', f'{hp:+.3f}%' if hp is not None else 'N/D',
+                       estado_macd_hist(d.get('macd_hist'), d.get('macd_hist_prev')),
+                       delta_color='off', help=G('Histograma MACD'))
+    with c7: st.metric('ADX', f"{d['adx']:.0f}" if d.get('adx') is not None else 'N/D',
+                       estado_adx(d), delta_color='off', help=G('ADX'))
+    with c8: st.metric('CMF', f"{d['cmf']:+.2f}" if d.get('cmf') is not None else 'N/D',
+                       estado_cmf(d.get('cmf')), delta_color='off', help=G('CMF'))
+    with c9: st.metric('Vol. relativo', f"{d['rvol']:.1f}x" if d.get('rvol') is not None else 'N/D',
+                       help=G('RVOL'))
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">🧭 Decisión: {d['confirma']}</div>
+      {d['accion']} → {d['confirma_motivo']}.
+    </div>
+    """, unsafe_allow_html=True)
+ 
 def _tdc_analizar_ticker(tk, cfg):
     try:
         df_v = descargar_datos(tk, cfg['periodo_valor'])
@@ -9602,6 +9622,7 @@ def _ana_render_tdc(ticker, hz):
     with c1: st.metric(f"Ret {cfg['ret_label_1']}", f"{d['ret_1']:+.2f}%")
     with c2: st.metric(f"Ret {cfg['ret_label_2']}", f"{d['ret_2']:+.2f}%")
     with c3: st.metric('RSI', f"{d['rsi']:.1f}")
+    _render_confirmacion_tdc(d)
     st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{d["accion"]}</span></div>',
                 unsafe_allow_html=True)
     nombre_lbl, _col, emo = _tdc_clasificar(d['sa'])
