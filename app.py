@@ -9660,13 +9660,23 @@ def _ana_render_largo_cuant(ticker):
 
 
 def _ana_render_fundamental(ticker):
-    render_perfil_empresa(ticker, key_suffix='ana')
+    render_perfil_empresa(ticker, key_suffix='ana', mostrar_descripcion=False)
+    industria_fund = TICKER_INDUSTRY.get(ticker, 'Sin Clasificar')
+    sector_fund = SECTOR_MAP_FUND.get(industria_fund, 'Sin Clasificar')
     with st.spinner('Descargando ratios fundamentales...'):
-        res_fund = analizar_fundamental(ticker, TICKER_INDUSTRY.get(ticker, 'Sin Clasificar'))
+        res_fund = analizar_fundamental(ticker, industria_fund)
     if res_fund is None:
         st.info('No se encontraron datos fundamentales para este activo.')
         return
+
+    mc1, mc2, mc3 = st.columns(3)
+    with mc1: st.metric('Sector', sector_fund[:20])
+    with mc2: st.metric('Industria', industria_fund[:20])
+    with mc3: st.metric('Rec. Analistas', res_fund.get('recommendation') or 'N/D')
+
     render_resumen_visual_fundamental(res_fund)
+    st.markdown('#### 🔎 Datos y señales detalladas')
+    render_detalle_fundamental(res_fund, sector_fund)
 
 
 def _ana_render_activo(ticker):
@@ -9683,7 +9693,7 @@ def _ana_render_activo(ticker):
     with st.spinner('Calculando los tres horizontes...'):
         _ana_resumen_activo(ticker)
 
-    nombres_tabs = ['⚡ Corto plazo', '📆 Mediano plazo', '📈 Largo plazo']
+    nombres_tabs = ['⚡ Corto plazo', '📆 Mediano plazo', '📈 Largo plazo', '🧮 Cuantitativo']
     con_fund = not _es_activo_sin_fundamentals(ticker)
     if con_fund:
         nombres_tabs.append('📊 Fundamental')
@@ -9698,11 +9708,11 @@ def _ana_render_activo(ticker):
     with tabs[2]:
         st.caption('Horizonte: 1–2 años')
         _ana_render_tdc(ticker, 'LP')
-        st.markdown('---')
-        st.markdown('#### 🧮 Análisis cuantitativo (2 años)')
+    with tabs[3]:
+        st.caption('Modelo cuantitativo sobre 2 años de historia')
         _ana_render_largo_cuant(ticker)
     if con_fund:
-        with tabs[3]:
+        with tabs[4]:
             _ana_render_fundamental(ticker)
 
 
