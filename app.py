@@ -4751,30 +4751,51 @@ def render_resumen_visual_fundamental(res):
     </div>
     """, unsafe_allow_html=True)
 
+_MULTIPLOS_FUND = {'PER', 'P/B', 'EV/EBITDA', 'P/FCF', 'EV/Sales', 'PEG', 'D/E',
+                   'Net Debt/EBITDA', 'Current Ratio', 'Interest Coverage'}
+
+def _fmt_metrica_fund(label, v):
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return 'N/D'
+    if label.endswith('%'):
+        return f'{v:.2f}%'
+    if label in _MULTIPLOS_FUND:
+        return f'{v:.2f}x'
+    return f'{v:.2f}'
+
+
+def render_kpis_fundamental_completo(res):
+    """Tarjetas con TODAS las métricas de CATEGORIAS_FUNDAMENTAL + una de tamaño/caja."""
+    colores = ['#3a7bd5', '#3fb950', '#e3b341', '#bc8cff', '#f0883e']
+    tarjetas = []
+    for (categoria, metricas), color in zip(CATEGORIAS_FUNDAMENTAL, colores):
+        celdas = [(lbl, _fmt_metrica_fund(lbl, ext(res))) for lbl, ext, _d, _g in metricas]
+        tips = [GLOSARIO.get(g) or GLOSARIO_EXTRA.get(g) for _l, _e, _d, g in metricas]
+        tooltip = ' | '.join(t for t in tips[:3] if t)
+        tarjetas.append((categoria, color, celdas, tooltip))
+
+    # Extras que no estaban en las categorías
+    tarjetas.append(('📦 Tamaño y Caja', '#79c0ff', [
+        ('ROA', _fmt_pct(res.get('roa'))),
+        ('P/S', f"{_fmt_num(res.get('ps'))}x"),
+        ('FCF', _fmt_big(res.get('fcf'))),
+        ('Op. Cash Flow', _fmt_big(res.get('op_cf'))),
+        ('Cash', _fmt_big(res.get('cash'))),
+        ('Market Cap', _fmt_big(res.get('market_cap'))),
+        ('Enterprise Value', _fmt_big(res.get('ev'))),
+        ('Precio Objetivo', fmt_precio(res.get('target_price'))),
+    ], f"{G('ROA')} | {G('FCF')} | {G('Market Cap')}"))
+
+    for i in range(0, len(tarjetas), 3):
+        cols = st.columns(3)
+        for col, (titulo, color, celdas, tip) in zip(cols, tarjetas[i:i+3]):
+            with col:
+                kpi_card_fundamental(titulo, color, celdas, tip)
+        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+        
 def render_detalle_fundamental(res_fund, sector_fund):
     bench_b = res_fund['bench']
-    cols_fund_kpi = st.columns(3)
-    with cols_fund_kpi[0]:
-        kpi_card_fundamental('Valuación', '#3a7bd5', [
-            ('PER', f"{_fmt_num(res_fund.get('per'))}x"),
-            ('P/B', f"{_fmt_num(res_fund.get('pb'))}x"),
-            ('EV/EBITDA', f"{_fmt_num(res_fund.get('ev_ebitda'))}x"),
-            ('PEG', f"{_fmt_num(res_fund.get('peg'))}"),
-        ], f"{G('PER')} | {G('P/B')}")
-    with cols_fund_kpi[1]:
-        kpi_card_fundamental('Rentabilidad', '#3fb950', [
-            ('ROE', _fmt_pct(res_fund.get('roe'))),
-            ('ROA', _fmt_pct(res_fund.get('roa'))),
-            ('Mg.Bruto', _fmt_pct(res_fund.get('gross_margin'))),
-            ('Mg.Op.', _fmt_pct(res_fund.get('op_margin'))),
-        ], f"{G('ROE')} | {G('ROA')}")
-    with cols_fund_kpi[2]:
-        kpi_card_fundamental('Solvencia / Flujo', '#e3b341', [
-            ('D/E', f"{_fmt_num(res_fund.get('debt_equity'))}x"),
-            ('Curr.Ratio', f"{_fmt_num(res_fund.get('curr_ratio'))}x"),
-            ('FCF', _fmt_big(res_fund.get('fcf'))),
-            ('Beta', _fmt_num(res_fund.get('beta'))),
-        ], f"{G('FCF')} | {G('Beta')}")
+    render_kpis_fundamental_completo(res_fund)
 
     st.markdown(f"""
     <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
