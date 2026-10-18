@@ -4933,7 +4933,7 @@ def logo_html(logo_url, size=28, dominio_fallback=None):
     )
 
 
-def render_perfil_empresa(ticker, key_suffix=''):
+def render_perfil_empresa(ticker, key_suffix='', mostrar_descripcion=True):
     """Card con logo, capitalización y descripción del negocio. Usar en cualquier
     pantalla donde se analice un ticker individual (Buscador, Comparador, Fundamental)."""
     if _es_activo_sin_fundamentals(ticker):
@@ -4955,10 +4955,8 @@ def render_perfil_empresa(ticker, key_suffix=''):
                 st.rerun()
         return
 
-    if not perfil.get('descripcion'):
-        st.info(f'ℹ️ {ticker} no tiene descripción de negocio disponible en Yahoo Finance. Mostrando el resto de los datos igual.')
+    if mostrar_descripcion and not perfil.get('descripcion'):
         perfil['descripcion'] = 'Descripción no disponible.'
-        return
 
     mc = _fmt_big(perfil.get('market_cap'))
     ev = _fmt_big(perfil.get('enterprise_value'))
@@ -4989,6 +4987,14 @@ def render_perfil_empresa(ticker, key_suffix=''):
         if perfil.get('website') else 'N/D'
     )
 
+    descripcion_html = ''
+    if mostrar_descripcion:
+        descripcion_html = f"""
+      <div style="font-size:11px;font-weight:700;color:#6CC24A;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">
+        🏢 A qué se dedica / Modelo de negocio
+      </div>
+      <div style="font-size:13px;color:#f5f7fa;line-height:1.7">{escape_html(perfil['descripcion'])}</div>"""
+      
     st.markdown(f"""
     <div style="background:#0d1117;border:1px solid #21262d;border-top:2px solid #3a7bd5;
          border-radius:12px;padding:20px 24px;margin-bottom:16px">
@@ -5008,14 +5014,10 @@ def render_perfil_empresa(ticker, key_suffix=''):
         <div><div class="kpi-metric-label">% Insiders</div><div class="kpi-metric-value">{pct_ins}</div></div>
         <div><div class="kpi-metric-label">CEO</div><div class="kpi-metric-value" style="font-size:13px">{ceo_safe}</div></div>
       </div>
-      <div style="font-size:12px;color:#6b7d9a;margin-bottom:14px">🌐 Sitio web: {ubicacion_safe}</div>
-      <div style="font-size:11px;font-weight:700;color:#6CC24A;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">
-        🏢 A qué se dedica / Modelo de negocio
-      </div>
-      <div style="font-size:13px;color:#f5f7fa;line-height:1.7">{escape_html(perfil['descripcion'])}</div>
+      <div style="font-size:12px;color:#6b7d9a;margin-bottom:{'14px' if mostrar_descripcion else '0'}">🌐 Sitio web: {website_html}</div>
+      {descripcion_html}
     </div>
     """, unsafe_allow_html=True)
-
 
 # ==============================================================
 #  MÓDULO BUSCADOR UNIVERSAL
