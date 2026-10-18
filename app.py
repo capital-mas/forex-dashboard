@@ -4751,6 +4751,58 @@ def render_resumen_visual_fundamental(res):
     </div>
     """, unsafe_allow_html=True)
 
+def render_detalle_fundamental(res_fund, sector_fund):
+    bench_b = res_fund['bench']
+    cols_fund_kpi = st.columns(3)
+    with cols_fund_kpi[0]:
+        kpi_card_fundamental('Valuación', '#3a7bd5', [
+            ('PER', f"{_fmt_num(res_fund.get('per'))}x"),
+            ('P/B', f"{_fmt_num(res_fund.get('pb'))}x"),
+            ('EV/EBITDA', f"{_fmt_num(res_fund.get('ev_ebitda'))}x"),
+            ('PEG', f"{_fmt_num(res_fund.get('peg'))}"),
+        ], f"{G('PER')} | {G('P/B')}")
+    with cols_fund_kpi[1]:
+        kpi_card_fundamental('Rentabilidad', '#3fb950', [
+            ('ROE', _fmt_pct(res_fund.get('roe'))),
+            ('ROA', _fmt_pct(res_fund.get('roa'))),
+            ('Mg.Bruto', _fmt_pct(res_fund.get('gross_margin'))),
+            ('Mg.Op.', _fmt_pct(res_fund.get('op_margin'))),
+        ], f"{G('ROE')} | {G('ROA')}")
+    with cols_fund_kpi[2]:
+        kpi_card_fundamental('Solvencia / Flujo', '#e3b341', [
+            ('D/E', f"{_fmt_num(res_fund.get('debt_equity'))}x"),
+            ('Curr.Ratio', f"{_fmt_num(res_fund.get('curr_ratio'))}x"),
+            ('FCF', _fmt_big(res_fund.get('fcf'))),
+            ('Beta', _fmt_num(res_fund.get('beta'))),
+        ], f"{G('FCF')} | {G('Beta')}")
+
+    st.markdown(f"""
+    <div style='background:rgba(58,123,213,0.07);border:1px solid rgba(58,123,213,0.2);
+         border-radius:8px;padding:10px 16px;margin:10px 0;font-size:13px;color:#f5f7fa;line-height:1.8'>
+      <b style='color:#3a7bd5;font-size:13px'>BENCHMARK {sector_fund.upper()}</b><br>
+      {bench_b['descripcion']}<br>
+      <b style='color:#f5f7fa'>Métricas clave:</b> {' · '.join(bench_b.get('metricas_clave', []))}
+    </div>
+    """, unsafe_allow_html=True)
+
+    ok_sigs  = [m for t, m in res_fund['senales'] if t == 'OK']
+    alt_sigs = [m for t, m in res_fund['senales'] if t == 'ALT']
+    col_sig1, col_sig2 = st.columns(2)
+    with col_sig1:
+        st.markdown('<div style="font-size:11px;font-weight:700;color:#3fb950;margin-bottom:4px">✅ SEÑALES POSITIVAS</div>', unsafe_allow_html=True)
+        for msg in ok_sigs:
+            st.markdown(f'<div style="font-size:11px;color:#3fb950;padding:2px 0;border-bottom:1px solid #21262d">• {msg}</div>', unsafe_allow_html=True)
+    with col_sig2:
+        st.markdown('<div style="font-size:11px;font-weight:700;color:#f85149;margin-bottom:4px">⚠️ ALERTAS</div>', unsafe_allow_html=True)
+        for msg in alt_sigs:
+            st.markdown(f'<div style="font-size:11px;color:#f85149;padding:2px 0;border-bottom:1px solid #21262d">• {msg}</div>', unsafe_allow_html=True)
+
+    if res_fund['sector_senales']:
+        st.markdown('<div style="margin-top:12px;font-size:11px;font-weight:700;color:#3a7bd5;margin-bottom:4px">📐 COMPARATIVA VS BENCHMARK SECTORIAL</div>', unsafe_allow_html=True)
+        for tipo, msg in res_fund['sector_senales']:
+            col_vs = '#3fb950' if tipo == 'POS' else '#f85149'
+            ico_vs = '✔' if tipo == 'POS' else '✘'
+            st.markdown(f'<div style="font-size:11px;color:{col_vs};padding:3px 0;border-bottom:1px solid #21262d">{ico_vs} {msg}</div>', unsafe_allow_html=True)
 
 # ==============================================================
 #  PERFIL DE EMPRESA — logo, capitalización, descripción del negocio
