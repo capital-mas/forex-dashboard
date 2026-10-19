@@ -958,15 +958,6 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
         if analizar and ticker:
             st.session_state['velas_ticker_ok'] = ticker
         ticker_ok = st.session_state.get('velas_ticker_ok', '')
-    else:
-        with c_btn:
-            st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
-            analizar = st.button('▶ Analizar', use_container_width=True, key='velas_btn')
-        opciones_vel = [60, 120, 200, 300] if intradia else [30, 60, 90, 120]
-        ruedas = st.selectbox('Velas en gráfico', opciones_vel, index=1, key=f'velas_ruedas_{tf}')
-        if analizar and ticker:
-            st.session_state['velas_ticker_ok'] = ticker
-        ticker_ok = st.session_state.get('velas_ticker_ok', '')
 
     excluir_formacion = True
     if intradia:
