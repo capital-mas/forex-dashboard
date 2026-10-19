@@ -10706,6 +10706,17 @@ elif MODULO == 'optimizador':
     else:
         _mostrar_bloqueo_pro('Optimizador de Cartera')
 
+elif MODULO == 'analisis_unificado':
+    if TIENE_ACCESO_PRO:
+        modulo_analisis_unificado(
+            descargar_datos=descargar_datos,
+            selector_ticker_autocomplete=selector_ticker_autocomplete,
+            kpi_cards_4=kpi_cards_4,
+            fmt_precio=fmt_precio,
+            PLOTLY_CONFIG=PLOTLY_CONFIG,
+        )
+    else:
+        _mostrar_bloqueo_pro('Centro de análisis')
 
 elif MODULO == 'pares':
     if TIENE_ACCESO_PRO:
