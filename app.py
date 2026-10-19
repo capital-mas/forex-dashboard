@@ -10724,7 +10724,7 @@ elif MODULO == 'pares':
             '📐 Análisis Técnico', '🔗 Pares (Mean Reversion)', '📐 Cointegración (Engle-Granger)', '🌪️ Volatilidad (VIX)',
         ])
         with tab_analisis_tecnico:
-            modulo_analisis_tecnico(PLOTLY_CONFIG=PLOTLY_CONFIG, ticker_externo=ticker_arriba)
+            modulo_analisis_tecnico(PLOTLY_CONFIG=PLOTLY_CONFIG)
         with tab_rot_pares:
             modulo_scanner_pares()
         with tab_coint:
@@ -10738,7 +10738,7 @@ elif MODULO == 'pares':
                 selector_ticker_autocomplete=selector_ticker_autocomplete,
             )
         with tab_vol:
-            modulo_volatilidad(PLOTLY_CONFIG=PLOTLY_CONFIG, ticker_externo=ticker_arriba)
+            modulo_volatilidad(PLOTLY_CONFIG=PLOTLY_CONFIG)
     else:
         _mostrar_bloqueo_pro('Rotación y Pares')
 
