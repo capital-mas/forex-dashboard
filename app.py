@@ -10838,6 +10838,7 @@ elif MODULO == 'velas':
             kpi_cards_4=kpi_cards_4,
             fmt_precio=fmt_precio,
             PLOTLY_CONFIG=PLOTLY_CONFIG,
+            ticker_externo=ticker_arriba,   # <- la variable con el activo elegido arriba
         )
     else:
         _mostrar_bloqueo_pro('Lectura de Velas')
