@@ -9789,19 +9789,23 @@ def _ana_vista_activo(items):
 
 def _ana_vistas_avanzadas():
     st.markdown('<div class="sec-title">📑 Posicionamiento de futuros</div>', unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button('📑 Análisis COT' if TIENE_ACCESO_PRO else '🔒 Análisis COT (Pro)',
-                     key='ana_go_cot', use_container_width=True):
-            st.session_state['nav_horizonte'] = 'largo'
-            st.session_state['nav_modulo'] = 'cot'
-            st.rerun()
-    with c2:
-        if st.button('📑 Análisis TFF' if TIENE_ACCESO_PRO else '🔒 Análisis TFF (Pro)',
-                     key='ana_go_tff', use_container_width=True):
-            st.session_state['nav_horizonte'] = 'largo'
-            st.session_state['nav_modulo'] = 'tff'
-            st.rerun()
+    with st.expander('📑 Ver análisis COT / TFF', expanded=False):
+        if not TIENE_ACCESO_PRO:
+            _mostrar_bloqueo_pro('Análisis COT / TFF')
+            return
+        opcion = st.selectbox(
+            'Tipo de posicionamiento',
+            ['— Elegí una opción —',
+             'COT — Commitment of Traders (commodities)',
+             'TFF — Traders in Financial Futures (índices, forex, cripto)'],
+            key='ana_cot_tff_sel',
+        )
+        if opcion.startswith('COT'):
+            auto_sync(supabase, _cot_es_admin(st.session_state["usuario"].email))
+            modulo_cot(supabase, USER_ID, st.session_state["usuario"].email)
+        elif opcion.startswith('TFF'):
+            auto_sync(supabase, _cot_es_admin(st.session_state["usuario"].email))
+            modulo_tff(supabase, USER_ID, st.session_state["usuario"].email)
 
 def modulo_analisis():
     st.markdown("""
@@ -10122,17 +10126,17 @@ def _render_mi_cuenta(col):
                              use_container_width=True, key='menu_ia_chat'):
                     st.session_state['ia_chat_abierto'] = not st.session_state.get('ia_chat_abierto', False)
                     st.rerun()
+                if st.button('📆 Calendario Económico', use_container_width=True, key='menu_calendario'):
+                    st.session_state['nav_horizonte'] = 'calendario'
+                    st.session_state['nav_modulo'] = 'calendario'
+                    st.rerun()
+                if st.button('📰 Noticias de Mercado', use_container_width=True, key='menu_noticias'):
+                    st.session_state['nav_horizonte'] = 'noticias'
+                    st.session_state['nav_modulo'] = 'noticias'
+                    st.rerun()
 
                 if ES_ADMIN:
                     st.markdown('<hr style="margin:6px 0;border-color:#21262d">', unsafe_allow_html=True)
-                    if st.button('📆 Calendario Económico', use_container_width=True, key='menu_admin_calendario'):
-                        st.session_state['nav_horizonte'] = 'calendario'
-                        st.session_state['nav_modulo'] = 'calendario'
-                        st.rerun()
-                    if st.button('📰 Noticias de Mercado', use_container_width=True, key='menu_admin_noticias'):
-                        st.session_state['nav_horizonte'] = 'noticias'
-                        st.session_state['nav_modulo'] = 'noticias'
-                        st.rerun()
                     label_panel_pagos = (
                         f'🛠️ Panel de Pagos 🔴{n_pagos_pend}' if n_pagos_pend > 0 else '🛠️ Panel de Pagos'
                     )
@@ -10746,16 +10750,10 @@ elif MODULO == 'senales':
                            tiene_acceso_pro=TIENE_SENALES_PRO)
 
 elif MODULO == 'calendario':
-    if ES_ADMIN:
-        render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
-    else:
-        st.warning('No tenés permisos de administrador.')
+    render_calendario_economico(supabase, USER_ID, st.session_state["usuario"].email)
 
 elif MODULO == 'noticias':
-    if ES_ADMIN:
-        render_noticias_mercado(supabase, USER_ID, st.session_state["usuario"].email)
-    else:
-        st.warning('No tenés permisos de administrador.')
+    render_noticias_mercado(supabase, USER_ID, st.session_state["usuario"].email)
 
 elif MODULO == 'finanzas':
     render_finanzas_personales(supabase, USER_ID)
