@@ -324,13 +324,18 @@ def _panel_lw(base_cripto, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, ver
 #  MÓDULO PRINCIPAL
 # ==============================================================
 
-def grafico_live_panel(entrada, kpi_cards_4, fmt_precio, fuente_velas=None):
-    """Gráfico en vivo (GEX + velas) para un activo ya elegido. Sin selector de activo propio."""
-    c1, c2 = st.columns(2)
-    with c1:
-        tf_label = st.selectbox('Temporalidad', list(TIMEFRAMES), index=1, key='live_tf')
-    with c2:
-        altura = st.selectbox('Alto del gráfico', [520, 640, 760], index=1, key='live_alto')
+def grafico_live_panel(entrada, kpi_cards_4, fmt_precio, fuente_velas=None, tf_forzado=None):
+    """Gráfico en vivo (GEX + velas) para un activo ya elegido.
+    tf_forzado: '1m','5m','15m','30m','1h','1d' -> usa esa temporalidad y oculta el selector."""
+    if tf_forzado:
+        tf_label = next(k for k, v in TIMEFRAMES.items() if v == tf_forzado)
+        altura = st.selectbox('Alto del gráfico', [520, 640, 760], index=2, key='live_alto')
+    else:
+        c1, c2 = st.columns(2)
+        with c1:
+            tf_label = st.selectbox('Temporalidad', list(TIMEFRAMES), index=1, key='live_tf')
+        with c2:
+            altura = st.selectbox('Alto del gráfico', [520, 640, 760], index=1, key='live_alto')
 
     simbolo_cboe, simbolo, aviso = resolver_simbolo(entrada)
     if aviso:
