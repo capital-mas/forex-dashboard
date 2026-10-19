@@ -324,31 +324,13 @@ def _panel_lw(base_cripto, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, ver
 #  MÓDULO PRINCIPAL
 # ==============================================================
 
-def modulo_grafico_live(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, fuente_velas=None):
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid #3a7bd5;
-         border-radius:14px; padding:24px 30px; margin-bottom:20px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📈 Gráfico con GEX + Velas</div>
-      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        El mismo gráfico para todos los activos, con los niveles <b style="color:#bc8cff">GEX</b> dibujados y la
-        <b style="color:#3fb950">lectura de velas</b> marcada. Cripto: velas en vivo de Binance (cualquier par).
-        Acciones, ETFs, forex e índices: velas de Yahoo Finance, recargadas cada 60 s.
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    c1, c2, c3 = st.columns([3, 1.2, 1.2])
+def grafico_live_panel(entrada, kpi_cards_4, fmt_precio, fuente_velas=None):
+    """Gráfico en vivo (GEX + velas) para un activo ya elegido. Sin selector de activo propio."""
+    c1, c2 = st.columns(2)
     with c1:
-        entrada = selector_ticker_autocomplete('live_ticker', st.session_state.get('ticker_from_table', ''))
-    with c2:
         tf_label = st.selectbox('Temporalidad', list(TIMEFRAMES), index=1, key='live_tf')
-    with c3:
+    with c2:
         altura = st.selectbox('Alto del gráfico', [520, 640, 760], index=1, key='live_alto')
-
-    if not entrada:
-        st.info('Elegí un activo para ver el gráfico.')
-        return
 
     simbolo_cboe, simbolo, aviso = resolver_simbolo(entrada)
     if aviso:
@@ -379,3 +361,25 @@ def modulo_grafico_live(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, f
         'retraso e interés abierto del día anterior. Las señales y niveles son herramientas de lectura, '
         'no asesoramiento financiero.</div>',
         unsafe_allow_html=True)
+
+
+def modulo_grafico_live(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, fuente_velas=None):
+    """Versión standalone (con su propio selector de activo)."""
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
+         border:1px solid #21262d; border-top:2px solid #3a7bd5;
+         border-radius:14px; padding:24px 30px; margin-bottom:20px;">
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📈 Gráfico con GEX + Velas</div>
+      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+        El mismo gráfico para todos los activos, con los niveles <b style="color:#bc8cff">GEX</b> dibujados y la
+        <b style="color:#3fb950">lectura de velas</b> marcada. Cripto: velas en vivo de Binance (cualquier par).
+        Acciones, ETFs, forex e índices: velas de Yahoo Finance, recargadas cada 60 s.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    entrada = selector_ticker_autocomplete('live_ticker', st.session_state.get('ticker_from_table', ''))
+    if not entrada:
+        st.info('Elegí un activo para ver el gráfico.')
+        return
+    grafico_live_panel(entrada, kpi_cards_4, fmt_precio, fuente_velas)
