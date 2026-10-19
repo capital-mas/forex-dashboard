@@ -51,24 +51,29 @@ def _a_yahoo(t):
 
 
 def modulo_analisis_unificado(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt_precio,
-                              PLOTLY_CONFIG=None, fuente_velas=None):
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid #3a7bd5;
-         border-radius:14px; padding:22px 30px; margin-bottom:18px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🧭 Centro de análisis</div>
-      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Elegí el activo y la temporalidad una sola vez: el gráfico en vivo queda arriba y el análisis que elijas se muestra debajo.
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+                              PLOTLY_CONFIG=None, fuente_velas=None, ticker_externo=None):
+    if ticker_externo is None:
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
+             border:1px solid #21262d; border-top:2px solid #3a7bd5;
+             border-radius:14px; padding:22px 30px; margin-bottom:18px;">
+          <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🧭 Centro de análisis</div>
+          <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+            Elegí el activo y la temporalidad una sola vez: el gráfico en vivo queda arriba y el análisis que elijas se muestra debajo.
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # ── 1) Activo + temporalidad únicos ──
-    c_tk, c_tf = st.columns([3, 1])
-    with c_tk:
-        ticker = selector_ticker_autocomplete('hub_ticker', st.session_state.get('ticker_from_table', ''))
-    with c_tf:
+    # ── 1) Activo + temporalidad ──
+    if ticker_externo is not None:
+        ticker = ticker_externo
         tf_label = st.selectbox('Temporalidad', list(TF_HUB), key='hub_tf')
+    else:
+        c_tk, c_tf = st.columns([3, 1])
+        with c_tk:
+            ticker = selector_ticker_autocomplete('hub_ticker', st.session_state.get('ticker_from_table', ''))
+        with c_tf:
+            tf_label = st.selectbox('Temporalidad', list(TF_HUB), key='hub_tf')
     tf = TF_HUB[tf_label]
 
     if not ticker:
