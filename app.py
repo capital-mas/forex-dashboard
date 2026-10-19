@@ -10370,8 +10370,8 @@ with st.container(key='nav_mobile_wrap'):
         '🎲 Opciones': 'opciones',
         ('🧲 GEX' if TIENE_ACCESO_PRO else '🔒 GEX (Pro)'): 'gex',
         '📐 Promediador': 'promediador',
-        '📆 Calendario' = 'calendario',
-        '📰 Noticias' = 'noticias'
+        '📆 Calendario': 'calendario',
+        '📰 Noticias': 'noticias',
         ('🎯 Señales' if TIENE_SENALES_PRO else '🎯 Señales (1 destacada)'): 'senales',
         ('🏦 Valuación' if TIENE_ACCESO_PRO else '🔒 Valuación (Pro)'): 'valuacion',
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
