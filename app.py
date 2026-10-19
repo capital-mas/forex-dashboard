@@ -9382,24 +9382,6 @@ UNIVERSOS_ANALISIS = {
     '🛢️ Mercados (commodities / cripto)': 'mercados',
 }
 
-VISTAS_LEGACY = {
-    '🎯 Resumen Top-Down': ('corto', 'resumen'),
-    '💱 Forex — gráficos y ranking': ('corto', 'forex'),
-    '🌍 Países — gráficos y ranking': ('corto', 'paises'),
-    '📦 ETFs y Bonos — gráficos y ranking': ('corto', 'etfs'),
-    '📊 Sectores — gráficos y ranking': ('corto', 'sectores'),
-    '🧩 Sub-sectores — gráficos y ranking': ('corto', 'subsectores'),
-    '🛢️ Mercados — gráficos y ranking': ('corto', 'mercados'),
-    '📈 Acciones — gráficos y ranking (corto)': ('corto', 'acciones'),
-    '📋 Ranking cuantitativo (largo)': ('largo', 'ranking'),
-    '🔄 Candidatos a reversión': ('largo', 'reversion'),
-    '📊 Fundamental por industria': ('largo', 'fundamental'),
-    '📐 Top-Down Cuantitativo (universo completo)': ('largo', 'tdc'),
-    '📑 Análisis COT': ('largo', 'cot'),
-    '📑 Análisis TFF': ('largo', 'tff'),
-}
-
-
 def _ana_grupos(universo):
     """{nombre_grupo: {ticker: nombre_legible}} para el universo elegido."""
     g = {}
@@ -9805,20 +9787,21 @@ def _ana_vista_activo(items):
     ticker = otro if (usar_otro and otro) else tk_sel
     _ana_render_activo(ticker)
 
-
 def _ana_vistas_avanzadas():
-    with st.expander('🧭 Vistas avanzadas (gráficos por universo, ranking, reversión, COT, TFF…)'):
-        c1, c2 = st.columns([3, 1])
-        with c1:
-            sel = st.selectbox('Vista', list(VISTAS_LEGACY.keys()), key='ana_legacy_sel',
-                               label_visibility='collapsed')
-        with c2:
-            if st.button('Ir →', key='ana_legacy_go', use_container_width=True):
-                h, m = VISTAS_LEGACY[sel]
-                st.session_state['nav_horizonte'] = h
-                st.session_state['nav_modulo'] = m
-                st.rerun()
-
+    st.markdown('<div class="sec-title">📑 Posicionamiento de futuros</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button('📑 Análisis COT' if TIENE_ACCESO_PRO else '🔒 Análisis COT (Pro)',
+                     key='ana_go_cot', use_container_width=True):
+            st.session_state['nav_horizonte'] = 'largo'
+            st.session_state['nav_modulo'] = 'cot'
+            st.rerun()
+    with c2:
+        if st.button('📑 Análisis TFF' if TIENE_ACCESO_PRO else '🔒 Análisis TFF (Pro)',
+                     key='ana_go_tff', use_container_width=True):
+            st.session_state['nav_horizonte'] = 'largo'
+            st.session_state['nav_modulo'] = 'tff'
+            st.rerun()
 
 def modulo_analisis():
     st.markdown("""
