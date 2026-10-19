@@ -922,17 +922,17 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
 
     # --- Controles ---
     if externo:
-        c_tf, c_per = st.columns([1.2, 1])
         ticker = ticker_externo
+        tf = tf_externo if tf_externo in ('1d', '1h', '30m') else '1d'
+        c_per, _vacio = st.columns([1, 3])
     else:
         c_inp, c_tf, c_per, c_btn = st.columns([3, 1.2, 1, 1])
         with c_inp:
             ticker = selector_ticker_autocomplete('velas_ticker', st.session_state.get('ticker_from_table', ''))
-
-    with c_tf:
-        tf = st.selectbox('Temporalidad', ['1d', '1h', '30m'], key='velas_tf',
-                          format_func=lambda x: {'1d': 'Diaria (1D)', '1h': '1 hora (1H)',
-                                                 '30m': '30 minutos (30M)'}[x])
+        with c_tf:
+            tf = st.selectbox('Temporalidad', ['1d', '1h', '30m'], key='velas_tf',
+                              format_func=lambda x: {'1d': 'Diaria (1D)', '1h': '1 hora (1H)',
+                                                     '30m': '30 minutos (30M)'}[x])
     intradia = tf in ('1h', '30m')
     minutos_vela = 30 if tf == '30m' else 60
     with c_per:
@@ -949,6 +949,15 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     if externo:
         ticker_ok = ticker_externo
         ruedas = None
+    else:
+        with c_btn:
+            st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+            analizar = st.button('▶ Analizar', use_container_width=True, key='velas_btn')
+        opciones_vel = [60, 120, 200, 300] if intradia else [30, 60, 90, 120]
+        ruedas = st.selectbox('Velas en gráfico', opciones_vel, index=1, key=f'velas_ruedas_{tf}')
+        if analizar and ticker:
+            st.session_state['velas_ticker_ok'] = ticker
+        ticker_ok = st.session_state.get('velas_ticker_ok', '')
     else:
         with c_btn:
             st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
@@ -1001,15 +1010,13 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
         'SMA20': float(u['SMA20']) if pd.notna(u['SMA20']) else None,
     }
 
-    tab_graf, tab_hist, tab_mc = st.tabs(['📈 Gráfico y conclusión', '🗂️ Historial de señales',
-                                          '🎲 Monte Carlo'])
-    with tab_graf:
-        if externo:
-            # Gráfico grande (Lightweight Charts + GEX), con la temporalidad elegida acá.
-            # Import local para evitar import circular (modulo_grafico_live importa modulo_velas).
-            from modulo_grafico_live import grafico_live_panel
-            grafico_live_panel(ticker_ok, kpi_cards_4, fmt_precio, tf_forzado=tf)
-        else:
+    if externo:
+        # el gráfico y la conclusión ya están arriba, en el hub
+        tab_hist, tab_mc = st.tabs(['🗂️ Historial de señales', '🎲 Monte Carlo'])
+    else:
+        tab_graf, tab_hist, tab_mc = st.tabs(['📈 Gráfico y conclusión', '🗂️ Historial de señales',
+                                              '🎲 Monte Carlo'])
+        with tab_graf:
             st.plotly_chart(_fig_velas(d.tail(ruedas), ticker_ok, intradia, f'Velas de {tf_largo}'),
                             use_container_width=True, config=PLOTLY_CONFIG,
                             key=f'velas_fig_{ticker_ok}_{tf}')
