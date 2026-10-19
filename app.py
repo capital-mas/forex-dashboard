@@ -10385,10 +10385,8 @@ with st.container(key='nav_mobile_wrap'):
         '📰 Noticias': 'noticias',
         ('🎯 Señales' if TIENE_SENALES_PRO else '🎯 Señales (1 destacada)'): 'senales',
         ('🏦 Valuación' if TIENE_ACCESO_PRO else '🔒 Valuación (Pro)'): 'valuacion',
-        ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
         ('📡 Salud Mercado' if TIENE_ACCESO_PRO else '🔒 Salud Mercado (Pro)'): 'breadth',
         ('📉 Renta Fija/Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija/Macro (Pro)'): 'renta_fija_macro',
-        ('🧭 Centro análisis' if TIENE_ACCESO_PRO else '🔒 Centro análisis (Pro)'): 'analisis_unificado',
         '👤 Mi Cuenta': 'finanzas',
     }
     if ES_ADMIN:
