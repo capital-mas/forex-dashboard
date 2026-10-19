@@ -32,6 +32,7 @@ from modulo_noticias_mercado import render_noticias_mercado
 from modulo_inicio_dashboard import render_inicio_dashboard, limpiar_cache_inicio
 from adaptadores_inicio import obtener_eventos_clase_a, obtener_noticias_inicio
 from modulo_senales_trading import render_senales_trading
+from modulo_analisis_unificado import modulo_analisis_unificado
 from modulo_fundamental_fscore import modulo_fundamental_fscore, fundamental_desde_csv, obtener_base
 
 def analizar_fundamental(ticker, industria):
