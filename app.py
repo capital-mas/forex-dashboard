@@ -9734,6 +9734,19 @@ def _ana_render_fundamental(ticker):
     st.markdown('#### 🔎 Datos y señales detalladas')
     render_detalle_fundamental(res_fund, sector_fund)
 
+def _ana_render_centro(ticker):
+    if not TIENE_ACCESO_PRO:
+        _mostrar_bloqueo_pro('Centro de análisis')
+        return
+    modulo_analisis_unificado(
+        descargar_datos=descargar_datos,
+        selector_ticker_autocomplete=selector_ticker_autocomplete,
+        kpi_cards_4=kpi_cards_4,
+        fmt_precio=fmt_precio,
+        PLOTLY_CONFIG=PLOTLY_CONFIG,
+        ticker_externo=ticker,
+    )
+
 
 def _ana_render_activo(ticker):
     ticker = validar_ticker(ticker)
@@ -9749,8 +9762,9 @@ def _ana_render_activo(ticker):
     with st.spinner('Calculando los tres horizontes...'):
         _ana_resumen_activo(ticker)
 
-    nombres_tabs = ['⚡ Corto plazo', '📆 Mediano plazo', '📈 Largo plazo', '🧮 Cuantitativo']
     con_fund = not _es_activo_sin_fundamentals(ticker)
+    nombres_tabs = ['⚡ Corto plazo', '📆 Mediano plazo', '📈 Largo plazo',
+                    '🧮 Cuantitativo', '🧭 Centro de análisis']
     if con_fund:
         nombres_tabs.append('📊 Fundamental')
     tabs = st.tabs(nombres_tabs)
@@ -9767,10 +9781,11 @@ def _ana_render_activo(ticker):
     with tabs[3]:
         st.caption('Modelo cuantitativo sobre 2 años de historia')
         _ana_render_largo_cuant(ticker)
+    with tabs[4]:
+        _ana_render_centro(ticker)
     if con_fund:
-        with tabs[4]:
+        with tabs[5]:
             _ana_render_fundamental(ticker)
-
 
 def _ana_vista_activo(items):
     tickers = list(items.keys())
