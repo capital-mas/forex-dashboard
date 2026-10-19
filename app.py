@@ -10541,6 +10541,7 @@ titulos = {
     'fscore': ('F-Score (Piotroski)', '🧮', 'Calidad financiera 0-9 por sector — Piotroski Score'),
     'analisis': ('Análisis', '📊', 'Corto, mediano y largo plazo en un solo lugar'),
     'breadth': ('Salud del Mercado', '📡', 'Amplitud, avance/declive, máximos/mínimos y concentración'),
+    'analisis_unificado': ('Centro de análisis', '🧭', 'Gráfico GEX + velas · Monte Carlo · Volatilidad · Análisis técnico'),
     'ia_asistente': ('Asistente IA', '🤖', 'Preguntá por activos, comparaciones, finanzas personales y más'),
     'calendario': ('Calendario Económico', '📆', 'Eventos económicos relevantes y su impacto en mercados'),
     'noticias': ('Noticias', '📰', 'Noticias y análisis de mercado'),
@@ -10574,6 +10575,7 @@ badge_map = {
     'renta_fija_macro': ('#00838f', 'rgba(0,131,143,0.12)', 'RENTA FIJA'),   # ← coma agregada acá
     'ia_asistente': ('#bc8cff', 'rgba(188,140,255,0.12)', 'ASISTENTE IA'),
     'analisis': ('#6CC24A', 'rgba(108,194,74,0.12)', 'ANÁLISIS'),
+    'analisis_unificado': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'ANÁLISIS'),
     'calendario': ('#79c0ff', 'rgba(121,192,255,0.12)', 'CALENDARIO'),
     'noticias': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'NOTICIAS'),
     'pyme': ('#3a7bd5', 'rgba(58,123,213,0.12)', 'PYMES'),
