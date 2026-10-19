@@ -901,28 +901,36 @@ def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
 # ==============================================================
 
 def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt_precio,
-                 PLOTLY_CONFIG=None):
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid #e3b341;
-         border-radius:14px; padding:28px 32px; margin-bottom:24px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🕯️ Lectura de Velas + Monte Carlo</div>
-      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Detecta patrones de velas japonesas (martillo, estrella fugaz, envolventes, rechazos, doji),
-        los combina con RSI, volumen y contexto de las últimas 5 velas, y arma un score de
-        <b style="color:#3fb950">freno de caída</b> / <b style="color:#f85149">freno de suba</b>
-        con niveles de confirmación e invalidación. Velas <b>diarias</b>, de <b>1 hora</b> o de <b>30 minutos</b>.
-        Además incluye una simulación <b>Monte Carlo</b> a <b>1 hora</b> o <b>1 día</b> que calcula sola
-        la probabilidad de llegar a cada precio y muestra el historial de sus últimas 15 velas.
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+                 PLOTLY_CONFIG=None, ticker_externo=None):
+    """ticker_externo: activo ya elegido arriba en la app. Si se pasa, no se muestra el banner,
+    ni el selector, ni el botón Analizar: todo se calcula solo con ese activo."""
+    externo = bool(ticker_externo)
 
-    c_inp, c_tf, c_per, c_rue, c_btn = st.columns([3, 1.2, 1, 1, 1])
-    with c_inp:
-        ticker = selector_ticker_autocomplete('velas_ticker', st.session_state.get('ticker_from_table', ''))
+    if not externo:
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
+             border:1px solid #21262d; border-top:2px solid #e3b341;
+             border-radius:14px; padding:28px 32px; margin-bottom:24px;">
+          <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🕯️ Lectura de Velas + Monte Carlo</div>
+          <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
+            Detecta patrones de velas japonesas, los combina con RSI, volumen y contexto, y arma un score de
+            <b style="color:#3fb950">freno de caída</b> / <b style="color:#f85149">freno de suba</b>.
+            Incluye simulación <b>Monte Carlo</b> a 1 hora o 1 día.
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # --- Controles ---
+    if externo:
+        c_tf, c_per = st.columns([1.2, 1])
+        ticker = ticker_externo
+    else:
+        c_inp, c_tf, c_per, c_btn = st.columns([3, 1.2, 1, 1])
+        with c_inp:
+            ticker = selector_ticker_autocomplete('velas_ticker', st.session_state.get('ticker_from_table', ''))
+
     with c_tf:
-        tf = st.selectbox('Temporalidad velas', ['1d', '1h', '30m'], key='velas_tf',
+        tf = st.selectbox('Temporalidad', ['1d', '1h', '30m'], key='velas_tf',
                           format_func=lambda x: {'1d': 'Diaria (1D)', '1h': '1 hora (1H)',
                                                  '30m': '30 minutos (30M)'}[x])
     intradia = tf in ('1h', '30m')
@@ -937,13 +945,19 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
         else:
             periodo = st.selectbox('Historial', ['3mo', '6mo', '2y'], index=1, key='velas_periodo_1d',
                                    format_func=lambda x: {'3mo': '3 meses', '6mo': '6 meses', '2y': '2 años'}[x])
-    with c_rue:
+
+    if externo:
+        ticker_ok = ticker_externo
+        ruedas = None
+    else:
+        with c_btn:
+            st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+            analizar = st.button('▶ Analizar', use_container_width=True, key='velas_btn')
         opciones_vel = [60, 120, 200, 300] if intradia else [30, 60, 90, 120]
-        ruedas = st.selectbox('Velas en gráfico', opciones_vel, index=1,
-                              key=f'velas_ruedas_{tf}')
-    with c_btn:
-        st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
-        analizar = st.button('▶ Analizar', use_container_width=True, key='velas_btn')
+        ruedas = st.selectbox('Velas en gráfico', opciones_vel, index=1, key=f'velas_ruedas_{tf}')
+        if analizar and ticker:
+            st.session_state['velas_ticker_ok'] = ticker
+        ticker_ok = st.session_state.get('velas_ticker_ok', '')
 
     excluir_formacion = True
     if intradia:
@@ -951,20 +965,8 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
             'Excluir la vela en curso (todavía incompleta)', value=True, key='velas_excl',
             help='Una vela que aún no cerró puede cambiar de forma y disparar señales falsas.')
 
-    if analizar and ticker:
-        st.session_state['velas_ticker_ok'] = ticker
-
-    ticker_ok = st.session_state.get('velas_ticker_ok', '')
     if not ticker_ok:
-        st.markdown("""
-        <div style="border:1px dashed #21262d;border-radius:12px;padding:48px;text-align:center;margin-top:20px">
-          <div style="font-size:44px;margin-bottom:14px;opacity:.6">🕯️</div>
-          <div style="color:#6b7d9a;font-size:13px;line-height:1.8">
-            Elegí el activo y la temporalidad, y presioná <b style="color:#e6edf3">Analizar</b>
-            para leer sus velas y simular escenarios.
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.info('Elegí el activo y presioná Analizar.')
         return
 
     tf_corto = {'1d': '1D', '1h': '1H', '30m': '30M'}[tf]
@@ -988,13 +990,9 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
         st.warning('Hay muy poco historial para leer las velas con indicadores confiables (se necesitan ≥ 25 velas).')
         return
 
-    st.markdown(f'<div class="sec-title">Resultados para: {ticker_ok} · {tf_largo}</div>',
-                unsafe_allow_html=True)
-    if intradia:
-        st.caption(f'🕐 Horario Argentina · SMA20/SMA50 y RSI calculados sobre velas de {tf_largo} · '
-                   + ('"Movimiento previo" mide las últimas 5 velas de 30 min (2,5 horas, umbral 0,7%).'
-                      if tf == '30m' else
-                      '"Movimiento previo" mide las últimas 5 horas (umbral 1%).'))
+    if not externo:
+        st.markdown(f'<div class="sec-title">Resultados para: {ticker_ok} · {tf_largo}</div>',
+                    unsafe_allow_html=True)
 
     u = d.iloc[-1]
     ref_niveles = {
@@ -1006,10 +1004,16 @@ def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt
     tab_graf, tab_hist, tab_mc = st.tabs(['📈 Gráfico y conclusión', '🗂️ Historial de señales',
                                           '🎲 Monte Carlo'])
     with tab_graf:
-        st.plotly_chart(_fig_velas(d.tail(ruedas), ticker_ok, intradia, f'Velas de {tf_largo}'),
-                        use_container_width=True,
-                        config=PLOTLY_CONFIG, key=f'velas_fig_{ticker_ok}_{tf}')
-        _render_conclusion(d, ticker_ok, fmt_precio, kpi_cards_4, intradia)
+        if externo:
+            # Gráfico grande (Lightweight Charts + GEX), con la temporalidad elegida acá.
+            # Import local para evitar import circular (modulo_grafico_live importa modulo_velas).
+            from modulo_grafico_live import grafico_live_panel
+            grafico_live_panel(ticker_ok, kpi_cards_4, fmt_precio, tf_forzado=tf)
+        else:
+            st.plotly_chart(_fig_velas(d.tail(ruedas), ticker_ok, intradia, f'Velas de {tf_largo}'),
+                            use_container_width=True, config=PLOTLY_CONFIG,
+                            key=f'velas_fig_{ticker_ok}_{tf}')
+            _render_conclusion(d, ticker_ok, fmt_precio, kpi_cards_4, intradia)
     with tab_hist:
         st.caption('Últimas 15 velas con alguna señal distinta de "Sin señal clara".')
         _render_historial(d, 15, intradia)
