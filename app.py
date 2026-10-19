@@ -10248,18 +10248,14 @@ with st.container(key='nav_pills_wrap'):
 
         # ── Menú desplegable "Trading": Rotación, Señales, Opciones ──
         _TRADING_MAP = {
-            ('🔄 Rotación y Pares' if TIENE_ACCESO_PRO else '🔒 Rotación y Pares (Pro)'):
-                                     ('pares', 'pares'),
-            ('🎯 Señales de Trading' if TIENE_SENALES_PRO else '🎯 Señales de Trading (1 destacada)'):
-                         ('senales', 'senales'),
+            ('🔄 Rotación y Pares' if TIENE_ACCESO_PRO else '🔒 Rotación y Pares (Pro)'): ('pares', 'pares'),
+            ('🎯 Señales de Trading' if TIENE_SENALES_PRO else '🎯 Señales de Trading (1 destacada)'): ('senales', 'senales'),
             '🎲 Valuación de Opciones': ('opciones', 'opciones'),
             '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),
-            '📺 Gráfico en vivo': ('grafico_live', 'grafico_live'),
-            ('🕯️ Lectura de Velas' if TIENE_ACCESO_PRO else '🔒 Lectura de Velas (Pro)'):
-                                     ('velas', 'velas'),
+            ('🧭 Centro de análisis' if TIENE_ACCESO_PRO else '🔒 Centro de análisis (Pro)'):
+                ('analisis_unificado', 'analisis_unificado'),
         }
-        
-        _trading_horizontes = {'pares', 'senales', 'opciones', 'grafico_live', 'gex', 'velas'}
+        _trading_horizontes = {'pares', 'senales', 'opciones', 'gex', 'analisis_unificado'}
         _trading_activo = HORIZONTE in _trading_horizontes
         _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
         _label_trading = f'📈 {_trading_label_actual.split(" ",1)[1]}' if _trading_label_actual else '📈 Trading'
@@ -10392,7 +10388,7 @@ with st.container(key='nav_mobile_wrap'):
         ('📊 F-Score' if TIENE_ACCESO_PRO else '🔒 F-Score (Pro)'): 'fscore',
         ('📡 Salud Mercado' if TIENE_ACCESO_PRO else '🔒 Salud Mercado (Pro)'): 'breadth',
         ('📉 Renta Fija/Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija/Macro (Pro)'): 'renta_fija_macro',
-        ('🕯️ Velas' if TIENE_ACCESO_PRO else '🔒 Velas (Pro)'): 'velas',
+        ('🧭 Centro análisis' if TIENE_ACCESO_PRO else '🔒 Centro análisis (Pro)'): 'analisis_unificado',
         '👤 Mi Cuenta': 'finanzas',
     }
     if ES_ADMIN:
