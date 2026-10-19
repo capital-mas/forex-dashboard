@@ -1,25 +1,20 @@
 # ==============================================================
-#  MÓDULO GRÁFICO EN VIVO — multiusuario, SIN claves de API
+#  MÓDULO GRÁFICO CON GEX Y VELAS — multiusuario, SIN claves de API
 #
-#  CRIPTO (BTC, ETH):  gráfico Lightweight Charts (open source de TradingView)
-#     · Velas en vivo por WebSocket de Binance, conectado desde el NAVEGADOR de
-#       cada usuario (sin clave y sin carga en tu servidor).
-#     · Niveles GEX dibujados + marcadores de lectura de velas.
+#  · CRIPTO (BTC, ETH y cualquier par de Binance): velas en vivo por
+#    WebSocket de Binance, conectado desde el NAVEGADOR de cada usuario.
+#  · ACCIONES / ETFs / FOREX / ÍNDICES: velas de Yahoo Finance (o de la
+#    función que pases en fuente_velas), recarga cada 60 s.
+#  · Niveles GEX dibujados + marcadores de lectura de velas.
 #
-#  ACCIONES / ETFs / FOREX / ÍNDICES:
-#     · "📺 TradingView en vivo": widget oficial gratuito de TradingView
-#       (en vivo, sin clave, para todos los usuarios). No admite líneas
-#       externas, por eso al lado se muestra la ESCALERA DE NIVELES GEX.
-#     · "📈 Gráfico con GEX y velas": el mismo gráfico con líneas GEX y
-#       marcadores, alimentado por una función que le pasás vos
-#       (parámetro fuente_velas). Es opcional.
+#  (Se eliminó el widget de TradingView: queda solo Lightweight Charts.)
 #
 #  Uso:
 #      from modulo_grafico_live import modulo_grafico_live
 #      modulo_grafico_live(
 #          selector_ticker_autocomplete=selector_ticker_autocomplete,
 #          kpi_cards_4=kpi_cards_4, fmt_precio=fmt_precio,
-#          fuente_velas=mi_fuente,          # opcional, ver abajo
+#          fuente_velas=None,          # opcional
 #      )
 #  fuente_velas(simbolo, intervalo) -> DataFrame Open/High/Low/Close/Volume
 #      con índice de fechas, o None.  intervalo: '1m','5m','15m','30m','1h','1d'.
@@ -40,16 +35,8 @@ from modulo_velas import preparar_velas, _render_conclusion
 
 TZ_AR = 'America/Argentina/Buenos_Aires'
 LWC_URL = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js'
-TV_URL = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
 
 TIMEFRAMES = {'1 min': '1m', '5 min': '5m', '15 min': '15m', '30 min': '30m', '1 hora': '1h', 'Diario': '1d'}
-TV_INTERVALO = {'1m': '1', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '1d': 'D'}
-
-MODO_TV = '📺 TradingView en vivo'
-MODO_LW = '📈 Gráfico con GEX y velas'
-
-_INDICES_TV = {'SPX': 'SP:SPX', 'NDX': 'NASDAQ:NDX', 'RUT': 'RUSSELL:RUT', 'VIX': 'CBOE:VIX'}
-_FOREX_TV = {'EURUSD', 'GBPUSD', 'AUDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'NZDUSD', 'EURGBP', 'EURJPY', 'GBPJPY'}
 
 
 # ==============================================================
@@ -77,7 +64,7 @@ def _klines_binance(par, intervalo, limite=500):
 
 
 # ==============================================================
-#  DETECCIÓN DE CRIPTO + FUENTE POR DEFECTO PARA EL RESTO
+#  DETECCIÓN DE CRIPTO + FUENTE YAHOO PARA EL RESTO
 # ==============================================================
 
 _SUFIJOS_CRIPTO = ('-USDT', '/USDT', 'USDT', '-USD')
@@ -101,8 +88,8 @@ def _cripto_base(entrada):
 
 @st.cache_data(ttl=30, show_spinner=False)
 def _velas_yahoo(simbolo, intervalo):
-    """Fuente por defecto para acciones, ETFs, forex e índices (única opción sin clave del lado servidor).
-    Se cachea 30 s y se comparte entre todos los usuarios. Podés reemplazarla con fuente_velas=..."""
+    """Fuente por defecto para acciones, ETFs, forex e índices.
+    Se cachea 30 s y se comparte entre todos los usuarios."""
     import yfinance as yf
     sym = _INDICE_YF.get(simbolo, simbolo)
     d = yf.download(sym, period=_PERIODO_YF[intervalo], interval=intervalo, progress=False, auto_adjust=True)
@@ -167,18 +154,6 @@ def _armar_niveles(g):
     return list(out.values())
 
 
-def _render_escalera(g, fmt_precio):
-    """Escalera de niveles GEX (para acompañar al widget de TradingView)."""
-    S = g['S']
-    filas = [dict(Nivel=n['title'], Precio=n['price']) for n in _armar_niveles(g)]
-    filas.append(dict(Nivel='━━ PRECIO ACTUAL (CBOE, ~15 min) ━━', Precio=S))
-    esc = pd.DataFrame(filas).sort_values('Precio', ascending=False).reset_index(drop=True)
-    esc['Distancia %'] = (esc['Precio'] / S - 1) * 100
-    st.dataframe(esc, use_container_width=True, hide_index=True, height=min(520, len(esc) * 36 + 45),
-                 column_config={'Precio': st.column_config.NumberColumn(format='%.2f'),
-                                'Distancia %': st.column_config.NumberColumn(format='%+.2f')})
-
-
 # ==============================================================
 #  LECTURA DE VELAS -> MARCADORES (reutiliza modulo_velas)
 # ==============================================================
@@ -215,7 +190,7 @@ def _marcadores(d, tiempos, patrones_sueltos):
 
 
 # ==============================================================
-#  HTML — Lightweight Charts y widget TradingView
+#  HTML — Lightweight Charts
 # ==============================================================
 
 _HTML_LW = """
@@ -262,17 +237,6 @@ window.addEventListener('resize', () => chart.applyOptions({width: el.clientWidt
 </script>
 """
 
-_HTML_TV = """
-<style>html,body{height:100%;margin:0;background:#0d1117}</style>
-<div class="tradingview-widget-container" style="height:__H__px;width:100%">
-  <div class="tradingview-widget-container__widget" style="height:calc(100% - 22px);width:100%"></div>
-  <div class="tradingview-widget-copyright" style="font:11px Inter,sans-serif">
-    <a href="https://es.tradingview.com/" rel="noopener nofollow" target="_blank" style="color:#6b7d9a">Gráficos por TradingView</a>
-  </div>
-  <script type="text/javascript" src="__TV__" async>__CFG__</script>
-</div>
-"""
-
 
 def _render_lw(candles, levels, markers, titulo, diario, ws, estado, altura):
     cfg = dict(candles=candles, levels=levels, markers=markers, titulo=titulo, diario=diario,
@@ -280,29 +244,8 @@ def _render_lw(candles, levels, markers, titulo, diario, ws, estado, altura):
     components.html(_HTML_LW.replace('__LWC__', LWC_URL).replace('__CFG__', json.dumps(cfg)), height=altura + 24)
 
 
-def _render_tv(simbolo_tv, intervalo, altura):
-    cfg = {'autosize': True, 'symbol': simbolo_tv, 'interval': TV_INTERVALO[intervalo],
-           'timezone': TZ_AR, 'theme': 'dark', 'style': '1', 'locale': 'es',
-           'backgroundColor': '#0d1117', 'gridColor': '#161b22',
-           'allow_symbol_change': True, 'hide_side_toolbar': False, 'save_image': False,
-           'support_host': 'https://www.tradingview.com'}
-    html = _HTML_TV.replace('__H__', str(altura)).replace('__TV__', TV_URL).replace('__CFG__', json.dumps(cfg))
-    components.html(html, height=altura + 8)
-
-
-def _simbolo_tv(entrada, simbolo_cboe, simbolo, base_cripto=None):
-    if base_cripto:
-        return f'BINANCE:{base_cripto}USDT'
-    e = (entrada or '').strip().upper().lstrip('^').replace('=X', '').replace('/', '')
-    if e in _FOREX_TV:
-        return f'FX:{e}'
-    if e == 'XAUUSD':
-        return 'OANDA:XAUUSD'
-    return _INDICES_TV.get(simbolo, simbolo)
-
-
 # ==============================================================
-#  PANELES
+#  PANEL
 # ==============================================================
 
 def _panel_lw(base_cripto, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, ver_patrones, altura,
@@ -361,7 +304,7 @@ def _panel_lw(base_cripto, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, ver
     estado = 'conectando…' if cripto else 'actualiza cada 60 s'
     _render_lw(candles, niveles, marcadores, f'{nombre} · {tf_label}', diario, ws, estado, altura)
 
-    st.caption(f"🕐 Hora Argentina · {'Binance, en vivo desde tu navegador' if cripto else 'velas con el retraso de la fuente, recarga cada 60 s'} · "
+    st.caption(f"🕐 Hora Argentina · {'Binance, en vivo desde tu navegador' if cripto else 'Yahoo Finance, con el retraso de la fuente, recarga cada 60 s'} · "
                f"panel actualizado {datetime.now().strftime('%H:%M:%S')} · señales sobre velas cerradas")
     if aviso:
         st.info(f'ℹ️ {aviso}')
@@ -377,28 +320,6 @@ def _panel_lw(base_cripto, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, ver
     _render_conclusion(d, nombre, fmt_precio, kpi_cards_4, not diario)
 
 
-def _panel_tv(entrada, base_cripto, simbolo_cboe, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, altura, fmt_precio):
-    _render_tv(_simbolo_tv(entrada, simbolo_cboe, simbolo, base_cripto), TIMEFRAMES[tf_label], altura)
-    if not ver_niveles:
-        return
-    st.markdown('#### 🧲 Escalera de niveles GEX')
-    if cboe_gex is None:
-        st.info('Este activo no tiene opciones listadas (en cripto solo BTC y ETH).')
-        return
-    g, aviso = _niveles_gex(cboe_gex, n_vtos)
-    if aviso:
-        st.info(f'ℹ️ {aviso}')
-        return
-    z = g['z']
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.metric('Régimen de gamma', z['regimen'].capitalize())
-    with c2: st.metric('Flip gamma', fmt_precio(z['flip']) if z['flip'] else 'N/D')
-    with c3: st.metric('Call Wall', fmt_precio(z['call_wall']) if z['call_wall'] else 'N/D')
-    with c4: st.metric('Put Wall', fmt_precio(z['put_wall']) if z['put_wall'] else 'N/D')
-    _render_escalera(g, fmt_precio)
-    st.caption('El widget de TradingView no permite dibujar líneas externas: por eso los niveles van en esta escalera.')
-
-
 # ==============================================================
 #  MÓDULO PRINCIPAL
 # ==============================================================
@@ -408,11 +329,11 @@ def modulo_grafico_live(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, f
     <div style="background:linear-gradient(135deg,#0d1520 0%,#0a1830 50%,#0d1117 100%);
          border:1px solid #21262d; border-top:2px solid #3a7bd5;
          border-radius:14px; padding:24px 30px; margin-bottom:20px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📺 Gráfico en vivo + GEX + Velas</div>
+      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📈 Gráfico con GEX + Velas</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
         El mismo gráfico para todos los activos, con los niveles <b style="color:#bc8cff">GEX</b> dibujados y la
         <b style="color:#3fb950">lectura de velas</b> marcada. Cripto: velas en vivo de Binance (cualquier par).
-        Acciones, ETFs, forex e índices: velas con el retraso de la fuente, recargadas cada 60 s.
+        Acciones, ETFs, forex e índices: velas de Yahoo Finance, recargadas cada 60 s.
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -436,28 +357,22 @@ def modulo_grafico_live(selector_ticker_autocomplete, kpi_cards_4, fmt_precio, f
     # GEX solo si hay opciones: cualquier no-cripto (CBOE) o BTC/ETH (Deribit)
     cboe_gex = None if (base_cripto and not simbolo_cboe.startswith('DERIBIT:')) else simbolo_cboe
 
-    modo = st.radio('Modo', [MODO_LW, MODO_TV], horizontal=True, key='live_modo',
-                    help='El modo TradingView es el widget oficial: no admite líneas GEX ni marcadores de velas.')
-
     o1, o2, o3, o4 = st.columns(4)
     with o1:
         ver_niveles = st.checkbox('Niveles GEX', value=True, key='live_gex')
     with o2:
-        ver_patrones = st.checkbox('Patrones sueltos', value=False, key='live_pat', disabled=(modo == MODO_TV),
+        ver_patrones = st.checkbox('Patrones sueltos', value=False, key='live_pat',
                                    help='Martillo, envolventes y estrella fugaz.')
     with o3:
         n_vtos = st.slider('Vencimientos GEX', 1, 12, 6, key='live_nvtos', disabled=not ver_niveles)
     with o4:
-        auto = st.checkbox('Auto-actualizar señales', value=True, key='live_auto', disabled=(modo == MODO_TV))
+        auto = st.checkbox('Auto-actualizar señales', value=True, key='live_auto')
 
-    if modo == MODO_TV:
-        _panel_tv(entrada, base_cripto, simbolo_cboe, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, altura, fmt_precio)
-    else:
-        # cripto: el WebSocket mueve la vela; el panel solo recalcula señales y GEX cada 5 min
-        run_every = (300 if base_cripto else 60) if auto else None
-        st.fragment(run_every=run_every)(_panel_lw)(
-            base_cripto, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, ver_patrones, altura,
-            kpi_cards_4, fmt_precio, fuente_velas)
+    # cripto: el WebSocket mueve la vela; el panel solo recalcula señales y GEX cada 5 min
+    run_every = (300 if base_cripto else 60) if auto else None
+    st.fragment(run_every=run_every)(_panel_lw)(
+        base_cripto, cboe_gex, simbolo, tf_label, n_vtos, ver_niveles, ver_patrones, altura,
+        kpi_cards_4, fmt_precio, fuente_velas)
 
     st.markdown(
         '<div style="font-size:11px;color:#6b7d9a;margin-top:12px">GEX: opciones de CBOE/Deribit con ~15 min de '
