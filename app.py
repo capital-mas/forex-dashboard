@@ -10209,14 +10209,12 @@ with st.container(key='nav_pills_wrap'):
             '📐 Promediador + Stop Loss': ('promediador', 'promediador'),
             ('🏦 Simulador de Valuación' if TIENE_ACCESO_PRO else '🔒 Simulador de Valuación (Pro)'):
                                  ('valuacion', 'valuacion'),
-            ('📊 F-Score (Piotroski)' if TIENE_ACCESO_PRO else '🔒 F-Score (Piotroski) (Pro)'):
-                                     ('fscore', 'fscore'),
             ('📡 Salud del Mercado' if TIENE_ACCESO_PRO else '🔒 Salud del Mercado (Pro)'):
                                      ('breadth', 'breadth'),
             ('📉 Renta Fija y Macro' if TIENE_ACCESO_PRO else '🔒 Renta Fija y Macro (Pro)'):
                                      ('renta_fija_macro', 'renta_fija_macro'),
         }
-        _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'fscore', 'breadth', 'renta_fija_macro', 'valuacion'}
+        _herr_horizontes = {'comparador', 'optimizador', 'promediador', 'breadth', 'renta_fija_macro', 'valuacion'}
         _herr_activo = HORIZONTE in _herr_horizontes
         _herr_label_actual = next((k for k, (h, _m) in _HERRAMIENTAS_MAP.items() if h == HORIZONTE), None)
         _label_herramientas = f'🧰 {_herr_label_actual.split(" ",1)[1]}' if _herr_label_actual else '🧰 Herramientas'
@@ -10254,10 +10252,8 @@ with st.container(key='nav_pills_wrap'):
             ('🎯 Señales de Trading' if TIENE_SENALES_PRO else '🎯 Señales de Trading (1 destacada)'): ('senales', 'senales'),
             '🎲 Valuación de Opciones': ('opciones', 'opciones'),
             '🧲 GEX (Gamma Exposure)': ('gex', 'gex'),
-            ('🧭 Centro de análisis' if TIENE_ACCESO_PRO else '🔒 Centro de análisis (Pro)'):
-                ('analisis_unificado', 'analisis_unificado'),
         }
-        _trading_horizontes = {'pares', 'senales', 'opciones', 'gex', 'analisis_unificado'}
+        _trading_horizontes = {'pares', 'senales', 'opciones', 'gex'}
         _trading_activo = HORIZONTE in _trading_horizontes
         _trading_label_actual = next((k for k, (h, _m) in _TRADING_MAP.items() if h == HORIZONTE), None)
         _label_trading = f'📈 {_trading_label_actual.split(" ",1)[1]}' if _trading_label_actual else '📈 Trading'
