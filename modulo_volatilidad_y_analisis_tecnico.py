@@ -522,57 +522,42 @@ def _vol_tarjeta_matriz(dir_precio, dir_vol, titulo, color, descripcion, cambio_
 #  import ya existente en app.py.
 # ==============================================================
 
-def modulo_volatilidad(PLOTLY_CONFIG=None):
-    """Perfil de volatilidad de UN activo (no un dashboard de índices VIX):
+def modulo_volatilidad(PLOTLY_CONFIG=None, ticker_externo=None):
+    """(docstring igual que antes)
+    ticker_externo: activo ya elegido arriba en la app. Si se pasa, no se muestra
+    el banner ni el selector de activo."""
+    externo = bool(ticker_externo)
 
-      1) Volatilidad realizada anualizada en 6 ventanas (5/10/20/50/100/200
-         ruedas), calculada sobre retornos logarítmicos diarios.
-      2) Volatilidad relativa: percentil histórico (1 año) y Z-Score de la
-         ventana de referencia contra el propio historial del activo.
-      3) Régimen de volatilidad dentro del ciclo COMPRESSION → BUILDING →
-         EXPANSION → EXTREME → NORMALIZATION.
-      4) Cruce dirección de precio × dirección de volatilidad, con la
-         matriz de interpretación (tendencia sana, tensión, capitulación,
-         pérdida de momentum, compresión o preparación para expansión).
+    if not externo:
+        st.markdown("""
+        ... (dejá acá el banner original completo, tal cual estaba) ...
+        """, unsafe_allow_html=True)
 
-    El activo se elige desde las mismas categorías que usa el módulo de
-    Análisis Técnico (acciones por industria, forex, índices/países, ETFs,
-    mercados reales) o como ticker manual. Todo se descarga de Yahoo
-    Finance vía yfinance, con caché de 1 hora. Sin persistencia: vive solo
-    en la sesión actual, igual que el resto de la app."""
-
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid #a371f7;
-         border-radius:14px; padding:26px 30px; margin-bottom:22px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🌪️ Perfil de Volatilidad del Activo</div>
-      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Analizá la volatilidad de <b style="color:#e6edf3">cualquier activo</b> de tu universo, en vez de
-        mirar un índice de miedo genérico como el VIX: <b style="color:#e6edf3">volatilidad realizada</b>
-        anualizada en 6 ventanas (5/10/20/50/100/200 ruedas), <b style="color:#e6edf3">volatilidad
-        relativa</b> (percentil histórico y Z-Score contra su propio historial), el
-        <b style="color:#e6edf3">régimen de volatilidad</b> dentro del ciclo COMPRESSION → BUILDING →
-        EXPANSION → EXTREME → NORMALIZATION, y el cruce entre <b style="color:#e6edf3">dirección de
-        precio</b> y <b style="color:#e6edf3">dirección de volatilidad</b> para leer rápido qué tipo de
-        movimiento hay en curso. Este análisis no se guarda: vive solo en la sesión actual.
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        ticker, etiqueta_activo = _vol_seleccionar_ticker()
-    with col2:
+    if externo:
+        ticker = ticker_externo.strip().upper()
+        etiqueta_activo = ticker
         periodo_ref = st.selectbox(
             'Ventana de referencia (relativa / régimen)',
             VOL_PERIODOS_REALIZADA,
             index=VOL_PERIODOS_REALIZADA.index(VOL_PERIODO_REFERENCIA_DEFAULT),
             key='vol_periodo_ref',
         )
+    else:
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            ticker, etiqueta_activo = _vol_seleccionar_ticker()
+        with col2:
+            periodo_ref = st.selectbox(
+                'Ventana de referencia (relativa / régimen)',
+                VOL_PERIODOS_REALIZADA,
+                index=VOL_PERIODOS_REALIZADA.index(VOL_PERIODO_REFERENCIA_DEFAULT),
+                key='vol_periodo_ref',
+            )
 
     if not ticker:
         st.info('Seleccioná o ingresá un activo para analizar.')
         return
+
 
     with st.spinner(f'Descargando datos de {ticker}...'):
         data = _vol_descargar(ticker)
@@ -2258,53 +2243,29 @@ def _at_ejecutar_market_profile(ticker, etiqueta_activo, periodo_tpo_label, PLOT
 #  Sin Supabase: no recibe supabase/user_id y no persiste nada.
 # ==============================================================
 
-def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT):
-    """Análisis técnico de un activo con 7 métodos: Stan Weinstein,
-    William O'Neil, Darvas Box, Wyckoff, CPR, Market Profile (TPO) y ORB
-    (Opening Range Breakout).
+def modulo_analisis_tecnico(PLOTLY_CONFIG=None, benchmark=BENCHMARK_DEFAULT, ticker_externo=None):
+    """(docstring igual que antes)
+    ticker_externo: activo ya elegido arriba en la app. Si se pasa, no se muestra
+    el banner ni el selector de activo."""
+    externo = bool(ticker_externo)
 
-    Los primeros 5 (Weinstein, O'Neil, Darvas, Wyckoff, CPR) operan sobre
-    la temporalidad que elijas (1 Día, 4 Horas, 1 Hora, 45/30/15/5
-    Minutos). Market Profile y ORB trabajan por SESIÓN, con su propio
-    selector de período (TPO / caja de apertura) en vez del selector de
-    temporalidad genérico, y comparten la misma descarga de velas de 5
-    minutos.
+    if not externo:
+        st.markdown("""
+        ... (dejá acá el banner original completo, tal cual estaba) ...
+        """, unsafe_allow_html=True)
 
-    El ADX de Wilder se calcula siempre como filtro/dato transversal en
-    los primeros 5 métodos. El activo se elige desde las categorías de tu
-    configuración (acciones por industria, forex, índices/países, ETFs de
-    índice, ETFs de sector/subsector, mercados reales) o como ticker
-    manual. No se guarda ningún historial."""
-
-    st.markdown("""
-    <div style="background:linear-gradient(135deg,#0d1420 0%,#0a1c30 50%,#0d1117 100%);
-         border:1px solid #21262d; border-top:2px solid #6CC24A;
-         border-radius:14px; padding:26px 30px; margin-bottom:22px;">
-      <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">📐 Análisis Técnico</div>
-      <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Analizá cualquier activo de tu universo con 7 métodos técnicos: <b style="color:#e6edf3">Stan
-        Weinstein</b> (fases de mercado), <b style="color:#e6edf3">William O'Neil</b> (CANSLIM técnico /
-        fuerza relativa), <b style="color:#e6edf3">Darvas Box</b> (cajas de consolidación + breakout),
-        <b style="color:#e6edf3">Wyckoff</b> (acumulación/distribución), <b style="color:#e6edf3">CPR</b>
-        (Central Pivot Range + R1-R4/S1-S4), <b style="color:#e6edf3">Market Profile</b> (POC + Área de Valor)
-        y <b style="color:#e6edf3">ORB</b> (Opening Range Breakout intradía). Los primeros 5 operan en la
-        temporalidad que elijas: <b style="color:#e6edf3">1 Día</b>, <b style="color:#e6edf3">4 Horas</b>,
-        <b style="color:#e6edf3">1 Hora</b>, <b style="color:#e6edf3">45 Minutos</b>,
-        <b style="color:#e6edf3">30 Minutos</b>, <b style="color:#e6edf3">15 Minutos</b> o
-        <b style="color:#e6edf3">5 Minutos</b>; Market Profile y ORB arman su propio período por sesión.
-        Este análisis no se guarda: vive solo en la sesión actual.
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns([2, 2, 1.3])
+    if externo:
+        col2, col3 = st.columns([2, 1.3])
+        ticker = ticker_externo.strip().upper()
+        etiqueta_activo = ticker
+    else:
+        col1, col2, col3 = st.columns([2, 2, 1.3])
+        with col1:
+            ticker, etiqueta_activo = _at_seleccionar_ticker()
 
     with col2:
         metodo_label = st.selectbox('Método de análisis', list(METODOS_DISPONIBLES.keys()), key='at_metodo')
     metodo = METODOS_DISPONIBLES[metodo_label]
-
-    with col1:
-        ticker, etiqueta_activo = _at_seleccionar_ticker()
 
     with col3:
         if metodo == "orb":
