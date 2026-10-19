@@ -28,7 +28,6 @@ from modulo_volatilidad_y_analisis_tecnico import modulo_volatilidad, modulo_ana
 OPCION_VELAS = '🕯️ Velas + Monte Carlo'
 OPCION_VOL = '🌪️ Perfil de volatilidad'
 OPCION_TECNICO = '📐 Análisis técnico'
-
 OPCIONES = [OPCION_VELAS, OPCION_VOL, OPCION_TECNICO]
 
 DESCRIPCIONES = {
@@ -37,13 +36,18 @@ DESCRIPCIONES = {
     OPCION_TECNICO: "Weinstein, O'Neil, Darvas Box, Wyckoff, CPR, Market Profile y ORB.",
 }
 
+TF_HUB = {'Diaria (1D)': '1d', '1 hora (1H)': '1h', '30 minutos (30M)': '30m'}
 
-def _selector_fijo(ticker):
-    """Devuelve una función que reemplaza al selector de activo de los submódulos:
-    en vez de mostrar un selector, devuelve siempre el activo elegido en el hub."""
-    def _f(*args, **kwargs):
-        return ticker
-    return _f
+
+def _a_yahoo(t):
+    """Los módulos de volatilidad y técnico usan Yahoo: BTC -> BTC-USD, SOLUSDT -> SOL-USD."""
+    t = (t or '').strip().upper()
+    if t in ('BTC', 'ETH'):
+        return f'{t}-USD'
+    for suf in ('-USDT', '/USDT', 'USDT'):
+        if t.endswith(suf) and len(t) > len(suf):
+            return f'{t[:-len(suf)]}-USD'
+    return t
 
 
 def modulo_analisis_unificado(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt_precio,
@@ -54,19 +58,25 @@ def modulo_analisis_unificado(descargar_datos, selector_ticker_autocomplete, kpi
          border-radius:14px; padding:22px 30px; margin-bottom:18px;">
       <div style="font-size:18px;font-weight:700;color:#e6edf3;margin-bottom:6px">🧭 Centro de análisis</div>
       <div style="font-size:12px;color:#6b7d9a;line-height:1.7">
-        Elegí el activo una sola vez: el gráfico en vivo queda arriba y el análisis que elijas se muestra debajo.
+        Elegí el activo y la temporalidad una sola vez: el gráfico en vivo queda arriba y el análisis que elijas se muestra debajo.
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── 1) Activo único para todo el centro de análisis ──
-    ticker = selector_ticker_autocomplete('hub_ticker', st.session_state.get('ticker_from_table', ''))
+    # ── 1) Activo + temporalidad únicos ──
+    c_tk, c_tf = st.columns([3, 1])
+    with c_tk:
+        ticker = selector_ticker_autocomplete('hub_ticker', st.session_state.get('ticker_from_table', ''))
+    with c_tf:
+        tf_label = st.selectbox('Temporalidad', list(TF_HUB), key='hub_tf')
+    tf = TF_HUB[tf_label]
+
     if not ticker:
         st.info('Elegí un activo para empezar.')
         return
 
-    # ── 2) Gráfico en vivo (GEX + velas), siempre visible ──
-    grafico_live_panel(ticker, kpi_cards_4, fmt_precio, fuente_velas)
+    # ── 2) Gráfico grande en vivo (GEX + velas + conclusión) ──
+    grafico_live_panel(ticker, kpi_cards_4, fmt_precio, fuente_velas, tf_forzado=tf)
 
     st.divider()
 
@@ -77,12 +87,14 @@ def modulo_analisis_unificado(descargar_datos, selector_ticker_autocomplete, kpi
     if opcion == OPCION_VELAS:
         modulo_velas(
             descargar_datos=descargar_datos,
-            selector_ticker_autocomplete=_selector_fijo(ticker),
+            selector_ticker_autocomplete=selector_ticker_autocomplete,
             kpi_cards_4=kpi_cards_4,
             fmt_precio=fmt_precio,
             PLOTLY_CONFIG=PLOTLY_CONFIG,
+            ticker_externo=ticker,
+            tf_externo=tf,
         )
     elif opcion == OPCION_VOL:
-        modulo_volatilidad(PLOTLY_CONFIG=PLOTLY_CONFIG)
+        modulo_volatilidad(PLOTLY_CONFIG=PLOTLY_CONFIG, ticker_externo=_a_yahoo(ticker))
     else:
-        modulo_analisis_tecnico(PLOTLY_CONFIG=PLOTLY_CONFIG)
+        modulo_analisis_tecnico(PLOTLY_CONFIG=PLOTLY_CONFIG, ticker_externo=_a_yahoo(ticker))
