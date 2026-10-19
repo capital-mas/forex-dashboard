@@ -901,7 +901,7 @@ def _render_montecarlo(ticker, fmt, kpi_cards_4, descargar_datos, PLOTLY_CONFIG,
 # ==============================================================
 
 def modulo_velas(descargar_datos, selector_ticker_autocomplete, kpi_cards_4, fmt_precio,
-                 PLOTLY_CONFIG=None, ticker_externo=None):
+                 PLOTLY_CONFIG=None, ticker_externo=None, tf_externo=None):
     """ticker_externo: activo ya elegido arriba en la app. Si se pasa, no se muestra el banner,
     ni el selector, ni el botón Analizar: todo se calcula solo con ese activo."""
     externo = bool(ticker_externo)
