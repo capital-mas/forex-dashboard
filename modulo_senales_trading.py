@@ -45,6 +45,7 @@ from zoneinfo import ZoneInfo          # en Windows: pip install tzdata
 
 from scanner_gex import render_scanner_gex
 from scanner_multifactor import render_scanner_multifactor  
+from scanner_presets_supabase import PresetStoreSupabase 
 
 # Todas las fechas y horas de las señales se guardan en hora de Argentina,
 # sin importar en qué zona horaria esté el servidor.
