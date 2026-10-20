@@ -1043,7 +1043,10 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
     if modo == MODO_SCANNER:
         render_scanner_gex(on_cargar=_cargar_desde_scanner)
     elif modo == MODO_MULTIFACTOR:
-        render_scanner_multifactor(on_cargar=_cargar_desde_multifactor, key="mf")
+        render_scanner_multifactor(
+            on_cargar=_cargar_desde_multifactor,
+            store=PresetStoreSupabase(supabase),                    # ← nuevo
+        ) 
     else:
         _form_publicar_manual(supabase, user_id, user_email)
 
