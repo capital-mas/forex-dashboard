@@ -21,6 +21,11 @@
 #   guardan en un JSON local (scanner_presets.json); en Streamlit Cloud
 #   el disco es efímero, por eso conviene el store de Supabase.
 #
+#  ESCANEAR PRESETS GUARDADOS
+#   En la pestaña Scanner aparece la lista de todos los presets guardados.
+#   Con "Escanear presets seleccionados" se escanean juntos y cada preset usa
+#   SUS parámetros, SU temporalidad y SUS tickers del Scanner.
+#
 #  TEMPORALIDAD
 #   15 min, 30 min, 1 hora, 4 horas, Diario o Semanal (selector dentro de
 #   Parámetros). Se aplica al Scanner y al Backtest y se guarda en cada
@@ -585,6 +590,148 @@ def _aplicar_preset(st, key: str, datos: dict) -> None:
         st.session_state[f"{key}_{suf}"] = v
 
 
+def _params_desde_preset(d: dict):
+    """Arma (Params, cfg_temporalidad) a partir de un preset guardado, sin pasar por la pantalla."""
+    def num(k, defecto):
+        try:
+            return float(d.get(k, defecto))
+        except (TypeError, ValueError):
+            return float(defecto)
+
+    modo = "futuros" if str(d.get("modo", "")).startswith("Futuros") else "spot"
+    tf = d.get("tf") if d.get("tf") in TEMPORALIDADES else "Diario"
+    cfg = TEMPORALIDADES[tf]
+    p = Params(
+        min_acum=num("acum", 50.0), min_antic=num("antic", 50.0), max_sent=num("sent", 85.0),
+        adx_umbral=num("adx", 25.0), rvol_min=num("rvol", 1.5),
+        cci_inf=num("cci_i", -100.0), cci_sup=num("cci_s", 200.0),
+        exigir_volumen=bool(d.get("exvol", True)),
+        modo=modo, sl_atr=num("sl", 2.0), tp_atr=num("tp", 4.0),
+        comision_pct=num("com", 0.10), slippage_pct=num("slip", 0.05),
+        riesgo_pct=num("riesgo", 1.0),
+        apalancamiento=num("apal", 1.0) if modo == "futuros" else 1.0,
+        capital=num("cap", 10000.0), max_barras=int(num("maxbar", 30)),
+        intervalo=cfg["iv"])
+    return p, cfg
+
+
+def _render_scan_presets(st, key: str, presets: dict, dl, on_cargar=None):
+    """Escanea varios presets guardados de una vez: cada uno con SUS parámetros,
+    SU temporalidad y SUS tickers del Scanner."""
+    with st.container(border=True):
+        st.markdown("**📚 Escanear presets guardados**")
+        if not presets:
+            st.caption("Guardá al menos un preset (💾 Presets) para escanearlo desde acá. "
+                       "Cada preset se escanea con sus propios parámetros, temporalidad y tickers.")
+            return
+
+        nombres = sorted(presets.keys())
+        k_ms = f"{key}_multi_sel"
+        if k_ms not in st.session_state:
+            st.session_state[k_ms] = list(nombres)      # por defecto, todos
+        else:
+            st.session_state[k_ms] = [n for n in st.session_state[k_ms] if n in nombres]
+        elegidos = st.multiselect("Presets a escanear", nombres, key=k_ms)
+
+        resumen = []
+        for n in elegidos:
+            d = presets[n]
+            tks = _parse_tickers(d.get("scan_tk", ""))
+            resumen.append({
+                "Preset": n,
+                "Temporalidad": d.get("tf") if d.get("tf") in TEMPORALIDADES else "Diario",
+                "Mercado": "Futuros" if str(d.get("modo", "")).startswith("Futuros") else "Spot",
+                "Tickers del Scanner": ", ".join(tks) if tks else "— (vacío)",
+            })
+        if resumen:
+            st.dataframe(pd.DataFrame(resumen), use_container_width=True, hide_index=True)
+        st.caption("Se escanean los tickers de la pestaña Scanner que tenía cada preset al guardarlo. "
+                   "Si los cargaste solo en Backtest, ponelos también acá y volvé a guardar el preset.")
+
+        if st.button("▶ Escanear presets seleccionados", key=f"{key}_multi_run",
+                     type="primary", disabled=not elegidos):
+            tareas = []
+            for n in elegidos:
+                d = presets[n]
+                p_n, cfg_n = _params_desde_preset(d)
+                tf_n = d.get("tf") if d.get("tf") in TEMPORALIDADES else "Diario"
+                solo = bool(d.get("cerradas", True))
+                for tk in _parse_tickers(d.get("scan_tk", ""))[:60]:
+                    tareas.append((n, tf_n, tk, p_n, cfg_n, solo))
+
+            def _uno(t):
+                n, tf_n, tk, p_n, cfg_n, solo = t
+                df = dl(tk, cfg_n["scan"], cfg_n["fuente"], cfg_n["resample"])
+                f = evaluar_ultima(tk, df, p_n, solo) if df is not None else None
+                if f is None:
+                    return None
+                f = dict(f)
+                f["Preset"], f["TF"], f["_modo"] = n, tf_n, p_n.modo
+                f["notas"] = f"[{n}] " + f["notas"]
+                return f
+
+            with st.spinner(f"Escaneando {len(tareas)} activos de {len(elegidos)} preset(s)..."):
+                with ThreadPoolExecutor(max_workers=8) as ex:
+                    res = list(ex.map(_uno, tareas))
+            st.session_state[f"{key}_multi_res"] = [r for r in res if r]
+            st.session_state[f"{key}_multi_fallidos"] = [
+                f"{t[0]} · {t[2]}" for t, r in zip(tareas, res) if r is None]
+            st.session_state[f"{key}_multi_npresets"] = len(elegidos)
+
+        filas = st.session_state.get(f"{key}_multi_res")
+        if filas is None:
+            return
+        if st.session_state.get(f"{key}_multi_fallidos"):
+            st.warning("Sin datos suficientes (se necesitan ~150 velas): "
+                       + ", ".join(st.session_state[f"{key}_multi_fallidos"]))
+        if not filas:
+            st.info("No hubo resultados.")
+            return
+
+        n_sig = sum(1 for r in filas if r["Señal"] != "—")
+        solo_sig = st.checkbox("Mostrar solo activos con señal completa", key=f"{key}_multi_solo")
+        vis = [r for r in filas if r["Señal"] != "—"] if solo_sig else list(filas)
+        st.caption(f"{n_sig} activo(s) con señal completa de {len(filas)} analizados en "
+                   f"{st.session_state.get(f'{key}_multi_npresets', '?')} preset(s). "
+                   "Exigir los 8 filtros a la vez es estricto: lo normal es que pocos pasen.")
+        if not vis:
+            st.info("Ningún activo cumple los 8 filtros en este momento.")
+            return
+
+        vis = sorted(vis, key=lambda r: (r["Señal"] == "—", -r["_n"]))
+        cols = ["Preset", "TF", "Ticker", "Señal", "Filtros OK", "Precio", "Acum", "Antic", "Sent",
+                "ADX", "+DI", "-DI", "CMF", "RVOL", "MACD hist", "CCI", "Falta cumplir"]
+        st.dataframe(pd.DataFrame(vis)[cols], use_container_width=True, hide_index=True,
+                     height=min(600, len(vis) * 36 + 45),
+                     column_config={
+                         "Precio": st.column_config.NumberColumn(format="%.4f"),
+                         "Acum": st.column_config.NumberColumn(format="%.0f"),
+                         "Antic": st.column_config.NumberColumn(format="%.0f"),
+                         "Sent": st.column_config.NumberColumn(format="%.0f"),
+                         "ADX": st.column_config.NumberColumn(format="%.0f"),
+                         "+DI": st.column_config.NumberColumn(format="%.0f"),
+                         "-DI": st.column_config.NumberColumn(format="%.0f"),
+                         "CMF": st.column_config.NumberColumn(format="%+.2f"),
+                         "RVOL": st.column_config.NumberColumn(format="%.2fx"),
+                         "MACD hist": st.column_config.NumberColumn(format="%+.4f"),
+                         "CCI": st.column_config.NumberColumn(format="%.0f"),
+                     })
+
+        if on_cargar is not None:
+            st.divider()
+            st.markdown("**Cargar un activo en el formulario de señal** "
+                        "(SL/TP precalculados con los parámetros de su preset; revisalos antes de publicar)")
+            por_lbl = {f"{r['Preset']} · {r['TF']} · {r['Ticker']}": r for r in vis}
+            lbl_sel = st.selectbox("Activo", list(por_lbl.keys()), key=f"{key}_multi_sel_cargar")
+            fila = por_lbl[lbl_sel]
+            b1, b2 = st.columns(2)
+            b1.button("🟢 Cargar como LARGO", key=f"{key}_multi_cargar_l", use_container_width=True,
+                      on_click=on_cargar, args=(fila, "LARGO"))
+            if fila.get("_modo") == "futuros":
+                b2.button("🔴 Cargar como CORTO", key=f"{key}_multi_cargar_s",
+                          use_container_width=True, on_click=on_cargar, args=(fila, "CORTO"))
+
+
 # ==============================================================
 #  UI STREAMLIT
 # ==============================================================
@@ -710,6 +857,8 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
 
     # ─────────────── SCANNER ───────────────
     with tab_scan:
+        _render_scan_presets(st, key, presets, dl, on_cargar)
+        st.markdown("**🔎 Escaneo con los parámetros actuales (los de la pantalla)**")
         txt = st.text_area("Tickers (separados por coma)", key=f"{key}_scan_tk", height=80,
                            value="NVDA, AAPL, MSFT, TSLA, BTC-USD, ETH-USD, SOL-USD, GC=F, CL=F")
         solo_cerr = st.checkbox("Usar solo velas cerradas", True, key=f"{key}_cerradas",
