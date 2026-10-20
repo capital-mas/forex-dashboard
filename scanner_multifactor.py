@@ -4,10 +4,29 @@
 #  Uso 1 — script independiente:
 #      python scanner_multifactor.py NVDA BTC-USD GC=F --periodo 5y --modo spot
 #      python scanner_multifactor.py BTC-USD ETH-USD --modo futuros --apalancamiento 3
+#      python scanner_multifactor.py BTC-USD ETH-USD --modo futuros --tf 1h --periodo 365d
 #
 #  Uso 2 — dentro de la app (Señales → Publicar Señal):
 #      from scanner_multifactor import render_scanner_multifactor
 #      render_scanner_multifactor(on_cargar=_cargar_desde_multifactor)
+#
+#  Uso 3 — con presets guardados en Supabase (archivo aparte):
+#      from scanner_presets_supabase import PresetStoreSupabase
+#      render_scanner_multifactor(on_cargar=_cargar_desde_multifactor,
+#                                 store=PresetStoreSupabase(supabase))
+#
+#  PRESETS
+#   Guardan mercado, temporalidad, parámetros, tickers del Scanner y del
+#   Backtest e histórico, con un nombre por grupo de activos. Por defecto se
+#   guardan en un JSON local (scanner_presets.json); en Streamlit Cloud
+#   el disco es efímero, por eso conviene el store de Supabase.
+#
+#  TEMPORALIDAD
+#   15 min, 30 min, 1 hora, 4 horas, Diario o Semanal (selector dentro de
+#   Parámetros). Se aplica al Scanner y al Backtest y se guarda en cada
+#   preset. Límites de Yahoo Finance: 15m/30m ≈ 60 días, 1h ≈ 2 años.
+#   4h se arma agrupando velas de 1h. Con "solo velas cerradas" se
+#   descarta la última vela si todavía no terminó.
 #
 #  FILTROS (todos deben cumplirse para generar señal)
 #   1. Tendencia ADX/DI: bloquea compras si ADX > 25 y -DI domina
@@ -35,9 +54,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -68,18 +89,70 @@ class Params:
     riesgo_pct: float = 1.0       # % del equity arriesgado por operación
     apalancamiento: float = 1.0
     capital: float = 10000.0
-    max_barras: int = 30          # salida por tiempo (0 = sin límite)
+    max_barras: int = 30          # salida por tiempo (0 = sin límite), en velas
+    intervalo: str = "1d"         # temporalidad: 15m, 30m, 1h, 4h, 1d, 1wk
 
 
 # ==============================================================
 #  DATOS
 # ==============================================================
 
-def descargar_ohlcv(ticker: str, period: str = "2y") -> pd.DataFrame | None:
+TEMPORALIDADES = {
+    "15 min": dict(iv="15m", fuente="15m", resample=None, scan="30d",
+                   periodos=["30d", "60d"], defecto="60d", delta=pd.Timedelta(minutes=15),
+                   nota="Yahoo solo da ~60 días de velas de 15 min: pocas operaciones en el "
+                        "backtest. Pensado para intradía."),
+    "30 min": dict(iv="30m", fuente="30m", resample=None, scan="60d",
+                   periodos=["30d", "60d"], defecto="60d", delta=pd.Timedelta(minutes=30),
+                   nota="Yahoo solo da ~60 días de velas de 30 min: pocas operaciones en el "
+                        "backtest. Pensado para intradía."),
+    "1 hora": dict(iv="1h", fuente="1h", resample=None, scan="180d",
+                   periodos=["90d", "180d", "365d", "730d"], defecto="730d",
+                   delta=pd.Timedelta(hours=1),
+                   nota="Yahoo da hasta ~2 años de velas de 1 hora."),
+    "4 horas": dict(iv="4h", fuente="1h", resample="4h", scan="180d",
+                    periodos=["90d", "180d", "365d", "730d"], defecto="730d",
+                    delta=pd.Timedelta(hours=4),
+                    nota="Se arma agrupando velas de 1 hora (hasta ~2 años). En acciones los "
+                         "bloques no coinciden con la rueda; rinde mejor en cripto, forex y futuros."),
+    "Diario": dict(iv="1d", fuente="1d", resample=None, scan="1y",
+                   periodos=["2y", "5y", "10y"], defecto="5y", delta=pd.Timedelta(days=1),
+                   nota="Configuración original: hasta 10 años de histórico."),
+    "Semanal": dict(iv="1wk", fuente="1wk", resample=None, scan="5y",
+                    periodos=["5y", "10y", "20y"], defecto="10y", delta=pd.Timedelta(days=7),
+                    nota="Pocas operaciones por año: conviene histórico de 10 a 20 años."),
+}
+TF_POR_CODIGO = {c["iv"]: c for c in TEMPORALIDADES.values()}
+
+# Yahoo limita el histórico intradía (en días hacia atrás)
+_MAX_DIAS_INTRADIA = {"15m": 59, "30m": 59, "1h": 729}
+
+
+def _resamplear(df: pd.DataFrame, regla: str) -> pd.DataFrame:
+    """Agrupa velas (ej. 1h -> 4h)."""
+    out = df.resample(regla).agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
+    out["Volume"] = df["Volume"].resample(regla).sum(min_count=1)
+    return out.dropna(subset=["Close"])
+
+
+def _vela_abierta(ts, delta) -> bool:
+    """True si la vela que empieza en ts todavía no cerró."""
+    ahora = pd.Timestamp.now(tz=ts.tz) if getattr(ts, "tz", None) is not None else pd.Timestamp.now()
+    return ts + delta > ahora
+
+
+def descargar_ohlcv(ticker: str, period: str = "2y", interval: str = "1d",
+                    resample: str | None = None) -> pd.DataFrame | None:
     try:
         import yfinance as yf
-        df = yf.download(ticker, period=period, interval="1d",
-                         auto_adjust=True, progress=False)
+        if period.endswith("d"):      # ej. "365d": se pasa como fecha de inicio
+            dias = min(int(period[:-1]), _MAX_DIAS_INTRADIA.get(interval, 10 ** 6))
+            inicio = (pd.Timestamp.now() - pd.Timedelta(days=dias)).strftime("%Y-%m-%d")
+            df = yf.download(ticker, start=inicio, interval=interval,
+                             auto_adjust=True, progress=False)
+        else:
+            df = yf.download(ticker, period=period, interval=interval,
+                             auto_adjust=True, progress=False)
         if df is None or df.empty:
             return None
         if isinstance(df.columns, pd.MultiIndex):
@@ -91,6 +164,8 @@ def descargar_ohlcv(ticker: str, period: str = "2y") -> pd.DataFrame | None:
             df["Volume"] = np.nan
         df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
         df.loc[df["Volume"] == 0, "Volume"] = np.nan   # forex/índices reportan 0
+        if resample:
+            df = _resamplear(df, resample)
         return df
     except Exception:
         return None
@@ -377,7 +452,8 @@ def imprimir_metricas(ticker: str, m: dict) -> None:
 # ==============================================================
 
 def evaluar_ultima(ticker: str, df: pd.DataFrame, p: Params, solo_cerradas: bool = True):
-    if solo_cerradas and len(df) > 1 and df.index[-1].date() >= date.today():
+    delta = TF_POR_CODIGO.get(p.intervalo, TEMPORALIDADES["Diario"])["delta"]
+    if solo_cerradas and len(df) > 1 and _vela_abierta(df.index[-1], delta):
         df = df.iloc[:-1]      # evita RVOL/CMF distorsionados por una vela a medio formar
     if len(df) < 150:
         return None
@@ -409,9 +485,10 @@ def evaluar_ultima(ticker: str, df: pd.DataFrame, p: Params, solo_cerradas: bool
         "Falta cumplir": ", ".join(fallan) if fallan else "—",
         # datos para cargar en el formulario de señales
         "ticker_yahoo": ticker, "categoria": categoria_de(ticker), "precio": px, "atr": atr,
+        "temporalidad": p.intervalo,
         "sl_largo": px - p.sl_atr * atr, "tp_largo": px + p.tp_atr * atr,
         "sl_corto": px + p.sl_atr * atr, "tp_corto": px - p.tp_atr * atr,
-        "notas": (f"Scanner multi-factor · ADX {u['adx']:.0f} (+DI {u['pdi']:.0f}/-DI {u['mdi']:.0f}) · "
+        "notas": (f"Scanner multi-factor ({p.intervalo}) · ADX {u['adx']:.0f} (+DI {u['pdi']:.0f}/-DI {u['mdi']:.0f}) · "
                   f"Acum {u['acum']:.0f} / Antic {u['antic']:.0f} / Sent {u['sent']:.0f} · "
                   f"CMF {0 if pd.isna(u['cmf']) else u['cmf']:+.2f} · "
                   f"RVOL {0 if pd.isna(u['rvol']) else u['rvol']:.1f}x · CCI {u['cci']:.0f} · "
@@ -429,23 +506,173 @@ def _parse_tickers(txt: str) -> list:
 
 
 # ==============================================================
+#  PRESETS (guardar / cargar configuraciones por grupo de activos)
+# ==============================================================
+
+PRESETS_FILE = Path("scanner_presets.json")
+
+MODOS_LBL = ["Spot (solo largos)", "Futuros (largos y cortos)"]
+PERIODOS_VALIDOS = {x for c in TEMPORALIDADES.values() for x in c["periodos"]}
+
+# sufijo del widget -> tipo (se usa para leer/validar/convertir al guardar y cargar)
+_CAMPOS_PRESET = {
+    "modo": str, "tf": str, "acum": float, "antic": float, "sent": float, "adx": float,
+    "rvol": float, "cci_i": float, "cci_s": float, "exvol": bool,
+    "sl": float, "tp": float, "com": float, "slip": float,
+    "cap": float, "riesgo": float, "apal": float, "maxbar": int,
+    "scan_tk": str, "cerradas": bool, "bt_tk": str, "bt_per": str,
+}
+
+
+class PresetStoreJSON:
+    """Guarda los presets en un archivo JSON local.
+
+    OJO: en Streamlit Cloud el disco es efímero y se pierde al reiniciar la app.
+    Si desplegás ahí, usá PresetStoreSupabase (scanner_presets_supabase.py).
+
+    Interfaz que debe cumplir cualquier store:
+        listar()  -> dict {nombre: datos}
+        guardar(nombre, datos)
+        eliminar(nombre)
+    """
+
+    def __init__(self, path: Path = PRESETS_FILE):
+        self.path = Path(path)
+
+    def listar(self) -> dict:
+        try:
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def guardar(self, nombre: str, datos: dict) -> None:
+        todos = self.listar()
+        todos[nombre] = datos
+        self.path.write_text(json.dumps(todos, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def eliminar(self, nombre: str) -> None:
+        todos = self.listar()
+        todos.pop(nombre, None)
+        self.path.write_text(json.dumps(todos, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _snapshot_preset(st, key: str) -> dict:
+    """Lee el estado actual de los widgets y arma el dict a guardar."""
+    datos = {}
+    for suf, tipo in _CAMPOS_PRESET.items():
+        v = st.session_state.get(f"{key}_{suf}")
+        if v is not None:
+            datos[suf] = tipo(v)
+    return datos
+
+
+def _aplicar_preset(st, key: str, datos: dict) -> None:
+    """Vuelca un preset en los widgets (se llama desde un callback, antes del rerun)."""
+    datos = {"tf": "Diario", **datos}      # presets guardados antes de existir tf = diario
+    for suf, tipo in _CAMPOS_PRESET.items():
+        if suf not in datos:
+            continue
+        try:
+            v = tipo(datos[suf])
+        except Exception:
+            continue
+        if suf == "modo" and v not in MODOS_LBL:
+            continue
+        if suf == "tf" and v not in TEMPORALIDADES:
+            continue
+        if suf == "bt_per" and v not in PERIODOS_VALIDOS:
+            continue
+        st.session_state[f"{key}_{suf}"] = v
+
+
+# ==============================================================
 #  UI STREAMLIT
 # ==============================================================
 
-def render_scanner_multifactor(on_cargar=None, key: str = "mf"):
-    """on_cargar(fila, lado) se ejecuta como callback de botón ('LARGO' / 'CORTO')."""
+def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
+    """on_cargar(fila, lado) se ejecuta como callback de botón ('LARGO' / 'CORTO').
+    store: objeto con listar()/guardar(nombre, datos)/eliminar(nombre).
+           Por defecto usa un JSON local (PresetStoreJSON)."""
     import streamlit as st
     import plotly.graph_objects as go
 
+    store = store or PresetStoreJSON()
     dl = st.cache_data(ttl=900, show_spinner=False)(descargar_ohlcv)
 
     st.markdown("#### 📊 Scanner Multi-Factor + Backtest")
     st.caption("Filtros de tendencia (ADX/DI), scores, convicción (CMF/RVOL) y momento (MACD/CCI). "
                "El backtest incluye comisiones, slippage y SL/TP dinámicos por ATR.")
 
+    # ─────────────── PRESETS ───────────────
+    k_sel, k_nom, k_msg = f"{key}_preset_sel", f"{key}_preset_nombre", f"{key}_preset_msg"
+
+    def _cb_cargar():
+        nombre = st.session_state.get(k_sel)
+        datos = store.listar().get(nombre)
+        if datos:
+            _aplicar_preset(st, key, datos)
+            st.session_state[k_nom] = nombre
+            st.session_state[k_msg] = ("ok", f"Preset «{nombre}» cargado.")
+        else:
+            st.session_state[k_msg] = ("warn", "No se encontró el preset seleccionado.")
+
+    def _cb_guardar():
+        nombre = (st.session_state.get(k_nom) or "").strip()
+        if not nombre:
+            st.session_state[k_msg] = ("warn", "Escribí un nombre para el preset.")
+            return
+        try:
+            store.guardar(nombre, _snapshot_preset(st, key))
+            st.session_state[k_msg] = ("ok", f"Preset «{nombre}» guardado.")
+        except Exception as e:
+            st.session_state[k_msg] = ("warn", f"No se pudo guardar el preset: {e}")
+
+    def _cb_eliminar():
+        nombre = st.session_state.get(k_sel)
+        if not nombre:
+            return
+        try:
+            store.eliminar(nombre)
+            st.session_state.pop(k_sel, None)
+            st.session_state[k_msg] = ("ok", f"Preset «{nombre}» eliminado.")
+        except Exception as e:
+            st.session_state[k_msg] = ("warn", f"No se pudo eliminar el preset: {e}")
+
+    presets = store.listar()
+    with st.expander(f"💾 Presets ({len(presets)})", expanded=False):
+        p1, p2 = st.columns([3, 1])
+        if presets:
+            p1.selectbox("Preset guardado", sorted(presets.keys()), key=k_sel)
+            p2.write("")
+            p2.button("📂 Cargar", key=f"{key}_pre_load", on_click=_cb_cargar,
+                      use_container_width=True)
+            p2.button("🗑️ Eliminar", key=f"{key}_pre_del", on_click=_cb_eliminar,
+                      use_container_width=True)
+        else:
+            st.caption("Todavía no hay presets guardados.")
+        n1, n2 = st.columns([3, 1])
+        n1.text_input("Nombre para guardar (si ya existe, lo sobrescribe)", key=k_nom,
+                      placeholder="Ej: Cripto futuros")
+        n2.write("")
+        n2.button("💾 Guardar", key=f"{key}_pre_save", on_click=_cb_guardar,
+                  use_container_width=True)
+        st.caption("Guarda mercado, temporalidad, parámetros, tickers del Scanner y del Backtest, "
+                   "e histórico.")
+        msg = st.session_state.pop(k_msg, None)
+        if msg:
+            (st.success if msg[0] == "ok" else st.warning)(msg[1])
+
+    # ─────────────── PARÁMETROS ───────────────
     with st.expander("⚙️ Parámetros", expanded=False):
-        modo_lbl = st.radio("Mercado", ["Spot (solo largos)", "Futuros (largos y cortos)"],
-                            horizontal=True, key=f"{key}_modo")
+        modo_lbl = st.radio("Mercado", MODOS_LBL, horizontal=True, key=f"{key}_modo")
+        tf_lbl = st.radio("Temporalidad", list(TEMPORALIDADES.keys()),
+                          index=list(TEMPORALIDADES.keys()).index("Diario"),
+                          horizontal=True, key=f"{key}_tf",
+                          help="Se aplica al Scanner y al Backtest. Ojo: scores, ventanas e "
+                               "indicadores se calculan en velas, así que los mismos números "
+                               "cubren un tiempo distinto en cada temporalidad.")
+        cfg = TEMPORALIDADES[tf_lbl]
+        st.caption("⏱️ " + cfg["nota"])
         c1, c2, c3, c4 = st.columns(4)
         min_acum = c1.number_input("Acumulación mín.", 0.0, 100.0, 50.0, 5.0, key=f"{key}_acum")
         min_antic = c2.number_input("Anticipación mín.", 0.0, 100.0, 50.0, 5.0, key=f"{key}_antic")
@@ -468,7 +695,8 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf"):
         riesgo = e2.number_input("Riesgo % por operación", 0.1, 10.0, 1.0, 0.25, key=f"{key}_riesgo")
         apal = e3.number_input("Apalancamiento máx. (x)", 1.0, 125.0, 1.0, 1.0, key=f"{key}_apal")
         max_bar = e4.number_input("Máx. velas en operación", 0, 500, 30, 5, key=f"{key}_maxbar",
-                                  help="0 = sin salida por tiempo.")
+                                  help="En velas de la temporalidad elegida (30 velas = 30 horas en 1 hora, "
+                                       "30 días en diario). 0 = sin salida por tiempo.")
 
     modo = "futuros" if modo_lbl.startswith("Futuros") else "spot"
     p = Params(min_acum=min_acum, min_antic=min_antic, max_sent=max_sent, adx_umbral=adx_u,
@@ -476,7 +704,7 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf"):
                modo=modo, sl_atr=sl_atr, tp_atr=tp_atr, comision_pct=comision,
                slippage_pct=slippage, riesgo_pct=riesgo,
                apalancamiento=apal if modo == "futuros" else 1.0,
-               capital=capital, max_barras=int(max_bar))
+               capital=capital, max_barras=int(max_bar), intervalo=cfg["iv"])
 
     tab_scan, tab_bt = st.tabs(["🔎 Scanner", "🧪 Backtest"])
 
@@ -491,7 +719,7 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf"):
             tks = _parse_tickers(txt)[:60]
 
             def _uno(tk):
-                df = dl(tk, "1y")
+                df = dl(tk, cfg["scan"], cfg["fuente"], cfg["resample"])
                 return evaluar_ultima(tk, df, p, solo_cerr) if df is not None else None
 
             with st.spinner(f"Escaneando {len(tks)} activos..."):
@@ -499,9 +727,12 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf"):
                     res = list(ex.map(_uno, tks))
             st.session_state[f"{key}_scan_res"] = [r for r in res if r]
             st.session_state[f"{key}_scan_fallidos"] = [t for t, r in zip(tks, res) if r is None]
+            st.session_state[f"{key}_scan_tf"] = tf_lbl
 
         filas = st.session_state.get(f"{key}_scan_res")
         if filas is not None:
+            st.caption("⏱️ Temporalidad de este escaneo: **"
+                       + st.session_state.get(f"{key}_scan_tf", tf_lbl) + "**")
             if st.session_state.get(f"{key}_scan_fallidos"):
                 st.warning("Sin datos suficientes (se necesitan ~150 velas): "
                            + ", ".join(st.session_state[f"{key}_scan_fallidos"]))
@@ -551,14 +782,16 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf"):
             txt_bt = st.text_input("Tickers a testear (coma)", "BTC-USD, ETH-USD, NVDA",
                                    key=f"{key}_bt_tk")
         with cb2:
-            periodo = st.selectbox("Histórico", ["2y", "5y", "10y"], index=1, key=f"{key}_bt_per")
+            if st.session_state.get(f"{key}_bt_per") not in cfg["periodos"]:
+                st.session_state[f"{key}_bt_per"] = cfg["defecto"]
+            periodo = st.selectbox("Histórico", cfg["periodos"], key=f"{key}_bt_per")
 
         if st.button("▶ Correr backtest", key=f"{key}_bt_run", type="primary"):
             tks = _parse_tickers(txt_bt)[:15]
             salida, sin_datos = {}, []
             with st.spinner("Descargando y simulando..."):
                 for tk in tks:
-                    df = dl(tk, periodo)
+                    df = dl(tk, periodo, cfg["fuente"], cfg["resample"])
                     if df is None or len(df) < 150:
                         sin_datos.append(tk)
                         continue
@@ -566,6 +799,7 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf"):
             st.session_state[f"{key}_bt_res"] = salida
             st.session_state[f"{key}_bt_sin"] = sin_datos
             st.session_state[f"{key}_bt_cap"] = p.capital
+            st.session_state[f"{key}_bt_tf"] = tf_lbl
 
         res = st.session_state.get(f"{key}_bt_res")
         if res is None:
@@ -574,6 +808,11 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf"):
             st.warning("Sin datos suficientes: " + ", ".join(st.session_state[f"{key}_bt_sin"]))
         if not res:
             return
+
+        tf_res = st.session_state.get(f"{key}_bt_tf", tf_lbl)
+        st.caption(f"⏱️ Temporalidad de estos resultados: **{tf_res}**"
+                   + ("" if tf_res == tf_lbl else
+                      " · cambiaste la temporalidad: volvé a correr el backtest."))
 
         # Resumen por activo + total
         filas_r = []
@@ -662,7 +901,10 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf"):
 def main():
     ap = argparse.ArgumentParser(description="Scanner Multi-Factor + Backtest con fricciones")
     ap.add_argument("tickers", nargs="+")
-    ap.add_argument("--periodo", default="5y")
+    ap.add_argument("--tf", choices=list(TF_POR_CODIGO.keys()), default="1d",
+                    help="temporalidad: 15m, 30m, 1h, 4h, 1d, 1wk")
+    ap.add_argument("--periodo", default=None,
+                    help="histórico (ej. 5y, 365d). Por defecto, el de la temporalidad.")
     ap.add_argument("--modo", choices=["spot", "futuros"], default="spot")
     ap.add_argument("--sl-atr", type=float, default=2.0)
     ap.add_argument("--tp-atr", type=float, default=4.0)
@@ -677,12 +919,14 @@ def main():
     p = Params(modo=a.modo, sl_atr=a.sl_atr, tp_atr=a.tp_atr, comision_pct=a.comision,
                slippage_pct=a.slippage, riesgo_pct=a.riesgo,
                apalancamiento=a.apalancamiento if a.modo == "futuros" else 1.0,
-               capital=a.capital, max_barras=a.max_barras)
+               capital=a.capital, max_barras=a.max_barras, intervalo=a.tf)
+    cfg = TF_POR_CODIGO[a.tf]
+    periodo = a.periodo or cfg["defecto"]
 
     print("\n--- SCANNER (última vela cerrada) ---")
     todos = []
     for tk in a.tickers:
-        df = descargar_ohlcv(tk, a.periodo)
+        df = descargar_ohlcv(tk, periodo, cfg["fuente"], cfg["resample"])
         if df is None or len(df) < 150:
             print(f"  {tk}: sin datos suficientes")
             continue
