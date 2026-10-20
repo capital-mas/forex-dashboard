@@ -25,6 +25,8 @@
 #   En la pestaña Scanner aparece la lista de todos los presets guardados.
 #   Con "Escanear presets seleccionados" se escanean juntos y cada preset usa
 #   SUS parámetros, SU temporalidad y SUS tickers del Scanner.
+#   Los resultados se descartan solos si cambia la selección o el contenido
+#   de algún preset elegido (evita ver resultados viejos).
 #
 #  TEMPORALIDAD
 #   15 min, 30 min, 1 hora, 4 horas, Diario o Semanal (selector dentro de
@@ -618,6 +620,11 @@ def _params_desde_preset(d: dict):
 def _render_scan_presets(st, key: str, presets: dict, dl, on_cargar=None):
     """Escanea varios presets guardados de una vez: cada uno con SUS parámetros,
     SU temporalidad y SUS tickers del Scanner."""
+    k_res = f"{key}_multi_res"
+    k_fall = f"{key}_multi_fallidos"
+    k_np = f"{key}_multi_npresets"
+    k_sig = f"{key}_multi_sig"
+
     with st.container(border=True):
         st.markdown("**📚 Escanear presets guardados**")
         if not presets:
@@ -632,6 +639,15 @@ def _render_scan_presets(st, key: str, presets: dict, dl, on_cargar=None):
         else:
             st.session_state[k_ms] = [n for n in st.session_state[k_ms] if n in nombres]
         elegidos = st.multiselect("Presets a escanear", nombres, key=k_ms)
+
+        # ── Firma de lo que se va a escanear: selección + contenido de cada preset.
+        #    Si cambia respecto del último escaneo, los resultados guardados quedan
+        #    obsoletos y se descartan (evita ver tickers viejos con el nombre nuevo).
+        firma = json.dumps({n: presets[n] for n in elegidos}, sort_keys=True,
+                           ensure_ascii=False, default=str)
+        if st.session_state.get(k_sig) != firma:
+            for k in (k_res, k_fall, k_np):
+                st.session_state.pop(k, None)
 
         resumen = []
         for n in elegidos:
@@ -673,17 +689,17 @@ def _render_scan_presets(st, key: str, presets: dict, dl, on_cargar=None):
             with st.spinner(f"Escaneando {len(tareas)} activos de {len(elegidos)} preset(s)..."):
                 with ThreadPoolExecutor(max_workers=8) as ex:
                     res = list(ex.map(_uno, tareas))
-            st.session_state[f"{key}_multi_res"] = [r for r in res if r]
-            st.session_state[f"{key}_multi_fallidos"] = [
-                f"{t[0]} · {t[2]}" for t, r in zip(tareas, res) if r is None]
-            st.session_state[f"{key}_multi_npresets"] = len(elegidos)
+            st.session_state[k_res] = [r for r in res if r]
+            st.session_state[k_fall] = [f"{t[0]} · {t[2]}" for t, r in zip(tareas, res) if r is None]
+            st.session_state[k_np] = len(elegidos)
+            st.session_state[k_sig] = firma
 
-        filas = st.session_state.get(f"{key}_multi_res")
+        filas = st.session_state.get(k_res)
         if filas is None:
             return
-        if st.session_state.get(f"{key}_multi_fallidos"):
+        if st.session_state.get(k_fall):
             st.warning("Sin datos suficientes (se necesitan ~150 velas): "
-                       + ", ".join(st.session_state[f"{key}_multi_fallidos"]))
+                       + ", ".join(st.session_state[k_fall]))
         if not filas:
             st.info("No hubo resultados.")
             return
@@ -692,7 +708,7 @@ def _render_scan_presets(st, key: str, presets: dict, dl, on_cargar=None):
         solo_sig = st.checkbox("Mostrar solo activos con señal completa", key=f"{key}_multi_solo")
         vis = [r for r in filas if r["Señal"] != "—"] if solo_sig else list(filas)
         st.caption(f"{n_sig} activo(s) con señal completa de {len(filas)} analizados en "
-                   f"{st.session_state.get(f'{key}_multi_npresets', '?')} preset(s). "
+                   f"{st.session_state.get(k_np, '?')} preset(s). "
                    "Exigir los 8 filtros a la vez es estricto: lo normal es que pocos pasen.")
         if not vis:
             st.info("Ningún activo cumple los 8 filtros en este momento.")
