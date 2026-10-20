@@ -877,6 +877,28 @@ def _cargar_desde_scanner(fila, lado):
         + f" · Squeeze Score {fila['squeeze']:.0f} ({fila['sq_nivel']})."
     )
 
+def _cargar_desde_multifactor(fila, lado):
+    """on_click del scanner multi-factor: pasa el activo al formulario manual."""
+    es_largo = (lado == "LARGO")
+    st.session_state["sen_modo_pub"] = MODO_MANUAL
+    st.session_state["sen_ticker"] = fila["ticker_yahoo"]
+    if fila.get("categoria") in CATEGORIAS:
+        st.session_state["sen_categoria"] = fila["categoria"]
+    st.session_state["sen_tipo"] = "🟢 LARGO (Compra)" if es_largo else "🔴 CORTO (Venta)"
+    st.session_state["sen_modo_stop"] = "Manual"
+
+    sl = fila["sl_largo"] if es_largo else fila["sl_corto"]
+    tp = fila["tp_largo"] if es_largo else fila["tp_corto"]
+    st.session_state["sen_sl"] = round(float(sl), 5)
+    st.session_state["sen_tp"] = round(float(tp), 5)
+
+    # Una sola entrada, al precio de la última vela cerrada
+    _reset_entradas_state()
+    ent0 = st.session_state["sen_entradas"][0]
+    ent0["precio"] = round(float(fila["precio"]), 5)
+    st.session_state[f"sen_entrada_precio_{ent0['id']}"] = ent0["precio"]
+
+    st.session_state["sen_notas"] = fila["notas"]
 
 def _form_publicar_manual(supabase, user_id, user_email):
     st.markdown("#### 📥 Parámetros de la señal")
@@ -1015,10 +1037,13 @@ def _tab_publicar(supabase, user_id, user_email, es_admin):
                 "Podés ver las señales y simular operaciones en las otras pestañas.")
         return
 
-    modo = st.radio("Cómo querés armar la señal", [MODO_MANUAL, MODO_SCANNER],
-                    horizontal=True, key="sen_modo_pub")
+    modo = st.radio("Cómo querés armar la señal",
+                [MODO_MANUAL, MODO_SCANNER, MODO_MULTIFACTOR],
+                horizontal=True, key="sen_modo_pub")
     if modo == MODO_SCANNER:
         render_scanner_gex(on_cargar=_cargar_desde_scanner)
+    elif modo == MODO_MULTIFACTOR:
+        render_scanner_multifactor(on_cargar=_cargar_desde_multifactor, key="mf")
     else:
         _form_publicar_manual(supabase, user_id, user_email)
 
