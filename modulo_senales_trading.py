@@ -44,6 +44,7 @@ from streamlit_autorefresh import st_autorefresh
 from zoneinfo import ZoneInfo          # en Windows: pip install tzdata
 
 from scanner_gex import render_scanner_gex
+from scanner_multifactor import render_scanner_multifactor  
 
 # Todas las fechas y horas de las señales se guardan en hora de Argentina,
 # sin importar en qué zona horaria esté el servidor.
@@ -58,6 +59,7 @@ TABLA_SENALES = "senales_trading"
 
 MODO_MANUAL = "✍️ Cargar señal manual"
 MODO_SCANNER = "🧲 Scanner GEX (lista de activos)"
+MODO_MULTIFACTOR = "📊 Scanner Multi-Factor"   
 
 ESTADO_COLOR = {
     "PENDIENTE":            ("#a371f7", "rgba(163,113,247,0.12)", "🕓"),
