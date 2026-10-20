@@ -880,8 +880,10 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
         solo_cerr = st.checkbox("Usar solo velas cerradas", True, key=f"{key}_cerradas",
                                 help="Recomendado: durante la rueda el volumen de hoy es parcial y "
                                      "distorsiona RVOL y CMF.")
+        firma_man = repr((txt, solo_cerr, p))
         if st.button("▶ Escanear", key=f"{key}_scan_run", type="primary"):
             tks = _parse_tickers(txt)[:60]
+            st.session_state[f"{key}_scan_sig"] = firma_man
 
             def _uno(tk):
                 df = dl(tk, cfg["scan"], cfg["fuente"], cfg["resample"])
@@ -893,6 +895,12 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
             st.session_state[f"{key}_scan_res"] = [r for r in res if r]
             st.session_state[f"{key}_scan_fallidos"] = [t for t, r in zip(tks, res) if r is None]
             st.session_state[f"{key}_scan_tf"] = tf_lbl
+
+        # Si cambiaron tickers, velas cerradas o parámetros desde el último escaneo,
+        # los resultados guardados quedaron obsoletos: se descartan.
+        if st.session_state.get(f"{key}_scan_sig") != firma_man:
+            for sfx in ("scan_res", "scan_fallidos", "scan_tf"):
+                st.session_state.pop(f"{key}_{sfx}", None)
 
         filas = st.session_state.get(f"{key}_scan_res")
         if filas is not None:
