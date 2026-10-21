@@ -200,7 +200,7 @@ MODELOS_SCORE = {
     "mediano": dict(w_valor=504, w_mom=126, rsi_p=14, vol_p=20, mom_ret=20,
                     mom_escala=0.60, bb_p=20, atr_p=14),
 }
-MODELO_POR_TF = {"15m": "corto", "30m": "corto", "1h": "mediano", "4h": "mediano"}
+MODELO_POR_TF = {"15m": "corto", "30m": "corto", "1h": "mediano", "4h": "mediano", "1d": "corto"}
 # 1d y 1wk no figuran: siguen con el cálculo anterior.
 
 
