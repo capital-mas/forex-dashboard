@@ -190,6 +190,28 @@ def perfil_para(iv: str) -> dict:
     """Perfil de parámetros según el intervalo ('15m', '1h', '1d'...)."""
     return PERFILES.get(iv, PERFIL_ALTO)
 
+# ── Modelo de scoring por temporalidad (réplica de app.py) ──
+# Las ventanas están en VELAS, igual que en app.py (3 meses ≈ 63 ruedas, 2 años ≈ 504, etc.).
+MODELOS_SCORE = {
+    # scores_corto(): valor 3 meses (63) · momento 1 mes (21)
+    "corto":   dict(w_valor=63,  w_mom=21,  rsi_p=7,  vol_p=10, mom_ret=5,
+                    mom_escala=2.0,  bb_p=10, atr_p=14),
+    # _tdc_scores() con HORIZONTES_TDC['MP']: valor 2 años (504) · momento 6 meses (126)
+    "mediano": dict(w_valor=504, w_mom=126, rsi_p=14, vol_p=20, mom_ret=20,
+                    mom_escala=0.60, bb_p=20, atr_p=14),
+}
+MODELO_POR_TF = {"15m": "corto", "30m": "corto", "1h": "mediano", "4h": "mediano"}
+# 1d y 1wk no figuran: siguen con el cálculo anterior.
+
+
+def modelo_score(intervalo: str):
+    return MODELO_POR_TF.get(intervalo)
+
+
+def min_velas(intervalo: str) -> int:
+    """Velas mínimas para que los scores tengan ventana completa."""
+    m = MODELOS_SCORE.get(modelo_score(intervalo))
+    return max(150, m["w_valor"] + 50) if m else 150
 
 # Yahoo limita el histórico intradía (en días hacia atrás)
 _MAX_DIAS_INTRADIA = {"15m": 59, "30m": 59, "1h": 729}
@@ -274,6 +296,39 @@ def _adx_di(h: pd.Series, l: pd.Series, c: pd.Series, n: int = 14):
     adx = dx.ewm(alpha=a, adjust=False).mean()
     return adx, pdi, mdi
 
+def _scores_app(c: pd.Series, h: pd.Series, l: pd.Series, m: dict):
+    """Scores de app.py (scores_corto / _tdc_scores) calculados vela a vela."""
+    w_val, w_mom = m["w_valor"], m["w_mom"]
+
+    # Acumulación y Sentimiento
+    precio_pct = _rank_pct(c, w_val)
+
+    d = c.diff()                                            # RSI con media simple (calcular_rsi)
+    g = d.clip(lower=0).rolling(m["rsi_p"]).mean()
+    ls = (-d.clip(upper=0)).rolling(m["rsi_p"]).mean()
+    rs = g / ls.replace(0, np.nan)
+    rsi = (100 - 100 / (1 + rs)).fillna(50)
+    rsi_inv = 100 - _rank_pct(rsi, w_val)
+
+    vol = c.pct_change().rolling(m["vol_p"]).std() * np.sqrt(252) * 100
+    vol_inv = 100 - _rank_pct(vol, w_val - m["vol_p"])
+
+    acum = (100 - precio_pct) * 0.40 + rsi_inv * 0.35 + vol_inv * 0.25
+    sent = precio_pct
+
+    # Anticipación
+    mom = (50 + c.pct_change(m["mom_ret"]) * 100 * m["mom_escala"]).clip(0, 100)
+
+    atr_s = _true_range(h, l, c).rolling(m["atr_p"]).mean()  # ATR simple (calcular_atr)
+    n_atr = w_mom - m["atr_p"] + 1                            # valores de ATR dentro de la ventana de momento
+    comp_atr = (100 - atr_s / atr_s.rolling(n_atr, min_periods=6).mean() * 50).clip(0, 100)
+
+    bb_p = m["bb_p"]
+    bbw = c.rolling(bb_p).std() / c.rolling(bb_p).mean().replace(0, np.nan) * 100
+    bb_c = 100 - _rank_pct(bbw, w_mom - bb_p + 1)
+
+    antic = mom * 0.40 + comp_atr * 0.30 + bb_c * 0.30
+    return acum, antic, sent
 
 def calcular_indicadores(df: pd.DataFrame, ventana: int = 63) -> pd.DataFrame:
     o, h, l, c, v = df["Open"], df["High"], df["Low"], df["Close"], df["Volume"]
