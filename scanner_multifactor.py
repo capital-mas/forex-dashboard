@@ -143,11 +143,11 @@ TEMPORALIDADES = {
                    periodos=["30d", "60d"], defecto="60d", delta=pd.Timedelta(minutes=30),
                    nota="Yahoo solo da ~60 días de velas de 30 min: pocas operaciones en el "
                         "backtest. Pensado para intradía."),
-    "1 hora": dict(iv="1h", fuente="1h", resample=None, scan="180d",
+    "1 hora": dict(iv="1h", fuente="1h", resample=None, scan="730d",
                    periodos=["90d", "180d", "365d", "730d"], defecto="730d",
                    delta=pd.Timedelta(hours=1),
                    nota="Yahoo da hasta ~2 años de velas de 1 hora."),
-    "4 horas": dict(iv="4h", fuente="1h", resample="4h", scan="180d",
+    "4 horas": dict(iv="4h", fuente="1h", resample="4h", scan="730d",
                     periodos=["90d", "180d", "365d", "730d"], defecto="730d",
                     delta=pd.Timedelta(hours=4),
                     nota="Se arma agrupando velas de 1 hora (hasta ~2 años). En acciones los "
@@ -330,7 +330,7 @@ def _scores_app(c: pd.Series, h: pd.Series, l: pd.Series, m: dict):
     antic = mom * 0.40 + comp_atr * 0.30 + bb_c * 0.30
     return acum, antic, sent
 
-def calcular_indicadores(df: pd.DataFrame, ventana: int = 63) -> pd.DataFrame:
+def calcular_indicadores(df: pd.DataFrame, ventana: int = 63, intervalo: str = "1d") -> pd.DataFrame:
     o, h, l, c, v = df["Open"], df["High"], df["Low"], df["Close"], df["Volume"]
     out = pd.DataFrame(index=df.index)
     out["Open"], out["High"], out["Low"], out["Close"] = o, h, l, c
@@ -359,7 +359,13 @@ def calcular_indicadores(df: pd.DataFrame, ventana: int = 63) -> pd.DataFrame:
     mad = tp.rolling(20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
     out["cci"] = (tp - sma) / (0.015 * mad.replace(0, np.nan))
 
-    # ── Scores (misma lógica que el módulo de corto plazo, calculada vela a vela) ──
+    # ── Scores: modelo de app.py según temporalidad ──
+    m = MODELOS_SCORE.get(modelo_score(intervalo))
+    if m is not None:
+        out["acum"], out["antic"], out["sent"] = _scores_app(c, h, l, m)
+        return out
+
+    # ── Scores (cálculo anterior: diario / semanal) ──
     d = c.diff()
     g = d.clip(lower=0).rolling(7).mean()
     ls = (-d.clip(upper=0)).rolling(7).mean()
@@ -550,7 +556,7 @@ def generar_senales(ind: pd.DataFrame, p: Params):
 # ==============================================================
 
 def backtest(df: pd.DataFrame, p: Params, df_macro=None) -> dict:
-    ind = agregar_macro(calcular_indicadores(df), df_macro, p)
+    ind = agregar_macro(calcular_indicadores(df, intervalo=p.intervalo), df_macro, p)
     if macro_requerido(p) and "m_adx" not in ind.columns:
         raise ValueError("Sin datos de la temporalidad superior (MTF)")
     sig_l, sig_s = generar_senales(ind, p)
@@ -706,9 +712,9 @@ def evaluar_ultima(ticker: str, df: pd.DataFrame, p: Params, solo_cerradas: bool
     delta = TF_POR_CODIGO.get(p.intervalo, TEMPORALIDADES["Diario"])["delta"]
     if solo_cerradas and len(df) > 1 and _vela_abierta(df.index[-1], delta):
         df = df.iloc[:-1]      # evita RVOL/CMF distorsionados por una vela a medio formar
-    if len(df) < 150:
+    if len(df) < min_velas(p.intervalo):
         return None
-    ind = agregar_macro(calcular_indicadores(df), df_macro, p)
+    ind = agregar_macro(calcular_indicadores(df, intervalo=p.intervalo), df_macro, p)
     if macro_requerido(p) and "m_adx" not in ind.columns:
         return None             # no se opera sin la tendencia de la temporalidad superior
     cl, cs = condiciones(ind, p)
@@ -1306,7 +1312,7 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
                 for tk in tks:
                     df = dl(tk, periodo, cfg["fuente"], cfg["resample"])
                     dm = obtener_macro(dl, tk, p)
-                    if df is None or len(df) < 150 or (macro_requerido(p) and dm is None):
+                    if df is None or len(df) < min_velas(p.intervalo) or (macro_requerido(p) and dm is None):
                         sin_datos.append(tk)
                         continue
                     try:
