@@ -39,8 +39,8 @@
 #   1. Tendencia ADX/DI: bloquea compras si ADX > umbral y -DI domina
 #      (espejo para cortos). Con MTF activo se lee en la temporalidad
 #      SUPERIOR (ver MULTI-TIMEFRAME).
-#   2. Scores 0-100: Acumulación, Anticipación (compresión BB/ATR) y
-#      Sentimiento (tope anti-euforia).
+#   2. Scores 0-100: Acumulación y Sentimiento con rango (mín y máx) propio
+#      para largos y para cortos; Anticipación (compresión BB/ATR) con mínimo.
 #   3. Convicción: CMF > 0 y RVOL > 1.5.
 #   4. Momento: histograma MACD positivo y creciendo + CCI en zona
 #      (-100 a 200 y subiendo). Espejo para cortos.
@@ -95,9 +95,17 @@ import pandas as pd
 @dataclass
 class Params:
     # ── Scanner ──
-    min_acum: float = 50.0        # Score Acumulación mínimo (largos)
-    min_antic: float = 50.0       # Score Anticipación mínimo
-    max_sent: float = 85.0        # Tope de Sentimiento (evita euforia)
+    # Acumulación: rango permitido (0-100) para largos y para cortos
+    acum_l_min: float = 50.0
+    acum_l_max: float = 100.0
+    acum_c_min: float = 0.0
+    acum_c_max: float = 50.0
+    # Sentimiento: rango permitido (0-100) para largos y para cortos (tope anti-euforia en largos)
+    sent_l_min: float = 0.0
+    sent_l_max: float = 85.0
+    sent_c_min: float = 15.0
+    sent_c_max: float = 100.0
+    min_antic: float = 50.0       # Score Anticipación mínimo (largos y cortos)
     adx_umbral: float = 25.0
     cmf_min: float = 0.0
     rvol_min: float = 1.5
@@ -435,18 +443,18 @@ def condiciones(ind: pd.DataFrame, p: Params):
         corto["Estructura macro"] = macro_baj if p.mtf_estricto else ~macro_alc
 
     largo.update({
-        "Acumulación": ind["acum"] >= p.min_acum,
+        "Acumulación": (ind["acum"] >= p.acum_l_min) & (ind["acum"] <= p.acum_l_max),
         "Anticipación": ind["antic"] >= p.min_antic,
-        "Sentimiento": ind["sent"] <= p.max_sent,
+        "Sentimiento": (ind["sent"] >= p.sent_l_min) & (ind["sent"] <= p.sent_l_max),
         "CMF": (ind["cmf"] > p.cmf_min) | saltar_vol,
         "RVOL": (ind["rvol"] > p.rvol_min) | saltar_vol,
         "MACD hist": (hist > 0) & (hist > hist_prev),
         "CCI": (cci > p.cci_inf) & (cci < p.cci_sup) & (cci > cci_prev),
     })
     corto.update({
-        "Acumulación": ind["acum"] <= 100 - p.min_acum,
+        "Acumulación": (ind["acum"] >= p.acum_c_min) & (ind["acum"] <= p.acum_c_max),
         "Anticipación": ind["antic"] >= p.min_antic,
-        "Sentimiento": ind["sent"] >= 100 - p.max_sent,
+        "Sentimiento": (ind["sent"] >= p.sent_c_min) & (ind["sent"] <= p.sent_c_max),
         "CMF": (ind["cmf"] < -p.cmf_min) | saltar_vol,
         "RVOL": (ind["rvol"] > p.rvol_min) | saltar_vol,
         "MACD hist": (hist < 0) & (hist < hist_prev),
@@ -712,7 +720,9 @@ PERIODOS_VALIDOS = {x for c in TEMPORALIDADES.values() for x in c["periodos"]}
 
 # sufijo del widget -> tipo (se usa para leer/validar/convertir al guardar y cargar)
 _CAMPOS_PRESET = {
-    "modo": str, "tf": str, "acum": float, "antic": float, "sent": float, "adx": float,
+    "modo": str, "tf": str, "antic": float, "adx": float,
+    "acum_lmin": float, "acum_lmax": float, "acum_cmin": float, "acum_cmax": float,
+    "sent_lmin": float, "sent_lmax": float, "sent_cmin": float, "sent_cmax": float,
     "rvol": float, "cci_i": float, "cci_s": float, "exvol": bool,
     "sl": float, "tp": float, "com": float, "slip": float,
     "cap": float, "riesgo": float, "apal": float, "maxbar": int,
@@ -763,9 +773,28 @@ def _snapshot_preset(st, key: str) -> dict:
     return datos
 
 
+def _migrar_preset(d: dict) -> dict:
+    """Presets viejos guardaban un solo número de Acumulación ('acum') y de Sentimiento ('sent').
+    Se convierten a los rangos nuevos con la misma lógica espejo que tenían."""
+    d = dict(d)
+    if "acum" in d and "acum_lmin" not in d:
+        try:
+            a = float(d["acum"])
+            d.update(acum_lmin=a, acum_lmax=100.0, acum_cmin=0.0, acum_cmax=100.0 - a)
+        except (TypeError, ValueError):
+            pass
+    if "sent" in d and "sent_lmax" not in d:
+        try:
+            s = float(d["sent"])
+            d.update(sent_lmin=0.0, sent_lmax=s, sent_cmin=100.0 - s, sent_cmax=100.0)
+        except (TypeError, ValueError):
+            pass
+    return d
+
+
 def _aplicar_preset(st, key: str, datos: dict) -> None:
     """Vuelca un preset en los widgets (se llama desde un callback, antes del rerun)."""
-    datos = {"tf": "Diario", **datos}      # presets guardados antes de existir tf = diario
+    datos = {"tf": "Diario", **_migrar_preset(datos)}      # presets viejos: tf = diario, rangos nuevos
     for suf, tipo in _CAMPOS_PRESET.items():
         if suf not in datos:
             continue
@@ -785,6 +814,7 @@ def _aplicar_preset(st, key: str, datos: dict) -> None:
 def _params_desde_preset(d: dict):
     """Arma (Params, cfg_temporalidad) a partir de un preset guardado, sin pasar por la pantalla.
     Lo que el preset no tenga guardado se completa con el perfil automático de su temporalidad."""
+    d = _migrar_preset(d)
     tf = d.get("tf") if d.get("tf") in TEMPORALIDADES else "Diario"
     cfg = TEMPORALIDADES[tf]
     perf = perfil_para(cfg["iv"])
@@ -797,7 +827,11 @@ def _params_desde_preset(d: dict):
 
     modo = "futuros" if str(d.get("modo", "")).startswith("Futuros") else "spot"
     p = Params(
-        min_acum=num("acum", 50.0), min_antic=num("antic", 50.0), max_sent=num("sent", 85.0),
+        acum_l_min=num("acum_lmin", 50.0), acum_l_max=num("acum_lmax", 100.0),
+        acum_c_min=num("acum_cmin", 0.0), acum_c_max=num("acum_cmax", 50.0),
+        sent_l_min=num("sent_lmin", 0.0), sent_l_max=num("sent_lmax", 85.0),
+        sent_c_min=num("sent_cmin", 15.0), sent_c_max=num("sent_cmax", 100.0),
+        min_antic=num("antic", 50.0),
         adx_umbral=num("adx", perf["adx_umbral"]), rvol_min=num("rvol", perf["rvol_min"]),
         cci_inf=num("cci_i", -100.0), cci_sup=num("cci_s", 200.0),
         exigir_volumen=bool(d.get("exvol", True)),
@@ -1047,12 +1081,27 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
                                "cubren un tiempo distinto en cada temporalidad.")
         cfg = TEMPORALIDADES[tf_lbl]
         st.caption("⏱️ " + cfg["nota"])
+        a1, a2, a3, a4 = st.columns(4)
+        acum_l_min = a1.number_input("Acumulación LARGOS mín.", 0.0, 100.0, 50.0, 5.0, key=f"{key}_acum_lmin",
+                                     help="Largos: el score de Acumulación debe estar entre el mínimo y el máximo.")
+        acum_l_max = a2.number_input("Acumulación LARGOS máx.", 0.0, 100.0, 100.0, 5.0, key=f"{key}_acum_lmax")
+        acum_c_min = a3.number_input("Acumulación CORTOS mín.", 0.0, 100.0, 0.0, 5.0, key=f"{key}_acum_cmin",
+                                     help="Cortos: el score de Acumulación debe estar entre el mínimo y el máximo.")
+        acum_c_max = a4.number_input("Acumulación CORTOS máx.", 0.0, 100.0, 50.0, 5.0, key=f"{key}_acum_cmax")
+        s1, s2, s3, s4 = st.columns(4)
+        sent_l_min = s1.number_input("Sentimiento LARGOS mín.", 0.0, 100.0, 0.0, 5.0, key=f"{key}_sent_lmin",
+                                     help="Largos: el Sentimiento debe estar entre el mínimo y el máximo "
+                                          "(el máximo es el tope anti-euforia).")
+        sent_l_max = s2.number_input("Sentimiento LARGOS máx.", 0.0, 100.0, 85.0, 5.0, key=f"{key}_sent_lmax")
+        sent_c_min = s3.number_input("Sentimiento CORTOS mín.", 0.0, 100.0, 15.0, 5.0, key=f"{key}_sent_cmin",
+                                     help="Cortos: el Sentimiento debe estar entre el mínimo y el máximo "
+                                          "(el mínimo es el piso anti-pánico).")
+        sent_c_max = s4.number_input("Sentimiento CORTOS máx.", 0.0, 100.0, 100.0, 5.0, key=f"{key}_sent_cmax")
+        if acum_l_min > acum_l_max or acum_c_min > acum_c_max or sent_l_min > sent_l_max or sent_c_min > sent_c_max:
+            st.warning("Algún mínimo es mayor que su máximo: ese filtro nunca se va a cumplir.")
         c1, c2, c3, c4 = st.columns(4)
-        min_acum = c1.number_input("Acumulación mín.", 0.0, 100.0, 50.0, 5.0, key=f"{key}_acum")
-        min_antic = c2.number_input("Anticipación mín.", 0.0, 100.0, 50.0, 5.0, key=f"{key}_antic")
-        max_sent = c3.number_input("Sentimiento máx.", 0.0, 100.0, 85.0, 5.0, key=f"{key}_sent",
-                                   help="Tope anti-euforia para largos (espejo en cortos).")
-        adx_u = c4.number_input("ADX umbral", 5.0, 60.0, 25.0, 1.0, key=f"{key}_adx")
+        min_antic = c1.number_input("Anticipación mín.", 0.0, 100.0, 50.0, 5.0, key=f"{key}_antic")
+        adx_u = c2.number_input("ADX umbral", 5.0, 60.0, 25.0, 1.0, key=f"{key}_adx")
         c5, c6, c7, c8 = st.columns(4)
         rvol_min = c5.number_input("RVOL mín.", 0.5, 5.0, 1.5, 0.05, format="%.2f", key=f"{key}_rvol")
         cci_inf = c6.number_input("CCI inferior", -300.0, 0.0, -100.0, 25.0, key=f"{key}_cci_i")
@@ -1094,7 +1143,9 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
                       if fric > 0 else " · filtro de fricción desactivado."))
 
     modo = "futuros" if modo_lbl.startswith("Futuros") else "spot"
-    p = Params(min_acum=min_acum, min_antic=min_antic, max_sent=max_sent, adx_umbral=adx_u,
+    p = Params(acum_l_min=acum_l_min, acum_l_max=acum_l_max, acum_c_min=acum_c_min, acum_c_max=acum_c_max,
+               sent_l_min=sent_l_min, sent_l_max=sent_l_max, sent_c_min=sent_c_min, sent_c_max=sent_c_max,
+               min_antic=min_antic, adx_umbral=adx_u,
                rvol_min=rvol_min, cci_inf=cci_inf, cci_sup=cci_sup, exigir_volumen=exig_vol,
                modo=modo, sl_atr=sl_atr, tp_atr=tp_atr, comision_pct=comision,
                slippage_pct=slippage, riesgo_pct=riesgo,
