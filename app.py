@@ -9653,14 +9653,6 @@ def _ana_render_centro(ticker):
 #   · 4h         -> Yahoo NO lo ofrece: se arma agrupando velas de 1h
 #   · 1d / 1wk   -> historia larga
 TEMPORALIDADES = {
-    '15 min':  dict(interval='15m', period='60d',  resample=None,
-                    barras_valor=1500, barras_momento=130, min_barras=80),
-    '30 min':  dict(interval='30m', period='60d',  resample=None,
-                    barras_valor=800,  barras_momento=65,  min_barras=60),
-    '1 hora':  dict(interval='60m', period='730d', resample=None,
-                    barras_valor=500,  barras_momento=70,  min_barras=60),
-    '4 horas': dict(interval='60m', period='730d', resample='4h',
-                    barras_valor=300,  barras_momento=60,  min_barras=60),
     'Diario':  dict(interval='1d',  period='2y',   resample=None,
                     barras_valor=252,  barras_momento=40,  min_barras=60),
     'Semanal': dict(interval='1wk', period='10y',  resample=None,
@@ -9855,8 +9847,8 @@ def _ana_render_activo(ticker):
         + (f' · {escape_html(industria)}' if industria else '') + '</div>',
         unsafe_allow_html=True,
     )
-    with st.spinner('Calculando las 6 temporalidades...'):
-        _ana_resumen_activo(ticker)
+    with st.spinner('Calculando las temporalidades...'):
+    _ana_resumen_activo(ticker)
 
     con_fund = not _es_activo_sin_fundamentals(ticker)
     nombres_tf = list(TEMPORALIDADES.keys())
