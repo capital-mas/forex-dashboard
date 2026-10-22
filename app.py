@@ -5258,11 +5258,6 @@ def _renderizar_buscador(ticker):
 
                 st.markdown(f'<div style="margin:10px 0"><span class="signal-pill">{señal}</span></div>', unsafe_allow_html=True)
 
-                precios = cl_m.values
-                st.plotly_chart(fig_confirmacion_corto(ticker, df_v), use_container_width=True,
-                                config=PLOTLY_CONFIG, key=f'conf_corto_{ticker}')
-                if len(precios) > 2:
-                    st.plotly_chart(fig_mini_precio(ticker, precios), use_container_width=True, config=PLOTLY_CONFIG, key=f'mini_{ticker}')
             else:
                 st.info('Datos insuficientes para el análisis de corto plazo.')
 
@@ -9658,11 +9653,6 @@ def _ana_render_corto(ticker):
     </div>
     """, unsafe_allow_html=True)
 
-    st.plotly_chart(fig_confirmacion_corto(ticker, df_v), use_container_width=True,
-                    config=PLOTLY_CONFIG, key=f'ana_conf_{ticker}')
-    if len(cl_m.values) > 2:
-        st.plotly_chart(fig_mini_precio(ticker, cl_m.values), use_container_width=True,
-                        config=PLOTLY_CONFIG, key=f'ana_mini_{ticker}')
 
 
 def _ana_render_tdc(ticker, hz):
