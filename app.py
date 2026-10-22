@@ -9586,25 +9586,6 @@ def _ana_render_grupo(items, universo, grupo):
 
 
 # ── Vista ACTIVO ────────────────────────────────────────────────
-
-def _ana_resumen_activo(ticker):
-    res, _ = cargar_analisis_grupo((ticker,))
-    r = res.get(ticker)
-    if not r:
-        return
-    c, m, l, q = r.get('corto'), r.get('mp'), r.get('lp'), r.get('quant')
-    kpi_cards_4([
-        ('⚡ Corto plazo', c['accion'] if c else 'S/D', c.get('confirma', '') if c else '',
-         score_color_hex(c['sa']) if c else C_MUTED, ''),
-        ('📆 Mediano plazo', m['accion'] if m else 'S/D', f"Acum {m['sa']:.0f} · Antic {m['sn']:.0f}" if m else '',
-         score_color_hex(m['sa']) if m else C_MUTED, ''),
-        ('📈 Largo plazo', l['accion'] if l else 'S/D', f"Acum {l['sa']:.0f} · Antic {l['sn']:.0f}" if l else '',
-         score_color_hex(l['sa']) if l else C_MUTED, ''),
-        ('🧮 Cuantitativo', q['sesgo'] if q else 'S/D', f"Global {int(q['global_score'])}/100" if q else '',
-         sesgo_color_hex(q['sesgo']) if q else C_MUTED, ''),
-    ])
-
-
 def _ana_render_corto(ticker):
     with st.spinner('Cargando datos de corto plazo...'):
         df_v = descargar_datos(ticker, '3mo')
@@ -9747,7 +9728,255 @@ def _ana_render_centro(ticker):
         ticker_externo=ticker,
     )
 
+# ==============================================================
+#  PARCHE — Análisis del activo POR TEMPORALIDAD
+#  Reemplaza las pestañas "Corto / Mediano / Largo plazo" por:
+#  15 min · 30 min · 1 hora · 4 horas · Diario · Semanal
+#
+#  CÓMO APLICARLO (en tu archivo principal):
+#   1) Pegá TODO este bloque justo ANTES de `def _ana_render_activo(ticker):`
+#   2) BORRÁ tu `_ana_resumen_activo` y tu `_ana_render_activo` originales
+#      (las versiones nuevas están acá abajo).
+#   3) No hace falta tocar nada más. `_ana_render_corto` y `_ana_render_tdc`
+#      quedan sin uso en la vista Activo (la vista Industria/Grupo no cambia).
+# ==============================================================
 
+# Límites de Yahoo Finance (importante):
+#   · 15m y 30m  -> máximo ~60 días de historia
+#   · 60m (1h)   -> máximo ~730 días
+#   · 4h         -> Yahoo NO lo ofrece: se arma agrupando velas de 1h
+#   · 1d / 1wk   -> historia larga
+TEMPORALIDADES = {
+    '15 min':  dict(interval='15m', period='60d',  resample=None,
+                    barras_valor=1500, barras_momento=130, min_barras=80),
+    '30 min':  dict(interval='30m', period='60d',  resample=None,
+                    barras_valor=800,  barras_momento=65,  min_barras=60),
+    '1 hora':  dict(interval='60m', period='730d', resample=None,
+                    barras_valor=500,  barras_momento=70,  min_barras=60),
+    '4 horas': dict(interval='60m', period='730d', resample='4h',
+                    barras_valor=300,  barras_momento=60,  min_barras=60),
+    'Diario':  dict(interval='1d',  period='2y',   resample=None,
+                    barras_valor=252,  barras_momento=40,  min_barras=60),
+    'Semanal': dict(interval='1wk', period='10y',  resample=None,
+                    barras_valor=260,  barras_momento=52,  min_barras=60),
+}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _descargar_tf(ticker, interval, period, resample=None):
+    """Descarga velas de la temporalidad pedida (sin pasar por el caché de Supabase,
+    porque ese serializa solo la fecha y perdería la hora de las velas intradiarias)."""
+    try:
+        import yfinance as yf
+        d = yf.download(ticker, period=period, interval=interval,
+                        progress=False, auto_adjust=True)
+        if d is None or d.empty:
+            return None
+        if isinstance(d.columns, pd.MultiIndex):
+            d.columns = d.columns.get_level_values(0)
+        if 'Close' not in d.columns:
+            return None
+        d = d.dropna(subset=['Close'])
+        if resample:
+            agg = {c: f for c, f in {'Open': 'first', 'High': 'max', 'Low': 'min',
+                                      'Close': 'last', 'Volume': 'sum'}.items()
+                   if c in d.columns}
+            d = d.resample(resample).agg(agg).dropna(subset=['Close'])
+        return d
+    except Exception:
+        return None
+
+
+def _analizar_tf(ticker, nombre_tf):
+    """Scores + confirmación técnica para UNA temporalidad. Devuelve dict o None."""
+    cfg = TEMPORALIDADES[nombre_tf]
+    df = _descargar_tf(ticker, cfg['interval'], cfg['period'], cfg['resample'])
+    if df is None or len(df) < cfg['min_barras']:
+        return None
+    cl_full = get_close_series(df)
+    if cl_full is None or len(cl_full) < cfg['min_barras']:
+        return None
+
+    df_v = df.tail(cfg['barras_valor'])
+    cv = get_close_series(df_v)
+    cm = cl_full.tail(cfg['barras_momento'])
+    atr = calcular_atr(df.tail(cfg['barras_momento']))
+
+    sa, sn, ss = scores_corto(cv, cm, atr)
+    sf = sa * 0.45 + sn * 0.35 + ss * 0.20
+    rsi = float(calcular_rsi(cm, p=14).iloc[-1])
+    ret_5 = float(cm.pct_change(5).iloc[-1] * 100) if len(cm) >= 6 else 0.0
+    ret_10 = float(cm.pct_change(10).iloc[-1] * 100) if len(cm) >= 11 else 0.0
+    accion = señal_accion_corto(sa, sn, ss)
+    conf = calcular_confirmacion_corto(df_v, cv, accion, sa, sn, ss, rsi)
+
+    out = dict(tf=nombre_tf, sa=sa, sn=sn, ss=ss, sf=sf, rsi=rsi,
+               ret_5=ret_5, ret_10=ret_10, precio=float(cl_full.iloc[-1]),
+               accion=accion, n_barras=len(df), df=df, df_v=df_v, cl=cl_full)
+    out.update(conf)
+    return out
+
+
+def _ana_resumen_activo(ticker):
+    """Resumen multi-temporalidad: señal y decisión de las 6 temporalidades + confluencia."""
+    nombres = list(TEMPORALIDADES.keys())
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        resultados = dict(zip(nombres, ex.map(lambda t: _analizar_tf(ticker, t), nombres)))
+
+    validos = {t: r for t, r in resultados.items() if r}
+    if not validos:
+        st.warning('No se pudieron descargar datos de ninguna temporalidad para este activo.')
+        return
+
+    n_c = sum(1 for r in validos.values() if 'COMPRAR' in r.get('confirma', ''))
+    n_m = sum(1 for r in validos.values() if 'MANTENER' in r.get('confirma', ''))
+    n_v = sum(1 for r in validos.values() if 'VENDER' in r.get('confirma', ''))
+    total = len(validos)
+    if n_c >= total * 0.66:
+        lectura, col_l = 'Confluencia compradora', '#3fb950'
+    elif n_v >= total * 0.66:
+        lectura, col_l = 'Confluencia vendedora', '#f85149'
+    elif n_c > n_v:
+        lectura, col_l = 'Sesgo comprador', '#7ee787'
+    elif n_v > n_c:
+        lectura, col_l = 'Sesgo vendedor', '#f0883e'
+    else:
+        lectura, col_l = 'Mixto / sin consenso', '#e3b341'
+
+    kpi_cards_4([
+        ('🟢 Comprar', str(n_c), f'de {total} temporalidades', '#3fb950', ''),
+        ('🟡 Mantener', str(n_m), f'de {total} temporalidades', '#e3b341', ''),
+        ('🔴 Vender', str(n_v), f'de {total} temporalidades', '#f85149', ''),
+        ('🧭 Lectura', lectura, 'Acuerdo entre temporalidades', col_l, ''),
+    ])
+
+    filas = []
+    for t in nombres:
+        r = resultados[t]
+        if r:
+            filas.append({'Temporalidad': t, 'Acum': r['sa'], 'Antic': r['sn'], 'Sent': r['ss'],
+                          'RSI': round(r['rsi'], 1), 'Señal': r['accion'],
+                          'Decisión': r.get('confirma', '—'), 'Velas': r['n_barras']})
+        else:
+            filas.append({'Temporalidad': t, 'Acum': np.nan, 'Antic': np.nan, 'Sent': np.nan,
+                          'RSI': np.nan, 'Señal': '—', 'Decisión': 'Sin datos', 'Velas': 0})
+    df_t = pd.DataFrame(filas)
+    _map = 'map' if hasattr(df_t.style, 'map') else 'applymap'
+    styled = (df_t.style
+              .set_properties(**{'background-color': '#0d1117', 'color': '#e6edf3',
+                                 'border': '1px solid #21262d'})
+              .pipe(lambda s: getattr(s, _map)(_ana_color_score, subset=['Acum', 'Antic', 'Sent']))
+              .pipe(lambda s: getattr(s, _map)(_color_decision, subset=['Decisión']))
+              .format({'Acum': '{:.0f}', 'Antic': '{:.0f}', 'Sent': '{:.0f}', 'RSI': '{:.1f}'}, na_rep='—')
+              .set_table_styles([
+                  {'selector': 'th', 'props': [('background-color', '#161b22'), ('color', '#e6edf3'),
+                      ('font-weight', '700'), ('text-align', 'center'),
+                      ('border-bottom', '2px solid #3a7bd5'), ('font-size', '11px')]},
+                  {'selector': 'td', 'props': [('text-align', 'center'), ('font-size', '11px')]},
+              ]))
+    st.dataframe(styled, use_container_width=True, hide_index=True,
+                 height=len(df_t) * 36 + 45)
+    st.caption('Cada fila usa solo las velas de esa temporalidad. Cuando varias coinciden, la señal es más confiable.')
+
+
+def _ana_render_tf(ticker, nombre_tf):
+    d = _analizar_tf(ticker, nombre_tf)
+    cfg = TEMPORALIDADES[nombre_tf]
+    if d is None:
+        extra = ''
+        if cfg['interval'] in ('15m', '30m'):
+            extra = ' Yahoo solo entrega ~60 días de historia intradiaria.'
+        st.info(f'Datos insuficientes para {ticker} en {nombre_tf} '
+                f'(se necesitan al menos {cfg["min_barras"]} velas).{extra}')
+        return
+
+    lbl_sa, col_sa, _ = clasificar_score(d['sa'])
+    kpi_cards_4([
+        ('Score Acumulación', f"{d['sa']:.0f}/100", lbl_sa, col_sa),
+        ('Score Anticipación', f"{d['sn']:.0f}/100", 'Momentum futuro', score_color_hex(d['sn'])),
+        ('Score Sentimiento', f"{d['ss']:.0f}/100", 'Percentil precio', score_color_hex(d['ss'])),
+        ('Score Final', f"{d['sf']:.0f}/100", 'Compuesto 45/35/20', score_color_hex(d['sf'])),
+    ])
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric('RSI (14)', f"{d['rsi']:.1f}", help=G('RSI'))
+    with c2: st.metric('Ret 5 velas', f"{d['ret_5']:+.2f}%")
+    with c3: st.metric('Ret 10 velas', f"{d['ret_10']:+.2f}%")
+    with c4: st.metric('Precio', fmt_precio(d['precio']))
+
+    c6, c7, c8, c9 = st.columns(4)
+    hp = d.get('macd_hist_pct')
+    with c6: st.metric('Hist. MACD', f'{hp:+.3f}%' if hp is not None else 'N/D',
+                       estado_macd_hist(d.get('macd_hist'), d.get('macd_hist_prev')),
+                       delta_color='off', help=G('Histograma MACD'))
+    with c7: st.metric('ADX (14)', f"{d['adx']:.0f}" if d.get('adx') is not None else 'N/D',
+                       estado_adx(d), delta_color='off', help=G('ADX'))
+    with c8: st.metric('CMF (20)', f"{d['cmf']:+.2f}" if d.get('cmf') is not None else 'N/D',
+                       estado_cmf(d.get('cmf')), delta_color='off', help=G('CMF'))
+    with c9: st.metric('Vol. relativo', f"{d['rvol']:.1f}x" if d.get('rvol') is not None else 'N/D',
+                       help=G('RVOL'))
+
+    st.markdown(f"""
+    <div class="interp-card">
+      <div class="interp-header">🧭 Decisión ({escape_html(nombre_tf)}): {d['confirma']}</div>
+      {d['accion']} → {d['confirma_motivo']}.
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.plotly_chart(fig_confirmacion_corto(ticker, d['df_v']), use_container_width=True,
+                    config=PLOTLY_CONFIG, key=f'ana_tf_conf_{nombre_tf}_{ticker}')
+
+    tipo = st.radio('Tipo de gráfico', ['Línea', 'Velas'], horizontal=True,
+                    key=f'ana_tf_tipo_{nombre_tf}_{ticker}')
+    st.plotly_chart(fig_precio_bollinger(ticker, d['df_v']['Close'].dropna(), df_ohlc=d['df_v'], tipo=tipo),
+                    use_container_width=True, config=PLOTLY_CONFIG,
+                    key=f'ana_tf_precio_{nombre_tf}_{ticker}')
+
+    if d.get('rvol') is None:
+        st.caption('ℹ️ Este activo no informa volumen (forex/índices): CMF y volumen relativo no aplican.')
+    if cfg['interval'] in ('15m', '30m', '60m'):
+        st.caption('ℹ️ En intradiario el volumen relativo compara con las velas previas, '
+                   'por lo que varía según la hora del día.')
+    if cfg['resample']:
+        st.caption('ℹ️ Las velas de 4 horas se construyen agrupando velas de 1 hora (Yahoo no las ofrece directo).')
+
+
+def _ana_render_activo(ticker):
+    ticker = validar_ticker(ticker)
+    if ticker is None:
+        st.error('Símbolo inválido.')
+        return
+    industria = TICKER_INDUSTRY.get(ticker)
+    st.markdown(
+        f'<div class="sec-title">{escape_html(ticker)}'
+        + (f' · {escape_html(industria)}' if industria else '') + '</div>',
+        unsafe_allow_html=True,
+    )
+    with st.spinner('Calculando las 6 temporalidades...'):
+        _ana_resumen_activo(ticker)
+
+    con_fund = not _es_activo_sin_fundamentals(ticker)
+    nombres_tf = list(TEMPORALIDADES.keys())
+    nombres_tabs = [f'⏱️ {t}' for t in nombres_tf] + ['🧮 Cuantitativo', '🧭 Centro de análisis']
+    if con_fund:
+        nombres_tabs.append('📊 Fundamental')
+    tabs = st.tabs(nombres_tabs)
+
+    for i, tf in enumerate(nombres_tf):
+        with tabs[i]:
+            st.caption(f'Temporalidad: velas de {tf}')
+            _ana_render_tf(ticker, tf)
+
+    n = len(nombres_tf)
+    with tabs[n]:
+        st.caption('Modelo cuantitativo sobre 2 años de historia diaria')
+        _ana_render_largo_cuant(ticker)
+    with tabs[n + 1]:
+        _ana_render_centro(ticker)
+    if con_fund:
+        with tabs[n + 2]:
+            _ana_render_fundamental(ticker)
+            
 def _ana_render_activo(ticker):
     ticker = validar_ticker(ticker)
     if ticker is None:
