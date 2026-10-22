@@ -4,7 +4,7 @@
 #  Uso 1 — script independiente:
 #      python scanner_multifactor.py NVDA BTC-USD GC=F --periodo 5y --modo spot
 #      python scanner_multifactor.py BTC-USD ETH-USD --modo futuros --apalancamiento 3
-#      python scanner_multifactor.py BTC-USD ETH-USD --modo futuros --tf 1h --periodo 365d
+#      python scanner_multifactor.py BTC-USD ETH-USD --modo futuros --tf 1wk --periodo 10y
 #
 #  Uso 2 — dentro de la app (Señales → Publicar Señal):
 #      from scanner_multifactor import render_scanner_multifactor
@@ -20,6 +20,8 @@
 #   Backtest e histórico, con un nombre por grupo de activos. Por defecto se
 #   guardan en un JSON local (scanner_presets.json); en Streamlit Cloud
 #   el disco es efímero, por eso conviene el store de Supabase.
+#   Los presets viejos que tenían una temporalidad intradía (15m, 30m, 1h, 4h)
+#   se cargan automáticamente como Diario.
 #
 #  ESCANEAR PRESETS GUARDADOS
 #   En la pestaña Scanner aparece la lista de todos los presets guardados.
@@ -29,21 +31,15 @@
 #   de algún preset elegido (evita ver resultados viejos).
 #
 #  TEMPORALIDAD
-#   15 min, 30 min, 1 hora, 4 horas, Diario o Semanal (selector dentro de
-#   Parámetros). Se aplica al Scanner y al Backtest y se guarda en cada
-#   preset. Límites de Yahoo Finance: 15m/30m ≈ 60 días, 1h ≈ 2 años.
-#   4h se arma agrupando velas de 1h. Con "solo velas cerradas" se
+#   Diario o Semanal (selector dentro de Parámetros). Se aplica al Scanner y
+#   al Backtest y se guarda en cada preset. Con "solo velas cerradas" se
 #   descarta la última vela si todavía no terminó.
 #
 #  SCORES (Acumulación / Anticipación / Sentimiento) — IGUAL QUE app.py
 #   Cada temporalidad usa el mismo modelo que el análisis por temporalidad
 #   del activo en app.py (TEMPORALIDADES + scores_corto), con sus ventanas:
-#       15 min: valor 1500 · momento 130 · mín. 80 velas · descarga 60d
-#       30 min: valor  800 · momento  65 · mín. 60 velas · descarga 60d
-#       1 hora: valor  500 · momento  70 · mín. 60 velas · descarga 730d
-#       4 horas: valor 300 · momento  60 · mín. 60 velas · descarga 730d (1h)
-#       Diario: valor  252 · momento  40 · mín. 60 velas · descarga 2y
-#       Semanal: valor 260 · momento  52 · mín. 60 velas · descarga 10y
+#       Diario:  valor 252 · momento 40 · mín. 60 velas · descarga 2y
+#       Semanal: valor 260 · momento 52 · mín. 60 velas · descarga 10y
 #   Parámetros comunes: RSI 7 · vol 10 · retorno 5 velas (×2.0) · BB 10 · ATR 14.
 #   Igual que en app.py, el percentil usa las velas disponibles hasta un
 #   máximo de "valor" (la ventana se va llenando).
@@ -63,16 +59,15 @@
 #      costo ida y vuelta (2 comisiones + 2 slippages). Si no, se descarta.
 #
 #  MULTI-TIMEFRAME (MTF)
-#   Macro por temporalidad: 15m→1h · 30m→4h · 1h→4h · 4h→Diario · Diario→Semanal.
-#   Semanal no tiene macro (usa su propia tendencia). El gatillo (Acumulación,
-#   Anticipación, Sentimiento, CMF, RVOL, MACD, CCI) sigue en la temporalidad
-#   elegida. Sin look-ahead: cada vela solo ve velas macro YA CERRADAS.
+#   Macro por temporalidad: Diario→Semanal. Semanal no tiene macro (usa su
+#   propia tendencia). El gatillo (Acumulación, Anticipación, Sentimiento,
+#   CMF, RVOL, MACD, CCI) sigue en la temporalidad elegida. Sin look-ahead:
+#   cada vela solo ve velas macro YA CERRADAS.
 #   Si el macro no se puede descargar, el activo se omite (no se opera sin macro).
 #
-#  PERFILES AUTOMÁTICOS POR TEMPORALIDAD (un perfil propio por cada una, en PERFILES)
-#   Altas (4h / Diario / Semanal): 70 velas · SL 2.0 / TP 3.0 × ATR · ADX 25 · RVOL 1.50
-#   Bajas (15m / 30m / 1h):        135 velas · SL 1.2 / TP 2.0 × ATR · ADX 21 · RVOL 1.35
-#   Se cargan al cambiar de temporalidad si "Auto-ajustar" está activo.
+#  PERFIL AUTOMÁTICO POR TEMPORALIDAD (uno propio por cada una, en PERFILES)
+#   Diario / Semanal: 70 velas · SL 2.0 / TP 3.0 × ATR · ADX 25 · RVOL 1.50
+#   Se carga al cambiar de temporalidad si "Auto-ajustar" está activo.
 #
 #  BACKTEST — supuestos (conservadores)
 #   - La señal se evalúa al CIERRE de la vela y se ejecuta en la
@@ -135,7 +130,7 @@ class Params:
     apalancamiento: float = 1.0
     capital: float = 10000.0
     max_barras: int = 70          # salida por tiempo (0 = sin límite), en velas
-    intervalo: str = "1d"         # temporalidad: 15m, 30m, 1h, 4h, 1d, 1wk
+    intervalo: str = "1d"         # temporalidad: 1d, 1wk
     # ── Multi-timeframe y fricción ──
     mtf_activo: bool = True       # tendencia leída en la temporalidad superior
     mtf_estricto: bool = False    # True: exige macro A FAVOR; False: solo bloquea si es EN CONTRA
@@ -149,23 +144,6 @@ class Params:
 
 # 'scan' = histórico que baja el Scanner (igual que app.py → TEMPORALIDADES.period)
 TEMPORALIDADES = {
-    "15 min": dict(iv="15m", fuente="15m", resample=None, scan="60d",
-                   periodos=["30d", "60d"], defecto="60d", delta=pd.Timedelta(minutes=15),
-                   nota="Yahoo solo da ~60 días de velas de 15 min: pocas operaciones en el "
-                        "backtest. Pensado para intradía."),
-    "30 min": dict(iv="30m", fuente="30m", resample=None, scan="60d",
-                   periodos=["30d", "60d"], defecto="60d", delta=pd.Timedelta(minutes=30),
-                   nota="Yahoo solo da ~60 días de velas de 30 min: pocas operaciones en el "
-                        "backtest. Pensado para intradía."),
-    "1 hora": dict(iv="1h", fuente="1h", resample=None, scan="730d",
-                   periodos=["90d", "180d", "365d", "730d"], defecto="730d",
-                   delta=pd.Timedelta(hours=1),
-                   nota="Yahoo da hasta ~2 años de velas de 1 hora."),
-    "4 horas": dict(iv="4h", fuente="1h", resample="4h", scan="730d",
-                    periodos=["90d", "180d", "365d", "730d"], defecto="730d",
-                    delta=pd.Timedelta(hours=4),
-                    nota="Se arma agrupando velas de 1 hora (hasta ~2 años). En acciones los "
-                         "bloques no coinciden con la rueda; rinde mejor en cripto, forex y futuros."),
     "Diario": dict(iv="1d", fuente="1d", resample=None, scan="2y",
                    periodos=["2y", "5y", "10y"], defecto="5y", delta=pd.Timedelta(days=1),
                    nota="Configuración original: hasta 10 años de histórico."),
@@ -175,23 +153,17 @@ TEMPORALIDADES = {
 }
 
 # Temporalidad superior que aporta la tendencia macro (None = sin macro)
-_MACRO_DE = {"15 min": "1 hora", "30 min": "4 horas", "1 hora": "4 horas",
-             "4 horas": "Diario", "Diario": "Semanal", "Semanal": None}
+_MACRO_DE = {"Diario": "Semanal", "Semanal": None}
 for _k, _v in _MACRO_DE.items():
     TEMPORALIDADES[_k]["macro"] = _v
 TF_POR_CODIGO = {c["iv"]: c for c in TEMPORALIDADES.values()}
 
-# Perfiles automáticos por temporalidad (editá los números acá)
+# Perfil automático (editá los números acá)
 PERFIL_ALTO = dict(max_barras=70, sl_atr=2.0, tp_atr=3.0, adx_umbral=25.0, rvol_min=1.50)
-PERFIL_BAJO = dict(max_barras=135, sl_atr=1.2, tp_atr=2.0, adx_umbral=21.0, rvol_min=1.35)
 
 # Un perfil PROPIO por temporalidad (arrancan con los valores base de arriba).
 # Editá cada línea por separado para afinar cada temporalidad.
 PERFILES = {
-    "15m": dict(PERFIL_BAJO),
-    "30m": dict(PERFIL_BAJO),
-    "1h":  dict(PERFIL_BAJO),
-    "4h":  dict(PERFIL_ALTO),
     "1d":  dict(PERFIL_ALTO),
     "1wk": dict(PERFIL_ALTO),
 }
@@ -201,7 +173,7 @@ _PERFIL_A_WIDGET = {"sl": "sl_atr", "tp": "tp_atr", "adx": "adx_umbral",
 
 
 def perfil_para(iv: str) -> dict:
-    """Perfil de parámetros según el intervalo ('15m', '1h', '1d'...)."""
+    """Perfil de parámetros según el intervalo ('1d', '1wk')."""
     return PERFILES.get(iv, PERFIL_ALTO)
 
 
@@ -209,12 +181,8 @@ def perfil_para(iv: str) -> dict:
 # w_valor = barras_valor, w_mom = barras_momento, min_barras = min_barras de app.py.
 _SCORE_BASE = dict(rsi_p=7, vol_p=10, mom_ret=5, mom_escala=2.0, bb_p=10, atr_p=14)
 MODELOS_SCORE = {
-    "15m": dict(_SCORE_BASE, w_valor=1500, w_mom=130, min_barras=80),
-    "30m": dict(_SCORE_BASE, w_valor=800,  w_mom=65,  min_barras=60),
-    "1h":  dict(_SCORE_BASE, w_valor=500,  w_mom=70,  min_barras=60),
-    "4h":  dict(_SCORE_BASE, w_valor=300,  w_mom=60,  min_barras=60),
-    "1d":  dict(_SCORE_BASE, w_valor=252,  w_mom=40,  min_barras=60),
-    "1wk": dict(_SCORE_BASE, w_valor=260,  w_mom=52,  min_barras=60),
+    "1d":  dict(_SCORE_BASE, w_valor=252, w_mom=40, min_barras=60),
+    "1wk": dict(_SCORE_BASE, w_valor=260, w_mom=52, min_barras=60),
 }
 
 
@@ -228,12 +196,8 @@ def min_velas(intervalo: str) -> int:
     return m["min_barras"] if m else 150
 
 
-# Yahoo limita el histórico intradía (en días hacia atrás)
-_MAX_DIAS_INTRADIA = {"15m": 59, "30m": 59, "1h": 729}
-
-
 def _resamplear(df: pd.DataFrame, regla: str) -> pd.DataFrame:
-    """Agrupa velas (ej. 1h -> 4h)."""
+    """Agrupa velas (no se usa con Diario/Semanal; se deja por compatibilidad)."""
     out = df.resample(regla).agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
     out["Volume"] = df["Volume"].resample(regla).sum(min_count=1)
     return out.dropna(subset=["Close"])
@@ -250,7 +214,7 @@ def descargar_ohlcv(ticker: str, period: str = "2y", interval: str = "1d",
     try:
         import yfinance as yf
         if period.endswith("d"):      # ej. "365d": se pasa como fecha de inicio
-            dias = min(int(period[:-1]), _MAX_DIAS_INTRADIA.get(interval, 10 ** 6))
+            dias = int(period[:-1])
             inicio = (pd.Timestamp.now() - pd.Timedelta(days=dias)).strftime("%Y-%m-%d")
             df = yf.download(ticker, start=inicio, interval=interval,
                              auto_adjust=True, progress=False)
@@ -411,7 +375,7 @@ def calcular_indicadores(df: pd.DataFrame, ventana: int = 63, intervalo: str = "
 # ==============================================================
 
 def cfg_macro(intervalo: str):
-    """Config de la temporalidad superior de un intervalo ('30m' -> la de 4 horas) o None."""
+    """Config de la temporalidad superior de un intervalo ('1d' -> la Semanal) o None."""
     lbl = TF_POR_CODIGO.get(intervalo, {}).get("macro")
     return TEMPORALIDADES[lbl] if lbl else None
 
@@ -423,7 +387,7 @@ def macro_requerido(p: Params) -> bool:
 
 def periodo_macro(cm: dict) -> str:
     """Histórico a bajar de la TF superior (incluye margen de calentamiento de ADX/EMA)."""
-    return {"1h": "730d", "4h": "730d", "1d": "10y", "1wk": "20y"}.get(cm["iv"], "5y")
+    return {"1d": "10y", "1wk": "20y"}.get(cm["iv"], "5y")
 
 
 def obtener_macro(dl, ticker: str, p: Params):
@@ -886,7 +850,7 @@ def _aplicar_preset(st, key: str, datos: dict) -> None:
         if suf == "modo" and v not in MODOS_LBL:
             continue
         if suf == "tf" and v not in TEMPORALIDADES:
-            continue
+            v = "Diario"        # presets con temporalidad intradía (ya eliminada) pasan a Diario
         if suf == "bt_per" and v not in PERIODOS_VALIDOS:
             continue
         st.session_state[f"{key}_{suf}"] = v
@@ -1202,8 +1166,8 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
         riesgo = e2.number_input("Riesgo % por operación", 0.1, 10.0, 1.0, 0.25, key=f"{key}_riesgo")
         apal = e3.number_input("Apalancamiento máx. (x)", 1.0, 125.0, 1.0, 1.0, key=f"{key}_apal")
         max_bar = e4.number_input("Máx. velas en operación", 0, 500, 70, 5, key=f"{key}_maxbar",
-                                  help="En velas de la temporalidad elegida (30 velas = 30 horas en 1 hora, "
-                                       "30 días en diario). 0 = sin salida por tiempo.")
+                                  help="En velas de la temporalidad elegida (30 velas = 30 días en diario, "
+                                       "30 semanas en semanal). 0 = sin salida por tiempo.")
         f1, f2, f3, f4 = st.columns(4)
         f1.checkbox("Auto-ajustar por temporalidad", True, key=f"{key}_perfil", on_change=_cb_perfil,
                     help="Al cambiar de temporalidad carga el perfil propio de esa temporalidad "
@@ -1448,9 +1412,9 @@ def main():
     ap = argparse.ArgumentParser(description="Scanner Multi-Factor + Backtest con fricciones")
     ap.add_argument("tickers", nargs="+")
     ap.add_argument("--tf", choices=list(TF_POR_CODIGO.keys()), default="1d",
-                    help="temporalidad: 15m, 30m, 1h, 4h, 1d, 1wk")
+                    help="temporalidad: 1d, 1wk")
     ap.add_argument("--periodo", default=None,
-                    help="histórico (ej. 5y, 365d). Por defecto, el de la temporalidad.")
+                    help="histórico (ej. 5y, 10y). Por defecto, el de la temporalidad.")
     ap.add_argument("--modo", choices=["spot", "futuros"], default="spot")
     ap.add_argument("--sl-atr", type=float, default=None, help="por defecto, el del perfil de la temporalidad")
     ap.add_argument("--tp-atr", type=float, default=None, help="por defecto, el del perfil de la temporalidad")
