@@ -50,12 +50,12 @@
 #      SUPERIOR (ver MULTI-TIMEFRAME).
 #   2. Scores 0-100: Acumulación y Sentimiento con rango (mín y máx) propio
 #      para largos y para cortos; Anticipación (compresión BB/ATR) con mínimo.
-#   3. Convicción: CMF > 0 y RVOL > 1.5.
+#   3. Convicción: CMF > 0 y RVOL > 1.18.
 #   4. Momento: histograma MACD positivo y creciendo + CCI en zona
 #      (-100 a 200 y subiendo). Espejo para cortos.
 #   5. Estructura macro (MTF): +DI/-DI y precio vs EMA 50 en la temporalidad
 #      superior. Jamás se opera en contra de esa tendencia.
-#   6. Fricción: el TP (tp_atr × ATR) debe superar N veces (3 por defecto) el
+#   6. Fricción: el TP (tp_atr × ATR) debe superar N veces (2 por defecto) el
 #      costo ida y vuelta (2 comisiones + 2 slippages). Si no, se descarta.
 #
 #  MULTI-TIMEFRAME (MTF)
@@ -66,7 +66,7 @@
 #   Si el macro no se puede descargar, el activo se omite (no se opera sin macro).
 #
 #  PERFIL AUTOMÁTICO POR TEMPORALIDAD (uno propio por cada una, en PERFILES)
-#   Diario / Semanal: 70 velas · SL 2.0 / TP 3.0 × ATR · ADX 25 · RVOL 1.50
+#   Diario / Semanal: 70 velas · SL 1.5 / TP 2.0 × ATR · ADX 18 · RVOL 1.18
 #   Se carga al cambiar de temporalidad si "Auto-ajustar" está activo.
 #
 #  HISTORIAL (pestaña al lado de Backtest)
@@ -111,26 +111,26 @@ import pandas as pd
 class Params:
     # ── Scanner ──
     # Acumulación: rango permitido (0-100) para largos y para cortos
-    acum_l_min: float = 50.0
+    acum_l_min: float = 40.0
     acum_l_max: float = 100.0
     acum_c_min: float = 0.0
     acum_c_max: float = 50.0
     # Sentimiento: rango permitido (0-100) para largos y para cortos (tope anti-euforia en largos)
     sent_l_min: float = 0.0
-    sent_l_max: float = 85.0
-    sent_c_min: float = 15.0
+    sent_l_max: float = 25.0
+    sent_c_min: float = 75.0
     sent_c_max: float = 100.0
-    min_antic: float = 50.0       # Score Anticipación mínimo (largos y cortos)
-    adx_umbral: float = 25.0
+    min_antic: float = 20.0       # Score Anticipación mínimo (largos y cortos)
+    adx_umbral: float = 18.0
     cmf_min: float = 0.0
-    rvol_min: float = 1.5
+    rvol_min: float = 1.18
     cci_inf: float = -100.0       # zona CCI largos: (cci_inf, cci_sup) y subiendo
     cci_sup: float = 200.0
     exigir_volumen: bool = True   # False: activos sin volumen (forex) saltan CMF/RVOL
     # ── Backtest ──
-    modo: str = "spot"            # 'spot' (solo largos) | 'futuros' (largos y cortos)
-    sl_atr: float = 2.0
-    tp_atr: float = 3.0
+    modo: str = "futuros"            # 'spot' (solo largos) | 'futuros' (largos y cortos)
+    sl_atr: float = 1.5
+    tp_atr: float = 2.0
     comision_pct: float = 0.10    # % por lado
     slippage_pct: float = 0.05    # % por fill
     riesgo_pct: float = 1.0       # % del equity arriesgado por operación
@@ -142,7 +142,7 @@ class Params:
     mtf_activo: bool = True       # tendencia leída en la temporalidad superior
     mtf_estricto: bool = False    # True: exige macro A FAVOR; False: solo bloquea si es EN CONTRA
     ema_macro: int = 50           # EMA de estructura en la temporalidad superior
-    friccion_mult: float = 3.0    # TP debe ser >= N × costo ida y vuelta (0 = desactivado)
+    friccion_mult: float = 2.0    # TP debe ser >= N × costo ida y vuelta (0 = desactivado)
 
 
 # ==============================================================
@@ -166,7 +166,7 @@ for _k, _v in _MACRO_DE.items():
 TF_POR_CODIGO = {c["iv"]: c for c in TEMPORALIDADES.values()}
 
 # Perfil automático (editá los números acá)
-PERFIL_ALTO = dict(max_barras=70, sl_atr=2.0, tp_atr=3.0, adx_umbral=25.0, rvol_min=1.50)
+PERFIL_ALTO = dict(max_barras=70, sl_atr=1.5, tp_atr=2.0, adx_umbral=18.0, rvol_min=1.18)
 
 # Un perfil PROPIO por temporalidad (arrancan con los valores base de arriba).
 # Editá cada línea por separado para afinar cada temporalidad.
@@ -879,11 +879,11 @@ def _params_desde_preset(d: dict):
 
     modo = "futuros" if str(d.get("modo", "")).startswith("Futuros") else "spot"
     p = Params(
-        acum_l_min=num("acum_lmin", 50.0), acum_l_max=num("acum_lmax", 100.0),
+        acum_l_min=num("acum_lmin", 40.0), acum_l_max=num("acum_lmax", 100.0),
         acum_c_min=num("acum_cmin", 0.0), acum_c_max=num("acum_cmax", 50.0),
-        sent_l_min=num("sent_lmin", 0.0), sent_l_max=num("sent_lmax", 85.0),
-        sent_c_min=num("sent_cmin", 15.0), sent_c_max=num("sent_cmax", 100.0),
-        min_antic=num("antic", 50.0),
+        sent_l_min=num("sent_lmin", 0.0), sent_l_max=num("sent_lmax", 25.0),
+        sent_c_min=num("sent_cmin", 75.0), sent_c_max=num("sent_cmax", 100.0),
+        min_antic=num("antic", 20.0),
         adx_umbral=num("adx", perf["adx_umbral"]), rvol_min=num("rvol", perf["rvol_min"]),
         cci_inf=num("cci_i", -100.0), cci_sup=num("cci_s", 200.0),
         exigir_volumen=bool(d.get("exvol", True)),
@@ -894,7 +894,7 @@ def _params_desde_preset(d: dict):
         capital=num("cap", 10000.0), max_barras=int(num("maxbar", perf["max_barras"])),
         intervalo=cfg["iv"],
         mtf_activo=bool(d.get("mtf", True)), mtf_estricto=bool(d.get("mtf_est", False)),
-        friccion_mult=num("fric", 3.0))
+        friccion_mult=num("fric", 2.0))
     return p, cfg
 
 
@@ -1045,7 +1045,7 @@ def _render_historial(st, key: str, p: Params, dl):
     tk_txt = c1.text_input("Activo", "BTC-USD", key=f"{key}_hist_tk")
     tf_sel = c2.radio("Temporalidad", list(TEMPORALIDADES.keys()), horizontal=True,
                       key=f"{key}_hist_tf")
-    dias_sel = int(c3.number_input("Días a traer", 30, 7300, 365, 30, key=f"{key}_hist_dias",
+    dias_sel = int(c3.number_input("Días a traer", 30, 7300, 180, 30, key=f"{key}_hist_dias",
                                    help="Días corridos hacia atrás. En diario son ~1 vela por día "
                                         "(menos en acciones, que no operan fines de semana); "
                                         "en semanal, 1 vela cada 7 días."))
@@ -1284,7 +1284,7 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
 
     # ─────────────── PARÁMETROS ───────────────
     with st.expander("⚙️ Parámetros", expanded=False):
-        modo_lbl = st.radio("Mercado", MODOS_LBL, horizontal=True, key=f"{key}_modo")
+        modo_lbl = st.radio("Mercado", MODOS_LBL, index=1, horizontal=True, key=f"{key}_modo")
         tf_lbl = st.radio("Temporalidad", list(TEMPORALIDADES.keys()),
                           index=list(TEMPORALIDADES.keys()).index("Diario"),
                           horizontal=True, key=f"{key}_tf", on_change=_cb_tf,
@@ -1297,7 +1297,7 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
             st.caption(f"📐 Scores como en app.py: valor {_m['w_valor']} velas · "
                        f"momento {_m['w_mom']} velas · mínimo {_m['min_barras']} velas.")
         a1, a2, a3, a4 = st.columns(4)
-        acum_l_min = a1.number_input("Acumulación LARGOS mín.", 0.0, 100.0, 50.0, 5.0, key=f"{key}_acum_lmin",
+        acum_l_min = a1.number_input("Acumulación LARGOS mín.", 0.0, 100.0, 40.0, 5.0, key=f"{key}_acum_lmin",
                                      help="Largos: el score de Acumulación debe estar entre el mínimo y el máximo.")
         acum_l_max = a2.number_input("Acumulación LARGOS máx.", 0.0, 100.0, 100.0, 5.0, key=f"{key}_acum_lmax")
         acum_c_min = a3.number_input("Acumulación CORTOS mín.", 0.0, 100.0, 0.0, 5.0, key=f"{key}_acum_cmin",
@@ -1307,25 +1307,25 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
         sent_l_min = s1.number_input("Sentimiento LARGOS mín.", 0.0, 100.0, 0.0, 5.0, key=f"{key}_sent_lmin",
                                      help="Largos: el Sentimiento debe estar entre el mínimo y el máximo "
                                           "(el máximo es el tope anti-euforia).")
-        sent_l_max = s2.number_input("Sentimiento LARGOS máx.", 0.0, 100.0, 85.0, 5.0, key=f"{key}_sent_lmax")
-        sent_c_min = s3.number_input("Sentimiento CORTOS mín.", 0.0, 100.0, 15.0, 5.0, key=f"{key}_sent_cmin",
+        sent_l_max = s2.number_input("Sentimiento LARGOS máx.", 0.0, 100.0, 25.0, 5.0, key=f"{key}_sent_lmax")
+        sent_c_min = s3.number_input("Sentimiento CORTOS mín.", 0.0, 100.0, 75.0, 5.0, key=f"{key}_sent_cmin",
                                      help="Cortos: el Sentimiento debe estar entre el mínimo y el máximo "
                                           "(el mínimo es el piso anti-pánico).")
         sent_c_max = s4.number_input("Sentimiento CORTOS máx.", 0.0, 100.0, 100.0, 5.0, key=f"{key}_sent_cmax")
         if acum_l_min > acum_l_max or acum_c_min > acum_c_max or sent_l_min > sent_l_max or sent_c_min > sent_c_max:
             st.warning("Algún mínimo es mayor que su máximo: ese filtro nunca se va a cumplir.")
         c1, c2, c3, c4 = st.columns(4)
-        min_antic = c1.number_input("Anticipación mín.", 0.0, 100.0, 50.0, 5.0, key=f"{key}_antic")
-        adx_u = c2.number_input("ADX umbral", 5.0, 60.0, 25.0, 1.0, key=f"{key}_adx")
+        min_antic = c1.number_input("Anticipación mín.", 0.0, 100.0, 20.0, 5.0, key=f"{key}_antic")
+        adx_u = c2.number_input("ADX umbral", 5.0, 60.0, 18.0, 1.0, key=f"{key}_adx")
         c5, c6, c7, c8 = st.columns(4)
-        rvol_min = c5.number_input("RVOL mín.", 0.5, 5.0, 1.5, 0.05, format="%.2f", key=f"{key}_rvol")
+        rvol_min = c5.number_input("RVOL mín.", 0.5, 5.0, 1.18, 0.01, format="%.2f", key=f"{key}_rvol")
         cci_inf = c6.number_input("CCI inferior", -300.0, 0.0, -100.0, 25.0, key=f"{key}_cci_i")
         cci_sup = c7.number_input("CCI superior", 0.0, 400.0, 200.0, 25.0, key=f"{key}_cci_s")
         exig_vol = c8.checkbox("Exigir volumen", True, key=f"{key}_exvol",
                                help="Si lo desactivás, activos sin volumen (forex) saltan CMF/RVOL.")
         d1, d2, d3, d4 = st.columns(4)
-        sl_atr = d1.number_input("SL (× ATR)", 0.5, 10.0, 2.0, 0.1, format="%.2f", key=f"{key}_sl")
-        tp_atr = d2.number_input("TP (× ATR)", 0.5, 20.0, 3.0, 0.1, format="%.2f", key=f"{key}_tp")
+        sl_atr = d1.number_input("SL (× ATR)", 0.5, 10.0, 1.5, 0.1, format="%.2f", key=f"{key}_sl")
+        tp_atr = d2.number_input("TP (× ATR)", 0.5, 20.0, 2.0, 0.1, format="%.2f", key=f"{key}_tp")
         comision = d3.number_input("Comisión % por lado", 0.0, 2.0, 0.10, 0.01, format="%.3f", key=f"{key}_com")
         slippage = d4.number_input("Slippage % por fill", 0.0, 2.0, 0.05, 0.01, format="%.3f", key=f"{key}_slip")
         e1, e2, e3, e4 = st.columns(4)
@@ -1347,7 +1347,7 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
         mtf_est = f3.checkbox("MTF estricto", False, key=f"{key}_mtf_est",
                               help="Desactivado: solo se bloquea operar EN CONTRA de la tendencia macro. "
                                    "Activado: además se exige que la macro esté claramente A FAVOR.")
-        fric = f4.number_input("Fricción: TP ≥ N × costos", 0.0, 20.0, 3.0, 0.5, key=f"{key}_fric",
+        fric = f4.number_input("Fricción: TP ≥ N × costos", 0.0, 20.0, 2.0, 0.5, key=f"{key}_fric",
                                help="Descarta la señal si el TP (en % del precio) no supera N veces el costo "
                                     "ida y vuelta (2 comisiones + 2 slippages). 0 = desactivado.")
         _macro_lbl = cfg.get("macro")
@@ -1600,7 +1600,7 @@ def main():
     ap.add_argument("--capital", type=float, default=10000.0)
     ap.add_argument("--sin-mtf", action="store_true", help="desactiva el filtro multi-timeframe")
     ap.add_argument("--mtf-estricto", action="store_true", help="exige tendencia macro A FAVOR")
-    ap.add_argument("--friccion", type=float, default=3.0, help="TP >= N x costos (0 = desactiva)")
+    ap.add_argument("--friccion", type=float, default=2.0, help="TP >= N x costos (0 = desactiva)")
     a = ap.parse_args()
 
     perf = perfil_para(a.tf)
