@@ -9977,45 +9977,6 @@ def _ana_render_activo(ticker):
         with tabs[n + 2]:
             _ana_render_fundamental(ticker)
             
-def _ana_render_activo(ticker):
-    ticker = validar_ticker(ticker)
-    if ticker is None:
-        st.error('Símbolo inválido.')
-        return
-    industria = TICKER_INDUSTRY.get(ticker)
-    st.markdown(
-        f'<div class="sec-title">{escape_html(ticker)}'
-        + (f' · {escape_html(industria)}' if industria else '') + '</div>',
-        unsafe_allow_html=True,
-    )
-    with st.spinner('Calculando los tres horizontes...'):
-        _ana_resumen_activo(ticker)
-
-    con_fund = not _es_activo_sin_fundamentals(ticker)
-    nombres_tabs = ['⚡ Corto plazo', '📆 Mediano plazo', '📈 Largo plazo',
-                    '🧮 Cuantitativo', '🧭 Centro de análisis']
-    if con_fund:
-        nombres_tabs.append('📊 Fundamental')
-    tabs = st.tabs(nombres_tabs)
-
-    with tabs[0]:
-        st.caption('Horizonte: 1–30 días')
-        _ana_render_corto(ticker)
-    with tabs[1]:
-        st.caption('Horizonte: 3–6 meses')
-        _ana_render_tdc(ticker, 'MP')
-    with tabs[2]:
-        st.caption('Horizonte: 1–2 años')
-        _ana_render_tdc(ticker, 'LP')
-    with tabs[3]:
-        st.caption('Modelo cuantitativo sobre 2 años de historia')
-        _ana_render_largo_cuant(ticker)
-    with tabs[4]:
-        _ana_render_centro(ticker)
-    if con_fund:
-        with tabs[5]:
-            _ana_render_fundamental(ticker)
-
 def _ana_vista_activo(items):
     tickers = list(items.keys())
     if st.session_state.get('ana_activo_sel') not in tickers:
