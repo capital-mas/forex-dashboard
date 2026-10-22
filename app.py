@@ -9848,7 +9848,7 @@ def _ana_render_activo(ticker):
         unsafe_allow_html=True,
     )
     with st.spinner('Calculando las temporalidades...'):
-    _ana_resumen_activo(ticker)
+        _ana_resumen_activo(ticker)
 
     con_fund = not _es_activo_sin_fundamentals(ticker)
     nombres_tf = list(TEMPORALIDADES.keys())
