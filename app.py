@@ -9913,9 +9913,6 @@ def _ana_render_tf(ticker, nombre_tf):
     </div>
     """, unsafe_allow_html=True)
 
-    st.plotly_chart(fig_confirmacion_corto(ticker, d['df_v']), use_container_width=True,
-                    config=PLOTLY_CONFIG, key=f'ana_tf_conf_{nombre_tf}_{ticker}')
-
     tipo = st.radio('Tipo de gráfico', ['Línea', 'Velas'], horizontal=True,
                     key=f'ana_tf_tipo_{nombre_tf}_{ticker}')
     st.plotly_chart(fig_precio_bollinger(ticker, d['df_v']['Close'].dropna(), df_ohlc=d['df_v'], tipo=tipo),
