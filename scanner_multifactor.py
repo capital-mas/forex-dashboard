@@ -69,6 +69,13 @@
 #   Diario / Semanal: 70 velas · SL 2.0 / TP 3.0 × ATR · ADX 25 · RVOL 1.50
 #   Se carga al cambiar de temporalidad si "Auto-ajustar" está activo.
 #
+#  HISTORIAL (pestaña al lado de Backtest)
+#   Cargás un activo, elegís Diario o Semanal y cuántos días traer. Muestra,
+#   vela a vela, todos los indicadores (Acum, Antic, Sent, ADX, DI, CMF, RVOL,
+#   MACD, CCI, macro) y qué filtros se cumplieron con los parámetros cargados.
+#   Incluye: distribución de cada indicador vs. el parámetro actual, % de velas
+#   que cumple cada filtro, cuál es el cuello de botella y descarga en CSV.
+#
 #  BACKTEST — supuestos (conservadores)
 #   - La señal se evalúa al CIERRE de la vela y se ejecuta en la
 #     APERTURA de la vela siguiente (sin look-ahead).
@@ -88,7 +95,7 @@ from __future__ import annotations
 import argparse
 import json
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 
@@ -1027,6 +1034,166 @@ def _render_scan_presets(st, key: str, presets: dict, dl, on_cargar=None):
 #  UI STREAMLIT
 # ==============================================================
 
+def _render_historial(st, key: str, p: Params, dl):
+    """Pestaña Historial: trae los últimos N días de un activo con TODOS los indicadores y el
+    cumplimiento de cada filtro vela a vela, para calibrar los parámetros."""
+    st.markdown("**📜 Historial del activo (para calibrar parámetros)**")
+    st.caption("Elegí un activo, la temporalidad y cuántos días hacia atrás traer. Se calculan los "
+               "indicadores y se marca, vela a vela, qué filtros se cumplieron con los parámetros que "
+               "tenés cargados arriba (si los cambiás, la tabla se actualiza sola).")
+    c1, c2, c3 = st.columns([2, 2, 2])
+    tk_txt = c1.text_input("Activo", "BTC-USD", key=f"{key}_hist_tk")
+    tf_sel = c2.radio("Temporalidad", list(TEMPORALIDADES.keys()), horizontal=True,
+                      key=f"{key}_hist_tf")
+    dias_sel = int(c3.number_input("Días a traer", 30, 7300, 365, 30, key=f"{key}_hist_dias",
+                                   help="Días corridos hacia atrás. En diario son ~1 vela por día "
+                                        "(menos en acciones, que no operan fines de semana); "
+                                        "en semanal, 1 vela cada 7 días."))
+    o1, o2 = st.columns(2)
+    lado = o1.radio("Filtros a evaluar", ["Largos", "Cortos"], horizontal=True, key=f"{key}_hist_lado")
+    excl = o2.checkbox("Excluir la vela en formación", True, key=f"{key}_hist_excl",
+                       help="Recomendado: la última vela abierta tiene volumen parcial.")
+    if TEMPORALIDADES[tf_sel]["iv"] == "1wk":
+        st.caption(f"≈ {dias_sel // 7} velas semanales.")
+
+    if st.button("▶ Traer historial", key=f"{key}_hist_run", type="primary"):
+        tks = _parse_tickers(tk_txt)
+        if not tks:
+            st.warning("Escribí un ticker.")
+        else:
+            st.session_state[f"{key}_hist_args"] = (tks[0], tf_sel, dias_sel, excl)
+
+    a = st.session_state.get(f"{key}_hist_args")
+    if not a:
+        return
+    ticker, tf_h, dias, excl_h = a
+    cfg_h = TEMPORALIDADES[tf_h]
+    ph = replace(p, intervalo=cfg_h["iv"])
+    warm = 600 if cfg_h["iv"] == "1d" else 1500      # velas extra para que los indicadores "calienten"
+
+    with st.spinner(f"Descargando {ticker}..."):
+        df = dl(ticker, f"{dias + warm}d", cfg_h["fuente"], cfg_h["resample"])
+        dm = obtener_macro(dl, ticker, ph)
+    if df is None or len(df) < min_velas(ph.intervalo):
+        st.warning(f"No hay datos suficientes de {ticker} en {tf_h}.")
+        return
+    if macro_requerido(ph) and dm is None:
+        st.warning("No se pudo descargar la temporalidad superior (macro). "
+                   "Podés desactivar el Filtro Multi-Timeframe en Parámetros.")
+        return
+    if excl_h and len(df) > 1 and _vela_abierta(df.index[-1], cfg_h["delta"]):
+        df = df.iloc[:-1]
+
+    ind = agregar_macro(calcular_indicadores(df, intervalo=ph.intervalo), dm, ph)
+    if macro_requerido(ph) and "m_adx" not in ind.columns:
+        st.warning("Sin datos suficientes de la temporalidad superior para este activo.")
+        return
+    usa_m = _usa_macro(ind, ph)
+    cl, cs = condiciones(ind, ph)
+    filt = cl if lado == "Largos" else cs
+    valid = _validas(ind, ph).to_numpy()
+    corte = ind.index[-1] - pd.Timedelta(days=dias)
+    mask = (ind.index >= corte) & valid
+    if not mask.any():
+        st.warning("No hay velas con indicadores calculables en ese rango. Probá con más días.")
+        return
+
+    W = ind.loc[mask]
+    M = pd.DataFrame({k: v.loc[mask] for k, v in filt.items()}).astype(bool)
+    n_ok = M.sum(axis=1)
+    completa = M.all(axis=1)
+    n_f = M.shape[1]
+
+    st.caption(f"**{ticker}** · {tf_h} · {len(W)} velas entre {W.index[0].date()} y {W.index[-1].date()} "
+               f"· evaluando filtros de **{lado.lower()}**.")
+    if W["cmf"].isna().all():
+        st.info("Este activo no informa volumen: CMF y RVOL quedan vacíos y esos filtros fallan siempre "
+                "salvo que desactives «Exigir volumen» en Parámetros.")
+
+    # ── Resumen ──
+    pasa = M.mean() * 100
+    cuello = pasa.idxmin()
+    k = st.columns(4)
+    k[0].metric("Velas analizadas", f"{len(W)}")
+    k[1].metric("Velas con señal completa", f"{int(completa.sum())}",
+                f"{completa.mean() * 100:.1f}% de las velas", delta_color="off")
+    k[2].metric("Filtro más restrictivo", cuello, f"lo cumple el {pasa[cuello]:.0f}%", delta_color="off")
+    k[3].metric("Filtros cumplidos (promedio)", f"{n_ok.mean():.1f}/{n_f}")
+
+    # ── Tabla vela a vela ──
+    t = pd.DataFrame(index=W.index)
+    t["Fecha"] = W.index.strftime("%Y-%m-%d")
+    t["Close"] = W["Close"]
+    t["ATR"] = W["atr"]
+    t["Acum"], t["Antic"], t["Sent"] = W["acum"], W["antic"], W["sent"]
+    t["ADX"], t["+DI"], t["-DI"] = W["adx"], W["pdi"], W["mdi"]
+    t["CMF"], t["RVOL"] = W["cmf"], W["rvol"]
+    t["MACD hist"], t["CCI"] = W["macd_hist"], W["cci"]
+    if usa_m:
+        t["Macro"] = [etiqueta_macro(r) for _, r in W.iterrows()]
+        t["ADX macro"] = W["m_adx"]
+    t["Filtros OK"] = n_ok.astype(int).astype(str) + f"/{n_f}"
+    t["Cumple todo"] = np.where(completa, "✅", "—")
+    t["Falta cumplir"] = M.apply(lambda r: ", ".join([c for c, v in r.items() if not v]) or "—", axis=1)
+    for c in M.columns:
+        t[c] = np.where(M[c], "✔", "✘")
+    t = t.iloc[::-1].reset_index(drop=True)          # más reciente primero
+
+    fmt = {"Close": "%.4f", "ATR": "%.4f", "Acum": "%.1f", "Antic": "%.1f", "Sent": "%.1f",
+           "ADX": "%.1f", "+DI": "%.1f", "-DI": "%.1f", "CMF": "%+.2f", "RVOL": "%.2f",
+           "MACD hist": "%+.4f", "CCI": "%.0f", "ADX macro": "%.1f"}
+    cfg_cols = {c: st.column_config.NumberColumn(format=f) for c, f in fmt.items() if c in t.columns}
+    st.markdown("**Vela a vela** (más reciente primero)")
+    st.dataframe(t, use_container_width=True, hide_index=True,
+                 height=min(600, len(t) * 36 + 45), column_config=cfg_cols)
+    st.download_button("⬇️ Descargar CSV", t.to_csv(index=False).encode("utf-8-sig"),
+                       file_name=f"historial_{ticker}_{cfg_h['iv']}_{dias}d.csv",
+                       mime="text/csv", key=f"{key}_hist_csv")
+
+    # ── Distribución de cada indicador vs. el parámetro actual ──
+    if lado == "Largos":
+        umb = {"Acum": f"{ph.acum_l_min:g} – {ph.acum_l_max:g}", "Antic": f"≥ {ph.min_antic:g}",
+               "Sent": f"{ph.sent_l_min:g} – {ph.sent_l_max:g}", "CMF": f"> {ph.cmf_min:g}",
+               "RVOL": f"> {ph.rvol_min:g}", "MACD hist": "> 0 y creciendo",
+               "CCI": f"{ph.cci_inf:g} a {ph.cci_sup:g} y subiendo"}
+    else:
+        umb = {"Acum": f"{ph.acum_c_min:g} – {ph.acum_c_max:g}", "Antic": f"≥ {ph.min_antic:g}",
+               "Sent": f"{ph.sent_c_min:g} – {ph.sent_c_max:g}", "CMF": f"< {-ph.cmf_min:g}",
+               "RVOL": f"> {ph.rvol_min:g}", "MACD hist": "< 0 y decreciendo",
+               "CCI": f"{-ph.cci_sup:g} a {-ph.cci_inf:g} y bajando"}
+    umb["ADX macro" if usa_m else "ADX"] = f"bloquea si > {ph.adx_umbral:g} y domina el DI contrario"
+
+    cols_i = [("Acum", "acum"), ("Antic", "antic"), ("Sent", "sent"), ("ADX", "adx"), ("+DI", "pdi"),
+              ("-DI", "mdi"), ("CMF", "cmf"), ("RVOL", "rvol"), ("MACD hist", "macd_hist"), ("CCI", "cci")]
+    if usa_m:
+        cols_i.append(("ADX macro", "m_adx"))
+    filas = []
+    for nom, c in cols_i:
+        sr = W[c].dropna()
+        if sr.empty:
+            continue
+        filas.append({"Indicador": nom, "Mín": sr.min(), "P25": sr.quantile(.25),
+                      "Mediana": sr.median(), "P75": sr.quantile(.75), "P90": sr.quantile(.90),
+                      "Máx": sr.max(), "Último": sr.iloc[-1],
+                      "Parámetro actual": umb.get(nom, "—")})
+    st.markdown("**Distribución de cada indicador en el período vs. tu parámetro actual**")
+    st.dataframe(pd.DataFrame(filas).round(3), use_container_width=True, hide_index=True)
+
+    # ── Cumplimiento de cada filtro ──
+    solo = [float(((n_ok == n_f - 1) & ~M[c]).mean() * 100) for c in M.columns]
+    df_f = pd.DataFrame({"Filtro": list(M.columns),
+                         "% de velas que lo cumple": pasa.values,
+                         "% de velas donde es el ÚNICO que falla": solo}
+                        ).sort_values("% de velas que lo cumple").round(1)
+    st.markdown("**Cumplimiento de cada filtro**")
+    st.dataframe(df_f, use_container_width=True, hide_index=True)
+    st.caption("Cómo leerlo: un filtro que se cumple en muy pocas velas es el que más restringe. Si además "
+               "es el ÚNICO que falla en muchas velas, aflojarlo es lo que más señales agrega. "
+               "Compará la columna «Parámetro actual» con P25 / Mediana / P75 para elegir el nuevo valor. "
+               "Cuidado: aflojar demasiado para ver más señales puede sobreajustar al período. "
+               "No es asesoramiento financiero.")
+
+
 def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
     """on_cargar(fila, lado) se ejecuta como callback de botón ('LARGO' / 'CORTO').
     store: objeto con listar()/guardar(nombre, datos)/eliminar(nombre).
@@ -1201,7 +1368,7 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
                capital=capital, max_barras=int(max_bar), intervalo=cfg["iv"],
                mtf_activo=mtf_on, mtf_estricto=mtf_est, friccion_mult=fric)
 
-    tab_scan, tab_bt = st.tabs(["🔎 Scanner", "🧪 Backtest"])
+    tab_scan, tab_bt, tab_hist = st.tabs(["🔎 Scanner", "🧪 Backtest", "📜 Historial"])
 
     # ─────────────── SCANNER ───────────────
     with tab_scan:
@@ -1280,6 +1447,11 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
                     if modo == "futuros":
                         b2.button("🔴 Cargar como CORTO", key=f"{key}_cargar_s", use_container_width=True,
                                   on_click=on_cargar, args=(fila, "CORTO"))
+
+    # ─────────────── HISTORIAL ───────────────
+    # (va ANTES del Backtest: ese bloque termina con 'return' y cortaría todo lo que venga después)
+    with tab_hist:
+        _render_historial(st, key, p, dl)
 
     # ─────────────── BACKTEST ───────────────
     with tab_bt:
