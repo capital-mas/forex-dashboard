@@ -35,6 +35,19 @@
 #   4h se arma agrupando velas de 1h. Con "solo velas cerradas" se
 #   descarta la última vela si todavía no terminó.
 #
+#  SCORES (Acumulación / Anticipación / Sentimiento) — IGUAL QUE app.py
+#   Cada temporalidad usa el mismo modelo que el análisis por temporalidad
+#   del activo en app.py (TEMPORALIDADES + scores_corto), con sus ventanas:
+#       15 min: valor 1500 · momento 130 · mín. 80 velas · descarga 60d
+#       30 min: valor  800 · momento  65 · mín. 60 velas · descarga 60d
+#       1 hora: valor  500 · momento  70 · mín. 60 velas · descarga 730d
+#       4 horas: valor 300 · momento  60 · mín. 60 velas · descarga 730d (1h)
+#       Diario: valor  252 · momento  40 · mín. 60 velas · descarga 2y
+#       Semanal: valor 260 · momento  52 · mín. 60 velas · descarga 10y
+#   Parámetros comunes: RSI 7 · vol 10 · retorno 5 velas (×2.0) · BB 10 · ATR 14.
+#   Igual que en app.py, el percentil usa las velas disponibles hasta un
+#   máximo de "valor" (la ventana se va llenando).
+#
 #  FILTROS (todos deben cumplirse para generar señal)
 #   1. Tendencia ADX/DI: bloquea compras si ADX > umbral y -DI domina
 #      (espejo para cortos). Con MTF activo se lee en la temporalidad
@@ -134,8 +147,9 @@ class Params:
 #  DATOS
 # ==============================================================
 
+# 'scan' = histórico que baja el Scanner (igual que app.py → TEMPORALIDADES.period)
 TEMPORALIDADES = {
-    "15 min": dict(iv="15m", fuente="15m", resample=None, scan="30d",
+    "15 min": dict(iv="15m", fuente="15m", resample=None, scan="60d",
                    periodos=["30d", "60d"], defecto="60d", delta=pd.Timedelta(minutes=15),
                    nota="Yahoo solo da ~60 días de velas de 15 min: pocas operaciones en el "
                         "backtest. Pensado para intradía."),
@@ -152,10 +166,10 @@ TEMPORALIDADES = {
                     delta=pd.Timedelta(hours=4),
                     nota="Se arma agrupando velas de 1 hora (hasta ~2 años). En acciones los "
                          "bloques no coinciden con la rueda; rinde mejor en cripto, forex y futuros."),
-    "Diario": dict(iv="1d", fuente="1d", resample=None, scan="1y",
+    "Diario": dict(iv="1d", fuente="1d", resample=None, scan="2y",
                    periodos=["2y", "5y", "10y"], defecto="5y", delta=pd.Timedelta(days=1),
                    nota="Configuración original: hasta 10 años de histórico."),
-    "Semanal": dict(iv="1wk", fuente="1wk", resample=None, scan="5y",
+    "Semanal": dict(iv="1wk", fuente="1wk", resample=None, scan="10y",
                     periodos=["5y", "10y", "20y"], defecto="10y", delta=pd.Timedelta(days=7),
                     nota="Pocas operaciones por año: conviene histórico de 10 a 20 años."),
 }
@@ -190,28 +204,29 @@ def perfil_para(iv: str) -> dict:
     """Perfil de parámetros según el intervalo ('15m', '1h', '1d'...)."""
     return PERFILES.get(iv, PERFIL_ALTO)
 
-# ── Modelo de scoring por temporalidad (réplica de app.py) ──
-# Las ventanas están en VELAS, igual que en app.py (3 meses ≈ 63 ruedas, 2 años ≈ 504, etc.).
+
+# ── Modelo de scoring por temporalidad (IDÉNTICO a app.py → TEMPORALIDADES / scores_corto) ──
+# w_valor = barras_valor, w_mom = barras_momento, min_barras = min_barras de app.py.
+_SCORE_BASE = dict(rsi_p=7, vol_p=10, mom_ret=5, mom_escala=2.0, bb_p=10, atr_p=14)
 MODELOS_SCORE = {
-    # scores_corto(): valor 3 meses (63) · momento 1 mes (21)
-    "corto":   dict(w_valor=63,  w_mom=21,  rsi_p=7,  vol_p=10, mom_ret=5,
-                    mom_escala=2.0,  bb_p=10, atr_p=14),
-    # _tdc_scores() con HORIZONTES_TDC['MP']: valor 2 años (504) · momento 6 meses (126)
-    "mediano": dict(w_valor=504, w_mom=126, rsi_p=14, vol_p=20, mom_ret=20,
-                    mom_escala=0.60, bb_p=20, atr_p=14),
+    "15m": dict(_SCORE_BASE, w_valor=1500, w_mom=130, min_barras=80),
+    "30m": dict(_SCORE_BASE, w_valor=800,  w_mom=65,  min_barras=60),
+    "1h":  dict(_SCORE_BASE, w_valor=500,  w_mom=70,  min_barras=60),
+    "4h":  dict(_SCORE_BASE, w_valor=300,  w_mom=60,  min_barras=60),
+    "1d":  dict(_SCORE_BASE, w_valor=252,  w_mom=40,  min_barras=60),
+    "1wk": dict(_SCORE_BASE, w_valor=260,  w_mom=52,  min_barras=60),
 }
-MODELO_POR_TF = {"15m": "corto", "30m": "corto", "1h": "mediano", "4h": "mediano", "1d": "corto"}
-# 1d y 1wk no figuran: siguen con el cálculo anterior.
 
 
 def modelo_score(intervalo: str):
-    return MODELO_POR_TF.get(intervalo)
+    return intervalo if intervalo in MODELOS_SCORE else None
 
 
 def min_velas(intervalo: str) -> int:
-    """Velas mínimas para que los scores tengan ventana completa."""
-    m = MODELOS_SCORE.get(modelo_score(intervalo))
-    return max(150, m["w_valor"] + 50) if m else 150
+    """Velas mínimas, igual que app.py (la ventana se va llenando hasta w_valor)."""
+    m = MODELOS_SCORE.get(intervalo)
+    return m["min_barras"] if m else 150
+
 
 # Yahoo limita el histórico intradía (en días hacia atrás)
 _MAX_DIAS_INTRADIA = {"15m": 59, "30m": 59, "1h": 729}
@@ -273,9 +288,10 @@ def categoria_de(ticker: str) -> str:
 #  INDICADORES (vectorizados, una fila por vela)
 # ==============================================================
 
-def _rank_pct(s: pd.Series, w: int) -> pd.Series:
-    """Percentil (0-100) del valor actual dentro de su ventana rolling."""
-    return s.rolling(w, min_periods=w).apply(lambda x: (x < x[-1]).mean() * 100, raw=True)
+def _rank_pct(s: pd.Series, w: int, mp: int | None = None) -> pd.Series:
+    """Percentil (0-100) del valor actual dentro de su ventana rolling.
+    mp = mínimo de velas para calcular (por defecto, la ventana completa)."""
+    return s.rolling(w, min_periods=mp or w).apply(lambda x: (x < x[-1]).mean() * 100, raw=True)
 
 
 def _true_range(h: pd.Series, l: pd.Series, c: pd.Series) -> pd.Series:
@@ -296,22 +312,24 @@ def _adx_di(h: pd.Series, l: pd.Series, c: pd.Series, n: int = 14):
     adx = dx.ewm(alpha=a, adjust=False).mean()
     return adx, pdi, mdi
 
+
 def _scores_app(c: pd.Series, h: pd.Series, l: pd.Series, m: dict):
-    """Scores de app.py (scores_corto / _tdc_scores) calculados vela a vela."""
+    """Scores de app.py (scores_corto) vela a vela, con las ventanas de cada temporalidad."""
     w_val, w_mom = m["w_valor"], m["w_mom"]
+    mpv = lambda win: min(win, m["min_barras"])      # igual que app.py: usa las velas disponibles
 
     # Acumulación y Sentimiento
-    precio_pct = _rank_pct(c, w_val)
+    precio_pct = _rank_pct(c, w_val, mpv(w_val))
 
-    d = c.diff()                                            # RSI con media simple (calcular_rsi)
+    d = c.diff()                                      # RSI con media simple (calcular_rsi)
     g = d.clip(lower=0).rolling(m["rsi_p"]).mean()
     ls = (-d.clip(upper=0)).rolling(m["rsi_p"]).mean()
     rs = g / ls.replace(0, np.nan)
     rsi = (100 - 100 / (1 + rs)).fillna(50)
-    rsi_inv = 100 - _rank_pct(rsi, w_val)
+    rsi_inv = 100 - _rank_pct(rsi, w_val, mpv(w_val))
 
     vol = c.pct_change().rolling(m["vol_p"]).std() * np.sqrt(252) * 100
-    vol_inv = 100 - _rank_pct(vol, w_val - m["vol_p"])
+    vol_inv = 100 - _rank_pct(vol, w_val - m["vol_p"], mpv(w_val - m["vol_p"]))
 
     acum = (100 - precio_pct) * 0.40 + rsi_inv * 0.35 + vol_inv * 0.25
     sent = precio_pct
@@ -319,16 +337,18 @@ def _scores_app(c: pd.Series, h: pd.Series, l: pd.Series, m: dict):
     # Anticipación
     mom = (50 + c.pct_change(m["mom_ret"]) * 100 * m["mom_escala"]).clip(0, 100)
 
-    atr_s = _true_range(h, l, c).rolling(m["atr_p"]).mean()  # ATR simple (calcular_atr)
-    n_atr = w_mom - m["atr_p"] + 1                            # valores de ATR dentro de la ventana de momento
+    atr_s = _true_range(h, l, c).rolling(m["atr_p"]).mean()   # ATR simple (calcular_atr)
+    n_atr = w_mom - m["atr_p"] + 1                             # valores de ATR dentro de la ventana de momento
     comp_atr = (100 - atr_s / atr_s.rolling(n_atr, min_periods=6).mean() * 50).clip(0, 100)
 
     bb_p = m["bb_p"]
     bbw = c.rolling(bb_p).std() / c.rolling(bb_p).mean().replace(0, np.nan) * 100
-    bb_c = 100 - _rank_pct(bbw, w_mom - bb_p + 1)
+    n_bb = w_mom - bb_p + 1
+    bb_c = 100 - _rank_pct(bbw, n_bb, min(n_bb, 6))
 
     antic = mom * 0.40 + comp_atr * 0.30 + bb_c * 0.30
     return acum, antic, sent
+
 
 def calcular_indicadores(df: pd.DataFrame, ventana: int = 63, intervalo: str = "1d") -> pd.DataFrame:
     o, h, l, c, v = df["Open"], df["High"], df["Low"], df["Close"], df["Volume"]
@@ -365,7 +385,7 @@ def calcular_indicadores(df: pd.DataFrame, ventana: int = 63, intervalo: str = "
         out["acum"], out["antic"], out["sent"] = _scores_app(c, h, l, m)
         return out
 
-    # ── Scores (cálculo anterior: diario / semanal) ──
+    # ── Scores (cálculo anterior: solo se usa si el intervalo no está en MODELOS_SCORE) ──
     d = c.diff()
     g = d.clip(lower=0).rolling(7).mean()
     ls = (-d.clip(upper=0)).rolling(7).mean()
@@ -989,7 +1009,7 @@ def _render_scan_presets(st, key: str, presets: dict, dl, on_cargar=None):
         if filas is None:
             return
         if st.session_state.get(k_fall):
-            st.warning("Sin datos suficientes (~150 velas y su temporalidad superior): "
+            st.warning("Sin datos suficientes (velas mínimas de su temporalidad y de la superior): "
                        + ", ".join(st.session_state[k_fall]))
         if not filas:
             st.info("No hubo resultados.")
@@ -1137,11 +1157,14 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
         tf_lbl = st.radio("Temporalidad", list(TEMPORALIDADES.keys()),
                           index=list(TEMPORALIDADES.keys()).index("Diario"),
                           horizontal=True, key=f"{key}_tf", on_change=_cb_tf,
-                          help="Se aplica al Scanner y al Backtest. Ojo: scores, ventanas e "
-                               "indicadores se calculan en velas, así que los mismos números "
-                               "cubren un tiempo distinto en cada temporalidad.")
+                          help="Se aplica al Scanner y al Backtest. Los scores usan las mismas "
+                               "ventanas por temporalidad que app.py (velas de valor y de momento).")
         cfg = TEMPORALIDADES[tf_lbl]
         st.caption("⏱️ " + cfg["nota"])
+        _m = MODELOS_SCORE.get(cfg["iv"])
+        if _m:
+            st.caption(f"📐 Scores como en app.py: valor {_m['w_valor']} velas · "
+                       f"momento {_m['w_mom']} velas · mínimo {_m['min_barras']} velas.")
         a1, a2, a3, a4 = st.columns(4)
         acum_l_min = a1.number_input("Acumulación LARGOS mín.", 0.0, 100.0, 50.0, 5.0, key=f"{key}_acum_lmin",
                                      help="Largos: el score de Acumulación debe estar entre el mínimo y el máximo.")
@@ -1253,7 +1276,7 @@ def render_scanner_multifactor(on_cargar=None, key: str = "mf", store=None):
             st.caption("⏱️ Temporalidad de este escaneo: **"
                        + st.session_state.get(f"{key}_scan_tf", tf_lbl) + "**")
             if st.session_state.get(f"{key}_scan_fallidos"):
-                st.warning("Sin datos suficientes (~150 velas y su temporalidad superior): "
+                st.warning("Sin datos suficientes (velas mínimas de su temporalidad y de la superior): "
                            + ", ".join(st.session_state[f"{key}_scan_fallidos"]))
             if not filas:
                 st.info("No hubo resultados.")
@@ -1464,7 +1487,7 @@ def main():
     for tk in a.tickers:
         df = descargar_ohlcv(tk, periodo, cfg["fuente"], cfg["resample"])
         dm = obtener_macro(descargar_ohlcv, tk, p)
-        if df is None or len(df) < 150 or (macro_requerido(p) and dm is None):
+        if df is None or len(df) < min_velas(p.intervalo) or (macro_requerido(p) and dm is None):
             print(f"  {tk}: sin datos suficientes (o de la temporalidad superior)")
             continue
         fila = evaluar_ultima(tk, df, p, True, dm)
